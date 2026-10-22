@@ -45,11 +45,15 @@ version section on release.
   exposes its port, accepts only your Tailscale login, and requires an enrolled
   device's token on everything but enrolment. Idle with no phone connected it uses
   about 4 MB and no CPU. `docs/running.md` covers setup; `contrib/tether.service` is
-  the systemd user unit.
+  the systemd user unit. Stopping it lets each tmux control client exit on its own
+  rather than killing it.
 - Added phone enrolment: `tether enroll` prints a one-time code (10 minutes, 5 wrong
   tries) for the app's Add host, and `tether device list|add|remove` manages enrolled
   devices. A removed device's open sockets close within 10 s. The daemon keeps only
-  hashes, in `~/.local/state/tether/`.
+  hashes, in `~/.local/state/tether/`. If `auth.toml` can't be read or parsed (a hand
+  edit gone wrong), every token check fails until it is fixed, but as "auth
+  unavailable" (close 4503, HTTP 503), which the app retries with the token it has,
+  not as a revoked token.
 
 ## [0.0.1] - 2026-10-22
 

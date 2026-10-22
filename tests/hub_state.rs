@@ -11,7 +11,7 @@ use bytes::Bytes;
 use serde_json::{Value, json};
 use tether::hub::{
     CAPTURE_RESERVATION, CREDIT, ConnId, Effect, Endpoints, FromConn, Input, OVERDRAFT, PasteFile,
-    State, ToConn,
+    SNAPSHOT_SPACING, State, ToConn,
 };
 use tether::proto::{self, ClientMsg, SessionRef, WindowRef};
 use tether::tmux::{
@@ -289,10 +289,11 @@ impl Hub {
         let Some((tag, cmd)) = self.oneshots.pop_front() else {
             return;
         };
-        let result = if !self.alive {
-            Err(TmuxError::NoServer)
-        } else {
-            Ok(match cmd {
+        let result = match cmd {
+            _ if !self.alive => Err(TmuxError::NoServer),
+            // tmux checks the instance before it creates anything (`command::only_on`).
+            OneShotCmd::NewWindow { server, .. } if server != SERVER => Err(TmuxError::NoServer),
+            cmd => Ok(match cmd {
                 OneShotCmd::Locate { window } => Reply::Location(self.locate(window.0, None)),
                 OneShotCmd::LocateSession { session } => Reply::SessionLocation(SessionLocation {
                     server: SERVER,
@@ -317,7 +318,7 @@ impl Hub {
                     }],
                 }),
                 other => panic!("unexpected one-shot {other:?}"),
-            })
+            }),
         };
         self.input(Input::OneShot(tag, result));
     }
@@ -1192,33 +1193,102 @@ fn control_json_past_the_overdraft_wedges_the_connection() {
 
 #[test]
 fn new_windows_and_session_refs_from_another_server_run() {
+    // A fresh hub has seen no server, so only tmux can refuse another run's session id,
+    // which here names an unrelated session `$0`.
     let mut hub = Hub::new();
     let conn = hub.connect();
-    let session = SessionRef {
-        server: SERVER_NAME.into(),
-        session: 0,
-    };
-    hub.send(
-        conn,
-        json!({"type": "newWindow", "data": {"req": 1, "session": session}}),
-    );
-    hub.settle();
-    assert_eq!(
-        hub.take_json(conn),
-        [
-            json!({"type": "created", "data": {"req": 1, "window": {"server": SERVER_NAME, "window": 9}, "session": {"server": SERVER_NAME, "session": 0}}})
-        ]
-    );
     let stale = SessionRef {
         server: "main:41-1".into(),
         session: 0,
     };
     hub.send(
         conn,
-        json!({"type": "newWindow", "data": {"req": 2, "session": stale}}),
+        json!({"type": "newWindow", "data": {"req": 1, "session": stale}}),
     );
+    hub.settle();
     let json = hub.take_json(conn);
     assert_eq!(kinds(&json), ["serverExited", "error"]);
+    assert_eq!(json[0]["data"]["server"], "main:41-1");
     assert_eq!(json[1]["data"]["code"], "noServer");
-    assert!(hub.oneshots.is_empty(), "nothing ran on the new server");
+    assert!(
+        !hub.windows.contains_key(&9),
+        "nothing created on the new server"
+    );
+    let session = SessionRef {
+        server: SERVER_NAME.into(),
+        session: 0,
+    };
+    hub.send(
+        conn,
+        json!({"type": "newWindow", "data": {"req": 2, "session": session}}),
+    );
+    hub.settle();
+    assert_eq!(
+        hub.take_json(conn),
+        [
+            json!({"type": "created", "data": {"req": 2, "window": {"server": SERVER_NAME, "window": 9}, "session": {"server": SERVER_NAME, "session": 0}}})
+        ]
+    );
+}
+
+#[test]
+fn a_closed_connection_and_an_exited_client_let_go_of_their_channels() {
+    let mut hub = Hub::new();
+    let conn = hub.connect();
+    hub.open(conn, 1, 0);
+    let client = hub.client(0);
+    hub.input(Input::Conn(conn, FromConn::Closed));
+    assert!(
+        hub.dropped.contains(&conn),
+        "the executor drops its channel"
+    );
+    // tmux ended the lingering client on its own, not the hub.
+    let stderr_tail = String::new();
+    hub.input(Input::Pump(client, PumpMsg::Exited { stderr_tail }));
+    assert!(
+        hub.clients[&client].closed,
+        "the executor drops its line channel"
+    );
+}
+
+#[test]
+fn output_past_the_spacing_deadline_stands_in_for_the_tick() {
+    let mut hub = Hub::new();
+    let conn = hub.connect();
+    hub.open(conn, 1, 0);
+    let client = hub.client(0);
+    hub.take(conn);
+    let starve = |hub: &mut Hub| {
+        let chunk = "x".repeat(60_000);
+        for _ in 0..100 {
+            hub.output(client, 0, &chunk);
+            if hub.take(conn).is_empty() {
+                return;
+            }
+        }
+        panic!("never starved");
+    };
+    // Past the spacing with no credit to snapshot on: the deadline is spent, not
+    // reported again and again.
+    starve(&mut hub);
+    hub.now += SNAPSHOT_SPACING + Duration::from_millis(1);
+    hub.output(client, 0, "late");
+    hub.settle();
+    assert!(hub.take(conn).is_empty());
+    assert_eq!(hub.state.next_deadline(), None);
+    hub.credit(conn, CREDIT as u32);
+    hub.settle();
+    assert_eq!(hub.take(conn), [Got::Snapshot(1, size(80, 24))]);
+    // Credit back within the spacing: the snapshot waits for its deadline, and the
+    // output that comes first, not a Tick, takes it.
+    hub.credit(conn, CREDIT as u32);
+    starve(&mut hub);
+    hub.credit(conn, CREDIT as u32);
+    hub.settle();
+    assert!(hub.take(conn).is_empty());
+    assert_eq!(hub.state.next_deadline(), Some(hub.now + SNAPSHOT_SPACING));
+    hub.now += SNAPSHOT_SPACING + Duration::from_millis(1);
+    hub.output(client, 0, "late");
+    hub.settle();
+    assert_eq!(hub.take(conn), [Got::Snapshot(1, size(80, 24))]);
 }

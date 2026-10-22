@@ -89,12 +89,16 @@ async fn read_head(stderr: ChildStderr) -> Result<Vec<u8>, TmuxError> {
 }
 
 /// Why tmux failed. With `-N` and no server, a stale socket is refused and a missing
-/// one is absent; both mean no server.
+/// one is absent; both mean no server, as does another instance than the one-shot was
+/// for (`command::SERVER_CHANGED`).
 fn failure(stderr: &[u8], status: ExitStatus) -> TmuxError {
     let message = String::from_utf8_lossy(stderr).trim().to_owned();
     let absent = message.starts_with("error connecting to ")
         && message.ends_with("(No such file or directory)");
-    if message.starts_with("no server running on ") || absent {
+    if message.starts_with("no server running on ")
+        || absent
+        || message.contains(command::SERVER_CHANGED)
+    {
         TmuxError::NoServer
     } else if message.is_empty() {
         TmuxError::Command(format!("tmux {status}"))

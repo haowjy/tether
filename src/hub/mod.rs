@@ -155,10 +155,13 @@ impl PasteFile {
 
 /// The hub's inbox from connections and the one-shot runner.
 enum HubMsg {
-    Connect(oneshot::Sender<(ConnId, mpsc::Receiver<ToConn>)>),
+    Connect(ConnectReply),
     Conn(ConnId, FromConn),
     OneShot(Tag, Result<Reply, TmuxError>),
 }
+
+/// Where the hub answers `connect`: the connection's id and the channel it sends on.
+type ConnectReply = oneshot::Sender<(ConnId, mpsc::Receiver<ToConn>)>;
 
 /// The hub has ended: it panicked, or the daemon is shutting down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

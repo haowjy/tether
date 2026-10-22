@@ -357,7 +357,7 @@ impl Conn<'_> {
                 }
                 Err(cause) => {
                     error!(conn = self.id.0, %device, %cause, "can't re-check the device");
-                    return Err(End::Close(CloseCode::BadToken));
+                    return Err(End::Close(CloseCode::AuthUnavailable));
                 }
             }
         }

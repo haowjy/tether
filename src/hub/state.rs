@@ -50,7 +50,8 @@ pub enum Effect {
         client: ClientId,
         lines: Vec<String>,
     },
-    /// Close the client's stdin; its pump's `Exited` is then ignored.
+    /// The client is gone from the hub: close its stdin if it is still open. Its pump's
+    /// `Exited`, if still to come, is then ignored.
     CloseClient {
         client: ClientId,
     },
@@ -64,7 +65,8 @@ pub enum Effect {
         conn: ConnId,
         msg: ToConn,
     },
-    /// The connection is wedged: close its channel (the connection closes with 4002).
+    /// The connection is gone from the hub: drop its channel. A connection still
+    /// reading it was dropped as wedged, and closes with 4002.
     DropConn {
         conn: ConnId,
     },
@@ -271,6 +273,8 @@ pub(super) enum OneShotWork {
         conn: ConnId,
         req: u32,
         endpoint: usize,
+        /// The instance a new window's session belongs to; `None` for a new session.
+        server: Option<ServerInstance>,
     },
 }
 
@@ -314,8 +318,11 @@ impl State {
     }
 
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect> {
+        // An input at or past the deadline stands in for the Tick the runtime didn't
+        // get to: once `now` passes a deadline, `next_deadline` no longer reports it.
+        let due = self.next_deadline().is_some_and(|deadline| deadline <= now);
         self.now = now;
-        self.dirty = !matches!(input, Input::Pump(_, PumpMsg::Bytes(_)));
+        self.dirty = due || !matches!(input, Input::Pump(_, PumpMsg::Bytes(_)));
         match input {
             Input::Connected(conn) => {
                 self.conns.insert(conn, Conn::default());
@@ -342,6 +349,8 @@ impl State {
 
     /// When `handle(Input::Tick, …)` is next due: a respawn, a linger's end, a reply
     /// deadline, a starved watch's snapshot spacing. `None`: nothing is waiting on time.
+    /// A deadline is reported until an input comes at or after it, which handles it,
+    /// so one that can't be acted on then (no credit, no capture slot) can't spin.
     pub fn next_deadline(&self) -> Option<Instant> {
         let clients = self.clients.values().flat_map(|client| {
             let respawn = match client.phase {
@@ -965,7 +974,6 @@ impl State {
                 conn = conn.0,
                 "connection wedged: control messages past the overdraft"
             );
-            self.effects.push(Effect::DropConn { conn });
             self.closed(conn);
         }
     }

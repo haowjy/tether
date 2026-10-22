@@ -127,6 +127,8 @@ async fn tailscale_check(
 /// Every route but the enrolment routes: a device token in `auth.toml`. Without one,
 /// HTTP gets `401 auth_required`; a WebSocket upgrade completes and closes with 4401,
 /// since a browser can't see a refused upgrade's status (auth.md "Carrying the token").
+/// An `auth.toml` that can't be read or parsed fails closed, but as `503
+/// auth_unavailable` or close 4503, which the app retries with the token it has.
 async fn device_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: Next) -> Response {
     let refused = match ctx.app.auth.check(request.headers()).await {
         Ok(device) => {
@@ -135,14 +137,25 @@ async fn device_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: N
         }
         Err(refused) => refused,
     };
-    match &refused {
-        AuthError::Store(cause) => error!(%cause, "can't read auth.toml: every token fails"),
-        _ => warn!(%refused, path = request.uri().path(), "refused by the device check"),
-    }
+    let (close, status, code) = match &refused {
+        AuthError::Store(cause) => {
+            error!(%cause, "can't read auth.toml: every token fails");
+            let unavailable = StatusCode::SERVICE_UNAVAILABLE;
+            (CloseCode::AuthUnavailable, unavailable, "auth_unavailable")
+        }
+        AuthError::NoToken | AuthError::Unknown => {
+            warn!(%refused, path = request.uri().path(), "refused by the device check");
+            (
+                CloseCode::BadToken,
+                StatusCode::UNAUTHORIZED,
+                "auth_required",
+            )
+        }
+    };
     let (mut parts, _) = request.into_parts();
     match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
-        Ok(upgrade) => ws::refuse(upgrade, CloseCode::BadToken),
-        Err(_) => refusal(StatusCode::UNAUTHORIZED, "auth_required"),
+        Ok(upgrade) => ws::refuse(upgrade, close),
+        Err(_) => refusal(status, code),
     }
 }
 

@@ -17,7 +17,8 @@ use crate::proto::{
     WatchEndReason, WindowListing, WindowRef,
 };
 use crate::tmux::{
-    ClientId, InputItem, OneShotCmd, Op, PaneId, Reply, SessionId, Tag, TmuxError, WindowId,
+    ClientId, InputItem, OneShotCmd, Op, PaneId, Reply, ServerInstance, SessionId, Tag, TmuxError,
+    WindowId,
 };
 
 enum Refusal {
@@ -107,7 +108,7 @@ impl State {
                     name,
                     dir: dir.map(Into::into),
                 };
-                self.create(conn, req, MAIN, cmd);
+                self.create(conn, req, MAIN, None, cmd);
             }
             // The connection's own: handshake, heartbeat, and pastes as files.
             ClientMsg::Hello { .. }
@@ -406,24 +407,24 @@ impl State {
             let message = "unknown tmux server";
             return self.refuse(conn, Some(req), None, ErrorCode::BadRequest, message);
         };
-        // A session id from another run of the server names some other session.
-        if self.endpoints[endpoint]
-            .live
-            .is_some_and(|live| live != server)
-        {
-            self.server_gone(endpoint, server);
-            let message = "that tmux server has exited";
-            return self.refuse(conn, Some(req), None, ErrorCode::NoServer, message);
-        }
+        // tmux checks the instance itself: what the hub last saw may be stale.
         let cmd = OneShotCmd::NewWindow {
+            server,
             session: SessionId(session.session),
             name,
             dir: dir.map(Into::into),
         };
-        self.create(conn, req, endpoint, cmd);
+        self.create(conn, req, endpoint, Some(server), cmd);
     }
 
-    pub(super) fn create(&mut self, conn: ConnId, req: u32, endpoint: usize, cmd: OneShotCmd) {
+    pub(super) fn create(
+        &mut self,
+        conn: ConnId,
+        req: u32,
+        endpoint: usize,
+        server: Option<ServerInstance>,
+        cmd: OneShotCmd,
+    ) {
         if self.oneshot.is_some() {
             return self.refuse(conn, Some(req), None, ErrorCode::Busy, "tmux is busy");
         }
@@ -431,6 +432,7 @@ impl State {
             conn,
             req,
             endpoint,
+            server,
         };
         self.run_oneshot(endpoint, cmd, work);
     }
@@ -440,9 +442,21 @@ impl State {
         conn: ConnId,
         req: u32,
         endpoint: usize,
+        server: Option<ServerInstance>,
         result: Result<Reply, TmuxError>,
     ) {
         match result {
+            Err(TmuxError::NoServer) => {
+                // The instance the window was for, or the one last seen, is gone.
+                if let Some(gone) = server.or(self.endpoints[endpoint].live) {
+                    self.server_gone(endpoint, gone);
+                }
+                let message = match server {
+                    Some(_) => "that tmux server has exited",
+                    None => "no tmux server running",
+                };
+                self.refuse(conn, Some(req), None, ErrorCode::NoServer, message);
+            }
             Ok(Reply::Created(created)) => {
                 self.learned(endpoint, created.server);
                 let msg = ServerMsg::Created {
@@ -485,14 +499,17 @@ impl State {
                 conn,
                 req,
                 endpoint,
-            } => self.created(conn, req, endpoint, result),
+                server,
+            } => self.created(conn, req, endpoint, server, result),
         }
     }
 
+    /// The connection is gone, by its own close or as wedged.
     pub(super) fn closed(&mut self, conn: ConnId) {
         let Some(state) = self.conns.remove(&conn) else {
             return;
         };
+        self.effects.push(Effect::DropConn { conn });
         for (watch, removed) in state.watches {
             self.leave(WatchKey { conn, watch }, removed.window);
         }

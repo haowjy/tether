@@ -1093,9 +1093,32 @@ async fn new_windows_and_sessions_take_names_and_directories_as_given() {
         assert_eq!(fields[0], session.to_string());
         (fields[1].to_owned(), fields[2].to_owned(), session)
     };
+    // A session id from another run of the server names some other session: tmux
+    // checks the instance before it creates anything.
+    let windows = || server.run(&["list-windows", "-a"]).expect("list-windows");
+    let before = windows();
+    let other_run = ServerInstance {
+        pid: server_instance().pid,
+        start_time: server_instance().start_time - 1,
+    };
+    assert_eq!(
+        oneshot::run(
+            &endpoint,
+            &OneShotCmd::NewWindow {
+                server: other_run,
+                session: SessionId(0),
+                name: Some(name.to_owned()),
+                dir: None,
+            },
+        )
+        .await,
+        Err(TmuxError::NoServer)
+    );
+    assert_eq!(windows(), before, "a window was created");
     let window = oneshot::run(
         &endpoint,
         &OneShotCmd::NewWindow {
+            server: server_instance(),
             session: SessionId(0),
             name: Some(name.to_owned()),
             dir: Some(dir.clone()),
@@ -1134,6 +1157,7 @@ async fn new_windows_and_sessions_take_names_and_directories_as_given() {
         oneshot::run(
             &endpoint,
             &OneShotCmd::NewWindow {
+                server: server_instance(),
                 session: SessionId(99),
                 name: None,
                 dir: None,

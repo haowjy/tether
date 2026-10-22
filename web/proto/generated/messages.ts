@@ -13,6 +13,7 @@ export const CloseCode = {
   OverCap: 4005,
   TooLarge: 4009,
   BadToken: 4401,
+  AuthUnavailable: 4503,
 } as const;
 
 export type ClientMsg = { "type": "hello", "data": { protocol: number, client: ClientInfo, } }

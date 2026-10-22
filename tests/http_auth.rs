@@ -218,3 +218,32 @@ async fn a_bad_token_gets_the_upgrade_then_4401() {
         assert_eq!(frame.code, CloseCode::from(4401), "{protocols}");
     }
 }
+
+#[tokio::test]
+async fn an_unreadable_auth_file_is_retryable_not_a_bad_token() {
+    let daemon = start("unreadable").await;
+    let added = daemon
+        .store
+        .add_device("phone", SystemTime::now())
+        .expect("a device");
+    // A hand edit gone wrong: every check fails, but the token isn't refused.
+    std::fs::write(daemon.store.dir().join("auth.toml"), "[[device]\n").expect("written");
+    let bearer = format!("Bearer {}", added.token);
+    let with_token = [("Tailscale-User-Login", LOGIN), ("Authorization", &bearer)];
+    let (status, body) = request(daemon.port, "GET", "/ws", &with_token, "").await;
+    assert_eq!(
+        (status, body.as_str()),
+        (503, r#"{"error":"auth_unavailable"}"#)
+    );
+    let protocols = format!("tether.v1, tether.auth.{}", added.token);
+    let (mut socket, _) = open(daemon.port, Some(LOGIN), &protocols)
+        .await
+        .expect("upgraded");
+    let closed = tokio::time::timeout(WAIT, socket.next())
+        .await
+        .expect("in time");
+    let Some(Ok(Message::Close(Some(frame)))) = closed else {
+        panic!("no close frame: {closed:?}");
+    };
+    assert_eq!(frame.code, CloseCode::from(4503));
+}

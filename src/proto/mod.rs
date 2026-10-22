@@ -35,10 +35,13 @@ pub enum CloseCode {
     OverCap = 4005,
     TooLarge = 4009,
     BadToken = 4401,
+    /// The daemon can't read its device list, so it can't check the token: the token
+    /// isn't refused, and the client keeps it and retries.
+    AuthUnavailable = 4503,
 }
 
 impl CloseCode {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Idle,
         Self::Incompatible,
         Self::Wedged,
@@ -47,6 +50,7 @@ impl CloseCode {
         Self::OverCap,
         Self::TooLarge,
         Self::BadToken,
+        Self::AuthUnavailable,
     ];
 
     pub fn code(self) -> u16 {

@@ -20,6 +20,14 @@ Rules the code relies on, which are easy to break:
   counted. A Release frees the slots of the snapshots it invalidated when it is answered.
 - Nothing is sent to a control client before `Ready`, and maintenance never gets
   `busy`: reconcile waits for room instead.
+- `State` owns every lifecycle; `run.rs` only mirrors it. Whatever removes a
+  connection or a started control client from `State` emits `DropConn` or
+  `CloseClient`, however it ended, or the executor's channel for it leaks.
+- Time is handled only when an input comes: `handle` treats any input at or past
+  `next_deadline()` as a Tick, since the runtime may pick pump input over its timer.
+  A deadline is reported only until then, so one that can't be acted on can't spin.
+- `run` returns only after every pump has ended (stdin closed, tmux gone): the
+  runtime's end would otherwise kill `tmux -C`.
 - Logs carry ids, kinds and lengths only, never pane output, reply bodies or input.
 
 `tests/hub_state.rs` drives `State` against a fake tmux that answers the lines the hub

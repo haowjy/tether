@@ -12,7 +12,9 @@ Rules the code relies on, which are easy to break:
   the fallback included. `tests/http_auth.rs` checks both layers over a real socket.
 - A bad token on a WebSocket upgrade gets the upgrade and then close 4401, because a
   browser can't see a refused upgrade's status. A failed Tailscale check is a plain
-  403, upgrade or not.
+  403, upgrade or not. An `auth.toml` that can't be read or parsed fails closed but
+  retryable: 503 `auth_unavailable` or close 4503, at the upgrade and at the re-check
+  alike. 4401 makes the app drop its token, so it means only "this token is gone".
 - In `ws.rs`, every `ToConn` goes into the `Outbox`, and `take_credit()` goes back
   as `FromConn::Credit` whenever it is non-zero. The connection's own JSON (welcome,
   pong, a paste's refusal) is never charged; it waits in `own`, and while `own` is

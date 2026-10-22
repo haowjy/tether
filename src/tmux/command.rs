@@ -6,7 +6,9 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use super::snapshot::STATE_FORMAT;
-use super::{InputItem, OneShotCmd, Op, PaneId, SessionId, Size, Tag, TmuxError, WindowId};
+use super::{
+    InputItem, OneShotCmd, Op, PaneId, ServerInstance, SessionId, Size, Tag, TmuxError, WindowId,
+};
 
 /// One line for a control client: commands joined by ` ; `, answered by one reply
 /// block per command that runs.
@@ -50,6 +52,9 @@ const LISTING_CLIENT_FORMAT: &str = "#{session_id}\t#{client_control_mode}";
 const LISTING_WINDOW_FORMAT: &str = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{window_name}";
 /// A created window, with the server instance that names it.
 const CREATED_FORMAT: &str = "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}";
+/// Not a tmux command: `only_on`'s branch, which fails to parse. tmux names it in its
+/// error, which is how `oneshot` tells this failure from others.
+pub(super) const SERVER_CHANGED: &str = "tether-server-changed";
 
 /// The control client's first line: version, server instance, and the size of the
 /// session's current window.
@@ -202,8 +207,14 @@ pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
             &session.to_string(),
             LOCATE_SESSION_FORMAT,
         ]),
-        OneShotCmd::NewWindow { session, name, dir } => {
-            let mut args = owned(&["new-window", "-d", "-t", &session.to_string()]);
+        OneShotCmd::NewWindow {
+            server,
+            session,
+            name,
+            dir,
+        } => {
+            let mut args = only_on(*server);
+            args.extend(owned(&["new-window", "-d", "-t", &session.to_string()]));
             named(&mut args, "-n", name.as_deref())?;
             named(&mut args, "-c", dir.as_deref().map(path).transpose()?)?;
             args.extend(owned(&["-P", "-F", CREATED_FORMAT]));
@@ -217,6 +228,14 @@ pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
             args
         }
     })
+}
+
+/// A first command that stops the rest of a one-shot's list unless the server is
+/// `server`. On another instance `if-shell` takes its branch, which fails to parse, so
+/// `if-shell` itself fails, and tmux skips the commands after a failure in a list.
+fn only_on(server: ServerInstance) -> Vec<String> {
+    let other = format!("#{{!=:#{{pid}}-#{{start_time}},{server}}}");
+    owned(&["if-shell", "-F", &other, SERVER_CHANGED, ";"])
 }
 
 fn owned(args: &[&str]) -> Vec<String> {

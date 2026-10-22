@@ -271,8 +271,11 @@ pub enum OneShotCmd {
     LocateSession {
         session: SessionId,
     },
-    /// Answered by `Reply::Created`.
+    /// Answered by `Reply::Created`, or `NoServer` if the server running isn't
+    /// `server`: tmux checks that before it creates anything, since a session id from
+    /// another run of the server names some other session.
     NewWindow {
+        server: ServerInstance,
         session: SessionId,
         name: Option<String>,
         dir: Option<PathBuf>,
@@ -434,7 +437,8 @@ pub enum TmuxError {
     /// tmux answered in a shape tether doesn't understand.
     #[error("unexpected reply from tmux")]
     BadReply,
-    /// No tmux server is running on the endpoint (a one-shot's answer).
+    /// No tmux server is running on the endpoint, or not the instance a one-shot was
+    /// for (a one-shot's answer).
     #[error("no tmux server running")]
     NoServer,
     /// A one-shot didn't finish within its timeout and was killed.

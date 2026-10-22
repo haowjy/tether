@@ -374,9 +374,7 @@ impl State {
         let Some(record) = self.clients.remove(&client) else {
             return;
         };
-        if killed {
-            self.effects.push(Effect::CloseClient { client });
-        }
+        self.effects.push(Effect::CloseClient { client });
         let detached = !killed && record.tmux().is_some_and(Session::exit_seen);
         info!(client = client.0, session = %record.session, detached, reason = %reason, "tmux control client ended");
         let server = record.server().or(self.endpoints[record.endpoint].live);
