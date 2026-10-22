@@ -1,6 +1,6 @@
 [package]
 name = "tether"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Phone-first client for tmux sessions on a dev server, over Tailscale"
