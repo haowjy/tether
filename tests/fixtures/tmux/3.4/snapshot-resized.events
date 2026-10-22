@@ -1,0 +1,7 @@
+ready server=65947-1792644666 version=3.4
+layout @0 %0:80x24
+layout @0 %0:100x30
+layout @0 %0:100x30
+snapshot tag=1 %0 100x30
+layout @0 %0:100x30
+layout @0 %0:100x30

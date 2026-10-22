@@ -360,6 +360,74 @@ fn failures_name_their_cause() {
     assert!(!replay.lines.iter().any(|line| line.contains("S-Enter")));
 }
 
+/// Whichever command of a paste failed, its buffer is deleted in a group of its own:
+/// commands after a failure in a list never run.
+#[test]
+fn a_failed_paste_deletes_its_buffer() {
+    let replay = whole("paste");
+    assert_eq!(
+        done(&replay, 5),
+        &Err(TmuxError::Command("can't find window: @0".into())),
+        "a hook killed the window between load-buffer and paste-buffer"
+    );
+    let deleted = replay
+        .lines
+        .iter()
+        .filter_map(|line| line.strip_prefix("delete-buffer -b "))
+        .collect::<Vec<_>>();
+    assert_eq!(deleted, ["tether-3", "tether-4", "tether-5"]);
+}
+
+/// A hook that resizes the window after the state read changes the pane without
+/// printing: the state read at the end differs, so the list goes again, and the
+/// snapshot has the size tmux captured at.
+#[test]
+fn a_snapshot_whose_state_changed_mid_list_is_sent_again() {
+    let replay = whole("snapshot-resized");
+    let sends = replay
+        .lines
+        .iter()
+        .filter(|line| line.starts_with("refresh-client -A '%0:continue'"))
+        .count();
+    assert_eq!(sends, 2);
+    let snapshots = restores_with_output(&replay);
+    let [(size, _, _)] = &snapshots[..] else {
+        panic!("one snapshot: {}", snapshots.len());
+    };
+    assert_eq!(
+        *size,
+        Size {
+            cols: 100,
+            rows: 30
+        }
+    );
+}
+
+/// A Release made while a snapshot of its pane is in flight invalidates it: the
+/// snapshot answers nothing, and no `continue` follows the Release's pause, so the
+/// pane stays paused.
+#[test]
+fn a_torn_snapshot_released_before_its_reply_is_not_sent_again() {
+    let replay = whole("snapshot-released");
+    assert!(!replay.events.iter().any(|event| matches!(
+        event,
+        Event::Done { tag: Tag(1), .. } | Event::Snapshot { tag: Tag(1), .. }
+    )));
+    assert_eq!(done(&replay, 2), &Ok(Reply::Ok));
+    let release = replay
+        .lines
+        .iter()
+        .rposition(|line| line == "refresh-client -A '%0:pause'")
+        .expect("the release's pause");
+    assert!(
+        !replay.lines[release..]
+            .iter()
+            .any(|line| line.contains(":continue'")),
+        "{:?}",
+        replay.lines
+    );
+}
+
 /// A hook that doesn't wait leaves the list whole; one that waits lets output in
 /// mid-list, and the list is sent three times before failing.
 #[test]

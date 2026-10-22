@@ -6,9 +6,11 @@ version section on release.
 ## [Unreleased]
 
 - Added `tmux::Session`, the pure tmux control client: startup and client size,
-  reply matching with the in-flight cap, pausing panes nobody watches, snapshots with
-  torn-list retries, gaps, layouts, cwd subscriptions, and typed commands for locate,
-  votes, history, input and paste. Tested against recorded tmux 3.4 streams.
+  reply matching with the in-flight cap, pausing panes nobody watches, snapshots that
+  are retried when a tmux hook tears or changes the pane mid-list, gaps, layouts, cwd
+  subscriptions, and typed commands for locate, votes, history, input and paste (a
+  failed paste leaves nothing in tmux's buffers). Tested against recorded tmux 3.4
+  streams.
 - Added the snapshot restore-byte composer (`tmux::snapshot::compose`): bytes that
   rebuild a pane's screen (primary and alternate), cursor, modes, scroll region and
   tab stops in a freshly reset terminal, so clients carry no restore logic.

@@ -151,11 +151,18 @@ fn cup(out: &mut Vec<u8>, row: u32, col: u32) {
 /// A reply body, one entry per line, without line ends.
 pub(crate) type Rows = Vec<Bytes>;
 
-/// Replies of a completed snapshot list: continue, state, active, pending, saved.
+/// Replies of a completed snapshot list: continue, state, active, pending, saved, and
+/// the state again. A state that changed between its two reads means a hook changed
+/// the pane mid-list, and the captures may match neither: `Torn`.
 pub(crate) fn from_replies(replies: Vec<Rows>) -> Result<PaneSnapshot, TmuxError> {
-    let Ok([_continue, state, active, pending, saved]) = <[Rows; 5]>::try_from(replies) else {
+    let Ok([_continue, state, active, pending, saved, state_after]) =
+        <[Rows; 6]>::try_from(replies)
+    else {
         return Err(TmuxError::BadReply);
     };
+    if state != state_after {
+        return Err(TmuxError::Torn);
+    }
     let state = state.first().and_then(|line| parse_state(line));
     let pending = pending.first().map(|line| decode_octal(line));
     Ok(PaneSnapshot {
@@ -248,15 +255,22 @@ mod tests {
                 _ => {}
             }
         }
-        replies
-            .windows(5)
-            .filter(|list| {
-                list[1]
-                    .first()
-                    .is_some_and(|row| parse_state(row).is_some())
-            })
-            .map(|list| from_replies(list.to_vec()).expect("a snapshot list"))
-            .collect()
+        // A list is six replies, the second a state; the sixth is one too, so step
+        // past each list found.
+        let mut snapshots = Vec::new();
+        let mut at = 0;
+        while let Some(list) = replies.get(at..at + 6) {
+            if list[1]
+                .first()
+                .is_some_and(|row| parse_state(row).is_some())
+            {
+                snapshots.push(from_replies(list.to_vec()).expect("a snapshot list"));
+                at += 6;
+            } else {
+                at += 1;
+            }
+        }
+        snapshots
     }
 
     fn blank(size: Size) -> vt100::Parser {

@@ -171,7 +171,7 @@ pub enum Op {
     Snapshot {
         pane: PaneId,
     },
-    /// Unwants and pauses the pane.
+    /// Unwants and pauses the pane. Its snapshots still in flight answer nothing.
     Release {
         pane: PaneId,
     },
@@ -301,7 +301,8 @@ pub enum TmuxError {
     /// The snapshot's pane no longer exists.
     #[error("pane gone")]
     PaneGone,
-    /// Every attempt let pane output in mid-list (a waiting hook).
+    /// A tmux hook changed every attempt mid-list: a waiting one let pane output in,
+    /// or one changed the pane's state between its two reads.
     #[error("snapshot torn by a tmux hook")]
     Torn,
     /// The group's replies exceeded the reply cap.

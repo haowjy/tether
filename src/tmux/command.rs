@@ -53,15 +53,19 @@ pub fn pause(pane: PaneId) -> Group {
     Group::one(format!("refresh-client -A '{pane}:pause'"))
 }
 
-/// The atomic snapshot list (§3.5). `continue` goes first; the alternate capture goes
-/// last, with `-q` so a pane without one doesn't abort the list.
+/// The atomic snapshot list (§3.5). `continue` goes first. The state is read before
+/// the captures and again after them: a hook run between two commands can change the
+/// pane without printing, and two different reads show it. The alternate capture has
+/// `-q`, so a pane without one doesn't abort the list.
 pub fn snapshot(pane: PaneId) -> Group {
+    let state = format!("display-message -p -t {pane} '{STATE_FORMAT}'");
     Group::of(&[
         format!("refresh-client -A '{pane}:continue'"),
-        format!("display-message -p -t {pane} '{STATE_FORMAT}'"),
+        state.clone(),
         format!("capture-pane -p -e -N -t {pane}"),
         format!("capture-pane -p -P -C -t {pane}"),
         format!("capture-pane -p -e -N -a -q -t {pane}"),
+        state,
     ])
 }
 
@@ -95,17 +99,26 @@ pub fn op(op: &Op, tag: Tag) -> Result<Group, TmuxError> {
                 .to_str()
                 .ok_or(TmuxError::BadRequest("paste path is not UTF-8"))?;
             let path = quote(path)?;
-            let buffer = format!("tether-{}", tag.0);
+            let buffer = paste_buffer(tag);
+            // `-d` deletes the buffer only when the paste succeeds; after a failure
+            // the session sends `delete_paste_buffer`.
             Group::of(&[
-                // Fails first if the window is gone, so the buffer is never left
-                // behind holding the pasted text: `paste-buffer -d` deletes it only
-                // on success.
-                format!("send-keys -t {window}"),
                 format!("load-buffer -b {buffer} {path}"),
                 format!("paste-buffer -p -d -b {buffer} -t {window}"),
             ])
         }
     })
+}
+
+/// Deletes what a failed paste left in tmux's buffers. Commands after a failure in a
+/// list never run, so this is a group of its own; it fails harmlessly when no buffer
+/// was made.
+pub fn delete_paste_buffer(tag: Tag) -> Group {
+    Group::one(format!("delete-buffer -b {}", paste_buffer(tag)))
+}
+
+fn paste_buffer(tag: Tag) -> String {
+    format!("tether-{}", tag.0)
 }
 
 /// `w<W>`: the subscription that reports window `@W`'s active pane's cwd.

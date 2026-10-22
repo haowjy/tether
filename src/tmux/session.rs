@@ -33,10 +33,7 @@ pub struct Session {
     pending: VecDeque<Pending>,
     block: Block,
     wanted: BTreeSet<PaneId>,
-    /// Panes this client paused or tmux paused while unwanted: their output is
-    /// dropped without pausing again. Holds only panes that printed while unwanted.
-    paused: BTreeSet<PaneId>,
-    /// Pauses waiting for room under `MAX_IN_FLIGHT`.
+    /// Pauses of unwanted panes waiting for room under `MAX_IN_FLIGHT`.
     deferred_pauses: VecDeque<PaneId>,
     exit_seen: bool,
 }
@@ -85,7 +82,11 @@ enum Purpose {
     Startup,
     ClientSize,
     /// This session's own pause of an unwanted pane.
-    Pause,
+    Pause {
+        pane: PaneId,
+    },
+    /// Deletes the buffer a failed paste left behind.
+    DeletePasteBuffer,
     Request {
         tag: Tag,
         request: Request,
@@ -99,8 +100,14 @@ enum Request {
         pane: PaneId,
         group: Group,
         attempt: u8,
+        /// A `Release` of the pane was requested after this attempt went out.
+        released: bool,
+    },
+    Release {
+        pane: PaneId,
     },
     History,
+    Paste,
     Plain,
 }
 
@@ -113,7 +120,6 @@ impl Session {
             pending: VecDeque::new(),
             block: Block::None,
             wanted: BTreeSet::new(),
-            paused: BTreeSet::new(),
             deferred_pauses: VecDeque::new(),
             exit_seen: false,
         };
@@ -177,27 +183,29 @@ impl Session {
             Op::LocateSession { .. } => Request::LocateSession,
             Op::Snapshot { pane } => {
                 self.wanted.insert(pane);
-                self.paused.remove(&pane);
                 self.deferred_pauses.retain(|deferred| *deferred != pane);
                 Request::Snapshot {
                     pane,
                     group: group.clone(),
                     attempt: 1,
+                    released: false,
                 }
             }
             Op::Release { pane } => {
                 self.wanted.remove(&pane);
-                self.paused.insert(pane);
                 self.deferred_pauses.retain(|deferred| *deferred != pane);
-                Request::Plain
+                self.pending
+                    .iter_mut()
+                    .for_each(|group| group.release(pane));
+                Request::Release { pane }
             }
             Op::History { .. } => Request::History,
+            Op::Paste { .. } => Request::Paste,
             Op::Vote { .. }
             | Op::ClearVote { .. }
             | Op::Subscribe { .. }
             | Op::Unsubscribe { .. }
-            | Op::Input { .. }
-            | Op::Paste { .. } => Request::Plain,
+            | Op::Input { .. } => Request::Plain,
         };
         self.send(group, Purpose::Request { tag, request }, &mut step);
         step
@@ -256,13 +264,25 @@ impl Session {
         }
         if self.wanted.contains(&pane) {
             step.events.push(Event::Output { pane, bytes: data });
-        } else if self.paused.insert(pane) {
+        } else if !self.pausing(pane) {
             if self.pending.len() < MAX_IN_FLIGHT {
-                self.send(command::pause(pane), Purpose::Pause, step);
+                self.send(command::pause(pane), Purpose::Pause { pane }, step);
             } else {
                 self.deferred_pauses.push_back(pane);
             }
         }
+    }
+
+    /// Whether a pause of `pane` waits to be sent or answered. tmux drops a paused
+    /// pane's queued output and orders replies with output, so nothing arrives from
+    /// the pane after the pause's reply; until then, its output is dropped unpaused.
+    /// Output after that means something resumed the pane, and it is paused again.
+    fn pausing(&self, pane: PaneId) -> bool {
+        self.deferred_pauses.contains(&pane)
+            || self
+                .pending
+                .iter()
+                .any(|group| group.pauses() == Some(pane))
     }
 
     fn notification(&mut self, notification: Notification, step: &mut Step) {
@@ -280,7 +300,6 @@ impl Session {
                 if self.wanted.contains(&pane) {
                     Event::Gap { pane }
                 } else {
-                    self.paused.insert(pane);
                     self.deferred_pauses.retain(|deferred| *deferred != pane);
                     return;
                 }
@@ -389,20 +408,27 @@ impl Session {
                     _ => self.fatal(SessionError::Startup, step),
                 }
             }
-            Purpose::Pause => {}
+            Purpose::Pause { .. } | Purpose::DeletePasteBuffer => {}
             Purpose::Request { tag, request } => self.answered(tag, request, outcome, step),
         }
-        // A slot this freed (a torn retry reuses its own) goes to the oldest deferred
-        // pause at once, so the lines written never depend on how bytes were chunked.
+        // A slot this freed (a torn retry or a paste's cleanup reuses its own) goes to
+        // the oldest deferred pause at once, so the lines written never depend on how
+        // bytes were chunked.
         if self.pending.len() < MAX_IN_FLIGHT && !matches!(self.phase, Phase::Dead) {
             if let Some(pane) = self.deferred_pauses.pop_front() {
-                self.send(command::pause(pane), Purpose::Pause, step);
+                self.send(command::pause(pane), Purpose::Pause { pane }, step);
             }
         }
     }
 
     fn answered(&mut self, tag: Tag, request: Request, done: Outcome, step: &mut Step) {
+        // The hub dropped the tag when it released the pane (§4.4), and a retry's
+        // `continue` would resume the pane it just paused.
+        if matches!(request, Request::Snapshot { released: true, .. }) {
+            return;
+        }
         let first_row = |replies: &[Rows]| replies.first()?.first().cloned();
+        let paste = matches!(request, Request::Paste);
         let result = if done.too_large {
             Err(TmuxError::TooLarge)
         } else if let Some(message) = done.failure {
@@ -419,28 +445,34 @@ impl Session {
                     pane,
                     group,
                     attempt,
-                } if done.torn => {
-                    if attempt < SNAPSHOT_ATTEMPTS {
-                        let request = Request::Snapshot {
-                            pane,
-                            group: group.clone(),
-                            attempt: attempt + 1,
-                        };
-                        return self.send(group, Purpose::Request { tag, request }, step);
+                    ..
+                } => {
+                    let snapshot = if done.torn {
+                        Err(TmuxError::Torn)
+                    } else {
+                        snapshot::from_replies(done.replies)
+                    };
+                    match snapshot {
+                        Ok(snapshot) => {
+                            return step.events.push(Event::Snapshot {
+                                tag,
+                                pane,
+                                size: snapshot.state.size,
+                                restore: snapshot::compose(&snapshot),
+                            });
+                        }
+                        Err(TmuxError::Torn) if attempt < SNAPSHOT_ATTEMPTS => {
+                            let request = Request::Snapshot {
+                                pane,
+                                group: group.clone(),
+                                attempt: attempt + 1,
+                                released: false,
+                            };
+                            return self.send(group, Purpose::Request { tag, request }, step);
+                        }
+                        Err(error) => Err(error),
                     }
-                    Err(TmuxError::Torn)
                 }
-                Request::Snapshot { pane, .. } => match snapshot::from_replies(done.replies) {
-                    Ok(snapshot) => {
-                        return step.events.push(Event::Snapshot {
-                            tag,
-                            pane,
-                            size: snapshot.state.size,
-                            restore: snapshot::compose(&snapshot),
-                        });
-                    }
-                    Err(error) => Err(error),
-                },
                 Request::Locate => first_row(&done.replies)
                     .and_then(|row| parse_location(&row))
                     .map(Reply::Location)
@@ -452,9 +484,16 @@ impl Session {
                 Request::History => Ok(Reply::History(
                     done.replies.into_iter().next().unwrap_or_default(),
                 )),
-                Request::Plain => Ok(Reply::Ok),
+                Request::Release { .. } | Request::Paste | Request::Plain => Ok(Reply::Ok),
             }
         };
+        if paste && result.is_err() {
+            self.send(
+                command::delete_paste_buffer(tag),
+                Purpose::DeletePasteBuffer,
+                step,
+            );
+        }
         step.events.push(Event::Done { tag, result });
     }
 
@@ -481,6 +520,31 @@ impl Session {
 }
 
 impl Pending {
+    /// The pane this group pauses: the session's own pause, or a `Release`.
+    fn pauses(&self) -> Option<PaneId> {
+        match self.purpose {
+            Purpose::Pause { pane }
+            | Purpose::Request {
+                request: Request::Release { pane },
+                ..
+            } => Some(pane),
+            _ => None,
+        }
+    }
+
+    /// Marks this group released if it is a snapshot of `pane`.
+    fn release(&mut self, pane: PaneId) {
+        if let Purpose::Request {
+            request: Request::Snapshot {
+                pane: of, released, ..
+            },
+            ..
+        } = &mut self.purpose
+        {
+            *released |= *of == pane;
+        }
+    }
+
     fn snapshot_pane(&self) -> Option<PaneId> {
         match &self.purpose {
             Purpose::Request {

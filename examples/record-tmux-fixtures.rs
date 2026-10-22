@@ -50,6 +50,8 @@ const SCENARIOS: &[(&str, Scenario)] = &[
     ("snapshot-tui", snapshot_tui),
     ("snapshot-gone", snapshot_gone),
     ("hooks", hooks),
+    ("snapshot-resized", snapshot_resized),
+    ("snapshot-released", snapshot_released),
     ("gap", gap),
     ("layout", layout),
     ("windows", windows),
@@ -633,6 +635,78 @@ fn hooks(r: &mut Recorder) -> Result<()> {
     r.settle()
 }
 
+/// A hook that resizes the window after the snapshot's state read changes the pane
+/// without printing: the state read again at the end differs, so the list goes again,
+/// and the snapshot has the size tmux captured at.
+fn snapshot_resized(r: &mut Recorder) -> Result<()> {
+    r.server.run(&[
+        "set-hook",
+        "-g",
+        "after-display-message",
+        "resize-window -t @0 -x 100 -y 30",
+    ])?;
+    let snapshot = r.run(Op::Snapshot { pane: PaneId(0) })?;
+    r.server
+        .run(&["set-hook", "-gu", "after-display-message"])?;
+    let real = r.server.run(&[
+        "display-message",
+        "-p",
+        "-t",
+        "%0",
+        "#{pane_width}x#{pane_height}",
+    ])?;
+    match snapshot {
+        Event::Snapshot { size, .. }
+            if real.trim() == "100x30" && real.trim() == format!("{}x{}", size.cols, size.rows) => {
+        }
+        other => return Err(format!("expected a {} snapshot, got {other:?}", real.trim()).into()),
+    }
+    r.settle()
+}
+
+/// A snapshot torn by a waiting hook, released before its reply: it answers nothing
+/// and isn't sent again, so once the release is answered tmux sends nothing more from
+/// the pane.
+fn snapshot_released(r: &mut Recorder) -> Result<()> {
+    r.server.run(&[
+        "set-hook",
+        "-g",
+        "after-display-message",
+        "run-shell 'sleep 0.3'",
+    ])?;
+    r.server
+        .type_line("%0", "while :; do echo tick; sleep 0.01; done")?;
+    // The session pauses the unwanted pane on its first tick.
+    thread::sleep(Duration::from_millis(200));
+    r.settle()?;
+    let start = r.events.len();
+    let snapshot = r.request(Op::Snapshot { pane: PaneId(0) })?;
+    let release = r.request(Op::Release { pane: PaneId(0) })?;
+    expect_ok(r.wait_from(
+        start,
+        |event| matches!(event, Event::Done { tag, .. } if *tag == release),
+    )?)?;
+    let released_at = r.raw.len();
+    r.pump_for(Duration::from_millis(500))?;
+    let answered = r.events[start..].iter().any(|event| {
+        matches!(event, Event::Done { tag, .. } | Event::Snapshot { tag, .. } if *tag == snapshot)
+    });
+    if answered {
+        return Err("the released snapshot was answered".into());
+    }
+    let after = &r.raw[released_at..];
+    let streaming = [&b"%output %0 "[..], b"%extended-output %0 "]
+        .iter()
+        .any(|line| after.windows(line.len()).any(|window| window == *line));
+    if streaming {
+        return Err("the released pane still streams".into());
+    }
+    r.server
+        .run(&["set-hook", "-gu", "after-display-message"])?;
+    r.server.run(&["send-keys", "-t", "%0", "C-c"])?;
+    r.settle()
+}
+
 /// tmux pauses a wanted pane after pause-after: a gap, healed by the next snapshot.
 /// A terminal client stays attached, as the laptop would: with only control clients
 /// behind, tmux stops reading the pane instead of pausing it.
@@ -773,35 +847,60 @@ fn subscription(r: &mut Recorder) -> Result<()> {
     r.settle()
 }
 
-/// A paste through a path tmux would otherwise parse, a missing file, a gone window.
+/// A paste through a path tmux would otherwise parse, a missing file, a gone window,
+/// and a window a hook kills between `load-buffer` and `paste-buffer`. No paste leaves
+/// its buffer in tmux.
 fn paste(r: &mut Recorder) -> Result<()> {
     let dir = env::temp_dir().join(format!("tether-fixture-{}", std::process::id()));
     fs::create_dir_all(&dir)?;
+    let result = paste_from(r, &dir);
+    let _ = fs::remove_dir_all(&dir);
+    result
+}
+
+fn paste_from(r: &mut Recorder, dir: &Path) -> Result<()> {
     let path = dir.join("we ird'#{pane_id}$HOME;~.txt");
     fs::write(&path, "echo PASTED-OK\n")?;
     r.run(Op::Snapshot { pane: PaneId(0) })?;
-    let pasted = r.run(Op::Paste {
+    expect_ok(r.run(Op::Paste {
         window: WindowId(0),
         path: path.clone(),
-    });
-    let missing = r.run(Op::Paste {
+    })?)?;
+    r.wait_for_output(b"PASTED-OK\r\n")?;
+    r.run(Op::Paste {
         window: WindowId(0),
         path: dir.join("missing.txt"),
-    });
-    let gone = r.run(Op::Paste {
+    })?;
+    r.run(Op::Paste {
         window: WindowId(99),
         path: path.clone(),
-    });
-    let _ = fs::remove_dir_all(&dir);
-    expect_ok(pasted?)?;
-    missing?;
-    gone?;
-    r.wait_for_output(b"PASTED-OK\r\n")?;
+    })?;
+    let secret = dir.join("secret.txt");
+    fs::write(&secret, "SECRET\n")?;
+    // A spare window keeps the session alive without @0.
+    r.server.run(&["new-window", "-d", "-t", "$0"])?;
+    r.server
+        .run(&["set-hook", "-g", "after-load-buffer", "kill-window -t @0"])?;
+    let killed = r.run(Op::Paste {
+        window: WindowId(0),
+        path: secret,
+    })?;
+    r.server.run(&["set-hook", "-gu", "after-load-buffer"])?;
+    if !matches!(
+        killed,
+        Event::Done {
+            result: Err(TmuxError::Command(_)),
+            ..
+        }
+    ) {
+        return Err(format!("expected the killed window's paste to fail: {killed:?}").into());
+    }
+    r.settle()?;
     let buffers = r.server.run(&["list-buffers", "-F", "#{buffer_name}"])?;
     if !buffers.trim().is_empty() {
         return Err(format!("paste left tmux buffers behind: {buffers}").into());
     }
-    r.settle()
+    Ok(())
 }
 
 /// Text as hex, keys by name (C-b reaches the pane past the prefix), raw bytes, every
