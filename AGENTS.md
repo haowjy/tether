@@ -7,8 +7,21 @@ tmux control mode to an installable web app. The design and its review are in
 ## How work lands (initial build)
 
 tether is being built in one pass: commit straight to `main` in the primary
-checkout. No PRs, no feature branches, no worktrees. Keep each commit coherent and
-run `scripts/preflight.sh full` before pushing (the pre-push hook does it).
+checkout. No PRs, no feature branches, no worktrees. Dropping PRs drops only the
+review ceremony; the rigor stays:
+
+- **Design before code.** Settle each subsystem's design and spec in
+  `docs/design/` before building it, starting from `plan.md` and the corrections
+  in `plan-review.md`. Record decisions with the alternatives rejected.
+- **Coding standards.** Follow the structure and style in `plan-review.md` §5–6
+  (pure parser and state core, one task per control client, bounded queues, one
+  focus controller on the web side). Get a review of each subsystem's design and
+  code before moving on.
+- **Probe the real thing.** Verify against real tmux (3.4 and 3.7b), a real iPhone,
+  and the resource budget measured on the dev box. Passing tests is not enough.
+- **Coherent commits.** One change per commit; `scripts/preflight.sh full` passes
+  before every push (the pre-push hook enforces it). Keep `docs/design/` and any
+  `.context/` notes accurate in the same commit as the code they describe.
 
 Direct pushes to `main` never release. Cut a release only when Jimmy asks, with
 `scripts/manually-release.sh`. The PR-and-label release flow in `docs/releasing.md`
