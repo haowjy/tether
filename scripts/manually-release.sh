@@ -117,7 +117,9 @@ create_tag() {
 
 push_release() {
   local tag="$1"
-  git -C "$ROOT_DIR" push origin HEAD:main
+  # --no-follow-tags: with push.followTags set, the branch push would also carry
+  # the new tag, and the pre-push hook refuses that push.
+  git -C "$ROOT_DIR" push --no-follow-tags origin HEAD:main
   git -C "$ROOT_DIR" push --no-verify origin "$tag"
 }
 
