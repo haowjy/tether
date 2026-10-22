@@ -13,3 +13,6 @@ mars.local.toml
 .cursor/
 .opencode/
 .pi/
+
+node_modules/
+web/dist/
