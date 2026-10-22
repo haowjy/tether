@@ -259,6 +259,9 @@ and buffer use.
   after the first large free, so completion's indexes would land in the heap and stay
   resident after its idle drop; pinned, each is its own mapping and goes back to the
   kernel on free, with no `unsafe` call ([complete.md](complete.md#memory-cpu-and-threads)).
+  It affects only the glibc build, the one `cargo install` makes and the unit runs. The
+  Linux release binaries are static musl, which ignore it; musl's behaviour is
+  unmeasured.
 - `TasksMax` counts threads and processes in the cgroup. tokio's blocking pool
   defaults to 512 threads, so `max_blocking_threads` is 8. The total, with control
   clients and a one-shot, stays under 32. A carapace run (a Go binary starts several
@@ -543,7 +546,9 @@ terminal input while open ([ios-shell.md](ios-shell.md#focus-one-controller-nati
 pick, take or paste a photo (`^V img`, or the file manager's upload button); HEIC is
 re-encoded to JPEG on the phone (quality 0.9, longest side 2048 px unless "send
 original"); it uploads to `uploads_dir` with a timestamped name; its quoted absolute
-path is typed into the tab it was started from, without Enter.
+path is typed into the tab it was started from, without Enter. The web shows no upload
+progress yet: it handles only the finished upload's path, so native's progress reports
+([ios-shell.md](ios-shell.md#files-and-sharing)) have no UI.
 
 **Viewers:**
 
@@ -787,6 +792,11 @@ Mac), on its own `-L` socket.
 - **Spike outcomes:** above all whether the keyboard meets "rarely closes" (spike 1),
   the boundary on 3.7b and the measured memory ceiling (spike 2), and the repaint on
   tab switch (spike 3).
+- **File manager in landscape with the keyboard up:** the sheet is left about 70 px of
+  list (seen in the web build against a real daemon, the 852×393 layout with the
+  keyboard shown). Whether the file manager should hide the keyboard while it is open
+  in landscape, or keep it (the keyboard rule in
+  [Keyboard behaviour](#keyboard-behaviour) says nothing closes it), is undecided.
 - **Protocol gap:** the tab pill's long-press offers rename, detach and kill session,
   but the protocol has no message for any of them yet; define them (user one-shots,
   like `newWindow`) before building that menu.

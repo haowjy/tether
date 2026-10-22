@@ -228,7 +228,9 @@ Entry   = { name: string,
 
 ### `GET /fs/raw/{*path}`
 
-`fs::open(…, File)`, then the bytes, holding a raw-response slot. A producer task
+`fs::open(…, File)`, then the bytes, holding a raw-response slot. A directory, FIFO,
+socket or device is `409 not_a_file`; the file manager's web code expects that answer
+when a link leads to a folder. A producer task
 `pread`s 64 KiB chunks from the descriptor (each in a blocking task under an fs slot)
 into a channel of capacity 1 that feeds the response body. If a send waits past the
 stall deadline (a paused player, a sleeping phone), the producer drops the channel
@@ -254,7 +256,11 @@ is Linux-only and a no-op elsewhere. Use std file calls inside `spawn_blocking`,
 | `Content-Security-Policy` | `sandbox` |
 
 The daemon sets `nosniff` and `sandbox` itself, because the native player fetches
-without the scheme handler, which also adds them.
+without the scheme handler, which also adds them. The web reads `Content-Range` and
+`ETag` across origins, which only the scheme handler's
+`Access-Control-Expose-Headers` makes possible
+([ios-shell.md](ios-shell.md#where-the-web-ui-comes-from)); the daemon sends no CORS
+headers.
 
 - **Range:** one range only, `bytes=a-b`, `bytes=a-` or `bytes=-n` → `206` with
   `Content-Range`. A range list, or a header that doesn't parse, is ignored → `200`

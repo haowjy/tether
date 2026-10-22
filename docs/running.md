@@ -114,7 +114,10 @@ Under systemd, each carapace run happens in its own transient scope with its own
 limit, so it never counts against tether's. Idle completion state is freed after five
 minutes ([complete.md](design/complete.md)). The unit sets
 `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072` so freed memory returns to the
-kernel.
+kernel. That setting works only for the glibc binary that `cargo install` builds,
+which the unit runs. The prebuilt Linux release binaries are static musl and ignore it,
+so under the unit they may keep more memory after the five-minute drop; the effect is
+unmeasured.
 
 ## Enrol the phone
 

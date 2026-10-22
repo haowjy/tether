@@ -18,7 +18,7 @@ Decisions and the alternatives rejected are in [decisions.md](decisions.md#compl
 
 | Constant | Value | When hit |
 |---|---|---|
-| request body | 4 KiB | `413` |
+| request body | 4 KiB | `413 too_large` |
 | requests in flight | 4 | `503 busy` at once |
 | chips per response | 20; history at most 3 of them | the rest are dropped |
 | chip description | 100 bytes | cut |
@@ -29,7 +29,7 @@ Decisions and the alternatives rejected are in [decisions.md](decisions.md#compl
 | history recency half-life | 200 entries | |
 | PATH index | 20,000 names or 256 KiB | the rest of `PATH` isn't indexed |
 | carapace run, and `carapace --list` | 300 ms wall time, from spawn to end of output | killed; no carapace chips |
-| carapace runs at once | 1; a request for another key kills the run in flight | the older request gets no carapace chips |
+| carapace runs at once | 1; an uncached request for another key kills the run in flight | the older request gets no carapace chips |
 | carapace output | 1 MiB; stderr: its last 4 KiB kept | killed; treated as a failure |
 | carapace cache | 64 entries or 1 MiB, LRU; 30 s per entry, timeouts and failures included | |
 | carapace scope | `MemoryMax=128M`, `TasksMax=64`, `CPUWeight=20`, `IOWeight=10`, `RuntimeMaxSec=2` | the scope is killed, inside itself only |
@@ -64,11 +64,16 @@ Chip       = { insert: string,          // typed at the cursor, verbatim
   has to be agreed between JavaScript and Rust.
 - **`cwd`** must be absolute, at most 4,096 bytes and free of NUL (`400 bad_request`
   otherwise, as [fs.md](fs.md#errors)). Which value the client sends is in
-  [What the client does](#what-the-client-does).
-- **Errors** use fs's JSON shape: `400 bad_request`, `413`, `503 busy` with
-  `Retry-After: 1`, `500 internal`. A source that fails, times out or is missing is
-  not an error: its chips are simply absent. The route sits in the `devices` router
-  behind both auth layers.
+  [What the client does](#what-the-client-does). The 4 KiB body cap is checked first and
+  the body also holds `before` and `after`, so a `cwd` near its cap gets `413
+  too_large`, not `400`.
+- **Errors** use fs's JSON shape: `400 bad_request`, `413 too_large`, `503 busy` with
+  `Retry-After: 1`, `500 internal`. A body that isn't the route's JSON is answered with
+  axum's own status for the cause and the code `bad_request`, as
+  [auth.md](auth.md#endpoints) and fs's routes do: `415` for a missing JSON content
+  type, `422` for JSON of the wrong shape, `400` for text that isn't JSON. A source
+  that fails, times out or is missing is not an error: its chips are simply absent.
+  The route sits in the `devices` router behind both auth layers.
 
 Types go in `src/proto/complete.rs`, generated for TypeScript
 ([daemon-core.md §5.5](daemon-core.md#55-type-generation)).
@@ -100,7 +105,10 @@ run:
    - a later word of any other command → **paths**.
 
 Chips are merged in that order (history first), deduplicated by `insert` with a
-trailing space ignored (the first kept), and cut at the chip cap.
+trailing space ignored (the first kept), and cut at the chip cap. A later chip is
+dropped whole, not merged into the first: when a history line and a carapace value
+have the same `insert`, the strip shows the history chip, which has no description and
+no trailing space (`cargo build --rel` shows only the history line).
 
 ## History
 
@@ -194,9 +202,11 @@ await a shared result.
 
 - One run at a time. A request whose key matches the run in flight waits for it; a
   request for another key kills it, so the latest keystroke wins and a stale run never
-  delays a fresh one.
-- Only three things kill a run: a request for another key, the timeout, and the output
-  cap. A request that goes away (the phone aborted it) kills nothing, and a run that
+  delays a fresh one. A request whose answer is already cached never reaches the
+  runner (the cache is read first), so it kills nothing: typing back to a stem seen in
+  the last 30 s leaves the run for another key going.
+- Only three things kill a run: an uncached request for another key, the timeout, and
+  the output cap. A request that goes away (the phone aborted it) kills nothing, and a run that
   finishes is cached even when no request still waits.
 - Each run is spawned in its own process group, and a kill is `SIGKILL` to the group,
   which also reaches the helpers carapace starts (`git`, `docker`).
@@ -242,8 +252,8 @@ binary was evicted from the page cache first:
 | `systemctl status ''` | 473 | 26 MB | 12 MB | 22 MB | 560 ms |
 
 Run inside tether's unit, one `docker` completion would add 43 MB of RSS, and up to
-74 MB on a cold cache, to a unit whose ceiling is already within 2 MB of its 64 MB
-`MemoryMax` ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
+74 MB on a cold cache, to a unit whose ceiling already reaches its 64 MB `MemoryMax`
+([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
 Scoped, the cost to tether's unit is `systemd-run` before its exec: the unit's peak
 rose 1.1 MB for a `docker run --` completion. The scope adds about 27 ms (34 ms scoped
 against 7 ms direct for `tmux ''`), which the 300 ms timeout covers.
@@ -272,6 +282,13 @@ non-ASCII characters stay as they are), then `/` for a directory or a space for
 anything else. The lexer reads the escapes back, so the next request after a chip
 continues from the same directory.
 
+`~` and `=` are in the unescaped set, so they are not escaped at the start of a word
+either. When the current word is empty and a file is named `~x` or `=x`, the chip's
+`insert` begins the word and the shell expands it: `~x` as user x's home directory
+when that user exists (any shell), `=x` as the path of command x, or an error when
+there is none (zsh). The line that runs is then not the file the chip named. Anywhere
+else in a word, as in `dir/~x`, the characters are plain.
+
 ## Memory, CPU and threads
 
 Everything `complete` holds is built on demand and freed together by the idle drop:
@@ -285,10 +302,18 @@ no phone typing, completion holds nothing and wakes nothing.
 | carapace: cache, one run's output and its parse, the command list | 1 + 1 + ~1 + 0.3 MiB | 3.3 |
 | `systemd-run` before its exec | measured | 1.1 |
 | path listing and its cache | 2 × (1 MiB of names + 5,000 × 32 B) | 2.4 |
-| **completion** | | **~11** |
+| kernel dentry and inode slab from the `PATH` scan and directory listings, charged to the unit | measured | 2.4 |
+| **completion** | | **~14** |
 
 That row replaces the unmeasured carapace estimate (~15 MB) in
 [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling).
+
+The slab row is kernel memory the daemon doesn't hold: walking `PATH`'s directories and
+listing others leaves their dentries and inodes cached, and the cache is charged to the
+unit's cgroup. It is reclaimable, so the kernel gives it back under pressure before
+`MemoryMax` bites, but the idle drop does not free it, and it counts toward
+`MemoryHigh`, where the unit's tasks are throttled. It is in the ceiling so the table
+doesn't promise a margin the unit doesn't have.
 
 **Freed memory must reach the kernel**, or the idle drop doesn't restore the ~5 MB
 idle budget. glibc mmaps the first large allocation, but after it is freed raises its
@@ -296,8 +321,17 @@ dynamic mmap threshold, so later indexes come from the heap and stay resident. T
 unit pins the threshold with
 `Environment=GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072`, which turns the
 dynamic threshold off with no `unsafe` call; then every index, list and listing buffer
-over 128 KiB is its own mapping, returned on free. The budget run checks the RSS
-after an idle drop.
+over 128 KiB is its own mapping, returned on free. Measured on the dev box with the
+unit's limits, after an idle drop: anon RSS 1.51 MB with the tunable (0.33 MB above
+its baseline), 1.80 MB without it (1.39 MB above), about 1 MB less resident.
+
+**The tunable reaches only the glibc build.** Only glibc's allocator reads
+`GLIBC_TUNABLES`. The unit's `ExecStart` is `~/.cargo/bin/tether`, the binary
+`cargo install` builds on the server, which links glibc. The Linux release binaries are
+static musl builds (`.github/workflows/release.yml`) and ignore the variable. Run under
+the unit, a release binary gets none of the effect measured above; how musl's allocator
+returns freed memory is unmeasured. The budget run must read the RSS after an idle
+drop for whichever binary the unit runs.
 
 **Blocking threads.** Completion takes at most 2 of the runtime's 8 blocking threads,
 beside fs's 4. The index slot runs history parsing and the PATH scan; the directory
@@ -405,6 +439,7 @@ parts are tested without a disk or a process.
 | `complete/commands.rs` | the PATH scan and its mtime check |
 | `complete/carapace.rs` | stems, argv and JSON → values (pure); the runner task, scope wrapper and LRU |
 | `complete/paths.rs` | splitting and escaping (pure); the listing through `fs::open` |
+| `complete/packed.rs` | strings stored end to end in one buffer, which every index uses, so an index is two allocations and goes back to the kernel when freed |
 
 No new crates: `serde_json` is already in, and the LRU is a small local type. Tests:
 the lexer and context rules on a table of lines (redirections, `2>&1`, escaped and

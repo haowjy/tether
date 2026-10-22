@@ -1256,7 +1256,7 @@ other documents link to this table.
 | daemon: code, runtime, tasks | budget target | 5 |
 | control clients | 3 × 5.3 MB measured | 16 |
 | one-shot `tmux` | 1 × 4.9 MB measured | 5 |
-| completion: indexes, caches, a carapace launch (carapace itself runs in its own scope) | [complete.md](complete.md#memory-cpu-and-threads) | 11 |
+| completion: indexes, caches, a carapace launch, and the kernel slab its scans leave (carapace itself runs in its own scope) | [complete.md](complete.md#memory-cpu-and-threads) | 14 |
 | tmux chunks, pump → hub | 128 × 16 KiB | 2 |
 | reply bodies | large ones only in the 2 capture slots × 1 MiB | 2 |
 | payloads hub → socket: channel, outbox, frame being written | 3 connections × (2 MiB credit + 64 KiB overdraft) | 6.5 |
@@ -1265,15 +1265,17 @@ other documents link to this table.
 | paste files on tmpfs | 4 slots × 256 KiB | 1 |
 | file API: a scan, raw responses, an upload (2 MiB of dirty pages between flushes included) | [fs.md](fs.md#limits-and-the-memory-ceiling) | 5 |
 | kernel socket buffers, charged to the unit | 2 × 128 KiB (`SO_SNDBUF`, `SO_RCVBUF`, [fs.md](fs.md#constants)) per socket with data queued: the 3 WebSockets, 2 raw responses, 1 upload, and a couple of JSON replies (the fs waiter cap keeps the rest idle) | 2 |
-| **ceiling** | | **~62** |
+| **ceiling** | | **~65** |
 
-That is within 2 MB of the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)) and
-above its `MemoryHigh` of 48 MB, where systemd starts throttling the unit's tasks; the
-[budget measurement](plan.md#resource-budget) checks it, reading
+That is at the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)), about 1 MB
+over it, and above its `MemoryHigh` of 48 MB, where systemd starts throttling the
+unit's tasks. The 2.4 MB of dentry and inode slab inside the completion row is
+reclaimable, so the kernel shrinks it before the unit would be killed. The
+[budget measurement](plan.md#resource-budget) checks the ceiling, reading
 the unit's `memory.peak` (which counts kernel buffers and page cache), not RSS. If it
 doesn't fit, lower the control-client cap first. The normal case, one control client
-and one watch, is about 11 MB, plus up to 11 MB of completion state while Jimmy types
-and for five minutes after.
+and one watch, is about 11 MB, plus up to 14 MB of completion state while Jimmy types
+and for five minutes after (the slab is the part the idle drop doesn't free).
 
 ## 7. Failure handling
 

@@ -1795,6 +1795,11 @@ review. The product calls behind it are Jimmy's
   ([auth.md](auth.md#carrying-the-token)).
 - **Rejected:** answering `OPTIONS` in the daemon (it would open a CORS path that
   auth.md keeps shut for browsers on the tailnet).
+- **Added** (from the web file-manager run, p62): the handler also sends
+  `Access-Control-Expose-Headers: Content-Range, ETag`. The CORS rules let a
+  cross-origin page read only safelisted response headers, so without it the web can't
+  read a file's size or ETag from a `206`. The gap can't show in dev mode, where the
+  Vite proxy makes everything same-origin. Rejected: none recorded.
 
 ### Raw drops the page cache from the response start
 
@@ -2026,6 +2031,8 @@ the p61 review. The product calls behind it are Jimmy's
   never gets chips); an LRU with no expiry (branches go stale); trying every command
   (a scope and a process for every unknown command); routing every word with a `/` to
   paths (`git checkout origin/m` needs carapace).
+- **Amended** by [Completion, as built](#completion-as-built): a request whose key is
+  cached kills no run.
 
 ### Completion takes two blocking slots, and the unit pins glibc's mmap threshold
 
@@ -2041,6 +2048,11 @@ the p61 review. The product calls behind it are Jimmy's
 - **Rejected:** one shared slot (a hung listing stops every source); `check_dir`
   outside any slot (stuck threads pile toward the pool's 8); `malloc_trim` or
   `mallopt` (an `unsafe` FFI call under `#![forbid(unsafe_code)]`).
+- **Scope, found in the p63 build:** the tunable reaches only the glibc binary that
+  `cargo install` builds and the unit runs. The Linux release binaries are static musl
+  (`release.yml`) and ignore it; musl's allocator is unmeasured. With the tunable the
+  daemon's anon RSS after an idle drop was 1.51 MB (0.33 MB above baseline); without it
+  1.80 MB (1.39 MB above). complete.md, plan.md and running.md say so.
 
 ### Path chips list names in any readable directory
 
@@ -2083,6 +2095,36 @@ the p61 review. The product calls behind it are Jimmy's
 - **The bash wrapper** makes an existing `PROMPT_COMMAND` an array on bash 5.1+ and
   joins it with newlines before that: joined with `;`, one ending in `&` broke every
   prompt and one ending in a comment swallowed the B hook (p61).
+
+### Completion, as built
+
+- **Decided:** 2026-10-22, design, documenting the completion build (p63) and the web
+  file manager run (p62). Changes [complete.md](complete.md) where the spec was silent
+  or said otherwise.
+- **What:**
+  - **The slab is in the ceiling.** The `PATH` scan and directory listings leave about
+    2.4 MB of reclaimable dentry and inode slab charged to the unit. complete.md's
+    memory table has a row for it (completion ~11 to ~14 MB) and the daemon's ceiling
+    goes from ~62 to ~65 MB ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)),
+    about 1 MB past `MemoryMax`.
+  - **A cached key kills no run.** The runner is asked only after the cache misses, so
+    a request whose answer is cached leaves the run in flight for another key going.
+    The spec said any other key kills it.
+  - **Dedup keeps the first chip whole.** A carapace chip with the same `insert` as a
+    history chip is dropped with its description and trailing space.
+  - **`~` and `=` stay unescaped** in a path chip's `insert`, so a name starting with
+    one, completed at the start of a word, is expanded by the shell.
+  - **A long `cwd` is `413`, not `400`.** The 4 KiB body cap is checked before the
+    4,096-byte `cwd` cap, and the body holds more than `cwd`. A body that isn't the
+    route's JSON gets axum's status (415, 422 or 400) with `bad_request`, as fs's
+    routes do.
+- **Why:** the slab is memory the unit is charged for, and the table without it
+  promised a margin the unit didn't have. A cached request needs no run, so killing
+  one for it would only throw away work. The other three are what the code does and
+  what the order of its checks gives; nothing better was found to change them to.
+- **Rejected:** leaving the slab out because it is reclaimable (the budget run reads
+  `memory.peak`, which includes it, and it counts toward `MemoryHigh`); the other
+  items: none recorded.
 
 ## Documentation
 

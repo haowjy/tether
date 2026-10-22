@@ -91,7 +91,12 @@ origin:
   streams the response; passes the request headers `Range`, `If-Match`, `Content-Type`
   and the response headers `Content-Range`, `ETag`, `Content-Type`; adds the security
   headers below and `Access-Control-Allow-Origin: tether-app://ui`, since the page
-  fetches these cross-origin. It answers a CORS preflight (`OPTIONS`) itself, allowing
+  fetches these cross-origin. It also adds `Access-Control-Expose-Headers:
+  Content-Range, ETag`: a cross-origin page can read only the CORS-safelisted response
+  headers (`Content-Type`, `Content-Length` and a few others), so without the list the
+  page could not read the file size from `Content-Range` or the validator from `ETag`.
+  Dev mode never shows the gap, because the Vite proxy makes everything same-origin.
+  It answers a CORS preflight (`OPTIONS`) itself, allowing
   `tether-app://ui`, those methods and those request headers, and never forwards one:
   the daemon answers no preflight ([auth.md](auth.md#carrying-the-token)). The routes
   are in [fs.md](fs.md). After `webView(_:stop:)` it cancels the
@@ -504,7 +509,8 @@ control). Then:
    2048 px unless "Send original" is on.
 3. `Uploader` posts the bytes to the host's `/fs/upload?name=<file name>` with the
    Bearer token ([fs.md](fs.md#post-fsupload)), one upload at a time, retrying a `503
-   busy` after its `Retry-After`, and reports progress in `upload` messages.
+   busy` after its `Retry-After`, and reports progress in `upload` messages. The web has
+   no progress UI yet: it acts only on the finished upload (step 4).
 4. On success, the `upload` message carries the absolute path. The web queues an
    insertion for `tab`: the path, shell-quoted, as `text` input, without Enter. It is
    applied at once if the tab's watch is bound, otherwise when that tab's next
