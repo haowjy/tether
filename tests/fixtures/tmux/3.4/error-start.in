@@ -1,0 +1,2 @@
+capture-pane -p -t %99999 ; display-message -p SKIPPED_START
+display-message -p AFTER_START_ERROR ; display-message -p 'AFTER_START_ERROR'

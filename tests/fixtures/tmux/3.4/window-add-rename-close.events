@@ -1,0 +1,6 @@
+group tag=0 end replies=[0,16]
+unknown bytes=14
+group tag=1 end replies=[0,19]
+notification window-renamed args="@1 fixture-renamed"
+group tag=2 end replies=[0,18]
+notification unlinked-window-close args="@1"

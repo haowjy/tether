@@ -12,7 +12,12 @@ name = "tether"
 path = "src/main.rs"
 
 [dependencies]
+bytes = "1"
 clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+rand = { version = "0.9", features = ["std_rng"] }
 
 [profile.release]
 strip = true

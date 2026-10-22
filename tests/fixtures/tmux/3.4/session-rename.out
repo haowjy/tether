@@ -1,0 +1,7 @@
+%begin 1792638664 312 1
+%end 1792638664 312 1
+%begin 1792638664 313 1
+SESSION_RENAME_DONE
+%end 1792638664 313 1
+%session-renamed $0 fixture-renamed
+%output %2 \033[?2004h\033[01;32mjimyao@pop-os\033[00m:\033[01;34m~/gitrepos/tether\033[00m$ 

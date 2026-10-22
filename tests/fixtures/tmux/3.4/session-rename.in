@@ -1,0 +1,1 @@
+rename-session -t '$0' fixture-renamed ; display-message -p 'SESSION_RENAME_DONE'

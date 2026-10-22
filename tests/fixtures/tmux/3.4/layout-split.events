@@ -1,0 +1,2 @@
+group tag=0 end replies=[0,18]
+notification layout-change args="@0 43ff,80x24,0,0[80x6,0,0,0,80x5,0,7,2,80x11,0,13,1] 43ff,80x24,0,0[80x6,0,0,0,80x5,0,7,2,80x11,0,13,1] *"

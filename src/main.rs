@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
 
 /// Phone-first client for tmux sessions on a dev server.

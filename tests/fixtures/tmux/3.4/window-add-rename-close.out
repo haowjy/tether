@@ -1,0 +1,18 @@
+%begin 1792638664 303 1
+%end 1792638664 303 1
+%begin 1792638664 304 1
+WINDOW_ADD_DONE
+%end 1792638664 304 1
+%window-add @1
+%begin 1792638664 306 1
+%end 1792638664 306 1
+%begin 1792638664 307 1
+WINDOW_RENAME_DONE
+%end 1792638664 307 1
+%window-renamed @1 fixture-renamed
+%begin 1792638664 309 1
+%end 1792638664 309 1
+%begin 1792638664 310 1
+WINDOW_CLOSE_DONE
+%end 1792638664 310 1
+%unlinked-window-close @1

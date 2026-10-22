@@ -1,0 +1,13 @@
+%begin 1792638665 315 1
+%end 1792638665 315 1
+%begin 1792638665 316 1
+SUBSCRIBE_DONE
+%end 1792638665 316 1
+%subscription-changed fixture-sub $0 - - - : fixture-renamed
+%begin 1792638666 317 1
+%end 1792638666 317 1
+%begin 1792638666 318 1
+SUBSCRIPTION_RENAME_DONE
+%end 1792638666 318 1
+%session-renamed $0 fixture-subscribed
+%subscription-changed fixture-sub $0 - - - : fixture-subscribed

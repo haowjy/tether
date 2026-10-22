@@ -1,0 +1,2 @@
+refresh-client -B 'fixture-sub::#{session_name}' ; display-message -p 'SUBSCRIBE_DONE'
+rename-session -t '$0' fixture-subscribed ; display-message -p 'SUBSCRIPTION_RENAME_DONE'

@@ -1,0 +1,2 @@
+refresh-client -A '%0:pause' ; display-message -p 'PAUSE_DONE'
+refresh-client -A '%0:continue' ; display-message -p 'CONTINUE_DONE'

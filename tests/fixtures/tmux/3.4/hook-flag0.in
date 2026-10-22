@@ -1,0 +1,2 @@
+set-hook -g after-split-window 'display-message -p HOOK_FLAG_ZERO' ; split-window -d -t %0 ; display-message -p HOOK_TRIGGERED
+set-hook -gu after-split-window ; display-message -p 'HOOK_REMOVED'
