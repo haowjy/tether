@@ -18,6 +18,7 @@ case "$MODE" in
   full)
     run_step cargo fmt --check
     run_step cargo clippy --all-targets --locked -- -D warnings
+    # Also fails while web/proto/generated/ is stale (src/proto/typescript.rs).
     run_step cargo test --locked
     run_step cargo build --release --locked
     # npm ci only when the lockfile changed since the last install.

@@ -23,6 +23,16 @@ version section on release.
   sessions, with a 2 s timeout and a "no server" answer. Every invocation passes `-N`
   (never starts a server) and `-u` (names and paths stay UTF-8 whatever the locale).
   Tested against a real tmux with `TETHER_TMUX_TESTS=1`.
+- Added the wire protocol (`proto`): the JSON messages, binary frames, version range
+  and close codes, with the web's TypeScript types generated into
+  `web/proto/generated/` and checked for staleness by `cargo test`.
+- Added the hub: the daemon's core that turns the phone's watches into tmux work. It
+  finds each watched window's session and attaches one control client per session,
+  follows windows that move between sessions, catches a tab up by snapshot on open,
+  resize, pane change or overflow, and reports closed windows, sessions and servers.
+  A detached control client ends its tabs; a crashed one is restarted once. Every byte
+  to a connection is bounded by its credit, so a slow phone starves only its own tab,
+  which catches up by snapshot.
 
 ## [0.0.1] - 2026-10-22
 

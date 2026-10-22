@@ -128,7 +128,7 @@ impl Endpoint {
 
 /// One run of a tmux server: `"<pid>-<start_time>"`. A restarted server reuses ids, so
 /// every id is only meaningful together with the instance it came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServerInstance {
     pub pid: u32,
     pub start_time: u64,
