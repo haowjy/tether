@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ServerMsg, WindowRef } from "../proto/generated/messages";
+import type { ClientMsg, ServerMsg, TmuxListing, WindowRef } from "../proto/generated/messages";
 import type { ConnectionState } from "../tabs/connection";
 import { TabDriver, type TabOptions } from "../tabs/driver";
 import { makeHost } from "./fakes";
+import { RequestError } from "./host";
 
 const server = "main:1-2";
 const winA: WindowRef = { server, window: 3 };
@@ -48,20 +49,13 @@ describe("one socket per host", () => {
     expect(b.state().kind).toBe("live");
   });
 
-  it("routes history replies and errors to the asking tab, and ends to the right tab", async () => {
+  it("ends a watch only for the tab that owns it", () => {
     const t = setup();
     const a = t.tab("a", winA);
     const b = t.tab("b", winB);
     t.link().welcome();
     t.link().say(t.watching(1, winA));
     t.link().say(t.watching(2, winB));
-    const rows = b.driver.history(-1, -1);
-    const failed = a.driver.history(-1, -1);
-    expect(t.link().sent.slice(-2).map((m) => m.type === "history" && m.data.req)).toEqual([1, 2]);
-    t.link().say({ type: "historyChunk", data: { req: 1, watch: 2, start: -1, lines: [btoa("x")] } });
-    expect((await rows).map((r) => new TextDecoder().decode(r))).toEqual(["x"]);
-    t.link().say({ type: "error", data: { req: 2, code: "busy", message: "no" } });
-    await expect(failed).rejects.toThrow("busy");
     t.link().say({ type: "watchEnded", data: { watch: 1, reason: "detached" } });
     expect(a.state()).toMatchObject({ kind: "reconnecting", halt: "detached" });
     expect(b.state().kind).toBe("live");
@@ -80,6 +74,68 @@ describe("one socket per host", () => {
     t.link().say({ type: "serverExited", data: { server } });
     expect(b.state().kind).toBe("closed");
     expect(t.link().closed).toBe(true);
+  });
+});
+
+const tmux: TmuxListing = { server, version: "3.4", sessions: [] };
+const list = (h: ReturnType<typeof makeHost>) =>
+  h.host.request((req): ClientMsg => ({ type: "listSessions", data: { req } }), (reply) => (reply.type === "sessions" ? reply.data.tmux : undefined));
+const reqOf = (msg: ClientMsg | undefined): number => (msg && "req" in msg.data ? msg.data.req : -1);
+
+describe("requests", () => {
+  it("opens the socket for a request, sends it on welcome, and closes the socket once answered", async () => {
+    const h = makeHost();
+    const answer = list(h);
+    expect(h.links).toHaveLength(1);
+    expect(h.link().sent).toEqual([]);
+    h.link().welcome();
+    expect(h.link().types()).toEqual(["listSessions"]);
+    h.link().say({ type: "sessions", data: { req: reqOf(h.link().sent[0]), tmux } });
+    await expect(answer).resolves.toEqual(tmux);
+    expect(h.link().closed).toBe(true);
+  });
+
+  it("answers each request by its id, a refusal included, and ignores answers nobody waits for", async () => {
+    const t = setup();
+    t.tab("a", winA);
+    t.link().welcome();
+    const first = list(t);
+    const second = list(t);
+    const [one, two] = t.link().sent.filter((m) => m.type === "listSessions").map(reqOf);
+    t.link().say({ type: "sessions", data: { req: 99, tmux: null } });
+    t.link().say({ type: "error", data: { req: two ?? -1, code: "noServer", message: "no tmux" } });
+    t.link().say({ type: "sessions", data: { req: one ?? -1, tmux } });
+    await expect(first).resolves.toEqual(tmux);
+    await expect(second).rejects.toMatchObject({ reason: "noServer", message: "no tmux" });
+    expect(t.link().closed).toBe(false); // the tab still holds it
+  });
+
+  it("fails on a dropped socket without sending again, on a halt, on background, and after a timeout", async () => {
+    const t = setup();
+    t.tab("a", winA);
+    t.link().welcome();
+    const dropped = list(t);
+    t.link().drop();
+    await expect(dropped).rejects.toBeInstanceOf(RequestError);
+    await expect(dropped).rejects.toMatchObject({ reason: "lost" });
+    vi.advanceTimersByTime(500);
+    t.link().welcome();
+    expect(t.link().types()).toEqual(["watch"]);
+
+    const halted = list(t);
+    t.link().drop(4001);
+    await expect(halted).rejects.toMatchObject({ reason: "incompatible" });
+
+    const slow = list(t);
+    expect(t.links).toHaveLength(3); // a request tries a halted host again
+    vi.advanceTimersByTime(5_000);
+    await expect(slow).rejects.toMatchObject({ reason: "timeout" });
+
+    t.link().welcome();
+    const paused = list(t);
+    t.host.background();
+    await expect(paused).rejects.toMatchObject({ reason: "background" });
+    await expect(list(t)).rejects.toMatchObject({ reason: "background" });
   });
 });
 

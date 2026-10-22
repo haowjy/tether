@@ -1,5 +1,6 @@
 // The suggestion strip's client (complete.md "What the client does").
 import type { Chip, CompleteRequest, Completion } from "../proto/generated/messages";
+import { send } from "../files/api";
 
 /** How long the line must stay unchanged before asking. */
 const DEBOUNCE_MS = 100;
@@ -13,13 +14,8 @@ export type CompleteFn = (request: CompleteRequest, signal: AbortSignal) => Prom
  */
 export function httpComplete(origin: string): CompleteFn {
   return async (request, signal) => {
-    const res = await fetch(`${origin}/complete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-      signal,
-    });
-    if (!res.ok) throw new Error(`complete: ${String(res.status)}`);
+    const init = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request), signal };
+    const res = await send(`${origin}/complete`, init, 0);
     return (await res.json()) as Completion;
   };
 }

@@ -21,6 +21,21 @@ export interface Status {
   action: string | null;
 }
 
+/** Why a host can't be used, in every place that says so. */
+export type HostProblem = "unreachable" | "unauthorized" | "incompatible";
+
+/** The copy for a {@link HostProblem}: a headline and, when there is a way out, a hint. */
+export function hostProblem(kind: HostProblem, host: string): { title: string; hint: string | null } {
+  switch (kind) {
+    case "unreachable":
+      return { title: `Can't reach ${host}. Is Tailscale on?`, hint: null };
+    case "unauthorized":
+      return { title: `This iPhone isn't enrolled on ${host}`, hint: "Enrol it from the app's Hosts screen, with a code from tether device add on the server." };
+    case "incompatible":
+      return { title: `tether on ${host} is a different version`, hint: "Update the app or the daemon so they speak the same protocol." };
+  }
+}
+
 /** `downSince`: when the tab stopped being live, or opened. `onScreen`: the active tab. */
 export function describe(state: ConnectionState, downSince: number, retryAt: number | null, now: number, host: string, onScreen: boolean): Status {
   // Off screen, a tab has no watch: it rests in whichever of these it was in when it left,
@@ -48,28 +63,17 @@ export function describe(state: ConnectionState, downSince: number, retryAt: num
   }
   switch (state.halt) {
     case "unauthorized":
-      return {
-        tone: "halted",
-        short: "not enrolled",
-        detail: `This iPhone isn't enrolled on ${host}`,
-        hint: "Enrol it from the app's Hosts screen, with a code from tether device add on the server.",
-        action: "Retry",
-      };
-    case "incompatible":
-      return {
-        tone: "halted",
-        short: "update",
-        detail: `tether on ${host} is a different version`,
-        hint: "Update the app or the daemon so they speak the same protocol.",
-        action: "Retry",
-      };
+    case "incompatible": {
+      const { title, hint } = hostProblem(state.halt, host);
+      return { tone: "halted", short: state.halt === "unauthorized" ? "not enrolled" : "update", detail: title, hint, action: "Retry" };
+    }
     case "detached":
       return { tone: "waiting", short: "detached", detail: "Detached by another tmux client", hint: null, action: "Reattach" };
     case null:
       break;
   }
   const unreachable = now - downSince >= UNREACHABLE_AFTER_MS;
-  const detail = unreachable ? `Can't reach ${host}. Is Tailscale on?` : `Reconnecting to ${host}`;
+  const detail = unreachable ? hostProblem("unreachable", host).title : `Reconnecting to ${host}`;
   if (retryAt === null) return { tone: "waiting", short: "retry", detail, hint: null, action: "Retry" };
   const seconds = Math.max(0, Math.ceil((retryAt - now) / 1000));
   const when = seconds === 0 ? "now" : `${String(seconds)}s`;

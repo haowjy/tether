@@ -5,6 +5,7 @@ import type { TerminalRenderer } from "../term";
 import { initialState, reduce, type ConnectionEvent, type ConnectionState } from "./connection";
 import type { InputEvent } from "../native/bridge";
 import { shellQuote, toMessages } from "./input";
+import { sameWindow } from "../proto/window";
 
 type Watching = Extract<ServerMsg, { type: "watching" }>["data"];
 
@@ -25,12 +26,6 @@ export interface TabOptions {
   random?: () => number;
 }
 
-interface PendingHistory {
-  watch: number;
-  resolve(rows: Uint8Array[]): void;
-  reject(error: Error): void;
-}
-
 function decodeBase64(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
@@ -46,7 +41,6 @@ export class TabDriver {
   private covered = false;
   private watchId: number | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly histories = new Map<number, PendingHistory>();
   private readonly pendingInserts: string[] = [];
 
   /** What the host calls; the tab's public methods are for the UI. */
@@ -56,11 +50,11 @@ export class TabDriver {
       this.watchIfReady();
     },
     linkLost: ({ retryInMs, halt }) => {
-      this.unbind();
+      this.watchId = null;
       this.dispatch({ type: "linkLost", retryInMs, ...(halt && { halt }) });
     },
     paused: () => {
-      this.unbind();
+      this.watchId = null;
       this.dispatch({ type: "rewatch" });
     },
     message: (msg) => { this.onMessage(msg); },
@@ -80,7 +74,7 @@ export class TabDriver {
     if (this.covered) return;
     this.covered = true;
     if (this.watchId !== null) this.send({ type: "unwatch", data: { watch: this.watchId } });
-    this.unbind();
+    this.watchId = null;
   }
 
   /** The terminal is back: watch again and take a fresh snapshot. */
@@ -129,10 +123,14 @@ export class TabDriver {
     const rows: Uint8Array[] = [];
     for (let next = start; next <= end; ) {
       if (!this.bound || watch === null || this.watchId !== watch) throw new Error("watch ended");
-      const chunk = await this.requestChunk(watch, next, end);
-      if (chunk.length === 0) break;
-      rows.push(...chunk);
-      next += chunk.length;
+      const from = next;
+      const lines = await this.opts.host.request(
+        (req) => ({ type: "history", data: { req, watch, start: from, end } }),
+        (reply) => (reply.type === "historyChunk" && reply.data.watch === watch ? reply.data.lines : undefined),
+      );
+      if (lines.length === 0) break;
+      rows.push(...lines.map(decodeBase64));
+      next += lines.length;
     }
     return rows;
   }
@@ -149,14 +147,6 @@ export class TabDriver {
 
   private get bound(): boolean {
     return this.state.kind === "live" && this.watchId !== null;
-  }
-
-  private requestChunk(watch: number, start: number, end: number): Promise<Uint8Array[]> {
-    const req = this.opts.host.nextReq();
-    return new Promise((resolve, reject) => {
-      this.histories.set(req, { watch, resolve, reject });
-      this.send({ type: "history", data: { req, watch, start, end } });
-    });
   }
 
   private sendAll(msgs: ClientMsg[]): void {
@@ -178,25 +168,18 @@ export class TabDriver {
         this.watchIfReady();
         break;
       case "reconnecting":
-        this.unbind();
+        this.watchId = null;
         // With the socket down, the host is the one retrying; this timer is for a failed watch.
         if (next.retryInMs !== null && this.opts.host.ready) this.retryTimer = setTimeout(() => { this.dispatch({ type: "retry" }); }, next.retryInMs);
         break;
       case "closed":
-        this.unbind();
+        this.watchId = null;
         this.opts.host.leave(this.port);
         for (const path of this.pendingInserts.splice(0)) this.dropInsert(path);
         break;
       case "live":
         break;
     }
-  }
-
-  /** Forget the current watch and fail what waits on it. */
-  private unbind(): void {
-    this.watchId = null;
-    for (const h of this.histories.values()) h.reject(new Error("watch ended"));
-    this.histories.clear();
   }
 
   private watchIfReady(): void {
@@ -206,7 +189,6 @@ export class TabDriver {
   }
 
   private onMessage(msg: ServerMsg): void {
-    const same = (w: WindowRef): boolean => w.server === this.opts.window.server && w.window === this.opts.window.window;
     switch (msg.type) {
       case "incompatible":
         break; // the 4001 close follows and carries the halt
@@ -218,30 +200,15 @@ export class TabDriver {
         break;
       case "watchEnded":
         if (msg.data.watch !== this.watchId) break;
-        this.unbind();
+        this.watchId = null;
         this.dispatch({ type: "watchEnded", reason: msg.data.reason, jitter: this.jitter() });
         break;
       case "windowClosed":
-        if (same(msg.data.window)) this.dispatch({ type: "windowClosed" });
+        if (sameWindow(msg.data.window, this.opts.window)) this.dispatch({ type: "windowClosed" });
         break;
       case "serverExited":
         if (msg.data.server === this.opts.window.server) this.dispatch({ type: "serverExited" });
         break;
-      case "historyChunk": {
-        const pending = this.histories.get(msg.data.req);
-        if (!pending || pending.watch !== msg.data.watch) break;
-        this.histories.delete(msg.data.req);
-        pending.resolve(msg.data.lines.map(decodeBase64));
-        break;
-      }
-      case "error": {
-        const pending = msg.data.req === undefined ? undefined : this.histories.get(msg.data.req);
-        if (msg.data.req !== undefined && pending) {
-          this.histories.delete(msg.data.req);
-          pending.reject(new Error(`${msg.data.code}: ${msg.data.message}`));
-        }
-        break;
-      }
       default:
         break; // sessions, renames and the rest belong to other screens
     }

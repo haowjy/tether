@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { App } from "../app/app";
 import type { HostEntry } from "../native/bridge";
+import { ago } from "../ui/format";
+import { useStore } from "../ui/store";
 import { Tappable } from "../ui/Tappable";
 import { ChevronRight, Close, Eye, EyeOff, FileIcon, Film, Folder, Gear, ImageIcon, Plus, Upload, Wrap } from "../ui/icons";
 import { CloseButton, Empty, Sheet, SheetHeader } from "../ui/Sheet";
@@ -14,27 +16,11 @@ const PULL_TRIGGER = 64;
 /** Start the next page this far before the list's end. */
 const MORE_MARGIN = 600;
 
-function useBrowser(browser: FileBrowser): FilesView {
-  const [, rerender] = useState(0);
-  useEffect(() => browser.subscribe(() => { rerender((n) => n + 1); }), [browser]);
-  return browser.snapshot;
-}
-
 /** `/home/jimmy/code/x` → `~/code/x`. */
 function tilde(path: string, roots: Roots | null): string {
   const home = roots?.home;
   if (!home || !within(path, home)) return path;
   return path === home ? "~" : `~${path.slice(home.length)}`;
-}
-
-/** "5m", "3h", "Oct 2": a listing's modified time, short. */
-function age(unixSeconds: number, now: number): string {
-  const s = Math.max(0, Math.round(now / 1000 - unixSeconds));
-  if (s < 60) return "now";
-  if (s < 3600) return `${String(Math.floor(s / 60))}m`;
-  if (s < 86400) return `${String(Math.floor(s / 3600))}h`;
-  if (s < 86400 * 7) return `${String(Math.floor(s / 86400))}d`;
-  return new Date(unixSeconds * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", ...(s > 86400 * 300 && { year: "numeric" }) });
 }
 
 function EntryIcon({ entry }: { entry: Entry }) {
@@ -62,7 +48,7 @@ function EntryRow({ entry, onOpen, now }: { entry: Entry; onOpen: () => void; no
         {sub && <span class="row-sub">{sub}</span>}
       </span>
       {entry.kind === "file" && entry.size !== undefined && <span class="row-meta">{formatSize(entry.size)}</span>}
-      {entry.mtime !== undefined && <span class="row-meta entry-age">{age(entry.mtime, now)}</span>}
+      {entry.mtime !== undefined && <span class="row-meta entry-age">{ago(entry.mtime, now)}</span>}
       {entry.kind === "dir" && <ChevronRight size={16} />}
     </Tappable>
   );
@@ -226,7 +212,7 @@ function HiddenToggle({ browser, hidden }: { browser: FileBrowser; hidden: boole
  * lies over the listing it came from, so going back finds the list where it was.
  */
 export function FilesSheet({ app, host, browser }: { app: App; host: HostEntry; browser: FileBrowser }) {
-  const view = useBrowser(browser);
+  const view = useStore(browser);
   const [wrap, setWrap] = useState(false);
   const { place, roots, pages, hidden, saving } = view;
   const close = (): void => { app.closeSheet(); };

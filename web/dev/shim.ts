@@ -186,7 +186,6 @@ export function createDevShim(): Post {
           hosts: [HOST],
           tabs: raw ? (JSON.parse(raw) as SavedTab[]) : [],
           active: localStorage.getItem(ACTIVE_KEY),
-          settings: {},
           viewport: VIEWPORT,
           locked: false,
         };

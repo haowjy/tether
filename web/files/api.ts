@@ -80,6 +80,28 @@ export interface FsApi {
 /** `busy` is answered with `Retry-After: 1`; a couple of retries ride out a burst. */
 const BUSY_RETRIES = 2;
 
+/**
+ * One request to a host's HTTP origin. A refusal becomes an {@link FsError} with the
+ * daemon's code, a dead network `network`; `busy` is retried `retries` times.
+ */
+export async function send(target: string, init: RequestInit = {}, retries = BUSY_RETRIES, fetchFn: typeof fetch = (input, opts) => fetch(input, opts)): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetchFn(target, init);
+    } catch (error) {
+      if (init.signal?.aborted) throw error;
+      throw new FsError(0, "network");
+    }
+    if (res.ok) return res;
+    const code = await res.json().then((b: unknown) => (b as { error?: unknown }).error, () => undefined);
+    const err = new FsError(res.status, typeof code === "string" ? code : `http_${String(res.status)}`);
+    if (err.code !== "busy" || attempt >= retries) throw err;
+    const wait = Number(res.headers.get("Retry-After")) || 1;
+    await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+  }
+}
+
 /** `/a/b c` → `/a/b%20c`: each segment percent-encoded, joined with `/` (fs.md "Routes"). */
 export function encodePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
@@ -106,28 +128,9 @@ function totalOf(contentRange: string | null): number | null {
  * The file API on one host's HTTP origin: `tether-app://h-{host}` in the app, the dev
  * server's proxy on the desktop. Native (or the proxy) adds the Bearer token.
  */
-export function httpFsApi(origin: string, fetchFn: typeof fetch = (input, init) => fetch(input, init)): FsApi {
+export function httpFsApi(origin: string, fetchFn?: typeof fetch): FsApi {
   const url = (route: string, path: string, query = ""): string => `${origin}/fs/${route}${encodePath(path)}${query}`;
-
-  async function send(target: string, init: RequestInit = {}): Promise<Response> {
-    for (let attempt = 0; ; attempt++) {
-      let res: Response;
-      try {
-        res = await fetchFn(target, init);
-      } catch (error) {
-        if (init.signal?.aborted) throw error;
-        throw new FsError(0, "network");
-      }
-      if (res.ok) return res;
-      const code = await res.json().then((b: unknown) => (b as { error?: unknown }).error, () => undefined);
-      const err = new FsError(res.status, typeof code === "string" ? code : `http_${String(res.status)}`);
-      if (err.code !== "busy" || attempt >= BUSY_RETRIES) throw err;
-      const wait = Number(res.headers.get("Retry-After")) || 1;
-      await new Promise((resolve) => setTimeout(resolve, wait * 1000));
-    }
-  }
-
-  const json = async <T>(target: string, init?: RequestInit): Promise<T> => (await (await send(target, init)).json()) as T;
+  const json = async <T>(target: string, init?: RequestInit): Promise<T> => (await (await send(target, init, BUSY_RETRIES, fetchFn)).json()) as T;
   const post = (route: string, path: string): Promise<Roots> =>
     json<Roots>(`${origin}/fs/${route}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
   const page = (offset: number, hidden: boolean): string => `?offset=${String(offset)}&hidden=${hidden ? "1" : "0"}`;
@@ -142,7 +145,7 @@ export function httpFsApi(origin: string, fetchFn: typeof fetch = (input, init) 
 
     async probe(path) {
       try {
-        const res = await send(url("raw", path), { headers: { Range: "bytes=0-0" } });
+        const res = await send(url("raw", path), { headers: { Range: "bytes=0-0" } }, BUSY_RETRIES, fetchFn);
         void res.body?.cancel();
         const size = res.status === 206 ? totalOf(res.headers.get("Content-Range")) : Number(res.headers.get("Content-Length") ?? NaN);
         return { kind: "file", mime: res.headers.get("Content-Type"), size: Number.isFinite(size) ? size : null };
@@ -156,7 +159,7 @@ export function httpFsApi(origin: string, fetchFn: typeof fetch = (input, init) 
     async text(path, limit, signal) {
       let res: Response;
       try {
-        res = await send(url("raw", path), { headers: { Range: `bytes=0-${String(limit - 1)}` }, ...(signal && { signal }) });
+        res = await send(url("raw", path), { headers: { Range: `bytes=0-${String(limit - 1)}` }, ...(signal && { signal }) }, BUSY_RETRIES, fetchFn);
       } catch (error) {
         if (error instanceof FsError && error.code === "bad_range") return { text: "", size: 0, truncated: false };
         throw error;

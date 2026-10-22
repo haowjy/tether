@@ -18,11 +18,9 @@ async function start(): Promise<void> {
   const chrome = document.getElementById("chrome");
   if (!terminal || !chrome) throw new Error("index.html lacks #terminal or #chrome");
 
-  const native = hasNativeBridge()
-    ? new Native(webkitPost)
-    : import.meta.env.DEV
-      ? new Native((await import("./dev/shim")).createDevShim())
-      : new Native(webkitPost);
+  const native = !hasNativeBridge() && import.meta.env.DEV
+    ? new Native((await import("./dev/shim")).createDevShim(), "web")
+    : new Native(webkitPost, "ios");
 
   // Registered before `ready`, so nothing native sends right after boot is missed.
   // Native's first batch can predate the app; `boot` carries the same state, so it is dropped.
@@ -43,13 +41,17 @@ async function start(): Promise<void> {
     document.fonts.load(`${String(TERMINAL_FONT_SIZE)}px tether-mono`).catch(() => undefined),
     new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS)),
   ]);
-  const renderer = createXtermRenderer(terminal, { fontFamily, fontSize: TERMINAL_FONT_SIZE, theme: terminalTheme() });
+  const renderer = createXtermRenderer(terminal, {
+    fontFamily,
+    fontSize: TERMINAL_FONT_SIZE,
+    theme: terminalTheme(),
+    openLink: (url) => { native.openURL(url); },
+  });
   onSchemeChange(() => { renderer.setTheme(terminalTheme()); });
   const app = new App({
     native,
     boot,
     renderer,
-    kind: hasNativeBridge() ? "ios" : "web",
     chromeHeight: () => chrome.querySelector<HTMLElement>(".bar")?.offsetHeight ?? 0,
     edge: () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--term-edge")) || 0,
   });

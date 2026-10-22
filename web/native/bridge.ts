@@ -46,7 +46,6 @@ export interface Boot {
   tabs: SavedTab[];
   /** The tab last on screen; null, or an id not in `tabs`, means the first tab. */
   active: string | null;
-  settings: Record<string, unknown>;
   viewport: Viewport;
   locked: boolean;
 }
@@ -101,9 +100,22 @@ export const webkitPost: Post = (msg) => {
   return handler ? handler.postMessage(msg) : Promise.reject(new Error("no native bridge"));
 };
 
-/** What the rest of the web UI calls; one method per message that has a caller. */
+/**
+ * What the rest of the web UI calls; one method per message that has a caller. `kind` is
+ * `web` for the desktop dev shim, where the page is served by Vite rather than native.
+ */
 export class Native {
-  constructor(private readonly post: Post) {}
+  constructor(private readonly post: Post, readonly kind: "ios" | "web") {}
+
+  /**
+   * The origin a host's HTTP requests (`/fs/*`, `/complete`) go to. In the app that is
+   * native's per-host scheme origin, which adds the token and keeps daemon responses off
+   * the UI's origin (ios-shell.md "Where the web UI comes from"); on the desktop it is
+   * `baseURL`, the dev server's proxy.
+   */
+  httpOrigin(host: HostEntry): string {
+    return this.kind === "ios" ? `tether-app://h-${host.id}` : new URL(host.baseURL).origin;
+  }
 
   /** The host closed the socket with 4401: native marks it "not enrolled". */
   hostRejected(host: string): void {

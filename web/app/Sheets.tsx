@@ -1,20 +1,15 @@
 import type { TmuxListing } from "../proto/generated/messages";
+import { sameWindow } from "../proto/window";
+import { ago } from "../ui/format";
+import { useStore } from "../ui/store";
 import { Tappable } from "../ui/Tappable";
 import { ChevronRight, Close, Folder, Plus, Refresh } from "../ui/icons";
 import { CloseButton, Empty, Sheet, SheetHeader } from "../ui/Sheet";
 import { FilesSheet } from "../files/FilesSheet";
-import type { App, Draft, Listing } from "./app";
-import { describe } from "./status";
+import type { App } from "./app";
+import { describe, hostProblem } from "./status";
 import { Dot } from "./TabBar";
-
-/** Seconds since the epoch → "now", "5m", "3h", "2d". */
-function ago(unixSeconds: number, now: number): string {
-  const s = Math.max(0, Math.round(now / 1000 - unixSeconds));
-  if (s < 60) return "now";
-  if (s < 3600) return `${String(Math.floor(s / 60))}m`;
-  if (s < 86400) return `${String(Math.floor(s / 3600))}h`;
-  return `${String(Math.floor(s / 86400))}d`;
-}
+import type { Draft, WindowList, WindowsSheet } from "./windows";
 
 /** The last two segments of a path, enough to recognise a project. */
 function shortPath(path: string): string {
@@ -22,28 +17,30 @@ function shortPath(path: string): string {
   return parts.length <= 2 ? path : `…/${parts.slice(-2).join("/")}`;
 }
 
-function ListingProblem({ app, listing, host }: { app: App; listing: Exclude<Listing, { kind: "list" }>; host: string }) {
-  switch (listing.kind) {
+/** The list, or why there is none. */
+function Windows({ app, windows, list, creates }: { app: App; windows: WindowsSheet; list: WindowList; creates: boolean }) {
+  const host = windows.hostName;
+  const retry = <Tappable class="action action-quiet" label="Try again" onTap={() => { void windows.refresh(); }}>Try again</Tappable>;
+  switch (list.kind) {
+    case "list":
+      return <SessionList app={app} windows={windows} listing={list.listing} creates={creates} />;
     case "loading":
       return <div class="loading">Loading windows…</div>;
     case "noServer":
       return <Empty title={`No tmux server on ${host}`} hint="Start tmux on the server. tether attaches to it, and never starts one." />;
-    case "halted":
-      return listing.halt === "incompatible"
-        ? <Empty title={`tether on ${host} is a different version`} hint="Update the app or the daemon so they speak the same protocol." />
-        : <Empty title={`This iPhone isn't enrolled on ${host}`} hint="Enrol it from the app's Hosts screen, with a code from tether device add on the server." />;
+    case "problem": {
+      const { title, hint } = hostProblem(list.problem, host);
+      return <Empty title={title} hint={hint ?? undefined}>{list.problem === "unreachable" && retry}</Empty>;
+    }
     case "error":
-      return (
-        <Empty title={listing.message}>
-          <Tappable class="action action-quiet" label="Try again" onTap={() => { void app.refresh(); }}>Try again</Tappable>
-        </Empty>
-      );
+      return <Empty title={list.message}>{retry}</Empty>;
   }
 }
 
 /** Sessions and their windows; a tap opens a window as a tab. */
-function SessionList({ app, listing, creates }: { app: App; listing: TmuxListing; creates: boolean }) {
-  const { tabs, host } = app.snapshot;
+function SessionList({ app, windows, listing, creates }: { app: App; windows: WindowsSheet; listing: TmuxListing; creates: boolean }) {
+  const { tabs } = app.snapshot;
+  const host = windows.hostId;
   const now = Date.now();
   return (
     <div class="sessions">
@@ -56,20 +53,21 @@ function SessionList({ app, listing, creates }: { app: App; listing: TmuxListing
               <Tappable
                 class="session-new"
                 label={`New window in ${session.name}`}
-                onTap={() => { app.startCreate({ kind: "window", session: { server: listing.server, session: session.id } }, session.name); }}
+                onTap={() => { windows.startCreate({ kind: "window", session: { server: listing.server, session: session.id } }, session.name); }}
               >
                 <Plus /> Window
               </Tappable>
             )}
           </div>
           {session.windows.map((win) => {
-            const open = tabs.some((t) => t.host === host?.id && t.window.server === listing.server && t.window.window === win.id);
+            const window = { server: listing.server, window: win.id };
+            const open = tabs.some((t) => t.host === host && sameWindow(t.window, window));
             return (
               <Tappable
                 key={win.id}
                 class="row"
                 label={`${open ? "Go to" : "Open"} ${session.name}:${win.name}`}
-                onTap={() => { if (host) app.add(host.id, { server: listing.server, window: win.id }, `${session.name}:${win.name}`); }}
+                onTap={() => { if (host) app.add(host, window, `${session.name}:${win.name}`); }}
               >
                 <span class="row-index">{win.index}</span>
                 <span class="row-main">
@@ -88,27 +86,26 @@ function SessionList({ app, listing, creates }: { app: App; listing: TmuxListing
 }
 
 /** `[+]`: attach to a window, or start a new window or session. */
-function AttachSheet({ app }: { app: App }) {
-  const { listing, host } = app.snapshot;
-  const name = host?.name ?? "host";
-  const canCreate = listing?.kind === "list";
+function AttachSheet({ app, windows }: { app: App; windows: WindowsSheet }) {
+  const { list, draft } = useStore(windows);
+  if (draft) return <CreateSheet app={app} windows={windows} draft={draft} />;
   return (
     <Sheet onClose={() => { app.closeSheet(); }} label="Open a window">
       <SheetHeader
         title="Open a window"
-        sub={name}
+        sub={windows.hostName}
         actions={
           <>
-            <Tappable class="icon-tap" label="Refresh" onTap={() => { void app.refresh(); }}><Refresh /></Tappable>
+            <Tappable class="icon-tap" label="Refresh" onTap={() => { void windows.refresh(); }}><Refresh /></Tappable>
             <CloseButton onClose={() => { app.closeSheet(); }} />
           </>
         }
       />
       <div class="sheet-body">
-        {listing?.kind === "list" ? <SessionList app={app} listing={listing.listing} creates /> : listing && <ListingProblem app={app} listing={listing} host={name} />}
+        <Windows app={app} windows={windows} list={list} creates />
       </div>
       <div class="sheet-foot">
-        <Tappable class="action" label="New session" disabled={!canCreate} onTap={() => { app.startCreate({ kind: "session" }, null); }}>
+        <Tappable class="action" label="New session" disabled={list.kind !== "list"} onTap={() => { windows.startCreate({ kind: "session" }, null); }}>
           <Plus /> New session
         </Tappable>
       </div>
@@ -129,31 +126,30 @@ function Choice({ label, sub, path = false, chosen, onTap }: { label: string; su
 }
 
 /** The new-window or new-session form. Text comes from native prompts. */
-function CreateSheet({ app, draft }: { app: App; draft: Draft }) {
-  const { host } = app.snapshot;
-  const cwd = app.activeTab()?.cwd ?? null;
+function CreateSheet({ app, windows, draft }: { app: App; windows: WindowsSheet; draft: Draft }) {
+  const { cwd } = windows;
   const what = draft.target.kind === "window" ? "window" : "session";
   const title = draft.target.kind === "window" ? `New window in ${draft.sessionName ?? "session"}` : "New session";
   const custom = draft.dir !== null && draft.dir !== cwd;
   return (
     <Sheet onClose={() => { app.closeSheet(); }} label={title}>
-      <SheetHeader title={title} sub={host?.name} onBack={() => { app.cancelCreate(); }} actions={<CloseButton onClose={() => { app.closeSheet(); }} />} />
+      <SheetHeader title={title} sub={windows.hostName} onBack={() => { windows.cancelCreate(); }} actions={<CloseButton onClose={() => { app.closeSheet(); }} />} />
       <div class="sheet-body">
         <div class="field-label">Name</div>
-        <Tappable class="row" label={`Name: ${draft.name ?? "tmux chooses"}. Tap to change`} onTap={() => { void app.promptName(); }}>
+        <Tappable class="row" label={`Name: ${draft.name ?? "tmux chooses"}. Tap to change`} onTap={() => { void windows.promptName(); }}>
           <span class="row-main">
             <span class={draft.name ? "row-title" : "row-title row-placeholder"}>{draft.name ?? "tmux chooses"}</span>
           </span>
           <ChevronRight size={18} />
         </Tappable>
         <div class="field-label">Start in</div>
-        {cwd && <Choice label="This tab's folder" sub={shortPath(cwd)} path chosen={draft.dir === cwd} onTap={() => { app.chooseDir(cwd); }} />}
-        <Choice label="tmux default" sub={what === "window" ? "the session's folder" : null} chosen={draft.dir === null} onTap={() => { app.chooseDir(null); }} />
-        <Choice label="Another folder…" sub={custom ? draft.dir : null} path chosen={custom} onTap={() => { void app.askDir(); }} />
+        {cwd && <Choice label="This tab's folder" sub={shortPath(cwd)} path chosen={draft.dir === cwd} onTap={() => { windows.chooseDir(cwd); }} />}
+        <Choice label="tmux default" sub={what === "window" ? "the session's folder" : null} chosen={draft.dir === null} onTap={() => { windows.chooseDir(null); }} />
+        <Choice label="Another folder…" sub={custom ? draft.dir : null} path chosen={custom} onTap={() => { void windows.askDir(); }} />
         {draft.error && <div class="form-error" role="alert">{draft.error}</div>}
       </div>
       <div class="sheet-foot">
-        <Tappable class="action action-primary" label={`Create ${what}`} disabled={draft.busy} onTap={() => { void app.submitCreate(); }}>
+        <Tappable class="action action-primary" label={`Create ${what}`} disabled={draft.busy} onTap={() => { void windows.submitCreate(); }}>
           {draft.busy ? "Creating…" : `Create ${what}`}
         </Tappable>
       </div>
@@ -162,16 +158,16 @@ function CreateSheet({ app, draft }: { app: App; draft: Draft }) {
 }
 
 /** `[<]`: the host, its open tabs, and every window to reopen. */
-function HomeSheet({ app }: { app: App }) {
-  const { listing, host, tabs, active } = app.snapshot;
-  const name = host?.name ?? "host";
+function HomeSheet({ app, windows }: { app: App; windows: WindowsSheet }) {
+  const { list } = useStore(windows);
+  const { tabs, active } = app.snapshot;
+  const name = windows.hostName;
   const now = Date.now();
-  const mine = tabs.filter((t) => t.host === host?.id);
-  const tab = app.activeTab();
-  const cwd = tab?.host === host?.id ? tab?.cwd : null;
+  const mine = tabs.filter((t) => t.host === windows.hostId);
+  const { cwd } = windows;
   return (
     <Sheet onClose={() => { app.closeSheet(); }} full label="Home">
-      <SheetHeader title={name} sub={hostLine(listing)} actions={<CloseButton onClose={() => { app.closeSheet(); }} />} />
+      <SheetHeader title={name} sub={hostLine(list)} actions={<CloseButton onClose={() => { app.closeSheet(); }} />} />
       <div class="sheet-body">
         <Tappable class="row" label="Files" onTap={() => { app.openFiles(); }}>
           <Folder />
@@ -202,18 +198,16 @@ function HomeSheet({ app }: { app: App }) {
           </section>
         )}
         <h2 class="home-section">Windows</h2>
-        {listing?.kind === "list" ? <SessionList app={app} listing={listing.listing} creates={false} /> : listing && <ListingProblem app={app} listing={listing} host={name} />}
+        <Windows app={app} windows={windows} list={list} creates={false} />
       </div>
     </Sheet>
   );
 }
 
-function hostLine(listing: Listing | null): string | null {
-  if (listing?.kind === "list") {
-    const n = listing.listing.sessions.length;
-    return `tmux ${listing.listing.version}, ${String(n)} session${n === 1 ? "" : "s"}`;
-  }
-  return null;
+function hostLine(list: WindowList): string | null {
+  if (list.kind !== "list") return null;
+  const n = list.listing.sessions.length;
+  return `tmux ${list.listing.version}, ${String(n)} session${n === 1 ? "" : "s"}`;
 }
 
 export function Sheets({ app }: { app: App }) {
@@ -221,11 +215,9 @@ export function Sheets({ app }: { app: App }) {
   if (!sheet) return null;
   switch (sheet.kind) {
     case "home":
-      return <HomeSheet app={app} />;
+      return <HomeSheet app={app} windows={sheet.windows} />;
     case "attach":
-      return <AttachSheet app={app} />;
-    case "create":
-      return <CreateSheet app={app} draft={sheet.draft} />;
+      return <AttachSheet app={app} windows={sheet.windows} />;
     case "files":
       return <FilesSheet app={app} host={sheet.host} browser={sheet.browser} />;
   }

@@ -1,17 +1,12 @@
 import { useEffect, useState } from "preact/hooks";
+import { useStore } from "../ui/store";
 import { Tappable } from "../ui/Tappable";
 import { Lock, Plus, ToBottom } from "../ui/icons";
 import { Strip } from "../complete/Strip";
-import type { App, AppView } from "./app";
+import type { App } from "./app";
 import { Sheets } from "./Sheets";
 import { describe } from "./status";
 import { TabBar } from "./TabBar";
-
-function useApp(app: App): AppView {
-  const [, rerender] = useState(0);
-  useEffect(() => app.subscribe(() => { rerender((n) => n + 1); }), [app]);
-  return app.snapshot;
-}
 
 /** The clock, ticking once a second only while some tab is down and counting. */
 function useNow(ticking: boolean): number {
@@ -48,8 +43,7 @@ function StatusStrip({ app, now }: { app: App; now: number }) {
 
 /** The web UI over and around the terminal: bar, strip, sheets, and the whole-screen states. */
 export function Chrome({ app }: { app: App }) {
-  const view = useApp(app);
-  const { tabs, notice, keyboard, locked, scrolledUp, chips } = view;
+  const { tabs, notice, keyboard, locked, scrolledUp, chips } = useStore(app);
   const active = app.activeTab();
   // Off-screen tabs rest in `connecting`; only a countdown or a slow connect needs the clock.
   const now = useNow(tabs.some((t) => t.state.kind === "reconnecting") || active?.state.kind === "connecting");

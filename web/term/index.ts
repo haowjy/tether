@@ -32,6 +32,8 @@ export interface RendererOptions {
   fontFamily: string;
   fontSize: number;
   theme: TerminalTheme;
+  /** A URL in the output was tapped. */
+  openLink(url: string): void;
 }
 
 export interface TerminalRenderer {
@@ -47,5 +49,4 @@ export interface TerminalRenderer {
   scrollToBottom(): void;
   /** Calls `listener` whenever the {@link PromptLine} changes. */
   onPromptLine(listener: (line: PromptLine | null) => void): void;
-  dispose(): void;
 }

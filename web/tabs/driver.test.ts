@@ -146,12 +146,14 @@ describe("history", () => {
     expect((await rows).map((r) => new TextDecoder().decode(r))).toEqual(["a", "b", "c", "d"]);
   });
 
-  it("rejects when the watch ends", async () => {
+  it("rejects when the watch ends, without asking for the rest", async () => {
     const t = setup();
     const l = t.bind();
     const rows = t.tab.history(-4, -1);
     l.say({ type: "watchEnded", data: { watch: 1, reason: "error" } });
-    await expect(rows).rejects.toThrow();
+    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [btoa("a")] } });
+    await expect(rows).rejects.toThrow("watch ended");
+    expect(l.types().filter((type) => type === "history")).toHaveLength(1);
   });
 });
 

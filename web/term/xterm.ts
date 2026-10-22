@@ -1,5 +1,4 @@
 import { Terminal } from "@xterm/xterm";
-import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -30,8 +29,8 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
   });
   term.loadAddon(new Unicode11Addon());
   term.unicode.activeVersion = "11";
-  term.loadAddon(new WebLinksAddon());
-  term.loadAddon(new SearchAddon());
+  // A tapped URL leaves the app through native, never `window.open` (ios-shell.md "Web content security").
+  term.loadAddon(new WebLinksAddon((_event, url) => { options.openLink(url); }));
   term.open(container);
   const helper = term.textarea;
   if (helper) {
@@ -114,10 +113,5 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     onScrolledUp: (listener) => { scrollListeners.push(listener); },
     scrollToBottom: () => { term.scrollToBottom(); },
     onPromptLine: (listener) => { prompt.onLine(listener); },
-    dispose: () => {
-      resized.disconnect();
-      webgl = undefined;
-      term.dispose();
-    },
   };
 }

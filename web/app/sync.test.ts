@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TmuxListing } from "../proto/generated/messages";
 import { makeHost } from "../net/fakes";
-import { HostSync, listed } from "./sync";
+import { listed } from "../proto/window";
+import { HostSync } from "./sync";
 
 const win = (id: number) => ({ id, index: id, name: "w", active: false, activity: 0 });
 const listing = (server: string, ids: number[]): TmuxListing => ({
@@ -37,10 +38,12 @@ describe("HostSync", () => {
     return { ...h, listings, renames, lists };
   }
 
-  it("lists on connect and passes every listing on", () => {
+  it("lists on connect and passes its listing on", async () => {
     const t = setup();
     expect(t.lists()).toBe(1);
-    t.link().say({ type: "sessions", data: { req: 99, tmux: listing("a", [1]) } });
+    const sent = t.link().sent.find((m) => m.type === "listSessions");
+    t.link().say({ type: "sessions", data: { req: sent?.type === "listSessions" ? sent.data.req : 0, tmux: listing("a", [1]) } });
+    await Promise.resolve();
     expect(t.listings).toHaveLength(1);
   });
 

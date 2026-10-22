@@ -643,11 +643,16 @@ src/auth/      LocalAPI identity, device tokens, enrolment (auth.md)
 src/fs/        the only place paths are resolved and checked against roots
 src/complete/  /complete: history, PATH index, carapace runner (bounded, cached; complete.md)
 web/           Vite app, bundled into the iOS app:
-  native/      the bridge to the Swift shell, focus and keyboard requests
-  term/        xterm.js wrapper, the serialized write pipeline, touch → keys/mouse
-  net/         HostLink: one WebSocket per host
-  tabs/        per-tab state machine
-  sheets/ fs/
+  native/      the bridge to the Swift shell: one method per message, a host's HTTP origin
+  proto/       generated wire types, binary frames, HostLink (one WebSocket), window identity
+  net/         Host: a host's shared socket, its reconnect, watch routing and requests
+  tabs/        per-tab state machine and TabDriver (watch, input, scrollback)
+  term/        xterm.js wrapper, the serialized write pipeline, sizing, the prompt line
+  app/         App (tabs, focus, sheet routing), the host registry, the window sheets
+  files/       the file manager: the /fs client, FileBrowser, viewers
+  complete/    the suggestion strip: the /complete client, Suggester
+  ui/          tokens, Tappable, Sheet, icons, Store
+  dev/         the desktop dev shim standing in for native; never in a build
 ios/           Swift app (XcodeGen) and the TetherKit package (ios-shell.md)
 ```
 
