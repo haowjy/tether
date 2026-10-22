@@ -53,10 +53,9 @@ Kept as stated. Where the review corrects one, the correction follows it.
   notifications are out of scope, because Jimmy's agent harness already handles
   notifications.
 
-### Proposed decisions (pending Jimmy)
+### Decisions on the review's open questions (Jimmy, 2026-10-21)
 
-The review raised three questions that only Jimmy can settle. Two are now decided;
-the rest of this document assumes the recommendation for the one still open.
+The review raised three questions that only Jimmy could settle. All three are decided.
 
 1. **Keyboard: decided 2026-10-21, native Swift shell first.** Jimmy chose a native
    iOS app (WKWebView hosting the web UI, with a native first responder owning the
@@ -68,12 +67,17 @@ the rest of this document assumes the recommendation for the one still open.
    TestFlight come later; Xcode installs from the Mac until then. **§4.5, §6.1, §9
    (passkeys) and §13 still describe the PWA-first plan and are being revised in the
    iOS shell design.**
-2. **Multi-host (v2).** *Proposed (pending Jimmy):* one hub daemon that proxies other
-   hosts, so there is one installed app and one passkey. Every `*.ts.net` host is a
-   separate web origin with its own installed app, cookies and passkey, so the
-   alternative multiplies all three. To keep the hub possible, host ids appear in URLs
-   and in the WebSocket protocol from day one; the MVP has exactly one host (§10).
-   *Alternative:* one installed app and one passkey per host, with no proxying.
+2. **Multi-host (v2): the app connects to each host directly.** The native app keeps
+   a list of hosts and a device key enrolled on each; each host runs its own
+   single-host daemon, and tabs from several hosts share one UI. Rejected: a hub
+   daemon proxying the other hosts, which was the answer only while the client was a
+   web app (each `*.ts.net` origin would need its own installed app, cookies and
+   passkey). For a native app it adds a single point of failure on a box that already
+   crashes, an extra hop, and daemon-to-daemon auth. One app per host is rejected for
+   the obvious reason. Host ids still appear in URLs and the protocol from day one;
+   the MVP has one host. Consequence for the iOS shell design: one UI must talk to
+   several daemons, which favours bundling the web UI in the app over loading it from
+   each host, and the version handshake works per host.
 3. *Decided 2026-10-21, see "Files" above.*
 
 ## 1. Goal
@@ -953,7 +957,7 @@ Opened from `[⊞]` or `[<]`, as a sheet over the terminal. The keyboard stays p
   symlinks), then a check against the roots.
 
 **API.** Every route sits behind the auth middleware (§9) and carries the host id
-(pending decision 2): the paths below sit under `/h/{host}`, e.g.
+(decision 2): the paths below sit under `/h/{host}`, e.g.
 `/h/{host}/fs/list`.
 
 | Route | Phase | Notes |
@@ -1066,10 +1070,9 @@ upload and edit size caps; files in the uploads folder are never executed by tet
 
 ## 10. Long-term decisions made now
 
-- **Multi-host (v2):** pending decision 2. With the recommended hub, the MVP already
-  puts a host id in every URL and protocol message, so adding hosts doesn't change the
-  auth or URL design. How the hub authenticates to other hosts' daemons is decided when
-  v2 starts.
+- **Multi-host (v2):** the app connects to each host directly (decision 2). The MVP
+  already puts a host id in every URL and protocol message, so adding hosts changes
+  neither the daemon's auth nor its URL design.
 - **Version skew (MVP):** protocol version in the WebSocket handshake, reload on
   mismatch (§4.4).
 - **tmux versions (MVP):** recorded `%output` and reply fixtures from 3.4 (server) and
@@ -1169,7 +1172,7 @@ via TestFlight or Xcode.
 - File editing: edit with a conflict check on save, new file, rename (§8). Resumable multi-upload. Diff viewer. PDFs. repo-viewer parity (Mermaid,
   gallery, hidden-file rules, gitignore).
 - OSC 52 ↔ iOS clipboard and tmux-buffer sync. Snippets.
-- Multi-host through the hub (pending decision 2).
+- Multi-host: the app connects to each host's daemon directly (decision 2).
 - Activity and bell dots, scrollback search, tappable file paths, per-tab pan mode.
 - Predictive local echo, if spike 3 shows 200 ms+ echo on travel links.
 
