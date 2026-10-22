@@ -1,0 +1,5 @@
+display-message -p '#{version}	#{pid}	#{start_time}	#{window_width}	#{window_height}'
+refresh-client -C 80x24
+refresh-client -B 'w0:@0:#{pane_current_path}'
+refresh-client -A '%0:pause'
+refresh-client -B 'w0'

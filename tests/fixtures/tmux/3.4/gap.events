@@ -1,0 +1,12 @@
+ready server=3817226-1792642065 version=3.4
+layout @0 %0:80x24
+layout @0 %0:80x23
+snapshot tag=1 %0 80x23 alt=0 cursor=2,0 rows=23 pending="" saved=1
+output %0 events=12 bytes=20809
+window-renamed @0 "sleep"
+window-renamed @0 "yes"
+window-renamed @0 "sleep"
+gap %0
+window-renamed @0 "sh"
+snapshot tag=2 %0 80x23 alt=0 cursor=2,22 rows=23 pending="" saved=1
+layout @0 %0:80x24

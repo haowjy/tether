@@ -1,0 +1,6 @@
+ready server=3820010-1792642074 version=3.4
+layout @0 %0:80x24
+done tag=1 ok
+cwd @0 "/tmp"
+cwd @0 "/"
+done tag=2 ok

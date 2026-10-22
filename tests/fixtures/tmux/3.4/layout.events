@@ -1,0 +1,11 @@
+ready server=3818438-1792642071 version=3.4
+layout @0 %0:80x24
+snapshot tag=1 %0 80x24 alt=0 cursor=2,0 rows=24 pending="" saved=1
+done tag=2 ok
+layout @0 %0:60x20
+layout @0 %0:60x10 %1:60x9
+active-pane @0 %1
+layout @0 %1:60x20
+layout @0 %0:60x10 %1:60x9
+done tag=3 ok
+layout @0 %0:80x12 %1:80x11

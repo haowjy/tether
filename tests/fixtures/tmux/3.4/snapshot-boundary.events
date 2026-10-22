@@ -1,0 +1,6 @@
+ready server=3815494-1792642062 version=3.4
+layout @0 %0:80x24
+snapshot tag=1 %0 80x24 alt=0 cursor=2,0 rows=24 pending="" saved=1
+output %0 events=267 bytes=5487
+snapshot tag=2 %0 80x24 alt=0 cursor=0,23 rows=24 pending="" saved=1
+output %0 events=723 bytes=14494

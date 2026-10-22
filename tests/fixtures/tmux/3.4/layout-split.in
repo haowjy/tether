@@ -1,1 +1,0 @@
-split-window -d -t %0 ; display-message -p 'LAYOUT_SPLIT_DONE'

@@ -1,3 +1,0 @@
-new-window -d -t '$0' -n fixture-window ; display-message -p 'WINDOW_ADD_DONE'
-rename-window -t @1 fixture-renamed ; display-message -p 'WINDOW_RENAME_DONE'
-kill-window -t @1 ; display-message -p 'WINDOW_CLOSE_DONE'

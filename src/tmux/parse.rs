@@ -1,53 +1,37 @@
-use bytes::Bytes;
-use thiserror::Error;
+//! Bytes from a control client into lines (daemon-core.md §3.2). No UTF-8 decoding;
+//! a partial line is kept across calls.
 
-const MAX_LINE: usize = 1024 * 1024;
-const MAX_BLOCK: usize = 4 * 1024 * 1024;
+use bytes::Bytes;
+
+use super::PaneId;
+
+/// The longest line kept; longer ones are discarded and reported as `TooLong`.
+pub const MAX_LINE: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
-    Block(Block),
-    Output { pane: Bytes, data: Bytes },
+    /// A reply block opened. `flag` is 1 for commands this client wrote, 0 for the
+    /// attach reply and hooks.
+    Begin {
+        flag: u8,
+    },
+    /// One line of the open block's body, without its LF.
+    Body(Bytes),
+    /// The open block closed: `%end`, or `%error` when `error`.
+    End {
+        error: bool,
+    },
+    Output {
+        pane: PaneId,
+        data: Bytes,
+    },
     Notification(Notification),
-    Unknown(Bytes),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Block {
-    pub timestamp: u64,
-    pub number: u64,
-    pub flag: u8,
-    pub result: BlockResult,
-    /// Reply bytes, including each body's trailing LF. Use `body_lines` for line access.
-    pub body: Bytes,
-}
-
-impl Block {
-    pub fn body_lines(&self) -> impl Iterator<Item = &[u8]> {
-        let mut remaining = self.body.as_ref();
-        std::iter::from_fn(move || {
-            if remaining.is_empty() {
-                return None;
-            }
-            let end = remaining
-                .iter()
-                .position(|byte| *byte == b'\n')
-                .unwrap_or(remaining.len());
-            let line = &remaining[..end];
-            remaining = if end < remaining.len() {
-                &remaining[end + 1..]
-            } else {
-                &[]
-            };
-            Some(line)
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlockResult {
-    End,
-    Error,
+    /// A line the core doesn't use; only its length is kept.
+    Unknown {
+        len: usize,
+    },
+    /// A line over `MAX_LINE`, discarded. Inside a block it was a body line.
+    TooLong,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,175 +51,127 @@ pub enum NotificationKind {
     WindowRenamed,
     UnlinkedWindowRenamed,
     WindowPaneChanged,
-    SessionRenamed,
     SessionsChanged,
-    SessionChanged,
+    SessionRenamed,
     SubscriptionChanged,
     Exit,
-}
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum ParseError {
-    #[error("tmux control-mode line or reply block exceeded its size limit")]
-    TooLarge,
-}
-
-#[derive(Debug)]
-struct OpenBlock {
-    timestamp: u64,
-    number: u64,
-    flag: u8,
-    body: Vec<u8>,
 }
 
 #[derive(Debug, Default)]
 pub struct Parser {
     partial: Vec<u8>,
-    block: Option<OpenBlock>,
+    /// The current line passed `MAX_LINE`; drop it up to its LF.
+    overflow: bool,
+    /// `(number, flag)` of the open block: only a guard with both closes it.
+    open: Option<(u64, u8)>,
 }
+
+/// Capacity the partial-line buffer keeps between lines.
+const KEPT_CAPACITY: usize = 16 * 1024;
 
 impl Parser {
-    pub fn push(&mut self, chunk: &[u8], out: &mut Vec<Line>) -> Result<(), ParseError> {
-        let mut start = 0;
-        while start < chunk.len() {
-            let next_newline = chunk[start..].iter().position(|byte| *byte == b'\n');
-            let end = next_newline.map_or(chunk.len(), |offset| start + offset);
-            let fragment = &chunk[start..end];
-            if self.partial.len().saturating_add(fragment.len()) > MAX_LINE {
-                return Err(ParseError::TooLarge);
-            }
-            self.partial.extend_from_slice(fragment);
-
-            if next_newline.is_some() {
-                let line = std::mem::take(&mut self.partial);
-                self.process_line(line, out)?;
-                start = end + 1;
+    pub fn push(&mut self, chunk: &[u8], out: &mut Vec<Line>) {
+        let mut rest = chunk;
+        while let Some(newline) = rest.iter().position(|byte| *byte == b'\n') {
+            let fragment = &rest[..newline];
+            rest = &rest[newline + 1..];
+            let too_long = self.overflow || self.partial.len() + fragment.len() > MAX_LINE;
+            self.overflow = false;
+            if too_long {
+                out.push(Line::TooLong);
+            } else if self.partial.is_empty() {
+                // The common case: the whole line is in this chunk.
+                out.push(classify(&mut self.open, fragment));
             } else {
-                start = chunk.len();
+                self.partial.extend_from_slice(fragment);
+                out.push(classify(&mut self.open, &self.partial));
             }
+            self.partial.clear();
+            self.partial.shrink_to(KEPT_CAPACITY);
         }
-        Ok(())
-    }
-
-    fn process_line(&mut self, line: Vec<u8>, out: &mut Vec<Line>) -> Result<(), ParseError> {
-        if let Some((result, _timestamp, number, flag)) = parse_block_end(&line)
-            && self
-                .block
-                .as_ref()
-                .is_some_and(|block| number == block.number && flag == block.flag)
-        {
-            if let Some(block) = self.block.take() {
-                out.push(Line::Block(Block {
-                    timestamp: block.timestamp,
-                    number,
-                    flag,
-                    result,
-                    body: Bytes::from(block.body),
-                }));
-            }
-            return Ok(());
-        }
-
-        if let Some(block) = &mut self.block {
-            let bytes_with_newline = line.len().saturating_add(1);
-            if block.body.len().saturating_add(bytes_with_newline) > MAX_BLOCK {
-                return Err(ParseError::TooLarge);
-            }
-            block.body.extend_from_slice(&line);
-            block.body.push(b'\n');
-            return Ok(());
-        }
-
-        if let Some((timestamp, number, flag)) = parse_block_start(&line) {
-            self.block = Some(OpenBlock {
-                timestamp,
-                number,
-                flag,
-                body: Vec::new(),
-            });
-        } else if let Some((pane, encoded)) = parse_output(&line) {
-            out.push(Line::Output {
-                pane: Bytes::copy_from_slice(pane),
-                data: decode_output(encoded),
-            });
-        } else if let Some((pane, encoded)) = parse_extended_output(&line) {
-            out.push(Line::Output {
-                pane: Bytes::copy_from_slice(pane),
-                data: decode_output(encoded),
-            });
-        } else if let Some(notification) = parse_notification(&line) {
-            out.push(Line::Notification(notification));
+        if self.overflow || self.partial.len() + rest.len() > MAX_LINE {
+            self.overflow = true;
+            self.partial = Vec::new();
         } else {
-            out.push(Line::Unknown(Bytes::from(line)));
+            self.partial.extend_from_slice(rest);
         }
-        Ok(())
     }
 }
 
-fn parse_block_start(line: &[u8]) -> Option<(u64, u64, u8)> {
-    let rest = line.strip_prefix(b"%begin ")?;
-    let mut fields = ascii_fields(rest);
-    let timestamp = parse_next::<u64>(&mut fields)?;
-    let number = parse_next::<u64>(&mut fields)?;
-    let flag = parse_next::<u8>(&mut fields)?;
-    fields.next().is_none().then_some((timestamp, number, flag))
+/// One complete line, without its LF. `open` is the open block's `(number, flag)`:
+/// inside a block every line is body until the guard with both.
+fn classify(open: &mut Option<(u64, u8)>, line: &[u8]) -> Line {
+    if let Some(guard) = *open {
+        return match parse_block_end(line) {
+            Some((error, end)) if end == guard => {
+                *open = None;
+                Line::End { error }
+            }
+            _ => Line::Body(Bytes::copy_from_slice(line)),
+        };
+    }
+    if let Some(guard) = parse_block_start(line) {
+        *open = Some(guard);
+        return Line::Begin { flag: guard.1 };
+    }
+    if let Some((pane, encoded)) = parse_output(line).or_else(|| parse_extended_output(line)) {
+        return Line::Output {
+            pane,
+            data: decode_octal(encoded),
+        };
+    }
+    if let Some(notification) = parse_notification(line) {
+        return Line::Notification(notification);
+    }
+    Line::Unknown { len: line.len() }
 }
 
-fn parse_block_end(line: &[u8]) -> Option<(BlockResult, u64, u64, u8)> {
-    let (result, rest) = if let Some(rest) = line.strip_prefix(b"%end ") {
-        (BlockResult::End, rest)
-    } else if let Some(rest) = line.strip_prefix(b"%error ") {
-        (BlockResult::Error, rest)
-    } else {
+/// `%begin T N F` → `(N, F)`.
+fn parse_block_start(line: &[u8]) -> Option<(u64, u8)> {
+    guard_fields(line.strip_prefix(b"%begin ")?)
+}
+
+/// `%end T N F` or `%error T N F` → `(is_error, (N, F))`.
+fn parse_block_end(line: &[u8]) -> Option<(bool, (u64, u8))> {
+    if let Some(rest) = line.strip_prefix(b"%end ") {
+        return Some((false, guard_fields(rest)?));
+    }
+    Some((true, guard_fields(line.strip_prefix(b"%error ")?)?))
+}
+
+fn guard_fields(rest: &[u8]) -> Option<(u64, u8)> {
+    let mut fields = rest.split(|byte| *byte == b' ');
+    let _time = number::<u64>(fields.next()?)?;
+    let number_field = number::<u64>(fields.next()?)?;
+    let flag = number::<u8>(fields.next()?)?;
+    fields.next().is_none().then_some((number_field, flag))
+}
+
+fn number<T: std::str::FromStr>(field: &[u8]) -> Option<T> {
+    if field.is_empty() || !field.iter().all(u8::is_ascii_digit) {
         return None;
-    };
-    let mut fields = ascii_fields(rest);
-    let timestamp = parse_next::<u64>(&mut fields)?;
-    let number = parse_next::<u64>(&mut fields)?;
-    let flag = parse_next::<u8>(&mut fields)?;
-    fields
-        .next()
-        .is_none()
-        .then_some((result, timestamp, number, flag))
+    }
+    std::str::from_utf8(field).ok()?.parse().ok()
 }
 
-fn ascii_fields(input: &[u8]) -> impl Iterator<Item = &[u8]> {
-    input
-        .split(|byte| byte.is_ascii_whitespace())
-        .filter(|field| !field.is_empty())
-}
-
-fn parse_next<'a, T: std::str::FromStr>(fields: &mut impl Iterator<Item = &'a [u8]>) -> Option<T> {
-    let field = fields.next()?;
-    let text = std::str::from_utf8(field).ok()?;
-    text.parse().ok()
-}
-
-fn parse_output(line: &[u8]) -> Option<(&[u8], &[u8])> {
+/// `%output %P data`.
+fn parse_output(line: &[u8]) -> Option<(PaneId, &[u8])> {
     let rest = line.strip_prefix(b"%output ")?;
-    let separator = rest.iter().position(|byte| *byte == b' ')?;
-    let pane = &rest[..separator];
-    is_pane_id(pane).then_some((pane, &rest[separator + 1..]))
+    let space = rest.iter().position(|byte| *byte == b' ')?;
+    Some((PaneId::parse(&rest[..space])?, &rest[space + 1..]))
 }
 
-fn parse_extended_output(line: &[u8]) -> Option<(&[u8], &[u8])> {
+/// `%extended-output %P age … : data`; tmux may add fields before the colon.
+fn parse_extended_output(line: &[u8]) -> Option<(PaneId, &[u8])> {
     let rest = line.strip_prefix(b"%extended-output ")?;
-    let pane_end = rest.iter().position(|byte| *byte == b' ')?;
-    let pane = &rest[..pane_end];
-    if !is_pane_id(pane) {
-        return None;
-    }
+    let space = rest.iter().position(|byte| *byte == b' ')?;
+    let pane = PaneId::parse(&rest[..space])?;
     let marker = rest.windows(3).position(|window| window == b" : ")?;
-    let fields = rest.get(pane_end + 1..marker)?;
+    let fields = rest.get(space + 1..marker)?;
     if fields.iter().all(u8::is_ascii_whitespace) {
         return None;
     }
     Some((pane, &rest[marker + 3..]))
-}
-
-fn is_pane_id(pane: &[u8]) -> bool {
-    pane.strip_prefix(b"%")
-        .is_some_and(|number| !number.is_empty() && number.iter().all(u8::is_ascii_digit))
 }
 
 fn parse_notification(line: &[u8]) -> Option<Notification> {
@@ -252,42 +188,40 @@ fn parse_notification(line: &[u8]) -> Option<Notification> {
         b"%window-renamed" => NotificationKind::WindowRenamed,
         b"%unlinked-window-renamed" => NotificationKind::UnlinkedWindowRenamed,
         b"%window-pane-changed" => NotificationKind::WindowPaneChanged,
-        b"%session-renamed" => NotificationKind::SessionRenamed,
         b"%sessions-changed" => NotificationKind::SessionsChanged,
-        b"%session-changed" => NotificationKind::SessionChanged,
+        b"%session-renamed" => NotificationKind::SessionRenamed,
         b"%subscription-changed" => NotificationKind::SubscriptionChanged,
         b"%exit" => NotificationKind::Exit,
         _ => return None,
     };
-    let args = if name_end < line.len() {
-        &line[name_end + 1..]
-    } else {
-        &[]
-    };
+    let args = line.get(name_end + 1..).unwrap_or_default();
     Some(Notification {
         kind,
         args: Bytes::copy_from_slice(args),
     })
 }
 
-fn decode_output(encoded: &[u8]) -> Bytes {
+/// tmux's control-mode escaping: `\` and three octal digits is one byte; every other
+/// byte passes through. Also used for `capture-pane -C`.
+pub fn decode_octal(encoded: &[u8]) -> Bytes {
     let mut decoded = Vec::with_capacity(encoded.len());
     let mut index = 0;
     while index < encoded.len() {
-        if encoded[index] == b'\\'
-            && index + 3 < encoded.len()
-            && encoded[index + 1..index + 4]
-                .iter()
-                .all(|byte| (b'0'..=b'7').contains(byte))
-        {
-            let value = u16::from(encoded[index + 1] - b'0') * 64
-                + u16::from(encoded[index + 2] - b'0') * 8
-                + u16::from(encoded[index + 3] - b'0');
-            decoded.push((value & 0xff) as u8);
-            index += 4;
-        } else {
-            decoded.push(encoded[index]);
-            index += 1;
+        let octal = encoded
+            .get(index + 1..index + 4)
+            .filter(|digits| digits.iter().all(|byte| (b'0'..=b'7').contains(byte)));
+        match (encoded[index], octal) {
+            (b'\\', Some(digits)) => {
+                let value = digits
+                    .iter()
+                    .fold(0u16, |value, digit| value * 8 + u16::from(digit - b'0'));
+                decoded.push((value & 0xff) as u8);
+                index += 4;
+            }
+            (byte, _) => {
+                decoded.push(byte);
+                index += 1;
+            }
         }
     }
     Bytes::from(decoded)
@@ -300,162 +234,88 @@ mod tests {
     fn parse(input: &[u8]) -> Vec<Line> {
         let mut parser = Parser::default();
         let mut lines = Vec::new();
-        parser.push(input, &mut lines).expect("parse test input");
+        parser.push(input, &mut lines);
         lines
     }
 
-    #[test]
-    fn partial_lines_and_blocks_survive_chunk_boundaries() {
-        let mut parser = Parser::default();
-        let mut lines = Vec::new();
-        parser
-            .push(b"%begin 12 4 1\nreply %s", &mut lines)
-            .expect("first part");
-        assert!(lines.is_empty());
-        parser
-            .push(b"tuff\n%pause %0\n%end 99 4 1\n", &mut lines)
-            .expect("second part");
-        assert_eq!(
-            lines,
-            vec![Line::Block(Block {
-                timestamp: 12,
-                number: 4,
-                flag: 1,
-                result: BlockResult::End,
-                body: Bytes::from_static(b"reply %stuff\n%pause %0\n"),
-            })]
-        );
+    fn body(text: &'static [u8]) -> Line {
+        Line::Body(Bytes::from_static(text))
     }
 
     #[test]
-    fn closes_only_on_matching_number_and_flag() {
-        let lines = parse(b"%begin 1 2 1\n%end 1 2 0\n%error 1 3 1\nbody\n%end 9 2 1\n");
-        assert_eq!(
-            lines,
-            vec![Line::Block(Block {
-                timestamp: 1,
-                number: 2,
-                flag: 1,
-                result: BlockResult::End,
-                body: Bytes::from_static(b"%end 1 2 0\n%error 1 3 1\nbody\n"),
-            })]
-        );
+    fn blocks_close_only_on_their_own_guard_and_survive_chunk_splits() {
+        let input: &[u8] =
+            b"%begin 1 2 1\n%end 1 2 0\n%error 1 3 1\n%output %1 x\n%end 9 2 1\n%pause %0\n";
+        let expected = vec![
+            Line::Begin { flag: 1 },
+            body(b"%end 1 2 0"),
+            body(b"%error 1 3 1"),
+            body(b"%output %1 x"),
+            Line::End { error: false },
+            Line::Notification(Notification {
+                kind: NotificationKind::Pause,
+                args: Bytes::from_static(b"%0"),
+            }),
+        ];
+        assert_eq!(parse(input), expected);
+        let mut parser = Parser::default();
+        let mut lines = Vec::new();
+        for byte in input {
+            parser.push(std::slice::from_ref(byte), &mut lines);
+        }
+        assert_eq!(lines, expected);
     }
 
     #[test]
     fn decodes_octal_bytes_without_utf8_assumptions() {
-        let lines = parse(b"%output %4 \\000\\177\\200\\377\\\\\\08\\9\n");
+        let lines = parse(b"%output %4 \\000\\177\\200\\377\\\\\\08\\9\\12\n");
         assert_eq!(
             lines,
             vec![Line::Output {
-                pane: Bytes::from_static(b"%4"),
+                pane: PaneId(4),
                 data: Bytes::from_static(&[
-                    0, 127, 128, 255, b'\\', b'\\', b'\\', b'0', b'8', b'\\', b'9',
+                    0, 127, 128, 255, b'\\', b'\\', b'\\', b'0', b'8', b'\\', b'9', b'\\', b'1',
+                    b'2',
                 ]),
             }]
         );
     }
 
     #[test]
-    fn parses_extended_output_after_future_fields() {
-        let lines = parse(b"%extended-output %2 15 future value : A\\015\\012\n");
+    fn extended_output_tolerates_future_fields_and_rejects_missing_ones() {
         assert_eq!(
-            lines,
-            vec![Line::Output {
-                pane: Bytes::from_static(b"%2"),
-                data: Bytes::from_static(b"A\r\n"),
-            }]
-        );
-    }
-
-    #[test]
-    fn malformed_extended_output_is_unknown_instead_of_panicking() {
-        assert_eq!(
-            parse(b"%extended-output %2 : data\n"),
-            vec![Line::Unknown(Bytes::from_static(
-                b"%extended-output %2 : data"
-            ))]
-        );
-    }
-
-    #[test]
-    fn types_only_consumed_notifications_and_keeps_other_bytes() {
-        let lines = parse(
-            b"%subscription-changed sub %0 current\n%window-add @1\n%output malformed nope\nnot a notification\n",
-        );
-        assert_eq!(lines.len(), 4);
-        assert_eq!(
-            lines[0],
-            Line::Notification(Notification {
-                kind: NotificationKind::SubscriptionChanged,
-                args: Bytes::from_static(b"sub %0 current"),
-            })
-        );
-        assert_eq!(
-            lines[1],
-            Line::Unknown(Bytes::from_static(b"%window-add @1"))
-        );
-        assert_eq!(
-            lines[2],
-            Line::Unknown(Bytes::from_static(b"%output malformed nope"))
-        );
-        assert_eq!(
-            lines[3],
-            Line::Unknown(Bytes::from_static(b"not a notification"))
-        );
-    }
-
-    #[test]
-    fn recognizes_only_the_notifications_consumed_by_the_core() {
-        let lines = parse(
-            b"%pause %0\n%continue %0\n%layout-change @0 x y *\n%window-close @0\n%unlinked-window-close @1\n%window-renamed @0 name\n%unlinked-window-renamed @1 name\n%window-pane-changed @0 %1\n%session-renamed name\n%sessions-changed\n%session-changed $0 name\n%subscription-changed sub $0 - - - : value\n%exit\n",
-        );
-        let kinds = lines
-            .iter()
-            .map(|line| match line {
-                Line::Notification(notification) => notification.kind,
-                other => panic!("expected typed notification, got {other:?}"),
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            kinds,
+            parse(b"%extended-output %2 15 future : A\\015\\012\n%extended-output %2 : x\n"),
             vec![
-                NotificationKind::Pause,
-                NotificationKind::Continue,
-                NotificationKind::LayoutChange,
-                NotificationKind::WindowClose,
-                NotificationKind::UnlinkedWindowClose,
-                NotificationKind::WindowRenamed,
-                NotificationKind::UnlinkedWindowRenamed,
-                NotificationKind::WindowPaneChanged,
-                NotificationKind::SessionRenamed,
-                NotificationKind::SessionsChanged,
-                NotificationKind::SessionChanged,
-                NotificationKind::SubscriptionChanged,
-                NotificationKind::Exit,
+                Line::Output {
+                    pane: PaneId(2),
+                    data: Bytes::from_static(b"A\r\n"),
+                },
+                Line::Unknown { len: 23 },
             ]
         );
     }
 
     #[test]
-    fn enforces_line_and_block_limits() {
-        let mut parser = Parser::default();
-        let mut out = Vec::new();
+    fn an_over_long_line_is_dropped_without_losing_the_stream() {
+        let mut input = b"%begin 1 1 1\n".to_vec();
+        input.extend(std::iter::repeat_n(b'x', MAX_LINE + 1));
+        input.extend_from_slice(b"\nok\n%end 1 1 1\n");
+        input.extend(std::iter::repeat_n(b'y', MAX_LINE + 5));
+        input.extend_from_slice(b"\n%exit\n");
+        let lines = parse(&input);
         assert_eq!(
-            parser.push(&vec![b'x'; MAX_LINE + 1], &mut out),
-            Err(ParseError::TooLarge)
+            lines,
+            vec![
+                Line::Begin { flag: 1 },
+                Line::TooLong,
+                body(b"ok"),
+                Line::End { error: false },
+                Line::TooLong,
+                Line::Notification(Notification {
+                    kind: NotificationKind::Exit,
+                    args: Bytes::new(),
+                }),
+            ]
         );
-
-        let mut parser = Parser::default();
-        let body_line = vec![b'x'; MAX_LINE];
-        parser
-            .push(b"%begin 1 1 1\n", &mut out)
-            .expect("open block");
-        let mut block = Vec::new();
-        for _ in 0..4 {
-            block.extend_from_slice(&body_line);
-            block.push(b'\n');
-        }
-        assert_eq!(parser.push(&block, &mut out), Err(ParseError::TooLarge));
     }
 }

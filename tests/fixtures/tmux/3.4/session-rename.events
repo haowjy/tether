@@ -1,3 +1,0 @@
-group tag=0 end replies=[0,20]
-notification session-renamed args="$0 fixture-renamed"
-output pane="%2" bytes=67

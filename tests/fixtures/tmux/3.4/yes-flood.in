@@ -1,2 +1,0 @@
-send-keys -t %0 -H 79 65 73 20 7c 20 68 65 61 64 20 2d 63 20 38 31 39 32 0a
-display-message -p FLOOD_DONE ; display-message -p 'FLOOD_DONE'

@@ -1,5 +1,0 @@
-group tag=0 end replies=[0,15]
-notification subscription-changed args="fixture-sub $0 - - - : fixture-renamed"
-group tag=1 end replies=[0,25]
-notification session-renamed args="$0 fixture-subscribed"
-notification subscription-changed args="fixture-sub $0 - - - : fixture-subscribed"

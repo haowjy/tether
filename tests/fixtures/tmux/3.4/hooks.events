@@ -1,0 +1,9 @@
+ready server=3815668-1792642064 version=3.4
+layout @0 %0:80x24
+snapshot tag=1 %0 80x24 alt=0 cursor=2,0 rows=24 pending="" saved=1
+output %0 events=46 bytes=305
+window-renamed @0 "sleep"
+output %0 events=39 bytes=234
+done tag=2 error Torn
+output %0 events=3 bytes=12
+window-renamed @0 "sh"

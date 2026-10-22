@@ -1,6 +1,0 @@
-group tag=0 end replies=[0]
-output pane="%0" bytes=86
-output pane="%0" bytes=55
-output pane="%1" bytes=8
-output pane="%1" bytes=59
-group tag=1 end replies=[58,21]

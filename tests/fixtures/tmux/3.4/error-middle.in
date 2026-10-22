@@ -1,1 +1,0 @@
-display-message -p BEFORE_MIDDLE_ERROR ; capture-pane -p -t %99999 ; display-message -p SKIPPED_MIDDLE

@@ -1,0 +1,22 @@
+%begin 1792642061 271 0
+%end 1792642061 271 0
+%session-changed $0 fixture
+%begin 1792642061 276 1
+3.4	3815287	1792642061	80	24
+%end 1792642061 276 1
+%begin 1792642061 277 1
+%end 1792642061 277 1
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%extended-output %0 0 : echo one; echo two
+%extended-output %0 0 : \015\012
+%extended-output %0 0 : one\015\012two\015\012
+%extended-output %0 0 : $ 
+%begin 1792642061 284 1
+%pause %0
+%end 1792642061 284 1
+%layout-change @0 c195,80x24,0,0[80x12,0,0,0,80x11,0,13,1] c195,80x24,0,0[80x12,0,0,0,80x11,0,13,1] *
+%extended-output %1 0 : $ 
+%begin 1792642061 288 1
+%pause %1
+%end 1792642061 288 1
+%exit

@@ -1,0 +1,12 @@
+ready server=3821076-1792642078 version=3.4
+layout @0 %0:80x24
+snapshot tag=1 %0 80x24 alt=0 cursor=2,0 rows=24 pending="" saved=1
+done tag=2 ok
+output %0 events=1 bytes=13
+done tag=3 ok
+output %0 events=3 bytes=39
+done tag=4 ok
+output %0 events=1 bytes=187
+done tag=5 error BadRequest("unknown key name")
+done tag=6 error Command("can't find window: @99")
+output %0 events=2 bytes=46
