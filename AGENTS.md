@@ -11,9 +11,10 @@ checkout. No PRs, no feature branches, no worktrees. Dropping PRs drops only the
 review ceremony; the rigor stays:
 
 - **Design before code.** Settle each subsystem's design and spec in
-  `docs/design/` before building it, starting from `plan.md` and the corrections
-  in `plan-review.md`. Record decisions with the alternatives rejected.
-- **Coding standards.** Follow the structure and style in `plan-review.md` §5–6
+  `docs/design/` before building it, starting from `plan.md` (the one current
+  design; `plan-review.md` is the review record already folded into it). Record
+  decisions with the alternatives rejected.
+- **Coding standards.** Follow the structure and style in `plan.md` §11
   (pure parser and state core, one task per control client, bounded queues, one
   focus controller on the web side). Get a review of each subsystem's design and
   code before moving on.

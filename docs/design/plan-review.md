@@ -1,3 +1,5 @@
+> Folded into [plan.md](plan.md) on 2026-10-21; kept as the review record. plan.md is the current design.
+
 # Tether plan review
 
 Review of [plan.md](plan.md) (revised 2026-10-21), written 2026-10-21.
