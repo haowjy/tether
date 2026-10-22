@@ -4,9 +4,10 @@ Can a native first responder keep the keyboard up over a WKWebView terminal thro
 everything Jimmy does in tether, and how fast does a keystroke cross from native code
 into the page? The answer gates [ios-shell.md](ios-shell.md): it decides the focus
 guard, the hidden-keyboard trick, the keyboard geometry, and whether the input view
-needs `UITextInput`, and checks that the keystroke bridge fits in a frame. Jimmy runs it from Xcode on his Mac with the iPhone 17 Pro (iOS 26);
-it takes about 45 minutes, plus 5 for part B, which checks the Face ID-gated Keychain
-item that [auth.md](auth.md) relies on.
+needs `UITextInput`, and checks that the keystroke bridge fits in a frame. Jimmy runs
+it from Xcode on his Mac with the iPhone 17 Pro (iOS 26); it takes about 45 minutes,
+plus 5 for part B, which checks the Face ID-gated Keychain item that
+[auth.md](auth.md) relies on.
 
 The spike is throwaway: it lives in `ios/spikes/keyboard/` and is deleted once its
 results are recorded in [research/](research/).
@@ -94,8 +95,8 @@ also exercises the custom-scheme origin.
 - Three tab buttons that swap which of three terminals is shown.
 - "sheet": a web overlay with buttons, opened and closed by taps.
 - "edit": an overlay with a `<textarea>` standing in for the v2 CodeMirror editor. It
-  sends `focus webText` on open and `focus terminal` on close, as ios-shell.md
-  specifies.
+  sends `focus webText` on open and `focus terminal` on close, as
+  [ios-shell.md](ios-shell.md#focus-one-controller-native) specifies.
 - A block of static text to long-press, select and Copy.
 - Bench: answers every native `bench` event with an `ack` at once.
 
@@ -253,7 +254,7 @@ feel (F1, F2), Option keys (H5), and every measurement.
 
 16 ms is one 60 Hz frame. Keystroke-to-echo also includes the network round trip
 (spike 3 measures it on cellular); the bridge should be a small share of it. Where
-the WebSocket lives is decided by spike 3's resume test, not by these numbers.
+the WebSocket lives is decided by spike 3's reconnect test, not by these numbers.
 
 ## Not in this spike
 
