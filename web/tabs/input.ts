@@ -1,7 +1,5 @@
+import type { InputEvent } from "../native/bridge";
 import type { ClientMsg, InputItem } from "../proto/generated/messages";
-
-/** Native → web input, ios-shell.md "How input reaches the terminal". */
-export type InputEvent = { text: string } | { key: string } | { bytes: string } | { paste: string };
 
 /** The daemon refuses an `input` message over this many bytes (daemon-core.md §6). */
 const MAX_INPUT_BYTES = 4 * 1024;

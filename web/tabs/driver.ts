@@ -1,25 +1,18 @@
 import type { ClientMsg, ServerMsg, Size, WindowRef } from "../proto/generated/messages";
-import { CloseCode } from "../proto/generated/messages";
 import type { Frame } from "../proto/frames";
-import type { LinkClose, LinkHandlers } from "../proto/link";
+import type { Host, TabPort } from "../net/host";
 import type { TerminalRenderer } from "../term";
 import { initialState, reduce, type ConnectionEvent, type ConnectionState } from "./connection";
-import { shellQuote, toMessages, type InputEvent } from "./input";
-
-/** What the driver needs of a socket; `HostLink` fits. */
-export interface TabLink {
-  readonly ready: boolean;
-  send(msg: ClientMsg): void;
-  close(): void;
-}
+import type { InputEvent } from "../native/bridge";
+import { shellQuote, toMessages } from "./input";
 
 type Watching = Extract<ServerMsg, { type: "watching" }>["data"];
 
 export interface TabOptions {
   window: WindowRef;
   renderer: TerminalRenderer;
-  /** Opens a link; called again after every loss. */
-  connect(handlers: LinkHandlers): TabLink;
+  /** The host's shared socket. */
+  host: Host;
   /** The terminal's size right now, in cells. */
   size(): Size;
   onState(state: ConnectionState): void;
@@ -41,33 +34,49 @@ function decodeBase64(b64: string): Uint8Array {
 }
 
 /**
- * One tab, end to end (daemon-core.md §5): the link, the connection reducer and the
- * terminal pipeline. At most one `watch` is outstanding; each gets a fresh id, so frames
- * from an earlier watch are dropped on arrival.
+ * One tab, end to end (daemon-core.md §5): its watch on the host's shared socket, the
+ * connection reducer and the terminal pipeline. At most one `watch` is outstanding; each
+ * gets a fresh host-wide id, so frames from an earlier watch are dropped on arrival.
  */
 export class TabDriver {
   private readonly opts: TabOptions;
   private state: ConnectionState = initialState;
-  private link: TabLink | null = null;
   private covered = false;
   private watchId: number | null = null;
-  private lastWatchId = 0;
-  private lastReq = 0;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly histories = new Map<number, PendingHistory>();
   private readonly pendingInserts: string[] = [];
 
+  /** What the host calls; the tab's public methods are for the UI. */
+  private readonly port: TabPort = {
+    linkUp: () => {
+      this.dispatch({ type: "linkUp" });
+      this.watchIfReady();
+    },
+    linkLost: ({ retryInMs, halt }) => {
+      this.unbind();
+      this.dispatch({ type: "linkLost", retryInMs, ...(halt && { halt }) });
+    },
+    paused: () => {
+      this.unbind();
+      this.dispatch({ type: "rewatch" });
+    },
+    message: (msg) => { this.onMessage(msg); },
+    frame: (frame) => { this.onFrame(frame); },
+  };
+
   constructor(opts: TabOptions) {
     this.opts = opts;
     opts.onState(this.state);
-    this.ensureConnected();
+    opts.host.join(this.port);
+    this.watchIfReady();
   }
 
   /** A native screen covers the terminal: stop watching, keep the socket. */
   cover(): void {
     if (this.covered) return;
     this.covered = true;
-    if (this.watchId !== null) this.link?.send({ type: "unwatch", data: { watch: this.watchId } });
+    if (this.watchId !== null) this.send({ type: "unwatch", data: { watch: this.watchId } });
     this.unbind();
   }
 
@@ -76,17 +85,18 @@ export class TabDriver {
     if (!this.covered) return;
     this.covered = false;
     this.dispatch({ type: "rewatch" });
-    this.ensureConnected();
+    this.watchIfReady();
   }
 
   /** Visible, online, or the pill was tapped. */
   nudge(): void {
     this.dispatch({ type: "nudge" });
+    this.opts.host.nudge();
   }
 
   /** Rotation or font change only. */
   resize(size: Size): void {
-    if (this.bound) this.link?.send({ type: "resize", data: { watch: this.watchId ?? 0, size } });
+    if (this.bound) this.send({ type: "resize", data: { watch: this.watchId ?? 0, size } });
   }
 
   /** Input goes only to a bound watch; otherwise it is dropped and `false` returned. */
@@ -134,15 +144,19 @@ export class TabDriver {
   }
 
   private requestChunk(watch: number, start: number, end: number): Promise<Uint8Array[]> {
-    const req = ++this.lastReq;
+    const req = this.opts.host.nextReq();
     return new Promise((resolve, reject) => {
       this.histories.set(req, { watch, resolve, reject });
-      this.link?.send({ type: "history", data: { req, watch, start, end } });
+      this.send({ type: "history", data: { req, watch, start, end } });
     });
   }
 
   private sendAll(msgs: ClientMsg[]): void {
-    for (const msg of msgs) this.link?.send(msg);
+    for (const msg of msgs) this.send(msg);
+  }
+
+  private send(msg: ClientMsg): void {
+    this.opts.host.send(this.port, msg);
   }
 
   private dispatch(event: ConnectionEvent): void {
@@ -153,16 +167,16 @@ export class TabDriver {
     this.opts.onState(next);
     switch (next.kind) {
       case "connecting":
-        this.ensureConnected();
+        this.watchIfReady();
         break;
       case "reconnecting":
         this.unbind();
-        if (next.retryInMs !== null) this.retryTimer = setTimeout(() => { this.dispatch({ type: "retry" }); }, next.retryInMs);
+        // With the socket down, the host is the one retrying; this timer is for a failed watch.
+        if (next.retryInMs !== null && this.opts.host.ready) this.retryTimer = setTimeout(() => { this.dispatch({ type: "retry" }); }, next.retryInMs);
         break;
       case "closed":
         this.unbind();
-        this.link?.close();
-        this.link = null;
+        this.opts.host.leave(this.port);
         for (const path of this.pendingInserts.splice(0)) this.dropInsert(path);
         break;
       case "live":
@@ -177,37 +191,10 @@ export class TabDriver {
     this.histories.clear();
   }
 
-  private ensureConnected(): void {
-    if (this.state.kind !== "connecting") return;
-    if (!this.link) {
-      const link = this.opts.connect(this.handlersFor(() => this.link === link));
-      this.link = link;
-    } else {
-      this.watchIfReady();
-    }
-  }
-
   private watchIfReady(): void {
-    if (this.state.kind !== "connecting" || !this.link?.ready || this.covered || this.watchId !== null) return;
-    this.watchId = ++this.lastWatchId;
-    this.link.send({ type: "watch", data: { watch: this.watchId, window: this.opts.window, size: this.opts.size() } });
-  }
-
-  private handlersFor(current: () => boolean): LinkHandlers {
-    return {
-      welcome: () => { if (current()) this.watchIfReady(); },
-      message: (msg) => { if (current()) this.onMessage(msg); },
-      frame: (frame) => { if (current()) this.onFrame(frame); },
-      close: (close) => { if (current()) this.onLinkClose(close); },
-    };
-  }
-
-  private onLinkClose(close: LinkClose): void {
-    this.link = null;
-    this.unbind();
-    const halt =
-      close.code === CloseCode.Incompatible ? "incompatible" : close.code === CloseCode.BadToken ? "unauthorized" : undefined;
-    this.dispatch({ type: "linkLost", jitter: this.jitter(), ...(halt && { halt }) });
+    if (this.state.kind !== "connecting" || !this.opts.host.ready || this.covered || this.watchId !== null) return;
+    this.watchId = this.opts.host.nextWatch();
+    this.send({ type: "watch", data: { watch: this.watchId, window: this.opts.window, size: this.opts.size() } });
   }
 
   private onMessage(msg: ServerMsg): void {

@@ -57,6 +57,13 @@ export function createXtermRenderer(container: HTMLElement): TerminalRenderer {
   return {
     output: (bytes) => { pipeline.output(bytes); },
     snapshot: (snapshot: Snapshot) => pipeline.snapshot(snapshot),
+    cellSize: () => {
+      // The screen element is exactly cols × rows cells, so this needs no private API.
+      const screen = term.element?.querySelector(".xterm-screen");
+      if (!screen || term.cols === 0 || term.rows === 0) return null;
+      const { width, height } = screen.getBoundingClientRect();
+      return width > 0 && height > 0 ? { width: width / term.cols, height: height / term.rows } : null;
+    },
     dispose: () => {
       webgl = undefined;
       term.dispose();

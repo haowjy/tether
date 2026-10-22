@@ -1,9 +1,10 @@
 // The renderer boundary: nothing outside term/ imports xterm.js, so ghostty-web could
 // replace it (plan.md "Layout").
 import type { Snapshot } from "./pipeline";
+import type { CellSize } from "./size";
 import { createXtermRenderer } from "./xterm";
 
-export type { Snapshot };
+export type { CellSize, Snapshot };
 export { createXtermRenderer };
 
 export interface TerminalRenderer {
@@ -11,5 +12,7 @@ export interface TerminalRenderer {
   output(bytes: Uint8Array): void;
   /** Reset, resize and repaint once every earlier write has parsed; resolves when restored. */
   snapshot(snapshot: Snapshot): Promise<void>;
+  /** One cell's size in CSS pixels, null until the first paint; changes with font size. */
+  cellSize(): CellSize | null;
   dispose(): void;
 }

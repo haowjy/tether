@@ -1,8 +1,8 @@
 // Per-tab connection state machine (plan.md "Reconnect"). A pure reducer: no timers, no
-// randomness, no I/O. The driver feeds events (jitter included) and arms one timer for
-// `reconnecting.retryInMs` whenever it is non-null.
+// randomness, no I/O. The host owns the socket's backoff and reports each loss with its
+// `retryInMs`; a failed watch backs off here, and the driver arms one timer for it.
 //
-//   connecting --bound--> live --linkLost/watchEnded--> reconnecting --retry/nudge--> connecting
+//   connecting --bound--> live --linkLost/watchEnded--> reconnecting --retry/nudge/linkUp--> connecting
 //   any state ------------- windowClosed / serverExited / userClosed ----------------> closed
 
 export type Halt = "incompatible" | "unauthorized" | "detached";
@@ -17,7 +17,8 @@ export type ConnectionState =
 
 export type ConnectionEvent =
   | { type: "bound" } // `watching` arrived
-  | { type: "linkLost"; jitter: number; halt?: Halt } // socket closed, or never opened
+  | { type: "linkLost"; retryInMs: number | null; halt?: Halt } // socket closed, or never opened
+  | { type: "linkUp" } // the host's socket is welcomed again
   | { type: "watchEnded"; reason: "detached" | "error"; jitter: number }
   | { type: "retry" } // the backoff timer fired
   | { type: "nudge" } // became visible, came online, or the pill was tapped
@@ -38,8 +39,8 @@ export function backoffMs(attempt: number, jitter: number): number {
   return Math.min(Math.round(base * (1 - JITTER + 2 * JITTER * jitter)), CAP_MS);
 }
 
-function lost(attempt: number, jitter: number, halt: Halt | null): ConnectionState {
-  return { kind: "reconnecting", attempt, retryInMs: halt ? null : backoffMs(attempt, jitter), halt };
+function lost(attempt: number, retryInMs: number | null, halt: Halt | null): ConnectionState {
+  return { kind: "reconnecting", attempt, retryInMs, halt };
 }
 
 export function reduce(state: ConnectionState, event: ConnectionEvent): ConnectionState {
@@ -54,13 +55,17 @@ export function reduce(state: ConnectionState, event: ConnectionEvent): Connecti
       return state.kind === "connecting" ? { kind: "live" } : state;
     case "linkLost":
       // A drop after a working connection starts the backoff over; a failed attempt climbs it.
-      if (state.kind === "live") return lost(0, event.jitter, event.halt ?? null);
-      if (state.kind === "connecting") return lost(state.attempt + 1, event.jitter, event.halt ?? null);
-      return event.halt ? lost(state.attempt, event.jitter, event.halt) : state;
+      if (state.kind === "live") return lost(0, event.retryInMs, event.halt ?? null);
+      if (state.kind === "connecting") return lost(state.attempt + 1, event.retryInMs, event.halt ?? null);
+      // Already waiting: a failed retry refreshes the countdown, but never undoes a wait for a tap.
+      if (event.halt) return lost(state.attempt, null, event.halt);
+      return state.halt === null ? lost(state.attempt + 1, event.retryInMs, null) : state;
+    case "linkUp":
+      return state.kind === "reconnecting" && state.halt === null ? { kind: "connecting", attempt: state.attempt } : state;
     case "watchEnded":
       // Another client detached us: retrying on a timer would fight it, so wait for a tap.
       if (state.kind === "reconnecting") return state;
-      return lost(0, event.jitter, event.reason === "detached" ? "detached" : null);
+      return event.reason === "detached" ? lost(0, null, "detached") : lost(0, backoffMs(0, event.jitter), null);
     case "retry":
       return state.kind === "reconnecting" && state.retryInMs !== null
         ? { kind: "connecting", attempt: state.attempt }

@@ -3,7 +3,7 @@ import { backoffMs, initialState, reduce, type ConnectionEvent, type ConnectionS
 
 const run = (events: ConnectionEvent[], from: ConnectionState = initialState): ConnectionState =>
   events.reduce(reduce, from);
-const lostMid = { type: "linkLost", jitter: 0.5 } as const; // jitter 0.5 = exact base
+const lostMid = { type: "linkLost", retryInMs: 500 } as const;
 
 describe("backoffMs", () => {
   it("doubles from 0.5 s and caps at 30 s", () => {
@@ -23,18 +23,23 @@ describe("tab connection", () => {
     expect(run([{ type: "bound" }])).toEqual({ kind: "live" });
   });
 
-  it("a drop from live backs off from 0.5 s; failed attempts climb", () => {
+  it("shows the host's countdown, refreshed by each failed retry", () => {
     let s = run([{ type: "bound" }, lostMid]);
     expect(s).toEqual({ kind: "reconnecting", attempt: 0, retryInMs: 500, halt: null });
-    s = run([{ type: "retry" }, lostMid], s);
-    expect(s).toMatchObject({ kind: "reconnecting", attempt: 1, retryInMs: 1000 });
-    s = run([{ type: "retry" }, lostMid, { type: "retry" }, lostMid], s);
-    expect(s).toMatchObject({ attempt: 3, retryInMs: 4000 });
+    s = reduce(s, { type: "linkLost", retryInMs: 1000 });
+    expect(s).toMatchObject({ kind: "reconnecting", retryInMs: 1000 });
   });
 
-  it("a successful reconnect resets the backoff", () => {
-    const s = run([lostMid, lostMid, { type: "retry" }, { type: "bound" }, lostMid]);
+  it("a successful reconnect resets the count", () => {
+    const s = run([lostMid, lostMid, { type: "linkUp" }, { type: "bound" }, lostMid]);
     expect(s).toMatchObject({ kind: "reconnecting", attempt: 0, retryInMs: 500 });
+  });
+
+  it("linkUp resumes a lost link but not a detached watch", () => {
+    expect(run([lostMid, { type: "linkUp" }])).toMatchObject({ kind: "connecting" });
+    const detached = run([{ type: "bound" }, { type: "watchEnded", reason: "detached", jitter: 0.5 }]);
+    expect(reduce(detached, { type: "linkUp" })).toBe(detached);
+    expect(reduce(detached, { type: "linkLost", retryInMs: 500 })).toBe(detached);
   });
 
   it("nudge retries at once and resets the backoff", () => {
@@ -48,7 +53,7 @@ describe("tab connection", () => {
   });
 
   it("incompatible/unauthorized hosts schedule no retry but a tap still works", () => {
-    const s = run([{ type: "linkLost", jitter: 0.5, halt: "unauthorized" }]);
+    const s = run([{ type: "linkLost", retryInMs: null, halt: "unauthorized" }]);
     expect(s).toMatchObject({ kind: "reconnecting", retryInMs: null, halt: "unauthorized" });
     expect(reduce(s, { type: "retry" })).toBe(s);
     expect(reduce(s, { type: "nudge" })).toEqual({ kind: "connecting", attempt: 0 });

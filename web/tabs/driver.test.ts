@@ -1,31 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ClientMsg, ServerMsg } from "../proto/generated/messages";
-import type { LinkHandlers } from "../proto/link";
+import type { ServerMsg } from "../proto/generated/messages";
 import type { Snapshot, TerminalRenderer } from "../term";
 import type { ConnectionState } from "./connection";
-import { TabDriver, type TabLink } from "./driver";
+import { makeHost, type FakeLink } from "../net/fakes";
+import { TabDriver } from "./driver";
 
 const window1 = { server: "main:1-2", window: 3 };
 
-class FakeLink implements TabLink {
-  ready = false;
-  sent: ClientMsg[] = [];
-  closed = false;
-  constructor(readonly handlers: LinkHandlers) {}
-  send(msg: ClientMsg): void { this.sent.push(msg); }
-  close(): void { this.closed = true; }
-  types(): string[] { return this.sent.map((m) => m.type); }
-  welcome(): void { this.ready = true; this.handlers.welcome({ protocol: 1, daemon: { version: "0" }, host: { id: "h", name: "n" } }); }
-  say(msg: ServerMsg): void { this.handlers.message(msg); }
-  output(watch: number, text: string): void { this.handlers.frame({ kind: "output", watch, bytes: new TextEncoder().encode(text) }); }
-  snapshot(watch: number, text: string): void {
-    this.handlers.frame({ kind: "snapshot", watch, cols: 80, rows: 24, restore: new TextEncoder().encode(text) });
-  }
-  drop(code = 1006): void { this.ready = false; this.handlers.close({ code, retry: code !== 4401 && code !== 4001 }); }
-}
-
 function setup() {
-  const links: FakeLink[] = [];
+  const { host, links, link, events } = makeHost();
   const painted: string[] = [];
   const states: ConnectionState[] = [];
   const notices: string[] = [];
@@ -33,18 +16,18 @@ function setup() {
   const renderer: TerminalRenderer = {
     output: (b) => painted.push(`o:${dec.decode(b)}`),
     snapshot: (s: Snapshot) => { painted.push(`s:${dec.decode(s.restore)}`); return Promise.resolve(); },
+    cellSize: () => null,
     dispose: () => undefined,
   };
   const tab = new TabDriver({
     window: window1,
     renderer,
-    connect: (h) => { const l = new FakeLink(h); links.push(l); return l; },
+    host,
     size: () => ({ cols: 80, rows: 24 }),
     onState: (s) => states.push(s),
     onNotice: (n) => notices.push(n),
     random: () => 0.5,
   });
-  const link = (): FakeLink => links[links.length - 1] as FakeLink;
   const watching = (watch: number): ServerMsg => ({
     type: "watching",
     data: { watch, window: window1, session: { server: window1.server, session: 1 }, pane: 1, cwd: null },
@@ -52,7 +35,7 @@ function setup() {
   /** Welcome and bind watch 1. */
   const bind = (): FakeLink => { link().welcome(); link().say(watching(1)); return link(); };
   const state = (): ConnectionState => states[states.length - 1] as ConnectionState;
-  return { tab, links, link, painted, notices, watching, bind, state };
+  return { tab, links, link, events, painted, notices, watching, bind, state };
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
