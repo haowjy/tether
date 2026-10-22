@@ -45,7 +45,8 @@ export class Host {
   private readonly opts: HostOptions;
   private readonly tabs = new Set<TabPort>();
   private readonly watchRoutes = new Map<number, TabPort>();
-  private readonly reqRoutes = new Map<number, { tab: TabPort; watch: number }>();
+  /** Requests awaiting an answer; `watch` is null for those that name none (listings, creates). */
+  private readonly reqRoutes = new Map<number, { tab: TabPort; watch: number | null }>();
   private status: Status = "idle";
   private link: Link | null = null;
   private attempt = 0;
@@ -95,6 +96,12 @@ export class Host {
         break;
       case "history":
         this.reqRoutes.set(msg.data.req, { tab, watch: msg.data.watch });
+        break;
+      case "listSessions":
+      case "newWindow":
+      case "newSession":
+        // Their answers are broadcast (every tab prunes on a listing); only an error is routed.
+        this.reqRoutes.set(msg.data.req, { tab, watch: null });
         break;
       default:
         break;
@@ -228,6 +235,11 @@ export class Host {
         else if (req === undefined && watch === undefined) this.broadcast(msg);
         break;
       }
+      case "sessions":
+      case "created":
+        this.reqRoutes.delete(msg.data.req);
+        this.broadcast(msg);
+        break;
       case "pong":
       case "welcome":
         break;

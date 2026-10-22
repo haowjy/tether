@@ -7,14 +7,20 @@ import { BRIDGE_VERSION } from "../native/bridge";
 const TOKEN_KEY = "tether.dev.token";
 const TABS_KEY = "tether.dev.tabs";
 const HOST = { id: "dev", name: "dev", enrolled: true };
-const VIEWPORT: Viewport = {
-  width: 390,
-  height: 700,
-  safeArea: { top: 0, right: 0, bottom: 0, left: 0 },
-  keyboard: false,
-  collapsedHeight: 700,
-  reason: "initial",
-};
+
+/**
+ * The phone's geometry, from the query string so screenshots can match a device:
+ * `?w=393&h=852&safe=59,0,34,0` (top, right, bottom, left). Defaults to an iPhone in portrait.
+ */
+function devViewport(): Viewport {
+  const query = new URLSearchParams(location.search);
+  const num = (key: string, fallback: number): number => Number(query.get(key) ?? fallback) || fallback;
+  const [top = 0, right = 0, bottom = 0, left = 0] = (query.get("safe") ?? "59,0,34,0").split(",").map(Number);
+  const width = num("w", 393);
+  const height = num("h", 852);
+  return { width, height, safeArea: { top, right, bottom, left }, keyboard: false, collapsedHeight: height, reason: "initial" };
+}
+const VIEWPORT = devViewport();
 
 const KEYS: Record<string, string> = {
   Enter: "Enter",
@@ -123,6 +129,14 @@ export function createDevShim(): Post {
         localStorage.removeItem(TOKEN_KEY);
         token = null;
         return Promise.resolve();
+      case "focus": {
+        // No real keyboard here: report one opening or closing so the UI follows.
+        const keyboard = msg.mode === "terminal";
+        setTimeout(() => { deliver({ type: "viewport", ...VIEWPORT, keyboard, reason: "keyboard" }); }, 0);
+        return Promise.resolve();
+      }
+      case "prompt":
+        return Promise.resolve(window.prompt(`${msg.title}\n${msg.message}`, msg.initial));
       case "saveTabs":
         localStorage.setItem(TABS_KEY, JSON.stringify(msg.tabs));
         return Promise.resolve();

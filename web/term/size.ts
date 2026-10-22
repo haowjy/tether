@@ -20,14 +20,15 @@ export function fitSize(width: number, height: number, cell: CellSize): Size {
 
 export interface SizerOptions {
   cell(): CellSize | null;
-  /** Height of the tab bar and suggestion strip, which sit over the web view's bottom. */
+  /** Height of the tab bar and suggestion strip, without the safe-area insets. */
   chromeHeight(): number;
   onChange(size: Size): void;
 }
 
 /**
  * The tmux size from native's geometry (ios-shell.md "Keyboard geometry"): the width and
- * `collapsedHeight`, never the live height. A `keyboard` viewport changes nothing, so
+ * `collapsedHeight`, never the live height, less every safe-area inset: the terminal sits
+ * inside all four (plan.md "Layout"). A `keyboard` viewport changes nothing, so
  * the terminal keeps its rows and the keyboard only pans it. Only `viewport` events and
  * `remeasure` recompute; `onChange` fires when cols or rows differ.
  */
@@ -56,8 +57,8 @@ export class TerminalSizer {
     const { viewport } = this;
     const cell = this.opts.cell();
     if (!viewport || !cell) return;
-    const width = viewport.width - viewport.safeArea.left - viewport.safeArea.right;
-    const next = fitSize(width, viewport.collapsedHeight - this.opts.chromeHeight(), cell);
+    const { top, right, bottom, left } = viewport.safeArea;
+    const next = fitSize(viewport.width - left - right, viewport.collapsedHeight - top - bottom - this.opts.chromeHeight(), cell);
     if (next.cols === this.current.cols && next.rows === this.current.rows) return;
     this.current = next;
     this.opts.onChange(next);

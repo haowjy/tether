@@ -4,6 +4,13 @@ import { Chrome } from "./app/Chrome";
 import { BRIDGE_VERSION, hasNativeBridge, installReceiver, Native, webkitPost } from "./native/bridge";
 import type { NativeMsg } from "./native/bridge";
 import { createXtermRenderer } from "./term";
+import { onSchemeChange, terminalTheme } from "./ui/theme";
+import "./ui/tokens.css";
+import "./app/app.css";
+
+const TERMINAL_FONT_SIZE = 12;
+/** How long to hold the first paint for the bundled font; it is local, so this is a ceiling. */
+const FONT_WAIT_MS = 2_000;
 
 async function start(): Promise<void> {
   const terminal = document.getElementById("terminal");
@@ -29,12 +36,20 @@ async function start(): Promise<void> {
     chrome.textContent = `Bridge version mismatch: web ${String(BRIDGE_VERSION)}, native ${String(boot.bridgeVersion)}. Rebuild both.`;
     return;
   }
+  // xterm.js measures its cell once, at open: the font must be there first.
+  const fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
+  await Promise.race([
+    document.fonts.load(`${String(TERMINAL_FONT_SIZE)}px tether-mono`).catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS)),
+  ]);
+  const renderer = createXtermRenderer(terminal, { fontFamily, fontSize: TERMINAL_FONT_SIZE, theme: terminalTheme() });
+  onSchemeChange(() => { renderer.setTheme(terminalTheme()); });
   const app = new App({
     native,
     boot,
-    renderer: createXtermRenderer(terminal),
+    renderer,
     kind: hasNativeBridge() ? "ios" : "web",
-    chromeHeight: () => chrome.offsetHeight,
+    chromeHeight: () => chrome.querySelector<HTMLElement>(".bar")?.offsetHeight ?? 0,
   });
   shown.app = app;
   render(<Chrome app={app} />, chrome);

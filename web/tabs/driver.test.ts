@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerMsg } from "../proto/generated/messages";
-import type { Snapshot, TerminalRenderer } from "../term";
+import type { Snapshot } from "../term";
 import type { ConnectionState } from "./connection";
 import { makeHost, type FakeLink } from "../net/fakes";
-import { TabDriver } from "./driver";
+import { TabDriver, type TabOptions } from "./driver";
 
 const window1 = { server: "main:1-2", window: 3 };
 
@@ -13,11 +13,9 @@ function setup() {
   const states: ConnectionState[] = [];
   const notices: string[] = [];
   const dec = new TextDecoder();
-  const renderer: TerminalRenderer = {
+  const renderer: TabOptions["renderer"] = {
     output: (b) => painted.push(`o:${dec.decode(b)}`),
     snapshot: (s: Snapshot) => { painted.push(`s:${dec.decode(s.restore)}`); return Promise.resolve(); },
-    cellSize: () => null,
-    dispose: () => undefined,
   };
   const tab = new TabDriver({
     window: window1,

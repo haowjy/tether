@@ -10,7 +10,7 @@ type Watching = Extract<ServerMsg, { type: "watching" }>["data"];
 
 export interface TabOptions {
   window: WindowRef;
-  renderer: TerminalRenderer;
+  renderer: Pick<TerminalRenderer, "output" | "snapshot">;
   /** The host's shared socket. */
   host: Host;
   /** The terminal's size right now, in cells. */

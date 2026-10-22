@@ -37,7 +37,7 @@ describe("TerminalSizer", () => {
     expect(sizer.size).toEqual({ cols: 80, rows: 24 });
     sizer.setViewport(vp());
     sizer.setViewport(vp({ width: 852, collapsedHeight: 393, reason: "rotation", safeArea: { top: 0, right: 59, bottom: 21, left: 59 } }));
-    expect(changes).toEqual(["56x52", "104x21"]);
+    expect(changes).toEqual(["56x45", "104x20"]);
   });
 
   it("never resizes for the keyboard, whatever the live height", () => {
@@ -45,7 +45,7 @@ describe("TerminalSizer", () => {
     sizer.setViewport(vp());
     sizer.setViewport(vp({ height: 400, keyboard: true, reason: "keyboard" }));
     sizer.setViewport(vp({ reason: "keyboard" }));
-    expect(changes).toEqual(["56x52"]);
+    expect(changes).toEqual(["56x45"]);
   });
 
   it("recomputes when the font changes or the cell first becomes measurable", () => {
@@ -57,6 +57,6 @@ describe("TerminalSizer", () => {
     setCell({ width: 9, height: 18 });
     sizer.remeasure();
     sizer.remeasure(); // same size: no change event
-    expect(changes).toEqual(["56x52", "43x43"]);
+    expect(changes).toEqual(["56x45", "43x38"]);
   });
 });

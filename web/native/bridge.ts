@@ -125,6 +125,22 @@ export class Native {
     this.fire({ type: "saveTabs", tabs });
   }
 
+  /** `[⌨]`: show the keyboard (`terminal`) or put it away (`hidden`). */
+  focus(mode: "terminal" | "hidden"): void {
+    this.fire({ type: "focus", mode });
+  }
+
+  /** A semantic haptic, ios-shell.md "Haptics". */
+  haptic(kind: "selection"): void {
+    this.fire({ type: "haptic", kind });
+  }
+
+  /** Short text entry: the web has no text fields. Null when cancelled. */
+  async prompt(title: string, message: string, initial: string): Promise<string | null> {
+    const reply = await this.post({ type: "prompt", title, message, initial });
+    return typeof reply === "string" ? reply : null;
+  }
+
   private fire(msg: WebMsg): void {
     // A missing bridge (desktop dev) or a native refusal has no caller to inform.
     this.post(msg).catch(() => undefined);

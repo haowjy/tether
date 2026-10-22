@@ -4,7 +4,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import type { TerminalRenderer } from ".";
+import type { RendererOptions, TerminalRenderer } from ".";
 import { WritePipeline, type Snapshot } from "./pipeline";
 
 /** Context losses tolerated before settling on the DOM renderer. */
@@ -15,15 +15,16 @@ const MAX_WEBGL_RECREATIONS = 3;
  * renderer otherwise; a lost context is recreated, a few times, since the buffer lives in
  * the Terminal and survives the renderer.
  */
-export function createXtermRenderer(container: HTMLElement): TerminalRenderer {
+export function createXtermRenderer(container: HTMLElement, options: RendererOptions): TerminalRenderer {
   // Native owns the keyboard: xterm's input never fires, and its helper textarea must
   // never take focus (ios-shell.md "Keyboard").
   const term = new Terminal({
     allowProposedApi: true, // unicode11 needs it
     disableStdin: true,
     scrollback: 5000,
-    fontFamily: "Menlo, monospace",
-    fontSize: 12,
+    fontFamily: options.fontFamily,
+    fontSize: options.fontSize,
+    theme: options.theme,
   });
   term.loadAddon(new Unicode11Addon());
   term.unicode.activeVersion = "11";
@@ -54,6 +55,20 @@ export function createXtermRenderer(container: HTMLElement): TerminalRenderer {
   attachWebgl();
 
   const pipeline = new WritePipeline(term);
+  const scrollListeners: ((scrolledUp: boolean) => void)[] = [];
+  let scrolledUp = false;
+  // New output while scrolled up moves the newest line away without scrolling the view,
+  // so writes are checked as well as scrolls.
+  const checkScroll = (): void => {
+    const buffer = term.buffer.active;
+    const up = buffer.viewportY < buffer.baseY;
+    if (up === scrolledUp) return;
+    scrolledUp = up;
+    for (const listener of scrollListeners) listener(up);
+  };
+  term.onScroll(checkScroll);
+  term.onWriteParsed(checkScroll);
+
   return {
     output: (bytes) => { pipeline.output(bytes); },
     snapshot: (snapshot: Snapshot) => pipeline.snapshot(snapshot),
@@ -64,6 +79,9 @@ export function createXtermRenderer(container: HTMLElement): TerminalRenderer {
       const { width, height } = screen.getBoundingClientRect();
       return width > 0 && height > 0 ? { width: width / term.cols, height: height / term.rows } : null;
     },
+    setTheme: (theme) => { term.options.theme = theme; },
+    onScrolledUp: (listener) => { scrollListeners.push(listener); },
+    scrollToBottom: () => { term.scrollToBottom(); },
     dispose: () => {
       webgl = undefined;
       term.dispose();

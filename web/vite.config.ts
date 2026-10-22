@@ -23,7 +23,9 @@ export default defineConfig(({ command }) => ({
   plugins: [preact()],
   // The iOS app loads the build from a custom scheme, so asset URLs are relative.
   base: "./",
-  build: { target: "es2022" },
+  // The bundle ships inside the iOS app and never crosses a network, so xterm.js's size
+  // isn't worth splitting for.
+  build: { target: "es2022", chunkSizeWarningLimit: 1024 },
   // Dev server only: the daemon wants a loopback peer carrying the owner's login, which
   // `tailscale serve` adds in production. Nothing here reaches a build.
   server:

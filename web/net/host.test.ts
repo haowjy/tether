@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerMsg, WindowRef } from "../proto/generated/messages";
-import type { TerminalRenderer } from "../term";
 import type { ConnectionState } from "../tabs/connection";
-import { TabDriver } from "../tabs/driver";
+import { TabDriver, type TabOptions } from "../tabs/driver";
 import { makeHost } from "./fakes";
 
 const server = "main:1-2";
@@ -15,11 +14,9 @@ function setup() {
   const dec = new TextDecoder();
   const tab = (name: string, window: WindowRef) => {
     const states: ConnectionState[] = [];
-    const renderer: TerminalRenderer = {
+    const renderer: TabOptions["renderer"] = {
       output: (b) => painted.push(`${name}:o:${dec.decode(b)}`),
       snapshot: (s) => { painted.push(`${name}:s:${dec.decode(s.restore)}`); return Promise.resolve(); },
-      cellSize: () => null,
-      dispose: () => undefined,
     };
     const driver = new TabDriver({ window, renderer, host: h.host, size: () => ({ cols: 80, rows: 24 }), onState: (s) => states.push(s), onNotice: () => undefined, random: () => 0.5 });
     return { driver, state: (): ConnectionState => states[states.length - 1] as ConnectionState };

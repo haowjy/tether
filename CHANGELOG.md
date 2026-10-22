@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- Visual web UI: tab bar with connection states, session sheets, new window and
+  session, jump to bottom, dark and light themes, bundled Nerd Font.
 - Added `tmux::Session`, the pure tmux control client: startup and client size,
   reply matching with the in-flight cap, pausing panes nobody watches, snapshots that
   are retried when a tmux hook tears or changes the pane mid-list, gaps, layouts, cwd

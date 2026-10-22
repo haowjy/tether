@@ -1,29 +1,64 @@
-import { Native, type Boot, type NativeMsg, type SavedTab } from "../native/bridge";
+import { Native, type Boot, type HostEntry, type NativeMsg, type SavedTab, type Viewport } from "../native/bridge";
 import type { TmuxListing, WindowRef } from "../proto/generated/messages";
 import { TabDriver } from "../tabs/driver";
-import { initialState, type ConnectionState } from "../tabs/connection";
+import { initialState, type ConnectionState, type Halt } from "../tabs/connection";
 import type { TerminalRenderer } from "../term";
 import { TerminalSizer } from "../term/size";
 import { HostRegistry } from "./hosts";
-import { listWindows } from "./listing";
+import { AskError, create, listWindows, type CreateTarget } from "./listing";
 import { HostSync, listed } from "./sync";
+
+/** How long a pill whose window went away stays, greyed, before it goes (plan.md "Layout"). */
+const GONE_LINGER_MS = 1_500;
+const NOTICE_MS = 5_000;
 
 let counter = 0;
 const newId = (): string => `${Date.now().toString(36)}-${String(counter++)}`;
 
 export interface TabView extends SavedTab {
   state: ConnectionState;
+  /** When the tab stopped being live, or opened, in ms since the epoch; null while live. */
+  downSince: number | null;
+  /** When the next automatic retry fires, null if none is due. */
+  retryAt: number | null;
+  /** The active pane's directory, from `watching`; null until tmux reports it. */
+  cwd: string | null;
   driver: TabDriver;
 }
 
-/** What the picker shows: windows to open, or why there are none. */
-export type Picker = { kind: "loading" } | { kind: "error"; message: string } | { kind: "list"; host: string; listing: TmuxListing };
+/** A host's tmux windows as the sheets show them, or why there are none. */
+export type Listing =
+  | { kind: "loading" }
+  | { kind: "list"; listing: TmuxListing }
+  | { kind: "noServer" }
+  | { kind: "halted"; halt: Halt }
+  | { kind: "error"; message: string };
+
+/** The new-window or new-session form. `null` name or dir lets tmux choose. */
+export interface Draft {
+  target: CreateTarget;
+  /** The session's name, for a new window. */
+  sessionName: string | null;
+  name: string | null;
+  dir: string | null;
+  busy: boolean;
+  error: string | null;
+}
+
+export type Sheet = { kind: "home" } | { kind: "attach" } | { kind: "create"; draft: Draft };
 
 export interface AppView {
   tabs: readonly TabView[];
   active: string | null;
-  picker: Picker | null;
+  /** The host the sheets are about: the active tab's, else the first. */
+  host: HostEntry | null;
+  sheet: Sheet | null;
+  listing: Listing | null;
   notice: string | null;
+  keyboard: boolean;
+  locked: boolean;
+  /** The terminal shows older lines than the newest: offer the jump to the bottom. */
+  scrolledUp: boolean;
 }
 
 export interface AppOptions {
@@ -47,7 +82,8 @@ export class App {
   private readonly sizer: TerminalSizer;
   private readonly listeners = new Set<() => void>();
   private readonly syncs = new Map<string, HostSync>();
-  private view: AppView = { tabs: [], active: null, picker: null, notice: null };
+  private view: AppView;
+  private noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(opts: AppOptions) {
     this.native = opts.native;
@@ -58,11 +94,17 @@ export class App {
       chromeHeight: () => opts.chromeHeight(),
       onChange: (size) => { this.activeTab()?.driver.resize(size); },
     });
-    this.sizer.setViewport(opts.boot.viewport);
+    this.view = {
+      tabs: [], active: null, host: null, sheet: null, listing: null, notice: null,
+      keyboard: opts.boot.viewport.keyboard, locked: opts.boot.locked, scrolledUp: false,
+    };
+    this.setViewport(opts.boot.viewport);
     this.hosts.set(opts.boot.hosts);
+    opts.renderer.onScrolledUp((scrolledUp) => { this.update({ scrolledUp }); });
     for (const saved of opts.boot.tabs) {
       this.open(saved, this.view.active === null);
     }
+    this.view.host = this.sheetHost();
     // The cell can be measured only once xterm has painted.
     requestAnimationFrame(() => { this.sizer.remeasure(); });
   }
@@ -87,7 +129,7 @@ export class App {
         this.activeTab()?.driver.input(msg.events);
         break;
       case "viewport":
-        this.sizer.setViewport(msg);
+        this.setViewport(msg);
         break;
       case "lifecycle":
         this.hosts.setActive(msg.phase === "active");
@@ -97,9 +139,11 @@ export class App {
         break;
       case "lock":
         this.hosts.setLocked(msg.locked);
+        this.update({ locked: msg.locked });
         break;
       case "hosts":
         this.hosts.set(msg.hosts);
+        this.update({ host: this.sheetHost() });
         break;
       case "upload":
         if (msg.path) this.view.tabs.find((t) => t.id === msg.tab && t.host === msg.host)?.driver.insertPath(msg.path);
@@ -107,27 +151,47 @@ export class App {
     }
   }
 
+  /** The label native gave a host, for the UI's copy. */
+  hostName(id: string): string {
+    return this.hosts.entries().find((h) => h.id === id)?.name ?? id;
+  }
+
+  /** A pill tap: switch to the tab, and retry now if it is waiting to reconnect. */
   activate(id: string): void {
     const next = this.view.tabs.find((t) => t.id === id);
-    if (!next) return;
-    if (next.id === this.view.active) {
-      next.driver.nudge();
-      return;
+    if (!next || next.state.kind === "closed") return;
+    if (next.id !== this.view.active) {
+      this.activeTab()?.driver.cover();
+      next.driver.uncover();
+      this.native.haptic("selection");
+      this.update({ active: id, sheet: null, host: this.sheetHost(next.host) });
+      this.save();
     }
-    this.activeTab()?.driver.cover();
-    next.driver.uncover();
-    this.update({ active: id });
-    this.save();
+    if (next.state.kind === "reconnecting") next.driver.nudge();
   }
 
   close(id: string): void {
     this.view.tabs.find((t) => t.id === id)?.driver.close();
   }
 
-  /** Opens `window` as a new tab and shows it. */
+  /** `[⌨]`: native owns the keyboard; this only asks. */
+  toggleKeyboard(): void {
+    this.native.focus(this.view.keyboard ? "hidden" : "terminal");
+  }
+
+  scrollToBottom(): void {
+    this.renderer.scrollToBottom();
+  }
+
+  dismissNotice(): void {
+    clearTimeout(this.noticeTimer);
+    this.update({ notice: null });
+  }
+
+  /** Opens `window` as a new tab and shows it; an open one is switched to. */
   add(host: string, window: WindowRef, name: string): void {
-    const open = this.view.tabs.find((t) => t.host === host && t.window.server === window.server && t.window.window === window.window);
-    this.update({ picker: null });
+    const open = this.view.tabs.find((t) => t.host === host && sameWindow(t.window, window) && t.state.kind !== "closed");
+    this.update({ sheet: null });
     if (open) {
       this.activate(open.id);
       return;
@@ -137,26 +201,90 @@ export class App {
     this.save();
   }
 
-  /** The `[+]` sheet: the windows of the active tab's host, else the first host's. */
-  async openPicker(): Promise<void> {
-    const id = this.activeTab()?.host ?? this.hosts.entries()[0]?.id;
-    const host = id === undefined ? undefined : this.hosts.get(id);
-    if (id === undefined || !host) {
-      this.update({ picker: { kind: "error", message: "No host. Add one in the app." } });
-      return;
-    }
-    this.update({ picker: { kind: "loading" } });
-    try {
-      const listing = await listWindows(host);
-      if (this.view.picker?.kind !== "loading") return; // dismissed meanwhile
-      this.update({ picker: listing ? { kind: "list", host: id, listing } : { kind: "error", message: "tmux isn't running on that host." } });
-    } catch (error) {
-      if (this.view.picker?.kind === "loading") this.update({ picker: { kind: "error", message: String(error) } });
-    }
+  /** `[<]` home or the `[+]` sheet; both list the host's windows. */
+  openSheet(kind: "home" | "attach"): void {
+    const host = this.sheetHost();
+    this.update({ sheet: { kind }, host });
+    void this.refresh();
   }
 
-  closePicker(): void {
-    this.update({ picker: null });
+  closeSheet(): void {
+    this.update({ sheet: null });
+  }
+
+  /** Lists the sheet's host again. */
+  async refresh(): Promise<void> {
+    const entry = this.view.host;
+    const host = entry ? this.hosts.get(entry.id) : undefined;
+    if (!entry || !host) {
+      this.update({ listing: { kind: "error", message: "No host yet. Add one in the app's Hosts screen." } });
+      return;
+    }
+    if (!entry.enrolled) {
+      this.update({ listing: { kind: "halted", halt: "unauthorized" } });
+      return;
+    }
+    if (this.view.listing?.kind !== "list") this.update({ listing: { kind: "loading" } });
+    let next: Listing;
+    try {
+      const listing = await listWindows(host);
+      this.prune(entry.id, listing);
+      next = listing ? { kind: "list", listing } : { kind: "noServer" };
+    } catch (error) {
+      next = listingError(error, entry.name);
+    }
+    if (this.view.sheet && this.view.host?.id === entry.id) this.update({ listing: next });
+  }
+
+  /** The new-window (in `session`) or new-session form. */
+  startCreate(target: CreateTarget, sessionName: string | null): void {
+    this.update({ sheet: { kind: "create", draft: { target, sessionName, name: null, dir: null, busy: false, error: null } } });
+  }
+
+  /** Back from the form to the list. */
+  cancelCreate(): void {
+    this.update({ sheet: { kind: "attach" } });
+  }
+
+  /** Asks native for the name: the web has no text fields (plan.md "Standards"). */
+  async promptName(): Promise<void> {
+    const draft = this.draft();
+    if (!draft) return;
+    const what = draft.target.kind === "window" ? "window" : "session";
+    const typed = await this.native.prompt(`Name the ${what}`, "Leave empty to let tmux choose.", draft.name ?? "");
+    if (typed === null) return;
+    this.patchDraft({ name: typed.trim() || null });
+  }
+
+  /** A start directory, or null for tmux's default. */
+  chooseDir(dir: string | null): void {
+    this.patchDraft({ dir });
+  }
+
+  /** A start directory typed into a native prompt. */
+  async askDir(): Promise<void> {
+    const draft = this.draft();
+    if (!draft) return;
+    const typed = await this.native.prompt("Start directory", "An absolute path on the server.", draft.dir ?? this.activeTab()?.cwd ?? "");
+    if (typed === null) return;
+    this.patchDraft({ dir: typed.trim() || null });
+  }
+
+  async submitCreate(): Promise<void> {
+    const draft = this.draft();
+    const entry = this.view.host;
+    const host = entry ? this.hosts.get(entry.id) : undefined;
+    if (!draft || draft.busy || !entry || !host) return;
+    this.patchDraft({ busy: true, error: null });
+    try {
+      const window = await create(host, draft.target, draft.name, draft.dir);
+      // `created` carries no names: a listing has them.
+      const listing = await listWindows(host).catch(() => null);
+      this.add(entry.id, window, titleOf(listing, window) ?? `${draft.sessionName ?? draft.name ?? "tmux"}:${draft.name ?? String(window.window)}`);
+    } catch (error) {
+      const message = error instanceof AskError && error.reason === "noServer" ? "tmux isn't running on the server." : String(error instanceof Error ? error.message : error);
+      this.patchDraft({ busy: false, error: message });
+    }
   }
 
   private open(saved: SavedTab, active: boolean): void {
@@ -165,11 +293,15 @@ export class App {
     if (!this.syncs.has(saved.host)) {
       this.syncs.set(saved.host, new HostSync({
         host,
-        onListing: (listing) => { this.prune(saved.host, listing); },
+        onListing: (listing) => {
+          this.prune(saved.host, listing);
+          // Keeps an open sheet current: `sessionsChanged` relists the host.
+          if (this.view.sheet && this.view.host?.id === saved.host) this.update({ listing: listing ? { kind: "list", listing } : { kind: "noServer" } });
+        },
         onRenamed: (window, name) => { this.rename(saved.host, window, name); },
       }));
     }
-    const tab = { ...saved, state: initialState } as TabView;
+    const tab = { ...saved, state: initialState, downSince: Date.now(), retryAt: null, cwd: null } as TabView;
     tab.driver = new TabDriver({
       window: saved.window,
       renderer: this.renderer,
@@ -177,11 +309,23 @@ export class App {
       size: () => this.sizer.size,
       covered: !active,
       onState: (state) => {
+        const now = Date.now();
         tab.state = state;
-        if (state.kind === "closed") queueMicrotask(() => { this.remove(tab.id); });
-        else this.update({});
+        tab.downSince = state.kind === "live" ? null : (tab.downSince ?? now);
+        tab.retryAt = state.kind === "reconnecting" && state.retryInMs !== null ? now + state.retryInMs : null;
+        if (state.kind === "closed") {
+          // A window that went away shows ✕ for a moment; a tab Jimmy closed just goes.
+          if (state.reason === "user") queueMicrotask(() => { this.remove(tab.id); });
+          else setTimeout(() => { this.remove(tab.id); }, GONE_LINGER_MS);
+        }
+        this.update({ tabs: [...this.view.tabs] });
       },
-      onNotice: (text) => { this.update({ notice: text }); },
+      onWatching: (watching) => {
+        if (tab.cwd === watching.cwd) return;
+        tab.cwd = watching.cwd;
+        this.update({ tabs: [...this.view.tabs] });
+      },
+      onNotice: (text) => { this.notice(text); },
     });
     this.view = { ...this.view, tabs: [...this.view.tabs, tab], ...(active && { active: tab.id }) };
     this.notify();
@@ -213,13 +357,41 @@ export class App {
 
   /** Titles are `session:window`; a rename changes the window part. */
   private rename(host: string, window: WindowRef, name: string): void {
-    const tab = this.view.tabs.find((t) => t.host === host && t.window.server === window.server && t.window.window === window.window);
+    const tab = this.view.tabs.find((t) => t.host === host && sameWindow(t.window, window));
     if (!tab) return;
     const title = `${tab.name.slice(0, tab.name.indexOf(":") + 1)}${name}`;
     if (title === tab.name) return;
     tab.name = title;
     this.update({ tabs: [...this.view.tabs] });
     this.save();
+  }
+
+  private setViewport(viewport: Viewport): void {
+    this.sizer.setViewport(viewport);
+    // The insets the terminal is sized from are the ones the layout pads by.
+    const root = document.documentElement.style;
+    for (const side of ["top", "right", "bottom", "left"] as const) root.setProperty(`--safe-${side}`, `${String(viewport.safeArea[side])}px`);
+    if (this.view.keyboard !== viewport.keyboard) this.update({ keyboard: viewport.keyboard });
+  }
+
+  private sheetHost(id = this.activeTab()?.host): HostEntry | null {
+    const entries = this.hosts.entries();
+    return entries.find((h) => h.id === id) ?? entries[0] ?? null;
+  }
+
+  private draft(): Draft | null {
+    return this.view.sheet?.kind === "create" ? this.view.sheet.draft : null;
+  }
+
+  private patchDraft(patch: Partial<Draft>): void {
+    const draft = this.draft();
+    if (draft) this.update({ sheet: { kind: "create", draft: { ...draft, ...patch } } });
+  }
+
+  private notice(text: string): void {
+    clearTimeout(this.noticeTimer);
+    this.update({ notice: text });
+    this.noticeTimer = setTimeout(() => { this.update({ notice: null }); }, NOTICE_MS);
   }
 
   private save(): void {
@@ -234,4 +406,27 @@ export class App {
   private notify(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+function sameWindow(a: WindowRef, b: WindowRef): boolean {
+  return a.server === b.server && a.window === b.window;
+}
+
+/** `session:window` for a window in a listing. */
+function titleOf(listing: TmuxListing | null, window: WindowRef): string | null {
+  if (listing?.server !== window.server) return null;
+  for (const session of listing.sessions) {
+    const win = session.windows.find((w) => w.id === window.window);
+    if (win) return `${session.name}:${win.name}`;
+  }
+  return null;
+}
+
+function listingError(error: unknown, hostName: string): Listing {
+  if (error instanceof AskError) {
+    if (error.reason === "unauthorized" || error.reason === "incompatible" || error.reason === "detached") return { kind: "halted", halt: error.reason };
+    if (error.reason === "noServer") return { kind: "noServer" };
+    if (error.reason === "timeout") return { kind: "error", message: `Can't reach ${hostName}. Is Tailscale on?` };
+  }
+  return { kind: "error", message: error instanceof Error ? error.message : String(error) };
 }

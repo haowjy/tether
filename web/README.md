@@ -9,8 +9,11 @@ Drives the real UI in a desktop browser against a daemon on this box. The dev se
 proxies `/ws` and `/auth/*` to the daemon and adds the owner's `Tailscale-User-Login`
 (dev server only, never in a build; the daemon still wants a loopback peer). A dev shim
 (`dev/`, loaded only under `import.meta.env.DEV`) stands in for native: it keeps a device
-token, reports a fixed 390×700 viewport, and turns keys typed in its textarea into
-bridge `input` events.
+token, reports a fixed viewport, turns keys typed in its textarea into bridge `input`
+events, answers `prompt` with `window.prompt`, and reports the keyboard opening when `[⌨]`
+asks for focus. The viewport defaults to an iPhone in portrait (393×852, safe area
+59/0/34/0); set it from the query string, e.g. landscape:
+`?w=852&h=393&safe=0,59,21,59` (top, right, bottom, left).
 
 1. Run a daemon. To keep clear of your own tmux, point it at a private server:
 
@@ -34,7 +37,7 @@ bridge `input` events.
    localStorage, so later loads need no hash; without one the page asks for it. A 4401
    from the daemon forgets it.
 4. `+` lists the windows on the daemon's tmux; tap one to open a tab. Click the dev textarea
-   and type. Tabs persist in localStorage.
+   and type. Tabs persist in localStorage. `prefers-color-scheme` picks dark or light.
 
 Drive the page from a script with `window.__tether.receive([...])` to send the messages
 native would (`lifecycle`, `network`, `viewport`, `lock`).
