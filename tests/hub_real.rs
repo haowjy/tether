@@ -291,6 +291,40 @@ async fn a_moved_window_rehomes_its_watch_and_a_closed_one_is_broadcast() {
 }
 
 #[tokio::test]
+async fn new_windows_and_sessions_reach_the_window_list() {
+    let Some((_serial, server)) = setup("new-window-list").await else {
+        return;
+    };
+    let name = server_name(&server);
+    let hub = start(&server);
+    let mut conn = Conn::open(&hub).await;
+    conn.watch(1, &name, 0).await;
+    conn.wait_json(0, "watching", |_| true).await;
+    conn.wait_snapshot(0, 1).await;
+
+    for (args, label) in [
+        (
+            &["new-window", "-d", "-t", tmux_server::SESSION][..],
+            "detached window",
+        ),
+        (
+            &["new-window", "-t", tmux_server::SESSION][..],
+            "foreground window",
+        ),
+        (
+            &["new-session", "-d", "-s", "other", "-x", "80", "-y", "24"][..],
+            "detached session",
+        ),
+    ] {
+        let mark = conn.got.len();
+        server
+            .run(args)
+            .unwrap_or_else(|_| panic!("create {label}"));
+        conn.wait_json(mark, "sessionsChanged", |_| true).await;
+    }
+}
+
+#[tokio::test]
 async fn kill_server_closes_every_tab_on_it() {
     let Some((_serial, server)) = setup("kill").await else {
         return;

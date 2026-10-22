@@ -342,9 +342,10 @@ impl Session {
                 };
                 Event::ActivePane { window, pane }
             }
-            NotificationKind::SessionsChanged | NotificationKind::SessionRenamed => {
-                Event::SessionsChanged
-            }
+            NotificationKind::WindowAdd
+            | NotificationKind::UnlinkedWindowAdd
+            | NotificationKind::SessionsChanged
+            | NotificationKind::SessionRenamed => Event::SessionsChanged,
             NotificationKind::SubscriptionChanged => {
                 // `w<W> $S @W <index> - : <value>`
                 let Some(window) = first

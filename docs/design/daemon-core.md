@@ -162,7 +162,8 @@ without UTF-8 decoding, keeping a partial line across calls:
 
 - **Outside a block:** `%begin T N F` opens one. `%output %P <data>` and
   `%extended-output %P <age> … : <data>` are pane output. Notifications used:
-  `%pause`, `%continue`, `%layout-change`, `%window-close`, `%unlinked-window-close`,
+  `%pause`, `%continue`, `%layout-change`, `%window-add`, `%unlinked-window-add`,
+  `%window-close`, `%unlinked-window-close`,
   `%window-renamed`, `%unlinked-window-renamed`, `%window-pane-changed`,
   `%sessions-changed`, `%session-renamed`, `%subscription-changed`, `%exit`. Anything
   else (including `load-buffer`'s read errors, printed outside any block) is dropped;
@@ -255,8 +256,8 @@ Its rules:
   format.
 - **Notifications.** `%layout-change` carries the window layout and the visible
   layout; `Layout` takes its pane sizes from the visible one, so a zoomed pane reports
-  its full window size. `%sessions-changed` and `%session-renamed` both become
-  `SessionsChanged`.
+  its full window size. `%window-add`, `%unlinked-window-add`, `%sessions-changed` and
+  `%session-renamed` all become `SessionsChanged`.
 - **Startup order** (§3.1): `Ready` follows the client-size line, so no vote reaches
   tmux first. `%subscription-changed` for a `w<W>` subscription becomes `Cwd` (§3.7).
 - **`%exit`** ends a control client whether tmux detached it, the server was killed
@@ -1188,14 +1189,15 @@ A snapshot clears xterm.js's scrollback; older rows come from `history`
 
 ### 5.5 Type generation
 
-Message types are defined once in `src/proto/messages.rs` and generated for TypeScript
-with **ts-rs** into one file, `web/proto/generated/messages.ts`. A Rust test
+WebSocket message types are defined in `src/proto/messages.rs`; the shared HTTP error
+types are in `src/proto/error.rs`. Both are generated for TypeScript with **ts-rs** into
+one file, `web/proto/generated/messages.ts`. A Rust test
 (`src/proto/typescript.rs`) renders the file from ts-rs's declarations and fails while
 the committed one differs, so `cargo test`, which preflight runs, checks it is current;
 `UPDATE_PROTO_TYPES=1 cargo test --lib proto::typescript` rewrites it. The file exports
-the two message types the web uses, `ClientMsg` and `ServerMsg`, the types they refer
-to, and the constants `PROTOCOL_VERSION` and `CloseCode` (§5.2). A type the web needs
-that no message refers to goes in the test's `declarations()` list; the test also
+the two message types the web uses, `ClientMsg` and `ServerMsg`, their referenced types,
+`ErrorBody` and `HttpError` for HTTP failures, and the constants `PROTOCOL_VERSION` and `CloseCode` (§5.2). A type the web needs that no
+message refers to goes in the test's `declarations()` list; the test also
 fails if a message refers to a type missing from it. Enums use
 `#[serde(tag = "type", content = "data")]`, with camelCase names. `sessions.tmux` is
 `TmuxListing | null` in TypeScript.
