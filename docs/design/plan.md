@@ -608,7 +608,8 @@ Dependency rules: `hub/` never sees HTTP, `http/` never talks to tmux, and
   (`hub::State`) are sans-IO state machines: input in, events or effects out, no
   I/O, no clock. Tasks around them only move bytes and execute effects
   ([daemon-core.md §2](daemon-core.md#2-tasks-and-channels)). No `Arc<Mutex<…>>` maps.
-- **Bounded everything**, with the drop-and-snapshot rule in one place, the outbox.
+- **Bounded everything**, with the drop-and-snapshot rule in one place, the hub's
+  per-connection credit ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)).
 - **The `%output` decoder works on bytes, not strings.**
 - `#![forbid(unsafe_code)]`, no `unwrap` in daemon paths, and a panicking task surfaces
   as an error rather than a silently dead tab.

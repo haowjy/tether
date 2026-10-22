@@ -8,7 +8,9 @@ state only the current rule; this log keeps the reasoning and the history.
 **Who decides.** *Jimmy* owns product calls, and his decisions are marked as his.
 *Tech lead* decisions settle reviews. *Design* decisions were made by the spec's
 author while writing it; the spawn that wrote each spec is named for traceability
-(daemon core p7, iOS shell and auth p8 and p15, review round 2 revision p21). Reviews:
+(daemon core p7, iOS shell and auth p8 and p15, review round 2 revision p21; the
+`tmux::Session` build p25 and the restore-byte composer p30, whose probes corrected
+the daemon-core spec). Reviews:
 round 1 of the plan is [plan-review.md](plan-review.md); round 1 of the subsystem specs
 was p10–p14; round 2 was p16 (structure) and p17 (correctness).
 
@@ -229,12 +231,83 @@ All 2026-10-21, decided by Jimmy.
   measured a gap); a private marker command (the list is already atomic); a
   server-side `vt100` (a second emulator, still needing the boundary).
 
+### Torn: the snapshot's own pane, or a changed size
+
+- **Decided:** 2026-10-22, design (p25, from tmux 3.4 probes; the size check by the
+  `src/tmux/` lane). Changes the torn rule of "Snapshot boundary: one atomic command
+  list" above, which counted any `%output` or flag-0 block in the list.
+- **What:** a snapshot group is torn when `%output` for its own pane arrives between its
+  first and last reply, or when the full `<STATE>` re-read by the list's last command
+  isn't byte-identical to the first state reply (about 150 bytes per snapshot).
+  Rejected: re-reading only the size, which accepts a hook's `send-keys -R` (screen
+  cleared, cursor moved, keypad off, size unchanged). It is re-sent, 3 attempts in all.
+- **Why:** a hook that doesn't wait (`after-display-message 'display-message -p
+  HOOKED'`) puts a flag-0 block between the replies but lets no output in, so the old
+  rule would have failed every snapshot for anyone with such a hook. A waiting hook
+  (`run-shell 'sleep 0.3'`) shows pane output arriving outside any block between the
+  state and the capture replies, which the new rule catches.
+- **Rejected:** any flag-0 block or any `%output` in the list as torn (the old rule,
+  above); output for other panes cannot be in this pane's capture.
+
+### A Release invalidates snapshot attempts
+
+- **Decided:** 2026-10-22, design (the `src/tmux/` lane).
+- **What:** `Release` for a pane abandons its outstanding snapshot attempts: none is
+  re-sent, and a reply that still arrives produces no `Snapshot`.
+- **Why:** every snapshot list starts with `continue`; a retry after the pane was
+  released would resume a pane the session just unwanted and paused.
+
 ### The daemon composes restore bytes
 
 - **Decided:** 2026-10-21, design (daemon core).
 - **Rejected:** structured state each client applies: the web and Swift clients would
   both carry restore logic, and only the daemon can test it against tmux with a `vt100`
   oracle.
+
+### `Session` composes them: `Event::Snapshot { tag, pane, size, restore }`
+
+- **Decided:** 2026-10-22, design (p30). Replaces the draft event shape
+  `PaneSnapshot { pane, size, restore }` and p25's typed `PaneSnapshot` event.
+- **What:** `Session` runs `snapshot::compose` over the five typed replies and emits the
+  composed bytes with the pane's size. `PaneSnapshot` and `PaneState` stay inside
+  `tmux/snapshot.rs`.
+- **Why:** the hub never needs tmux's state format, so hub tests feed recorded streams
+  and see only bytes; `compose` is pure, so it is tested where the recordings are.
+- **Rejected:** the event carrying the typed replies and the hub calling `compose`
+  (the hub would depend on tmux's state format).
+
+### Restore bytes: what the probes settled
+
+- **Decided:** 2026-10-22, design (p25 and p30), from tmux 3.4 recordings.
+- **What:**
+  - `?1003h` comes from `mouse_all_flag`.
+  - Each tab stop is a CUP to its column and `ESC H`.
+  - Empty rows are skipped.
+  - Tab stops, region and origin mode apply to the screen in use only.
+  - A cursor past the last column (tmux's pending wrap) is clamped.
+  - Every position is clamped to the pane.
+- **Why:** in tmux's `format.c`, `mouse_any_flag` means that some mouse mode is on (a
+  fixture that sets only `?1000h ?1006h` reports `mouse_any_flag=1`), so a restore
+  keyed on it would switch on any-motion tracking for every mouse application.
+  `ESC H` sets a stop at the cursor's column, so a bare run of them sets one stop.
+  tmux 3.4 reports `cursor_x == cols` at a pending wrap, and xterm.js clamps a cursor
+  at `cols` to the last column, so restore clamps it itself and loses the wrap.
+- **Rejected:** `mouse_any_flag` for `?1003`; a bare `ESC H` per stop.
+
+### How the composer is tested
+
+- **Decided:** 2026-10-22, design (p30).
+- **What:** the recorded snapshots' restore bytes are fed to `vt100` 0.18 and compared
+  with tmux's capture and state; the modes `vt100` lacks (autowrap, insert, tab
+  stops) are pinned on the bytes; a continuity check restores snapshot 1, feeds the
+  live output and compares with snapshot 2; and every composer change is cross-checked
+  against `@xterm/headless` 6.0.0 by hand ([daemon-core.md §8](daemon-core.md#8-testing)).
+- **Why:** the renderer is xterm.js, so `vt100` alone is a second emulator's opinion.
+  Seventeen deliberate breaks of `compose` were all caught by these tests; the xterm.js
+  run flagged a stripped `CSI 4 h` and a stripped tab-stop section, which `vt100`
+  cannot see.
+- **Rejected:** `vt100` as the only oracle, since it has no autowrap, insert mode or
+  tab stops.
 
 ### One control client per session, fixed for life
 
@@ -523,6 +596,23 @@ All 2026-10-21, decided by Jimmy.
   replies.
 - **Rejected:** deleting on `%paste-buffer-deleted` or after a 5 s timer.
 
+### Paste buffers: a window check first, a separate delete on failure
+
+- **Decided:** 2026-10-22, design (p25 for the check and the names; the `src/tmux/`
+  lane for the delete).
+- **What:** the paste group is `load-buffer ; paste-buffer -p -d`, the buffer is
+  `tether-<tag>`, and a failed group is followed by a separate `delete-buffer -b
+  tether-<tag>` group whose error is ignored. Tags are unique across control clients.
+- **Why:** `paste-buffer -d` deletes only on success, so a failure after `load-buffer`
+  would leave the pasted text in tmux's buffer list. A leading `send-keys -t @W` guard
+  was tried and dropped: it covered only a missing window, and the cleanup covers every
+  failure point. tmux skips the rest of a failed
+  list, so the delete can't ride in the same group. Buffer names are server-wide, so
+  two control clients sharing a tag space would collide. A missing file doesn't fail
+  `load-buffer` on 3.4 (the error is printed outside any block); the group fails at
+  `paste-buffer` instead.
+- **Rejected:** `paste-buffer -d` alone (leaves the buffer on failure).
+
 ### An oversized reply fails its group, not the control client
 
 - **Decided:** 2026-10-21, design (p21).
@@ -531,6 +621,34 @@ All 2026-10-21, decided by Jimmy.
 - **Why:** a legal, very large screen made the old 4 MiB limit kill the control
   client, which would respawn and fail again.
 - **Rejected:** treating any limit breach as fatal.
+- **Changed 2026-10-22 (design, p25):** the parser caps only the length of a line
+  (`TooLong`, never an error). The 1 MiB reply cap is `Session`'s, per group, because
+  only `Session` knows the groups; replies to hooks and the attach are never held. The
+  4 MiB block limit is gone.
+  - **Rejected:** a block cap in the parser, which doesn't know the groups.
+
+### `Session::new()` takes no session id
+
+- **Decided:** 2026-10-22, design (p25).
+- **What:** `Session::new()` takes no argument. The pump's `attach-session -t '$S'`
+  is the only place the id is used.
+- **Why:** the protocol never uses it: `display-message` without `-t` targets the
+  attached session.
+- **Rejected:** `Session::new(SessionId)` as the earlier spec had it.
+
+### Notification choices in `Session`
+
+- **Decided:** 2026-10-22, design (p25), where the spec was silent.
+- **What:**
+  - `%session-renamed` becomes `SessionsChanged`, like `%sessions-changed`.
+  - `Layout` takes pane sizes from the visible layout, so a zoomed pane reports its
+    full window size.
+  - The client-size line at startup produces a `%layout-change` even when no size
+    changes; it is reported like any other, and a `Layout` that repeats a stream's
+    size is not a break.
+  - `%exit` follows a detach, `kill-server` and a closed stdin alike, so
+    `LocateSession` keeps running first in the exit path.
+- **Rejected:** the window layout for sizes (it is the unzoomed layout).
 
 ### Caps sized for the memory ceiling
 

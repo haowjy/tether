@@ -70,9 +70,11 @@ Tasks share no mutable state; they talk over channels.
 
 - **Into the hub, senders wait.** Pumps send on one bounded channel, connections and
   the one-shot runner on another. A pump waiting for room stops reading stdout, so
-  tmux stops writing: it pauses a wanted pane after `pause-after` (§3.3), or, when
-  tether is the pane's only client, stops reading the pane. While waiting, a pump
-  keeps writing lines to stdin and a connection keeps moving `ToConn` into its outbox.
+  tmux stops writing. With a terminal client also attached to the pane's session,
+  tmux pauses a wanted pane after `pause-after` and drops what it queued (a Gap,
+  §3.3); with only control clients attached it stops reading the pane and nothing is
+  lost. While waiting, a pump keeps writing lines to stdin and a connection keeps
+  moving `ToConn` into its outbox.
 - **Out of the hub, nothing waits.** The hub uses `try_send`. A pump's line channel
   is as deep as its in-flight cap (§3.3), so it can't fill; if it does, the hub kills
   that client. A connection's channel is sized from its credit (§4.6), so it can't
@@ -98,11 +100,11 @@ flowchart LR
 
 ```text
 src/tmux/
-  mod.rs       ids, Op, Event, Location, PaneSnapshot
+  mod.rs       ids, Op, Event, Reply, Location, errors
   parse.rs     pure: bytes -> lines (blocks, notifications, %output decoding)
   session.rs   pure: Session, the sans-IO control client
   command.rs   pure: command builders, quoting, key-name validation
-  snapshot.rs  pure: state format, replies -> restore bytes
+  snapshot.rs  pure: state format, typed replies -> restore bytes
   layout.rs    pure: layout string -> pane sizes
   pump.rs      I/O: spawn `tmux -N -C`, bytes out, lines in
   oneshot.rs   I/O: one-shot `tmux -N` commands
@@ -124,6 +126,9 @@ Everything but `pump.rs` and `oneshot.rs` is pure and tested from recorded fixtu
   `"<pid>-<start_time>"` and the size of the session's current window; the session
   then sets that as the client size (`refresh-client -C <W>x<H>`, §3.6) and only then
   reports `Ready`. One line can't do both: `refresh-client -C` doesn't expand formats.
+  Without `-t`, `display-message` targets the attached session, so `Session` needs no
+  session id; only the pump's `attach-session` names it. Setting the client size makes
+  tmux send a `%layout-change` even when no size changed.
 - **Versions:** an optional `name-` prefix, `MAJOR.MINOR`, an optional letter
   (`3.4`, `3.7b`, `next-3.6`). Below 3.4 the client stops with `TmuxTooOld`; an
   unparseable version counts as the newest known, with a warning.
@@ -144,16 +149,17 @@ without UTF-8 decoding, keeping a partial line across calls:
   `%pause`, `%continue`, `%layout-change`, `%window-close`, `%unlinked-window-close`,
   `%window-renamed`, `%unlinked-window-renamed`, `%window-pane-changed`,
   `%sessions-changed`, `%session-renamed`, `%subscription-changed`, `%exit`. Anything
-  else (including `load-buffer`'s read errors, printed outside any block) is dropped
-  with a debug log of its length; newer tmux adds notifications.
+  else (including `load-buffer`'s read errors, printed outside any block) is dropped;
+  newer tmux adds notifications. The parser keeps only the length of such a line
+  (`Line::Unknown`), and `Session`, being pure, logs nothing.
 - **Inside a block:** every line is body, even one starting with `%`, until `%end` or
   `%error` with the **same `N` and `F`**. On 3.4 the `%pause`/`%continue` that
   `refresh-client -A` causes are written inside its block and ignored as body.
 - **`%output` decoding:** `\` plus three octal digits is one byte; every other byte
   passes through. The result is `Bytes` and may be invalid UTF-8.
-- **Limits** (§6): a partial line, and a group's reply bodies in total, are capped.
-  Past either cap, the excess is discarded to the next line or block end and the
-  group fails `TooLarge`; the control client survives.
+- **Limit** (§6): the parser caps only the length of a line. A longer line is
+  discarded through its line end and reported as `Line::TooLong`, never as an error.
+  The cap on a group's replies is `Session`'s (§3.3), since only it knows the groups.
 
 Accepted: a captured line that is byte for byte the matching `%end T N F` ends the
 block early. tmux's protocol has this ambiguity, and a pane can't predict `N`.
@@ -167,10 +173,12 @@ and no clock:
 pub struct Step { pub events: Vec<Event>, pub lines: Vec<String> }
 
 impl Session {
-    pub fn new(session: SessionId) -> (Session, Step);   // the startup line
+    pub fn new() -> (Session, Step);                       // the startup line
     pub fn feed(&mut self, bytes: &[u8]) -> Step;          // bytes from the pump
     pub fn request(&mut self, tag: Tag, op: Op) -> Step;   // caller checked capacity
     pub fn in_flight(&self) -> usize;
+    pub fn wanted(&self) -> impl Iterator<Item = PaneId> + '_;
+    pub fn exit_seen(&self) -> bool;                       // tmux sent %exit
 }
 ```
 
@@ -180,29 +188,57 @@ Its rules:
   server-wide counter. A **flag-1** block is the next reply for the oldest pending
   group; the group completes after one `%end` per command. `%error` completes it at
   once as failed: tmux skips the rest of a list after an error. A **flag-0** block
-  (the attach reply, a hook) isn't tether's and is dropped. A flag-1 block with
-  nothing pending is `Event::Fatal`.
+  (the attach reply, a hook) isn't tether's: it is dropped and never held in memory.
+  A flag-1 block with nothing pending is `Event::Fatal`.
+- **Reply cap.** The bodies of one group's replies are held up to 1 MiB together
+  (§6). Past it the held bodies are dropped, later replies of the group are still
+  matched and counted, and the group fails `TooLarge`; the control client survives
+  and later groups answer normally. A `TooLong` line (§3.2) inside a block counts as
+  past the cap.
 - **Wanted panes.** `Snapshot` makes a pane wanted, `Release` unwants and pauses it.
-  Output from a pane neither wanted nor paused is dropped and the pane paused
+  Output from a pane that is unwanted with no pause in flight is dropped and the pane paused
   (`refresh-client -A '%P:pause'`; a pause beyond the in-flight cap waits for a
   reply). This covers panes created later without listing anything, and keeps a
   non-owner's copy of a linked window's pane quiet (§4.2). Pausing affects only this
   client; tmux keeps reading the pane. Never `'%P:off'`: it crashes tmux 3.2a–3.6b
   when output is queued ([tmux-control-mode.md §6](research/tmux-control-mode.md)).
+  A `Release` also invalidates the pane's outstanding snapshot attempts: none is
+  re-sent (a list starts with `continue`, which would resume the pane just released),
+  and a reply that still arrives produces no event of any kind (no `Snapshot`, no
+  `Done`). The Release itself is the answer: Snapshot, Release, Snapshot of one pane
+  leaves the first unanswered even though the pane is wanted again.
+- **Pause tracking is bounded by work in flight.** A pane counts as pausing only while
+  a pause of it (the session's own or a Release) is in flight or waiting for a slot;
+  tmux 3.4 sends nothing from a pane after its pause reply. Output that arrives later
+  means something resumed the pane, and it is paused again.
 - **Loss.** `pause-after=3` bounds what tmux queues for a stalled tether. A `%pause`
   tether didn't request, for a wanted pane, means tmux dropped bytes: `Gap { pane }`.
   The next snapshot's `continue` resumes it. With pause-after on, output arrives as
-  `%extended-output`.
-- **Torn snapshots.** User hooks run between the commands of a list, and a waiting
-  hook (`run-shell` without `-b`) lets output in mid-list, outside both the capture
-  and the live stream. A snapshot group with any `%output` or flag-0 block between its
-  first and last reply is torn; the session re-sends it, 3 attempts in all, then fails
+  `%extended-output`. A Gap needs a non-control client attached to the pane's
+  session (the laptop). When every attached client is a control client that has
+  fallen behind, tmux stops reading the pane instead of pausing it, which matches §2:
+  nothing is lost and no `%pause` arrives.
+- **Torn snapshots.** User hooks run between the commands of a list. A hook that
+  waits (`run-shell` without `-b`) lets tmux read the pane mid-list, so the pane's
+  output lands outside both the capture and the live stream. A hook that doesn't wait
+  (`display-message -p`) only adds a flag-0 block between the replies and lets no
+  output in. A snapshot group is **torn** when `%output` for its own pane arrives
+  between its first and last reply (output for other panes doesn't matter), or when
+  the `<STATE>` re-read by the list's last command (§3.5) is not byte-identical to
+  the first state reply. The session re-sends a torn list, 3 attempts in all, then fails
   it with `Torn`.
-- **Snapshots in stream order:** `Snapshot { tag, pane, snapshot }` is emitted where
-  the group completed, between the output events around it (§3.5).
+- **Snapshots in stream order:** `Snapshot { tag, pane, size, restore }` is emitted
+  where the group completed, between the output events around it. The session turns
+  the replies into restore bytes itself (§3.5), so the hub never sees tmux's state
+  format.
+- **Notifications.** `%layout-change` carries the window layout and the visible
+  layout; `Layout` takes its pane sizes from the visible one, so a zoomed pane reports
+  its full window size. `%sessions-changed` and `%session-renamed` both become
+  `SessionsChanged`.
 - **Startup order** (§3.1): `Ready` follows the client-size line, so no vote reaches
   tmux first. `%subscription-changed` for a `w<W>` subscription becomes `Cwd` (§3.7).
-  The session notes whether `%exit` was seen.
+- **`%exit`** ends a control client whether tmux detached it, the server was killed
+  or its stdin closed, so `exit_seen()` alone doesn't say why it ended (§4.5).
 
 ### 3.4 Commands (`command.rs`)
 
@@ -219,7 +255,7 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 | `Subscribe { window }` / `Unsubscribe { window }` | `refresh-client -B 'w<W>:@W:#{pane_current_path}'` / `refresh-client -B 'w<W>'` | maint. |
 | `History { pane, start, end }` | `capture-pane -p -e -t %P -S <start> -E <end>` | user |
 | `Input { window, items }` | text and bytes: `send-keys -t @W -H 68 69 …`, ≤ 512 bytes per command; a key: `send-keys -t @W <name>` | user |
-| `Paste { window, path }` | `load-buffer -b tether-<n> '<path>' ; paste-buffer -p -d -b tether-<n> -t @W` | user |
+| `Paste { window, path }` | `load-buffer -b tether-<tag> '<path>' ; paste-buffer -p -d -b tether-<tag> -t @W` | user |
 
 - **Locate never errors.** On 3.4, `display-message -t` a missing window or session
   succeeds with the target fields empty, in control mode and as a one-shot, while
@@ -240,6 +276,15 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
   ([probe-tmux.md §6](research/probe-tmux.md)), so Shift+Enter goes as CSI-u bytes.
   `tests/fixtures/proto/keys.json` lists every name the clients send; the Rust tests
   check each against the regex.
+- **Paste buffers.** The buffer is named `tether-<tag>` after the request's `Tag`.
+  tmux buffer names are server-wide, so tags are unique across all control clients
+  (the hub draws them from one counter). `paste-buffer -d` deletes the buffer only on
+  success, and tmux skips the rest of a failed list, so every failed paste group is
+  followed by a separate `delete-buffer -b tether-<tag>` group whose own error is
+  ignored. That covers every failure point (missing window, a hook killing the window
+  between load and paste, a missing file). On 3.4 `load-buffer` of a missing file succeeds: its read error is printed
+  outside any block (dropped, §3.2) and the group then fails at `paste-buffer` with
+  `no buffer tether-<tag>`.
 - **Paste files.** The connection task takes one of a few daemon-wide paste slots
   (§6), or answers `busy` itself, then writes the text to a 0600 file in
   `$XDG_RUNTIME_DIR/tether/`, so the hub only holds a `PasteFile`: the path plus its
@@ -265,20 +310,34 @@ group's first reply is in the captured grid and output after its last reply is n
 ```text
 refresh-client -A '%P:continue' ; display-message -p -t %P '<STATE>' ;
 capture-pane -p -e -N -t %P ; capture-pane -p -P -C -t %P ;
-capture-pane -p -e -N -a -q -t %P
+capture-pane -p -e -N -a -q -t %P ;
+display-message -p -t %P '<STATE>'
 ```
 
 - **`continue` goes first**, always. On a running pane it is a no-op on 3.4; it also
   resumes a pane tmux auto-paused or the session paused as unwanted.
-- The alternate-screen capture goes last with `-q`, so a pane without one gives an
-  empty success instead of aborting the list.
+- The alternate-screen capture has `-q`, so a pane without one succeeds, with one
+  empty row, instead of aborting the list.
+- **The state re-read goes last.** If it isn't byte-identical to the first `<STATE>`
+  reply, the list is torn (§3.3): a hook changed the pane while the list ran. A
+  hook that runs `send-keys -R` clears the screen, moves the cursor and turns keypad
+  mode off with no size change and no output, so a size-only check would miss it. A
+  hook that rewrites screen content while every state field stays the same is still
+  missed.
 - `<STATE>`, tab-separated, for 3.4: `pane_id pane_width pane_height alternate_on
   alternate_saved_x alternate_saved_y cursor_x cursor_y cursor_flag insert_flag
   keypad_cursor_flag keypad_flag wrap_flag origin_flag scroll_region_upper
-  scroll_region_lower mouse_standard_flag mouse_button_flag mouse_any_flag
+  scroll_region_lower mouse_standard_flag mouse_button_flag mouse_all_flag
   mouse_utf8_flag mouse_sgr_flag pane_tabs`, from a per-version table in
-  `snapshot.rs` (newer versions use the newest entry).
+  `snapshot.rs` (newer versions use the newest entry). `mouse_all_flag` is any-motion
+  tracking (`?1003`); tmux's `mouse_any_flag` means that some mouse mode is on.
+  `alternate_saved_x` and `_y` are 4294967295 until the alternate screen has been
+  used, and stay so after `?47h` or `?1047h`, which save no cursor.
 - The replies count against the group reply cap; a larger screen fails `TooLarge`.
+- The session reads the replies as `PaneSnapshot { state: PaneState, active:
+  Vec<Bytes>, pending: Bytes, saved: Vec<Bytes> }` (`snapshot.rs`, tmux's field
+  names; `pending` already octal-decoded), composes the restore bytes, and emits only
+  `Event::Snapshot { tag, pane, size, restore }`; `size` is the state's pane size.
 
 **Boundary:** everything the hub saw for `%P` before the `Snapshot` event is inside
 it; everything after is live. Stream order is the boundary.
@@ -287,25 +346,45 @@ it; everything after is live. Stream order is the boundary.
 terminal of `cols × rows`, so the clients carry no restore logic:
 
 1. `CSI ?7l`, so a too-wide line (the saved primary grid keeps its old size while the
-   alternate screen is on; Unicode widths drift) can't wrap and scroll. Rows past
-   `rows` are dropped.
+   alternate screen is on; Unicode widths drift) is cut at the last column instead of
+   wrapping and scrolling. Rows past `rows` are dropped.
 2. If `alternate_on`: the saved primary grid (the `-a` capture), `CSI 0 m`, CUP to
-   `alternate_saved`, `CSI ?1049h`.
-3. The active grid: line *i* is `CSI i+1;1H` and its captured bytes. `-e` SGR state
-   carries across lines, so nothing resets between them.
-4. `CSI 0 m`; tab stops: `CSI 3 g`, then `ESC H` at each `pane_tabs` column; a scroll
-   region that isn't full height: `CSI top+1;bottom+1 r`; `origin_flag`: `CSI ?6h`.
+   `alternate_saved` (clamped to the pane, so 4294967295 lands in the bottom-right
+   corner), `CSI ?1049h`.
+3. The active grid: line *i* is `CSI i+1;1H` and its captured bytes; an empty row is
+   skipped. `-e` SGR state carries across lines, so nothing resets between them.
+4. `CSI 0 m`; tab stops: `CSI 3 g`, then for each `pane_tabs` column a CUP to that
+   column and `ESC H` (which sets a stop at the cursor's column); a scroll region that
+   isn't full height: `CSI top+1;bottom+1 r`; `origin_flag`: `CSI ?6h`. Tab stops,
+   region and origin mode apply to the screen in use only.
 5. Modes: `CSI ?7h` if `wrap_flag`, and each mode that is on: `CSI ?1h`
    (keypad_cursor), `ESC =` (keypad), `CSI 4h` (insert), `CSI ?1000h` / `?1002h` /
-   `?1003h` / `?1005h` / `?1006h` (mouse standard, button, any, utf8, sgr).
-6. CUP to the cursor (region-relative under origin mode; a column past the last is
-   clamped); `CSI ?25l` if `cursor_flag` is 0.
+   `?1003h` / `?1005h` / `?1006h` (mouse standard, button, all-motion from
+   `mouse_all_flag`, utf8, sgr). The three tracking modes exclude each other in tmux
+   3.4 and in xterm.js, and so do the two encodings; if both utf8 and sgr are set,
+   sgr is written last and wins.
+6. CUP to the cursor (region-relative under origin mode, a cursor outside the region
+   clamped to its nearest row; a column past the last clamped); `CSI ?25l` if
+   `cursor_flag` is 0.
 7. The pending parser bytes (`-P -C`, decoded like `%output`), so the next live bytes
    complete the sequence tmux is holding.
 
-Not restorable from 3.4: bracketed paste, focus reporting, character sets, the
-current SGR pen, a pending wrap, the title. Paste goes through `paste-buffer -p`,
-which checks the real mode; the rest return when the application next sets them.
+Every position and region value from tmux is clamped to the pane, so odd input can't
+panic.
+
+Not restorable from 3.4:
+
+- **Not in its formats:** the current SGR pen, character sets, cursor shape, title,
+  bracketed paste, focus reporting. Paste goes through `paste-buffer -p`, which checks
+  the real mode; the rest return when the application next sets them.
+- **A pending wrap.** After a character in the last column tmux reports `cursor_x`
+  equal to `cols`. Restore clamps it to `cols-1`, so the next character overwrites
+  the last cell instead of wrapping.
+- **The primary screen's region and tab stops behind an alternate screen.** The
+  reported ones belong to the alternate screen; the primary keeps xterm.js's defaults,
+  so after the application leaves the alternate screen its region and tab stops are
+  default, not tmux's.
+- **A saved cursor after `?47h` or `?1047h`:** none was saved, so it lands in a corner.
 
 ### 3.6 Sizing
 
@@ -399,19 +478,17 @@ pub enum Op {
 pub enum Event {
     Ready { server: ServerInstance, version: TmuxVersion },
     Output { pane: PaneId, bytes: Bytes },                 // wanted panes only
-    Snapshot { tag: Tag, pane: PaneId, snapshot: PaneSnapshot },
+    Snapshot { tag: Tag, pane: PaneId, size: Size, restore: Bytes },
     Done { tag: Tag, result: Result<Reply, TmuxError> },  // Location, history rows, or ()
     Gap { pane: PaneId },
     Layout { window: WindowId, panes: Vec<(PaneId, Size)> },
     ActivePane { window: WindowId, pane: PaneId },
     WindowUnlinked { window: WindowId },                   // closed *or moved*
     WindowRenamed { window: WindowId, name: String },
-    SessionsChanged,
+    SessionsChanged,                                       // also a session rename
     Cwd { window: WindowId, path: String },
     Fatal(SessionError),
 }
-
-pub struct PaneSnapshot { pub pane: PaneId, pub size: Size, pub restore: Bytes }
 
 // pump.rs: dropping the returned sender closes the client.
 pub fn spawn(endpoint: &Endpoint, session: SessionId, client: ClientId,
@@ -517,7 +594,7 @@ struct Stream {
 | `Output` not live, or from another client | dropped: the coming snapshot holds it |
 | `Snapshot` whose tag isn't `inflight` | dropped |
 | `Snapshot` | live; size from it; sent to the watches it reserved for, which stop awaiting; the rest keep awaiting; live watches are undisturbed |
-| **break:** new size in `Layout`, `Gap`, new owner | not live; every watch awaiting; `inflight` forgotten (a snapshot sent before the break may predate its cause); snapshot needed |
+| **break:** a `Layout` giving the pane a new size (one repeating its size is no break), `Gap`, new owner | not live; every watch awaiting; `inflight` forgotten (a snapshot sent before the break may predate its cause); snapshot needed |
 | a watch joins or sends `resync` | awaiting; snapshot needed |
 | snapshot fails: pane gone | the window re-locates |
 | snapshot fails: torn 3 times, or `TooLarge` (restore bytes over the capture reservation included) | `watchEnded { error }` for every watch, naming hooks or screen size; stream dropped |
@@ -553,7 +630,9 @@ on a window that has gone is harmless. Work in flight records where it runs; whe
 that control client exits, or a one-shot fails or times out, its unanswered Locates,
 session checks and snapshots become needed again, and the next `reconcile` sends them
 elsewhere. Nothing is sent to a client before it is `Ready`. Releases, cleared votes and unsubscribes go
-first, then Locates, subscriptions, votes, snapshots. A `Paste` the hub refuses or
+first, then Locates, subscriptions, votes, snapshots. A `Release` invalidates that
+pane's snapshot attempts still outstanding on the client (§3.3), so the hub drops
+their tags (§4.6) rather than wait for events. A `Paste` the hub refuses or
 drops (busy, unknown watch, connection gone) emits `RemoveFile`.
 
 ### 4.5 Control clients
@@ -578,9 +657,11 @@ drops (busy, unknown watch, connection gone) emits `RemoveFile`.
   - *Otherwise* each of its windows locates again: one now in another session rebinds
     to that session's client, one gone gets `windowClosed`. If the session was gone,
     `sessionClosed` is broadcast too.
-  - *A window still in the same, live session* depends on how the client ended. With
-    `%exit` seen it was **detached** by another client (`attach -d`,
-    `detach-client`): its watches get `watchEnded { detached }` and nothing reattaches.
+  - *A window still in the same, live session* depends on how the client ended.
+    `%exit` ends a client after a detach, `kill-server` and a closed stdin alike, which
+    is why `LocateSession` runs first. With `%exit` seen and the session alive it was
+    **detached** by another client (`attach -d`, `detach-client`): its watches get
+    `watchEnded { detached }` and nothing reattaches.
     Without it the client **crashed**: the hub respawns it after 1 s, kept only if the
     server instance is unchanged; a second crash within 60 s ends the watches with
     `watchEnded { error }`.
@@ -798,7 +879,9 @@ Every daemon constant lives here; other documents link to this table.
 | groups in flight per control client | 32; user requests below 24 | user: `busy`; maintenance waits |
 | capture slots (snapshot, history) | 2 daemon-wide | history: `busy`; snapshot waits |
 | reply timeout per group | 10 s | kill the client (crashed) |
-| parser partial line / replies per group | 1 MiB / 1 MiB | group fails `TooLarge` |
+| line length (parser) | 1 MiB | line discarded; the group it falls in fails `TooLarge` |
+| reply bodies per group (`Session`) | 1 MiB | group fails `TooLarge` |
+| snapshot attempts | 3 | `Torn` |
 | pump read size; pump → hub channel | 16 KiB; 128 chunks | the pump waits |
 | connection → hub channel | 128 messages | the connection waits |
 | credit per connection | 2 MiB outstanding | output: that watch starves; snapshot: waits; history, listing: `busy` |
@@ -871,22 +954,45 @@ Every failure ends as a message the phone can show. Logs carry framing metadata 
 
 ## 8. Testing
 
-**Recorded fixtures.** `cargo run --example record-tmux-fixtures -- --tmux <path>
---out tests/fixtures/tmux/<version>/` drives scripted scenarios against `tmux -L
-tether-fixture-$$ -f /dev/null` and writes the lines sent (`.in`) and the raw stdout
-(`.out`). Scenarios: startup; output with every C0 byte, backslashes and invalid
-UTF-8; a `yes` flood; lists failing in the middle and at the start; a hook firing; a
-capture with `%`-prefixed lines; pause, continue, auto-pause; splits and layout
-changes; window add, rename, kill, move and link; `select-pane`; cwd subscriptions;
-Locate on live, killed and moved windows; paste, including a missing file;
-`send-keys` of `C-b` and of `Escape` then a key; detach from outside; kill-server.
-3.4 is recorded on the dev box, 3.7b on the Mac, both committed.
+**Recorded fixtures.** `cargo run --example record-tmux-fixtures -- [--tmux <path>]
+--out tests/fixtures/tmux/<version>/ [scenario…]` starts a private server per scenario
+(`-L tether-fixture-<pid>-<n>`, `nice -n 10`), attaches a control client as the daemon
+does and drives a real `Session` over its pipes; set-up the daemon never does (splits,
+hooks, moves) goes through one-shot `tmux` commands. Each scenario writes the raw
+stdout (`.out`), every request with the stdout offset it was made at (`.script`) and
+every line `Session` wrote (`.in`). Scenarios: startup; output from unwanted panes;
+a pause at the reply cap; the snapshot boundary under a numbered flood; snapshots of
+an alternate screen, of styled text (SGR carried across rows, wide and combining
+characters, an OSC 8 link, custom tab stops, wrap off, hidden cursor), of a scroll
+region under origin mode, and of an alternate-screen TUI; a pane that is gone; hooks;
+a Gap, with a terminal client attached through `script`; splits and layout changes;
+window add, rename, kill, move and link; cwd subscriptions; Locate on live, killed and
+moved windows; paste, including a missing file; `send-keys` of `C-b` and of `Escape`
+then a key; history; detach from outside; kill-server. 3.4 is recorded on the dev
+box, 3.7b on the Mac, both committed.
 
-- **`Session`:** each `.out` in random chunk splits (fixed seeds, 1-byte chunks
-  included) with its requests, against golden events and lines: pausing, gaps, torn
-  snapshots and startup order are tested without real tmux.
-- **`snapshot::compose`:** per-mode unit tests, and restore bytes fed to `vt100` (a
-  dev-dependency) compared with the capture.
+- **`Session`:** each `.out` is replayed whole, in 1-byte chunks and in 4 seeded random
+  splits. The lines `Session` writes must equal the recorded `.in`, and its events
+  must not depend on the chunking and must match the `.events` goldens. Targeted tests
+  cover startup order, pausing on the first unwanted output (new panes included), the
+  pause at the cap, boundary continuity over 3000 numbered lines, failure causes, torn
+  retries, a Gap, notifications and Locate. Unit tests cover what no recording reaches
+  cheaply: `TooLarge` with the client surviving, `TmuxTooOld`, and a reply with nothing
+  pending. Pausing, gaps, torn snapshots and startup order are tested without real tmux.
+- **`snapshot::compose`:** the recorded snapshots' restore bytes are fed to `vt100`
+  0.18 (a dev-dependency) and compared with tmux's capture and state: cells, cursor,
+  hidden cursor, alternate screen, application keys, mouse mode and encoding; for an
+  alternate screen, `?1049l` and then the saved primary grid and its cursor. A blank
+  cell and an unwritten cell count as equal, since tmux draws `-N` trailing spaces as
+  written spaces and `\e[K` clears only to the background. vt100 0.18 models no
+  autowrap, insert mode or tab stops, so those are checked on the restore bytes.
+  **Continuity:** restoring snapshot 1 and feeding the live output up to snapshot 2
+  ends identical to restoring snapshot 2 (the 3000-line flood, a scroll region under
+  origin mode, an alternate screen). Before a change to `compose` is kept, every
+  recorded snapshot's restore bytes also run through `@xterm/headless` 6.0.0 with the
+  Unicode 11 addon, as `web/term/` does (`reset()`, `resize()`, `write()`), and cells
+  and styles, cursor, modes, region, tab stops, the alternate screen and the primary
+  behind it must match tmux.
 - **`hub::State` and `Outbox`:** scripted inputs → effects. A watch joining a live
   stream; output past the credit starving one watch, waiting snapshots ahead of output,
   and snapshot spacing; history and listings refused for credit, and a chunk cut to its
@@ -902,7 +1008,12 @@ and the Mac):
   snapshots through the real session and pump. `vt100(restore + later output)` equals
   tmux's final capture, and every numbered line appears exactly once.
 - **Torn:** with `set-hook -g after-display-message 'run-shell "sleep 0.3"'` and a
-  flood, every snapshot is torn, retried, and none delivered with a gap.
+  flood, every snapshot is torn, retried, and none delivered with a gap. With
+  `'display-message -p HOOKED'` as the hook, no snapshot is torn.
+- **Gap:** a stalled control client plus a terminal client (attached through `script`,
+  like the laptop) on a flooded pane gets a Gap; with only control clients attached,
+  tmux stops reading the pane and no Gap arrives. The Gap scenario needs the terminal
+  client.
 - **Sizing:** a 200×50 pty client plus a control client leave the sizes §3.6
   promises through watch, switch, unwatch and the laptop growing.
 - **Lifecycle:** kill-server, kill-session, `detach-client`, `move-window` (including
@@ -922,13 +1033,19 @@ and the Mac):
    repaints.
 4. **Every tab switch repaints from a snapshot.** Whether reset-and-write flashes in
    xterm.js 6 on iOS is measured in spike 3.
-5. **User hooks:** a waiting hook makes snapshots torn (retried); `destroy-unattached
-   on` destroys a session when tether's lingering client closes, as the option says.
-6. **Restore gaps:** one tmux scroll region versus one per xterm.js screen, and no
-   pending-wrap state. The application's next redraw fixes both.
+5. **User hooks:** a waiting hook makes snapshots torn (retried, then `Torn`);
+   `destroy-unattached on` destroys a session when tether's lingering client closes, as
+   the option says.
+6. **Restore gaps:** one tmux scroll region and tab-stop set versus one per xterm.js
+   screen, and no pending-wrap state (§3.5). The application's next redraw fixes both.
 7. **`pause-after=3` is a guess**; measure it in the budget run.
 8. **Opening a tab may snapshot twice:** the vote's `%layout-change` can land after
    the first snapshot and break the stream. Correct but wasteful; measure first.
+9. **tmux master (after 3.7c, commit 19ec0de) delays notifications until a reply block
+   closes.** A `%pause` that tether requested then lands outside its block, and
+   `Session` reads it as tmux's own: a Gap. A `Release` quickly followed by a
+   `Snapshot` of the same pane would cost one spurious extra snapshot. Not seen on 3.4
+   or 3.7b; unverified on master.
 
 ## Sources
 
