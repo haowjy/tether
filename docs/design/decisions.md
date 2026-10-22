@@ -9,8 +9,9 @@ state only the current rule; this log keeps the reasoning and the history.
 *Tech lead* decisions settle reviews. *Design* decisions were made by the spec's
 author while writing it; the spawn that wrote each spec is named for traceability
 (daemon core p7, iOS shell and auth p8 and p15, review round 2 revision p21; the
-`tmux::Session` build p25, the restore-byte composer p30, and the pump and one-shot
-runner p33, whose probes corrected the daemon-core spec). Reviews:
+`tmux::Session` build p25, the restore-byte composer p30, the pump and one-shot
+runner p33, and the hub and wire protocol p35, whose builds corrected the daemon-core
+spec). Reviews:
 round 1 of the plan is [plan-review.md](plan-review.md); round 1 of the subsystem specs
 was p10–p14; round 2 was p16 (structure) and p17 (correctness).
 
@@ -219,6 +220,8 @@ All 2026-10-21, decided by Jimmy.
 - **Rejected:** typeshare (a Swift generator and a preflight check for three types);
   specta (a runtime type model plain DTOs don't need); JSON Schema plus quicktype (two
   tools and a schema artifact for one producer).
+- **Changed 2026-10-22 (p35):** how and where ts-rs output is rendered; see "One
+  generated TypeScript file, rendered by a test" below.
 
 ## Daemon core
 
@@ -403,6 +406,9 @@ All 2026-10-21, decided by Jimmy.
   and skipping the crash delay); holding in-flight work as bare tags (a tag on a
   client that exits is never answered, leaving its window locating forever).
 - **Found by:** the review of this revision (p23).
+- **Changed 2026-10-22 (p35):** a bound window stays bound during a re-Locate, a window
+  binds only from its owner's own answer, and a Locate that fails ends the watches;
+  see "A window binds only from its owner's own Locate answer" below.
 
 ### `tmux -N` on every invocation
 
@@ -773,6 +779,193 @@ All 2026-10-21, decided by Jimmy.
   `scratch`, so the hub routes a window to its tmux server from the id alone.
 - **Rejected:** a separate endpoint field on every ref; a lookup from instance to
   endpoint (empty after a daemon restart, before anything is attached).
+
+### A window binds only from its owner's own Locate answer
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes "How
+  ownership and Locate interact" above
+  ([daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate)).
+- **What:** a window binds only from a Locate answered by the control client that will
+  own it. An answer from another client or a one-shot only names the session; the hub
+  finds or spawns that session's client and Locates again on it. A bound window stays
+  bound, and its stream live, while a re-Locate runs, and changes owner only if the
+  answer names a different owner or pane. So the old state diagram's `Bound →
+  Locating: unlinked` is gone.
+- **Why:** tmux orders a control client's replies with that client's own notifications
+  and with nobody else's. After the owner's answer, any later `ActivePane` or unlink
+  reaches the hub behind it; after another client's answer, one the owner had already
+  reported could be missed and the window bound to a stale pane. A `WindowUnlinked`
+  from an unrelated session of a linked window is common, and it must not cost the
+  watched window its stream.
+- **Rejected:** binding from any answer (the race above); returning a window to
+  `Locating` on every unlink (a live stream broken, and a snapshot paid, for a change
+  that names the same owner and pane).
+
+### A failing Locate or session check ends the watches
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes "How
+  ownership and Locate interact" above
+  ([daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate)).
+- **What:** a Locate or session check answered with anything but `NoServer` (tmux can't
+  run, a timeout, an unexpected reply) ends the window's watches with `watchEnded {
+  error }`. `NoServer` still means the server is gone. Work lost because its control
+  client exited is still needed again.
+- **Why:** needed-again work is sent on the next `reconcile`. When tmux can't be run at
+  all, a one-shot fails at once and every `handle` would spawn a failing process.
+- **Rejected:** "needed again" for one-shot failures and timeouts, as the earlier entry
+  had it.
+
+### The reply timeout is a progress deadline; every unplanned exit gets a session check
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes the
+  per-group timeout in the daemon-core spec
+  ([§4.5](daemon-core.md#45-control-clients)).
+- **What:**
+  - A control client with groups in flight that completes none for 10 s is killed. The
+    deadline belongs to the client, so it also covers `Session`'s own groups (the
+    startup line, pauses), which the hub never tags.
+  - Fatal errors and timeouts count as crashes, not detaches: the hub killed the client,
+    so tmux sent no `%exit`.
+  - The session check runs on every exit the hub didn't cause (not on a linger or cap
+    close), so `serverExited` and `sessionClosed` go out even when no tab was watched.
+- **Rejected:** a deadline per tagged group (the groups `Session` sends itself would be
+  unwatched); checking a session only when one of its windows was watched (closure
+  broadcasts reach tabs that exist but aren't on screen, and they would never be told).
+
+### One reporter per endpoint for renames and session changes
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35).
+- **What:** `windowRenamed` and `sessionsChanged` come only from the endpoint's
+  lowest-id `Ready` control client
+  ([daemon-core.md §4.5](daemon-core.md#45-control-clients)).
+- **Why:** tmux sends these notifications to every control client, so each would be
+  broadcast once per client.
+- **Rejected:** broadcasting from every client (N copies).
+
+### The stream is part of the window; `state.rs` is split three ways
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes the
+  `Stream` of [daemon-core.md §4.3](daemon-core.md#43-pane-streams) and the file layout
+  of §4.
+- **What:** a window shows one pane, so the hub keeps one stream per window (live, size,
+  the snapshot in flight and its reservations), and an active-pane change breaks it.
+  `state.rs` holds the model, tmux events, streams and credit; `owners.rs` the Locate
+  answers, binding, control clients and exits; `requests.rs` the connections'
+  messages.
+- **Rejected:** a `streams` map keyed by pane (it always changes together with its
+  window, and every change would touch both); one `state.rs` (three concerns in one file).
+
+### Reconcile runs only after inputs that may change desired state
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes
+  [daemon-core.md §4.1](daemon-core.md#41-statehandle), which had `reconcile` after
+  every `handle`.
+- **What:** `reconcile` is skipped for pump bytes that complete no group, produce only
+  `Output` events and starve no watch. Every other input, and every timer that fires,
+  runs it.
+- **Why:** measured in one release process, a plain output chunk cost about 230 ns
+  without `reconcile` and 590–910 ns with it; with the skip it costs about 256 ns, 5% of
+  the pump's own ~5 µs wake per chunk. Output is the only input at pump rate.
+- **Rejected:** `reconcile` after every `handle` (2.5 to 4 times the hub's work on the
+  hot path, for no change in what is sent).
+
+### Connection API details
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes
+  [daemon-core.md §4.6–4.7](daemon-core.md#47-public-interface).
+- **What:**
+  - `hub::spawn(endpoints)` takes no config: every limit is a constant.
+  - `connect` and `send` return `Result<_, HubGone>`.
+  - `ToConn::Msg` carries `ends: Option<u32>`, the watch a `watchEnded` ends; the outbox
+    forgets that watch as it takes the message.
+  - The outbox keeps no registry of watches. Frames for a forgotten watch are written,
+    and the client drops frames for a watch it no longer has.
+  - The connection sends `Credit` whenever `take_credit()` is non-zero, not only after a
+    write.
+- **Why:** the limits are sized together for the memory ceiling, so nothing is
+  configurable. A registry would copy what the client and hub already know. Credit
+  returned by a discard (an `unwatch` with frames queued) would otherwise wait for the
+  next write, and an idle socket makes none.
+- **Rejected:** a `HubConfig` struct; an outbox registry of live watches; returning
+  credit only after a socket write.
+
+### `sessions.tmux` is `TmuxListing | null`
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes the
+  `sessions` message ([daemon-core.md §5.3](daemon-core.md#53-json-messages)).
+- **Why:** `null` for "no tmux server" is what serde and ts-rs express cleanly.
+- **Rejected:** `"notRunning" | { … }`: a string-or-object union has no clean serde or
+  ts-rs shape.
+
+### Watches that can never bind, and reused ids
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Fills a gap in
+  [daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate).
+- **What:** a `watch` whose `server` string doesn't parse, or names an unknown endpoint,
+  gets `serverExited` for that string on that connection, which closes the tab. A watch
+  id that is already active gets `error { badRequest }` and the active watch is
+  unchanged.
+- **Why:** such a ref can never bind, which is what `serverExited` says of a dead
+  server's windows. A `watchEnded` for a reused id would name the live watch and end it.
+- **Rejected:** `error { badRequest }` for the unparseable server (the tab would wait
+  for a `watching` that never comes); `watchEnded` for a reused id.
+
+### Unknown message types are reported by `decode`
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Fills a gap in
+  [daemon-core.md §5.2](daemon-core.md#52-handshake-and-versions).
+- **What:** `ClientMsg::decode` returns `Decoded::Unknown { kind }` for a type it
+  doesn't know, so the connection logs and ignores it; a known type with bad data is a
+  protocol violation (4003).
+- **Why:** the protocol says new message types need no version bump.
+- **Rejected:** serde's `#[serde(other)]` catch-all alone: it matches only a message
+  without `data`, so a newer client's message carrying a `data` object would fail to
+  parse and look like a protocol violation.
+
+### One generated TypeScript file, rendered by a test
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes "ts-rs
+  for TypeScript, hand-written Swift" above
+  ([daemon-core.md §5.5](daemon-core.md#55-type-generation)).
+- **What:** the TypeScript is one file, `web/proto/generated/messages.ts`, rendered from
+  ts-rs declarations by a Rust test in `src/proto/typescript.rs`. The test fails while
+  the committed file is stale, so `cargo test` in preflight checks it;
+  `UPDATE_PROTO_TYPES=1 cargo test --lib proto::typescript` rewrites it. The message
+  types are `ClientMsg` and `ServerMsg`; the file also exports `PROTOCOL_VERSION` and
+  `CloseCode`. The web imports from it and drops its hand-written copies
+  (`ClientMessage`, `ServerMessage`, and `"notRunning"` for `sessions.tmux`).
+- **Why:** the web's protocol code lives under `web/proto/`, so the generated types sit
+  beside it.
+- **Rejected:** ts-rs's `#[ts(export)]`, which writes into the tree on every test run
+  instead of comparing against the committed file; `web/src/proto/generated/`, the
+  spec's earlier path.
+
+### An oversized history capture is retried with half the rows
+
+- **Decided:** 2026-10-22, tech lead, on the hub build's finding (p35). Changes how a
+  `historyChunk` is cut ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)).
+- **What:** when a `history` capture fails `TooLarge`, the hub reissues it with half the
+  rows, down to one row, and the client sees a shorter `historyChunk` and asks again
+  from where it ends. A single row that still fails answers `error { tmux }`.
+- **Why:** `Session` caps a group's replies at 1 MiB raw, but the reservation holds the
+  base64 text, a third larger. A capture of 768 KiB to 1 MiB raw succeeds and is cut to
+  the rows that fit. Over 1 MiB raw (200 heavily styled 500-column rows) the group
+  fails, and without a retry every request for that range fails the same way.
+- **Rejected:** the client shrinking its range on `error` (the error doesn't say what
+  size fits, and every client would carry the retry); the hub asking for fewer rows up
+  front (it can't know row sizes before capturing, and a fixed lower limit would shrink
+  every request for the rare heavy one).
+
+### Two watches on one connection snapshot one at a time under load
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35); a consequence
+  of the credit entry above, stated so nobody reads it as a stall.
+- **What:** credit is 2 MiB and a capture reservation 1 MiB, so two reservations on one
+  connection fit together only while nothing else is outstanding to it. With output or
+  an earlier snapshot in flight, the second watch's snapshot waits for credit to
+  return.
+- **Rejected:** none recorded; the sizes are set by the memory ceiling
+  ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
 
 ## iOS app
 
