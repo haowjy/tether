@@ -64,20 +64,22 @@ flowchart LR
 | pump (`tmux::pump`) | one per control client | the `tmux -C` child, its stdin and stdout | parse or decide |
 | hub (`hub::run`) | one | `hub::State`: sessions, windows, streams, watches, connection senders | await anything but its inboxes and timer |
 | connection (`http::ws`) | one per WebSocket | the socket, the handshake, its `hub::Outbox` | talk to tmux |
-| one-shot (`tmux::oneshot`) | at most one at a time | one short `tmux -N` process | attach |
+| one-shot (`tmux::oneshot`) | at most one at a time | one short `tmux -u -N` process | attach |
 
 Tasks share no mutable state; they talk over channels.
 
 - **Into the hub, senders wait.** Pumps send on one bounded channel, connections and
   the one-shot runner on another. A pump waiting for room stops reading stdout, so
-  tmux stops writing. With a terminal client also attached to the pane's session,
-  tmux pauses a wanted pane after `pause-after` and drops what it queued (a Gap,
-  §3.3); with only control clients attached it stops reading the pane and nothing is
-  lost. While waiting, a pump keeps writing lines to stdin and a connection keeps
-  moving `ToConn` into its outbox.
+  tmux stops writing. tmux queues the pane's output for the stalled client and, once a
+  queued block is `pause-after` old, pauses the pane and drops what it queued (a Gap,
+  §3.3). With only control clients attached, tmux stops reading the pane when a client
+  falls behind, so a stall shorter than `pause-after` loses nothing; blocks already
+  queued keep ageing, so a longer stall still ends in a Gap. While waiting, a pump
+  keeps writing lines to stdin and a connection keeps moving `ToConn` into its outbox.
 - **Out of the hub, nothing waits.** The hub uses `try_send`. A pump's line channel
   is as deep as its in-flight cap (§3.3), so it can't fill; if it does, the hub kills
-  that client. A connection's channel is sized from its credit (§4.6), so it can't
+  that client. A closed line channel means the pump has ended and its `Exited` is on
+  the way, so the hub ignores that error. A connection's channel is sized from its credit (§4.6), so it can't
   fill either; if it does, the connection is wedged: dropped, close 4002.
 - **One ordered stream per control client.** Replies, output and notifications reach
   the hub as raw bytes in tmux's order, and are parsed there.
@@ -100,25 +102,32 @@ flowchart LR
 
 ```text
 src/tmux/
-  mod.rs       ids, Op, Event, Reply, Location, errors
+  mod.rs       ids, Endpoint, Op, OneShotCmd, Event, Reply, Location, errors
   parse.rs     pure: bytes -> lines (blocks, notifications, %output decoding)
   session.rs   pure: Session, the sans-IO control client
   command.rs   pure: command builders, quoting, key-name validation
   snapshot.rs  pure: state format, typed replies -> restore bytes
   layout.rs    pure: layout string -> pane sizes
-  pump.rs      I/O: spawn `tmux -N -C`, bytes out, lines in
-  oneshot.rs   I/O: one-shot `tmux -N` commands
+  pump.rs      I/O: spawn `tmux -u -N -C`, bytes out, lines in
+  oneshot.rs   I/O: one-shot `tmux -u -N` commands
 ```
 
 Everything but `pump.rs` and `oneshot.rs` is pure and tested from recorded fixtures.
 
 ### 3.1 Invoking tmux
 
-- **Every invocation is `tmux -N [-L socket | -S path] …`.** With no server running,
-  `-N` makes every command fail with `no server running`, `attach-session` and
-  `new-session` included ([probe](research/probe-locate-subscriptions.md)). The socket
-  comes from config; tests use `-L`.
-- **Control client:** `tmux -N … -C attach-session -t '$S' -f pause-after=3` over
+- **Every invocation is `tmux -u -N [-L socket | -S path] …`**, built in one place
+  (`Endpoint::command`, from an `Endpoint` of executable plus `Socket`: default, `-L`
+  name or `-S` path), with `TMUX` removed from the environment (it would choose the
+  socket when none is configured). The socket comes from config; tests use `-L`.
+  - `-N`: with no server running, every command fails instead of starting one,
+    `attach-session` and `new-session` included, with one of two no-server messages
+    (§3.8) ([probe](research/probe-locate-subscriptions.md)).
+  - `-u`: tmux 3.4 replaces non-ASCII characters and line breaks in format output
+    (window names, `display-message`, listings) with `_` when the client's locale isn't
+    UTF-8, and a systemd unit's may not be. `-u` forces UTF-8 on the control client
+    and on every one-shot.
+- **Control client:** `tmux -u -N … -C attach-session -t '$S' -f pause-after=3` over
   pipes (3.4 needs no pty; [probe-control-client.md](research/probe-control-client.md)),
   the last 4 KiB of stderr kept, `kill_on_drop(true)`.
 - **Startup:** the first line is `display-message -p '<version, pid, start_time,
@@ -214,10 +223,13 @@ Its rules:
 - **Loss.** `pause-after=3` bounds what tmux queues for a stalled tether. A `%pause`
   tether didn't request, for a wanted pane, means tmux dropped bytes: `Gap { pane }`.
   The next snapshot's `continue` resumes it. With pause-after on, output arrives as
-  `%extended-output`. A Gap needs a non-control client attached to the pane's
-  session (the laptop). When every attached client is a control client that has
-  fallen behind, tmux stops reading the pane instead of pausing it, which matches §2:
-  nothing is lost and no `%pause` arrives.
+  `%extended-output`. tmux sees a stall only once the pump has stopped reading, which
+  is when the hub's inbox (2 MiB, §6) is full. With a non-control client (the laptop)
+  attached to the pane's session, tmux keeps reading the pane and pauses it for the
+  stalled client once a queued block is 3 s old. When every attached client is a
+  control client that has fallen behind, tmux stops reading the pane instead, so a
+  stall shorter than `pause-after` loses nothing and no `%pause` arrives (§2). Blocks
+  tmux had already queued keep ageing, so a longer stall still ends in a Gap.
 - **Torn snapshots.** User hooks run between the commands of a list. A hook that
   waits (`run-shell` without `-b`) lets tmux read the pane mid-list, so the pane's
   output lands outside both the capture and the live stream. A hook that doesn't wait
@@ -293,8 +305,9 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
   `PasteFile` back in a `RemoveFile` effect on `Done` and on every path that drops the
   request (§4.4), and deleting it frees the slot. The daemon empties the directory at
   startup.
-- **Quoting:** user arguments go in single quotes (`'` as `'\''`) after doubling every
-  `#` (tmux format-expands `-n` and `-c`); control characters are rejected.
+- **Quoting, on a control-client line:** user arguments go in single quotes (`'` as
+  `'\''`) after doubling every `#` (tmux format-expands `-n` and `-c`); control
+  characters are rejected. One-shots take arguments, not lines (§3.8).
 - Never send commands that wait (`run-shell`, `if-shell`, `wait-for`,
   `confirm-before`, `command-prompt`): one would stall every later reply.
 
@@ -437,15 +450,52 @@ hub sends the value in `watching` (§5.3).
 
 ### 3.8 One-shots and endpoints (`oneshot.rs`)
 
-- `list` (session sheet): `display-message -p '#{version}\t#{pid}\t#{start_time}' ;
-  list-windows -a -F <fmt> ; list-clients -F '#{client_session}\t#{client_control_mode}'`.
-  "Attached elsewhere" counts non-control clients. `no server running` maps to
-  `TmuxError::NoServer`.
-- `locate`, `locate_session`: the ops' commands, when the endpoint has no `Ready`
-  control client.
-- `new_window`: `new-window -d -t '$S' [-n <name>] [-c <dir>] -P -F '#{window_id}'`;
-  `new_session`: `new-session -d [-s <name>] [-c <dir>] -P -F
-  '#{session_id}\t#{window_id}'`.
+`oneshot::run(&Endpoint, &OneShotCmd) -> Result<Reply, TmuxError>` runs one `tmux -u -N`
+process that never attaches. It reads stdout (at most the 1 MiB reply cap) and the head
+of stderr (4 KiB), and parses stdout into the same `Reply` a control client's op gets,
+so the hub handles a Locate answer the same from either source. Stdin is closed, and a
+child dropped at the timeout is killed.
+
+- `List` (session sheet) answers `Reply::Listing { server, version, sessions }`:
+  `display-message -p '#{version}\t#{pid}\t#{start_time}' ; list-clients -F
+  '#{session_id}\t#{client_control_mode}' ; list-windows -a -F '#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{window_name}'`.
+  "Attached elsewhere" is a client line with mode 0 (not a control client) for the
+  session. Clients come before windows, and the window name is last and split with
+  `splitn`: tmux 3.4 allows raw tabs and line breaks in a name set with `-n`, so a
+  window name with a line break garbles only window lines, and a line that fits
+  neither shape is skipped. A session name can't hold either (tmux escapes it).
+- `Locate`, `LocateSession`: the ops' commands (§3.4) with `-t` set to the id, when the
+  endpoint has no `Ready` control client. They answer `Reply::Location` and
+  `Reply::SessionLocation`.
+- `NewWindow`: `new-window -d -t '$S' [-n <name>] [-c <dir>] -P -F <created>`;
+  `NewSession`: `new-session -d [-s <name>] [-c <dir>] -P -F <created>`. Both answer
+  `Reply::Created { server, session, window }`. `<created>` is
+  `'#{pid}\t#{start_time}\t#{session_id}\t#{window_id}'`: `created` carries a
+  `WindowRef`, which names the server instance, and the hub may not know one for the
+  endpoint yet.
+
+**Arguments, not command lines.** A one-shot is an argv vector with no shell and no
+quoting layer: tmux takes each argument literally, except that an argument ending in
+`;` ends the command (`-n 'x;'` fails with `unknown command: -c`), and an argument that
+is just `;` separates commands, which `List` uses. tether's own arguments are ids and
+fixed formats. A user's `name` or `dir` gets every `#` doubled (tmux format-expands
+both), a trailing `;` sent as `\;`, and control characters or a non-UTF-8 path refused
+as `BadRequest` before any process starts.
+
+**Errors.**
+
+| Cause | `TmuxError` |
+|---|---|
+| tmux says `no server running on …` (stale socket) or `error connecting to … (No such file or directory)` (socket file missing) | `NoServer` |
+| any other non-zero exit | `Command(stderr)`, or the exit status when stderr is empty |
+| still running after 2 s; the process is killed | `Timeout` |
+| tmux couldn't be run | `Spawn(message)` |
+| stdout past the 1 MiB reply cap | `TooLarge` |
+| stdout not in the expected shape | `BadReply` |
+
+`NoServer` starts no server. tmux rewrites `$NAME` in a window or session name to
+`\$NAME`, in control mode too; that is tmux's behaviour, not tether's escaping, and
+names pass through as tmux returns them.
 
 One at a time, 2 s timeout. The hub emits an effect, `run.rs` runs it in a task, and
 the result returns as an `Input`. While the slot is taken, user one-shots get `busy`
@@ -456,8 +506,9 @@ and `scratch`. Server instances are written `"<endpoint>:<pid>-<start_time>"`, s
 window id routes to its endpoint by itself.
 
 **Scratch shells (after the core MVP)** are sessions on a private server: the daemon
-runs `systemd-run --user --scope --collect tmux -L tether-scratch new-session -d -P -F
-'#{session_id}\t#{window_id}'`. Its own transient scope keeps the server out of
+runs `systemd-run --user --scope --collect tmux -u -L tether-scratch new-session -d -P
+-F '#{pid}\t#{start_time}\t#{session_id}\t#{window_id}'` (the creation format above;
+no `-N`, since this one starts the server). Its own transient scope keeps the server out of
 tether's cgroup, which is what the never-start-tmux rule protects. Scratch windows
 are ordinary tabs on the same stream path. Closing a scratch tab kills its session;
 the server exits with its last one.
@@ -479,7 +530,7 @@ pub enum Event {
     Ready { server: ServerInstance, version: TmuxVersion },
     Output { pane: PaneId, bytes: Bytes },                 // wanted panes only
     Snapshot { tag: Tag, pane: PaneId, size: Size, restore: Bytes },
-    Done { tag: Tag, result: Result<Reply, TmuxError> },  // Location, history rows, or ()
+    Done { tag: Tag, result: Result<Reply, TmuxError> },  // a Reply, or the error
     Gap { pane: PaneId },
     Layout { window: WindowId, panes: Vec<(PaneId, Size)> },
     ActivePane { window: WindowId, pane: PaneId },
@@ -490,12 +541,53 @@ pub enum Event {
     Fatal(SessionError),
 }
 
-// pump.rs: dropping the returned sender closes the client.
+// One answer type for a control client's op and a one-shot's command.
+pub enum Reply {
+    Ok, Location(Location), SessionLocation(SessionLocation),
+    History(Vec<Bytes>), Listing(Listing), Created(Created),
+}
+pub enum TmuxError {
+    Command(String), PaneGone, Torn, TooLarge, BadRequest(&'static str), BadReply,
+    NoServer, Timeout, Spawn(String),
+}
+pub struct Listing { server: ServerInstance, version: TmuxVersion, sessions: Vec<ListedSession> }
+pub struct ListedSession { id: SessionId, name: String, attached_elsewhere: bool,
+                           windows: Vec<ListedWindow> }
+pub struct ListedWindow { id: WindowId, index: u32, name: String, active: bool, activity: u64 }
+pub struct Created { server: ServerInstance, session: SessionId, window: WindowId }
+
+pub struct Endpoint { pub program: PathBuf, pub socket: Socket }
+pub enum Socket { Default, Name(String), Path(PathBuf) }          // none, -L, -S
+pub enum OneShotCmd {
+    List, Locate { window: WindowId }, LocateSession { session: SessionId },
+    NewWindow { session: SessionId, name: Option<String>, dir: Option<PathBuf> },
+    NewSession { name: Option<String>, dir: Option<PathBuf> },
+}
+
+// pump.rs
+pub const READ_SIZE: usize = 16 * 1024;
+pub enum PumpMsg { Bytes(Bytes), Exited { stderr_tail: String } }  // Exited is always last
 pub fn spawn(endpoint: &Endpoint, session: SessionId, client: ClientId,
              out: mpsc::Sender<(ClientId, PumpMsg)>)
-    -> Result<(mpsc::Sender<String>, JoinHandle<()>), SpawnError>;
-pub enum PumpMsg { Bytes(Bytes), Exited { stderr_tail: String } }
+    -> (mpsc::Sender<String>, JoinHandle<()>);
+
+// oneshot.rs
+pub const TIMEOUT: Duration = Duration::from_secs(2);
+pub async fn run(endpoint: &Endpoint, cmd: &OneShotCmd) -> Result<Reply, TmuxError>;
 ```
+
+**The pump's contract.** `spawn` can't fail, and must run inside the tokio runtime. A
+failure to start tmux arrives as `Exited` with a `stderr_tail` such as `can't run
+tmux: …` and no `Bytes` before it, so the hub has one exit path (§4.5). `Exited` is
+always the last message.
+
+- **Lines in.** Each string on the line channel is written to stdin with a line end. The
+  channel holds `MAX_IN_FLIGHT` (32) lines, so `try_send` can't find it full. A closed
+  channel means the pump has ended and its `Exited` is on the way.
+- **Close.** Dropping the line sender closes the client: stdin closes, tmux gets 1 s to
+  exit, then it is killed. A hub inbox that has been dropped closes it the same way.
+- **Bytes out.** Each read of up to `READ_SIZE` is one `Bytes`. While `out.send` waits
+  for room, the pump reads no stdout and keeps writing lines to stdin (§2).
 
 ## 4. `src/hub/`: windows, streams, desired state
 
@@ -511,7 +603,7 @@ src/hub/
 ### 4.1 `State::handle`
 
 ```rust
-pub enum Input { Pump(ClientId, PumpMsg), Conn(ConnId, FromConn), OneShot(Tag, OneShotResult), Tick }
+pub enum Input { Pump(ClientId, PumpMsg), Conn(ConnId, FromConn), OneShot(Tag, Result<Reply, TmuxError>), Tick }
 pub enum Effect {
     SpawnClient { client: ClientId, endpoint: Endpoint, session: SessionId },
     Write { client: ClientId, lines: Vec<String> }, CloseClient { client: ClientId },
@@ -1001,8 +1093,9 @@ box, 3.7b on the Mac, both committed.
   owner exiting after its window moved; user requests filling capacity while
   maintenance waits; every paste path deleting its file.
 
-**Real tmux** (`TETHER_TMUX_TESTS=1`, before each daemon-core commit, on the dev box
-and the Mac):
+**Real tmux** (`TETHER_TMUX_TESTS=1`, `tests/tmux_real.rs`, before each daemon-core
+commit, on the dev box and the Mac; the private-server and terminal helpers are shared
+with the replay tests and the recorder in `tests/support/`):
 
 - **Boundary:** numbered lines at full speed and a TUI in the alternate screen; 200
   snapshots through the real session and pump. `vt100(restore + later output)` equals
@@ -1010,16 +1103,27 @@ and the Mac):
 - **Torn:** with `set-hook -g after-display-message 'run-shell "sleep 0.3"'` and a
   flood, every snapshot is torn, retried, and none delivered with a gap. With
   `'display-message -p HOOKED'` as the hook, no snapshot is torn.
-- **Gap:** a stalled control client plus a terminal client (attached through `script`,
-  like the laptop) on a flooded pane gets a Gap; with only control clients attached,
-  tmux stops reading the pane and no Gap arrives. The Gap scenario needs the terminal
-  client.
+- **Gap:** a control client stalled for 7 s plus a terminal client (attached through
+  `script`, like the laptop) on a flooded pane gets a Gap, and the next snapshot plus
+  later output is continuous. With only control clients attached and a 2 s stall,
+  shorter than `pause-after`, no Gap arrives and no line is lost; a longer stall can
+  Gap there too, though not every time, so the Gap scenario uses the terminal client.
 - **Sizing:** a 200×50 pty client plus a control client leave the sizes §3.6
   promises through watch, switch, unwatch and the laptop growing.
 - **Lifecycle:** kill-server, kill-session, `detach-client`, `move-window` (including
-  a session's last window) and SIGKILL of `tmux -C` each end as §7 says. With no
-  server, watching and creating a session start none, even with a `~/.tmux.conf` that
-  creates a session.
+  a session's last window) and SIGKILL of `tmux -C` each end as §7 says: whether `%exit`
+  arrived, and what a `LocateSession` one-shot then answers. With no server, for a
+  stale socket and a missing one alike, the pump reports `Exited` with no events,
+  `List`, `LocateSession` and `NewSession` answer `NoServer`, and none starts a server,
+  even with a `~/.tmux.conf` that creates a session.
+- **Pump:** dropping the line sender closes the client in under 1 s.
+- **One-shots:** the listing detects a terminal client and keeps tab and UTF-8 window
+  names. New windows and sessions keep names and directories containing `#{pane_id}`,
+  `'`, spaces and a trailing `;`. An unknown session gives tmux's error, control
+  characters give `BadRequest`, and a Locate of a gone window gives `found: None`. With
+  the server stopped (`SIGSTOP`), the listing times out at 2 s and leaves no process.
+- **Locale:** the whole suite also runs with no locale set, where a missing `-u` turns a
+  non-ASCII window name into `_`.
 
 ## 9. Open risks
 

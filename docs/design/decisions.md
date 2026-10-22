@@ -9,8 +9,8 @@ state only the current rule; this log keeps the reasoning and the history.
 *Tech lead* decisions settle reviews. *Design* decisions were made by the spec's
 author while writing it; the spawn that wrote each spec is named for traceability
 (daemon core p7, iOS shell and auth p8 and p15, review round 2 revision p21; the
-`tmux::Session` build p25 and the restore-byte composer p30, whose probes corrected
-the daemon-core spec). Reviews:
+`tmux::Session` build p25, the restore-byte composer p30, and the pump and one-shot
+runner p33, whose probes corrected the daemon-core spec). Reviews:
 round 1 of the plan is [plan-review.md](plan-review.md); round 1 of the subsystem specs
 was p10–p14; round 2 was p16 (structure) and p17 (correctness).
 
@@ -414,6 +414,103 @@ All 2026-10-21, decided by Jimmy.
   sessions just seen in a listing, and spawning a control client on the first listed
   session for `newSession` (which also made it `latest` there).
 
+### `-u` on every invocation
+
+- **Decided:** 2026-10-22, tech lead (review of p33, from a tmux 3.4 probe).
+- **What:** every tmux process tether runs, control client and one-shot, is
+  `tmux -u -N …`, built in `Endpoint::command`.
+- **Why:** when the client's locale isn't UTF-8, tmux 3.4 replaces non-ASCII characters
+  and line breaks in format output (window names, `display-message`, listings) with `_`.
+  A systemd unit's locale may not be UTF-8. With no locale set and no `-u`, a window
+  named `中w` came back as `__w`, and the real-tmux tests catch the missing flag.
+- **Rejected:** relying on the inherited locale.
+
+### Both no-server messages are `NoServer`
+
+- **Decided:** 2026-10-22, tech lead (review of p33).
+- **What:** with `-N`, a stale socket prints `no server running on …` and a missing
+  socket file prints `error connecting to … (No such file or directory)`. Both map to
+  `TmuxError::NoServer`.
+- **Why:** both mean no server is running, and the hub answers both with `serverExited`
+  and `notRunning`.
+- **Rejected:** matching only `no server running`: a missing socket file (tmux never
+  started, or its socket removed) would surface as a generic `tmux` error.
+
+### One-shots are arguments, not command lines
+
+- **Decided:** 2026-10-22, tech lead (review of p33, from a tmux 3.4 probe).
+- **What:** a one-shot is an argv vector. A user's `name` or `dir` gets every `#`
+  doubled, a trailing `;` sent as `\;`, and control characters refused.
+- **Why:** tmux takes each argument literally, so the single-quote quoting of a
+  control-client line would put quote marks into names. The exception is a trailing
+  `;`, which ends the command: `-n 'x;'` produced `unknown command: -c`. `#` is
+  format-expanded in `-n` and `-c`. A control character is refused as on a control-client
+  line, and a name with a line break would also garble the listing.
+- **Rejected:** building the same quoted string a control client takes and passing it
+  to tmux as one command; sending a trailing `;` unescaped.
+
+### One reply type for control-client and one-shot answers
+
+- **Decided:** 2026-10-22, tech lead (review of p33). Replaces the draft
+  `OneShotResult`.
+- **What:** a one-shot answers `Result<Reply, TmuxError>`, like `Event::Done`. `Reply`
+  gained `Listing` and `Created`; `TmuxError` gained `NoServer`, `Timeout` and
+  `Spawn(String)`.
+- **Why:** the hub handles a Locate answer the same way from a control client and from a
+  one-shot.
+- **Rejected:** a separate `OneShotResult` type: the hub would carry two shapes for one
+  answer.
+
+### `pump::spawn` can't fail
+
+- **Decided:** 2026-10-22, tech lead (review of p33). Replaces
+  `Result<_, SpawnError>`.
+- **What:** `spawn` returns the line sender and the task handle. A failure to start
+  tmux arrives as `PumpMsg::Exited` with `stderr_tail` `can't run tmux: …` and no bytes
+  before it.
+- **Why:** the hub has one path for a client that ended, whether it never started or
+  died later.
+- **Rejected:** a `SpawnError` at the call: a second exit path beside `Exited`.
+
+### The pump's file is `pump.rs`
+
+- **Decided:** 2026-10-22, tech lead (review of p33).
+- **What:** the module is `src/tmux/pump.rs`, `tmux::pump`, as the spec's task table
+  says.
+- **Rejected:** `client.rs`, which the build brief named: the spec, the task table and
+  `src/tmux/AGENTS.md` all say `pump`.
+
+### The listing and creation formats
+
+- **Decided:** 2026-10-22, tech lead (review of p33).
+- **What:**
+  - `list-clients` prints `#{session_id}` rather than `#{client_session}`, and comes
+    before `list-windows`.
+  - The window line puts `#{window_name}` last, after `#{session_name}`.
+  - `new-window` and `new-session` print `#{pid}\t#{start_time}\t#{session_id}\t#{window_id}`,
+    replacing `#{window_id}` and `#{session_id}\t#{window_id}`.
+- **Why:** the session id joins client lines to window lines directly. tmux 3.4 allows
+  raw tabs and line breaks in a window name set with `-n`, so a name goes last to be
+  split with `splitn`, and clients come first so a name with a line break garbles only
+  window lines. A session name can't hold either (tmux escapes it). `created` carries a
+  `WindowRef`, which needs the server instance, and the hub may not know one for the
+  endpoint when it asks to create.
+- **Rejected:** `#{client_session}` (a name, not an id); windows before clients; a
+  creation format without the server instance, leaving the hub to guess it.
+
+### "Nothing is lost" holds only for stalls shorter than `pause-after`
+
+- **Decided:** 2026-10-22, tech lead (review of p33, from the Gap tests). Changes the
+  rule in §2 and §3.3 that with only control clients attached nothing is lost.
+- **What:** with only control clients attached, a stall shorter than `pause-after`
+  (3 s) loses nothing and sends no `%pause`. A longer stall can still end in a Gap.
+- **Why:** when a control client falls behind, tmux stops reading the pane, but the
+  blocks it had already queued keep ageing and are paused at 3 s. That explains the
+  1-in-3 Gap p25 saw with control clients only. The hub's inbox (2 MiB) sits in front of
+  tmux, so tmux notices a stall only once the inbox is full. The real-tmux test uses a 2 s
+  stall for the no-Gap case and a terminal client with a 7 s stall for the Gap case.
+- **Rejected:** keeping the unconditional claim, which the tests contradict.
+
 ### The client size is set at startup
 
 - **Decided:** 2026-10-21, tech lead (review round 2, p16 #8); the mechanism by design
@@ -807,3 +904,30 @@ All 2026-10-21, decided by Jimmy.
   the product and UX spec plus the index; prior art, the Rust-versus-Go comparison and
   the agent keybinding table moved to [research/](research/); each constant in one
   table; one term per concept (`watch`, not `viewer`).
+
+## Batched pipe reads for control clients
+
+- **Decided:** 2026-10-22, tech lead (from the p34 experiment, measured on the dev box).
+- **What:** the pump reads a control client's stdout through tokio's pipe `Receiver`,
+  registered with epoll only while waiting on a quiet pipe. While output is sustained
+  it leaves epoll (`into_nonblocking_fd`) and reads at most 4 turns per 2 ms, each
+  turn draining the pipe in 16 KiB reads. The first read after a quiet spell is
+  immediate. Default 64 KiB pipe; no extra thread; no `unsafe`.
+- **Why:** tmux writes one short `%output` line per write, and the old pump woke once
+  per write: a numbered-line flood cost 44.8% of a core. Batched: 2.0%, with idle
+  echo unchanged (p50 0.17 ms), idle CPU zero, throughput and tmux's own cost
+  unchanged, and echo during a flood up to ~3 ms later (p99 3.3 ms).
+- **Rejected:** a gate that stays registered with epoll (35%: every write still wakes
+  the runtime); a blocking reader thread per client (same CPU, 3 more threads against
+  `TasksMax`); `AsyncFd` (its safe constructors are deprecated as unsound in tokio
+  1.54, the replacements are `unsafe`); one read per interval (adds the full interval
+  to every keystroke, because the reply and the echo are separate writes); a 5 ms+
+  gate (needs a 1 MiB pipe or caps throughput at 15 MB/s).
+
+## Never send `respawn-pane` over control mode
+
+- **Decided:** 2026-10-22, tech lead (found by p34 on tmux 3.4).
+- **What:** tether never sends `respawn-pane` on a control client.
+- **Why:** with a control client attached and the pane flooding, `respawn-pane -k`
+  sent over control mode kills the whole tmux server (4 of 4 runs), taking every
+  session with it. The one-shot form, `kill-pane` and `kill-window` did not crash.
