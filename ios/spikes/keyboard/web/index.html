@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>tether keyboard spike</title>
+<link rel="stylesheet" href="xterm.css">
+<style>
+  :root { --bar: 44px; --kb: 0px; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #101012; color: #ddd;
+    font: 13px -apple-system, system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    display: flex; flex-direction: column; box-sizing: border-box;
+    /* Geometry B pads by the keyboard height; A resizes the web view instead. */
+    padding-bottom: max(var(--kb), env(safe-area-inset-bottom));
+  }
+  #static {
+    flex: none; padding: 4px 8px; font-size: 12px; line-height: 16px; max-height: 48px; overflow: hidden;
+    color: #bbb; -webkit-user-select: text; user-select: text; -webkit-touch-callout: default;
+  }
+  #echo {
+    flex: none; height: 18px; line-height: 18px; padding: 0 8px; overflow: hidden; white-space: pre;
+    font: 12px ui-monospace, Menlo, monospace; color: #7ee787; background: #18181b;
+  }
+  #termwrap { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
+  .termhost { position: absolute; left: 0; top: 0; }
+  .termhost.hidden { visibility: hidden; }
+  #bar {
+    flex: none; height: var(--bar); display: flex; align-items: center; gap: 5px; padding: 0 6px;
+    background: #1c1c1f; overflow-x: auto;
+  }
+  #bar button, .overlay button {
+    flex: none; height: 32px; padding: 0 9px; border: 0; border-radius: 8px;
+    background: #2c2c30; color: #eee; font: 600 13px -apple-system, system-ui, sans-serif;
+  }
+  #bar button.on { background: #0a84ff; color: #fff; }
+  .overlay {
+    position: absolute; inset: 8px; z-index: 5; display: none; flex-direction: column; gap: 8px;
+    padding: 12px; border-radius: 12px; background: rgba(36, 36, 40, 0.97); box-shadow: 0 6px 24px #000a;
+  }
+  .overlay.open { display: flex; }
+  .overlay .row { display: flex; gap: 8px; align-items: center; }
+  #editarea {
+    flex: 1; min-height: 60px; border-radius: 8px; border: 1px solid #444; background: #0d0d0f; color: #eee;
+    font: 15px ui-monospace, Menlo, monospace; padding: 8px; -webkit-user-select: text; user-select: text;
+  }
+  #banner {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10; padding: 6px 8px; background: #b3261e; color: #fff;
+    font: 12px ui-monospace, Menlo, monospace; white-space: pre-wrap;
+  }
+</style>
+<script type="module" src="spike.js"></script>
+</head>
+<body>
+  <div id="static">Static text for S7: long-press a word here, drag the selection handles, then tap Copy.
+    The quick brown fox jumps over the lazy dog; tether keeps the keyboard up while you select.</div>
+  <div id="echo"></div>
+  <div id="termwrap">
+    <div id="sheet" class="overlay">
+      <div>Web sheet (S4). Tap the buttons, then close.</div>
+      <div class="row"><button data-count>one</button><button data-count>two</button><button data-count>three</button></div>
+      <div id="sheetcount">taps: 0</div>
+      <div class="row"><button id="sheetclose">close</button></div>
+    </div>
+    <div id="editor" class="overlay">
+      <div>Editor stand-in (S11): tap the text area, type, then close.</div>
+      <textarea id="editarea" autocapitalize="off" spellcheck="false"></textarea>
+      <div class="row"><button id="editclose">close</button></div>
+    </div>
+  </div>
+  <div id="bar">
+    <button data-tab="0">tab1</button>
+    <button data-tab="1">tab2</button>
+    <button data-tab="2">tab3</button>
+    <button id="flood">flood 0</button>
+    <button id="sheetbtn">sheet</button>
+    <button id="editbtn">edit</button>
+    <button id="kbbtn">⌨</button>
+  </div>
+  <div id="banner" hidden></div>
+</body>
+</html>

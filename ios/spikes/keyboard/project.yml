@@ -1,0 +1,43 @@
+# XcodeGen spec for spike 1 (docs/design/spike-1-keyboard.md).
+# `xcodegen` writes KeyboardSpike.xcodeproj, which is gitignored.
+name: KeyboardSpike
+options:
+  bundleIdPrefix: dev.tether.spike
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+targets:
+  KeyboardSpike:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Spike
+      # A folder reference: the bundle keeps web/ as a directory, which
+      # SchemeHandler serves at spike-app://ui/.
+      - path: web
+        type: folder
+    settings:
+      base:
+        PRODUCT_NAME: KeyboardSpike
+        # Change this if Xcode says the bundle id is taken.
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tether.spike.keyboard
+        # Set your team id here to keep it across `xcodegen` runs, or pick the
+        # team in Signing & Capabilities after each run.
+        # DEVELOPMENT_TEAM: ABCDE12345
+        CODE_SIGN_STYLE: Automatic
+        INFOPLIST_FILE: Spike/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_STRICT_CONCURRENCY: complete
+schemes:
+  KeyboardSpike:
+    build:
+      targets:
+        KeyboardSpike: all
+    run:
+      config: Debug
+    archive:
+      config: Release

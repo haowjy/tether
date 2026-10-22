@@ -21,11 +21,13 @@ records results.
 
 ```text
 ┌──────────────────────────────────────┐
-│ ◀ S3 Tap terminal ▶  [Pass][Fail] ⚙  │  native strip (UIButtons, never first responder)
-│ 80×24 · kb:up · guard:on · fr:term   │  live status line
-│ $ …xterm.js output (flood toggle)…   │  WKWebView
-│                                      │
-│ (tab1)(tab2)(tab3)  [sheet][edit][⌨] │  web tab bar and test buttons
+│ ◀ S3 Tap tab1…  ▶ Pass Fail ⚙        │  native strip (UIButtons, never first responder)
+│ ✓ Keyboard stays up…  [A/on pass]    │  pass condition, answers so far
+│ 55×36 · kb:up · guard:on · fr:term … │  live status line
+│ Static text for S7…                  │  WKWebView
+│ tab1 ▸ hello⟨Enter⟩                  │  echo of what the active tab received
+│ $ …xterm.js output…                  │
+│ tab1 tab2 tab3 · flood sheet edit ⌨  │  web tab bar and test buttons
 ├──────────────────────────────────────┤
 │ esc tab ctrl ⇧tab ← ↑ ↓ → cmp paste ⌨̲ │  native accessory (key row)
 │           iOS keyboard               │
@@ -36,21 +38,25 @@ records results.
 
 ```text
 ios/spikes/keyboard/
-  project.yml                 XcodeGen: one iOS app target "KeyboardSpike", iOS 26
+  project.yml                 XcodeGen: one iOS app target "KeyboardSpike", iOS 26, Swift 6
   Spike/
-    AppDelegate.swift         window + SpikeViewController
-    SpikeViewController.swift WKWebView, control strip, geometry modes, native sheet
-    TerminalInputView.swift   UIKeyInput + traits; pressesBegan; guard; paste(_:)
+    AppDelegate.swift         app and scene delegates, window + SpikeViewController
+    SpikeViewController.swift WKWebView, control strip, ⚙ menu, geometry modes, native sheet and prompt
+    TerminalInputView.swift   UIKeyInput + traits; pressesBegan and key repeat; guard; paste(itemProviders:)
     Accessory.swift           key row (UIControls), compose UITextView, UIPasteControl, haptics
+    FocusController.swift     the only code that moves first responder
     Bridge.swift              message handler with reply; callAsyncJavaScript sender; coalescing
-    Recorder.swift            event log + measurements → results.json; share sheet export
+    Bench.swift               M1–M4
+    Recorder.swift            checklist steps, event log, measurements → results.json
     KeychainCheck.swift       part B
-    SchemeHandler.swift       serves web/ at spike-app://ui/
-    Info.plist                NSFaceIDUsageDescription
-    web/
-      index.html, spike.js    page: terminal, tabs, sheet, editor stand-in, selection text, bench
-      xterm.mjs, xterm.css    vendored from @xterm/xterm 6 (npm pack; no build step on the Mac)
-  README.md                   the steps below
+    SchemeHandler.swift       serves web/ at spike-app://ui/ with the app's CSP
+    Info.plist                scene manifest, orientations, NSFaceIDUsageDescription, file sharing
+  web/                        a folder reference, copied into the bundle as web/
+    index.html, spike.js      page: terminals, tabs, sheet, editor stand-in, selection text, flood, bench
+    xterm.mjs, xterm.css      vendored from @xterm/xterm 6.0.0 (npm pack; no build step on the Mac)
+    addon-fit.mjs             @xterm/addon-fit 0.11.0
+    addon-webgl.mjs           @xterm/addon-webgl 0.19.0
+  README.md                   building, driving the app, and the files
 ```
 
 The page loads through a `WKURLSchemeHandler`, as the real app will, so the spike
@@ -70,8 +76,9 @@ also exercises the custom-scheme origin.
 - Hiding the keyboard keeps `TerminalInputView` first responder: hide swaps in an
   empty zero-height `inputView` and a nil accessory and calls `reloadInputViews()`;
   `[⌨]` swaps them back. The status line's `fr:` shows the real first responder.
-- Every attempt to take first responder away while the guard was on is logged
-  (from `canResignFirstResponder` being asked), with the current step.
+- Every attempt to take first responder away is logged (from
+  `canResignFirstResponder` being asked, unless the spike's own focus code is
+  moving it), with the current step and whether the guard allowed it.
 - Geometry modes (⚙): **A** resizes the web view's frame to end at the keyboard's
   top, animated with the keyboard curve; **B** leaves the frame full size and sends
   the keyboard height to the page, which pads its bottom.
@@ -82,16 +89,28 @@ also exercises the custom-scheme origin.
 - ⚙ → Kill web process (Debug spike only) calls WebKit's private
   `_killWebContentProcess` through `perform(_:)`, to rehearse a jetsam kill; the
   spike reloads the page in `webViewWebContentProcessDidTerminate`.
-- `Recorder` logs every `keyboardWillShow`/`WillHide`/`DidChangeFrame` with a
-  timestamp, the current step, the first responder, and whether the spike's focus
-  code caused it. It writes `results.json`.
+- `Recorder` logs every keyboard notification (`Will`/`Did` `Show`, `Hide`,
+  `ChangeFrame`) with a timestamp, the current step and the first responder. Each
+  hide gets a cause: one of the spike's own actions in the previous 1.5 s (hide
+  key, `webText`, a native prompt or sheet, the kill), an app lifecycle change, or
+  `unrequested`; the status line counts unrequested hides. It also logs focus
+  changes, first-responder changes (polled every 0.5 s for the status line), and
+  the origin WebKit reports to the bridge for the custom scheme. It writes
+  `results.json`.
 
 **Web page.**
 
 - An xterm.js terminal sized once from the web view's height with the keyboard hidden;
   it shows its cols×rows in the status line and must never change them on keyboard
-  moves. Its helper textarea is made inert.
-- Flood toggle: 0, 100 KB/s or 1 MB/s of coloured output generated in the page.
+  moves. With the keyboard up it slides so the cursor row stays visible. It uses
+  the WebGL renderer, as the real app will, so M2's flood load is representative;
+  if WebGL fails it falls back to the DOM renderer and records `renderer: dom`. Its
+  helper textarea is made inert.
+- An echo line above the terminal shows what the active tab received, readable
+  during a flood.
+- Flood toggle (a tab-bar button): 0, 100 KB/s or 1 MB/s of coloured output
+  generated in the page, written with xterm.js's write callbacks so its queue stays
+  bounded; the achieved rate is logged when the flood stops.
 - Three tab buttons that swap which of three terminals is shown.
 - "sheet": a web overlay with buttons, opened and closed by taps.
 - "edit": an overlay with a `<textarea>` standing in for the v2 CodeMirror editor. It
@@ -104,30 +123,37 @@ also exercises the custom-scheme origin.
 
 ### Once: set up
 
-1. Mac with Xcode 26 and the iOS 26 SDK; `brew install xcodegen`.
+1. Mac with Xcode 26 or later, new enough for the phone's iOS version;
+   `brew install xcodegen`.
 2. On the iPhone: Settings → Privacy & Security → Developer Mode on (it restarts).
 3. In Xcode → Settings → Accounts, add your Apple ID (the free Personal Team is
    enough).
 4. `cd ios/spikes/keyboard && xcodegen && open KeyboardSpike.xcodeproj`.
 5. Target KeyboardSpike → Signing & Capabilities: pick your Personal Team; change
-   the bundle id if Xcode says it's taken.
+   the bundle id (`dev.tether.spike.keyboard`) if Xcode says it's taken. Each
+   `xcodegen` run resets the team unless `DEVELOPMENT_TEAM` is set in `project.yml`.
 6. Plug in the phone (or pair it over Wi-Fi), pick it as the run destination, ⌘R.
 7. First install only: on the phone, Settings → General → VPN & Device Management →
    trust your developer certificate, then ⌘R again.
 8. Have a Bluetooth or Magic Keyboard nearby for section 4, unpaired for now.
 
-The spike's Swift was written on the Linux dev box, which has no Xcode, so the first
-⌘R may stop on compile errors. Paste them into the chat with the agent that wrote
-the spike; expect one or two rounds before it runs.
+The spike's Swift was written on the Linux dev box, which has no Xcode. It was
+typechecked there under Swift 6 strict concurrency against stand-ins for UIKit and
+WebKit whose declarations were copied from Apple's documentation, and the page was
+run in desktop Chrome under the same CSP with a stand-in for native. The first ⌘R can
+still stop where the real SDK differs from those declarations. Paste the errors into
+the chat with the agent that wrote the spike; expect at most one or two rounds.
 
 ### Run the checklist
 
-The strip at the top shows the step. Do it, tap Pass or Fail, ▶ to the next step.
-Tap Fail when anything surprises you, and say what in the note prompt that follows.
-Run sections 1–3 with guard on and geometry A, then repeat sections 1 and 2 with
-geometry B.
+The strip at the top shows the step and its pass condition. Do it, tap Pass or Fail,
+▶ to the next step. Tap Fail when anything surprises you, and say what in the note
+prompt that follows. On steps that record a value (T1, T5, T6, F1, F2, B1–B3), Pass
+asks for it. Each answer is stored with the current guard and geometry. Run sections
+1–3 with guard on and geometry A, then repeat sections 1 and 2 with geometry B.
 
-**1. Keyboard stays up** (open the keyboard with `[⌨]` first, flood at 1 MB/s from S1)
+**1. Keyboard stays up** (open the keyboard with `[⌨]` first; tap `flood` in the tab
+bar until it reads 1M)
 
 | Step | Do | Pass when |
 |---|---|---|
@@ -149,7 +175,7 @@ geometry B.
 Then turn the guard off (⚙) and repeat S1–S3. This shows what the guard is buying;
 failures here are expected.
 
-**2. Typing in the terminal input**
+**2. Typing in the terminal input** (tap `flood` until it reads 0)
 
 | Step | Do | Record |
 |---|---|---|
@@ -187,21 +213,26 @@ Unpair the keyboard afterwards and check the software keyboard comes back on `[�
 
 ### Measure
 
-⚙ → Bench runs each automatically and writes the numbers into `results.json`; keep
-the phone still and the app in front.
+⚙ → Bench runs each automatically and writes the numbers into `results.json`. It
+takes about 90 s and opens and closes the keyboard by itself: unpair any hardware
+keyboard first, keep the phone still and the app in front, and wait for "Bench done"
+in the status line.
 
 | Bench | What it does | Recorded |
 |---|---|---|
 | M1 key RTT, idle | 1000 input events at 60/s, native → page → `ack` → native, timed with `CACurrentMediaTime` | p50, p95, p99, max of the round trip, and half of it as the one-way estimate |
 | M2 key RTT, flood | M1 with the page writing 1 MB/s into xterm.js | same |
-| M3 web → native | Page posts 1000 `haptic` requests with reply | p50, p99 |
-| M4 keyboard timing | 10 rounds of show/hide driven by the spike | `becomeFirstResponder` → `keyboardDidShow` ms; frame-change → page layout settled (page reports after the next animation frame) ms, per geometry mode |
+| M3 web → native | Page posts 1000 `haptic` requests with reply, each after the previous reply | p50, p99 of the round trip, timed natively as the gap between arrivals; the page's own `performance.now()` timing is recorded too, but WebKit may coarsen that clock |
+| M4 keyboard timing | 10 rounds of show/hide per geometry mode, driven by the focus controller | `focus terminal` from hidden (`reloadInputViews`) → `keyboardDidShow` ms; `focus hidden` → `keyboardDidHide` ms; `keyboardWillChangeFrame` → page layout settled (page reports after the next animation frame) ms |
 
 ### Part B: Keychain check
 
-⚙ → Keychain check. The item is the one auth.md specifies: a generic password with
-access control `.biometryCurrentSet` and `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly`.
-Each step reports the `OSStatus`; Jimmy counts Face ID prompts.
+Move the strip to the step, then use ⚙ → Keychain B1 (delete any leftover item,
+add) or ⚙ → Keychain B2/B3 (read, delete, add). The item is the one auth.md
+specifies: a generic password with access control `.biometryCurrentSet` and
+`kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly`. The status line shows each
+operation's `OSStatus` and duration, and `results.json` keeps them; Jimmy counts Face
+ID prompts and enters the count when he taps Pass.
 
 | Step | Do | Pass when |
 |---|---|---|
@@ -211,8 +242,9 @@ Each step reports the `OSStatus`; Jimmy counts Face ID prompts.
 
 ### Hand back the results
 
-⚙ → Export → AirDrop `results.json` to the Mac and attach or paste it into the chat
-with the agent coordinating tether. That agent records the results in
+⚙ → Export results.json → AirDrop it to the Mac (if AirDrop fails, it is in the
+Files app under On My iPhone → KB Spike) and attach or paste it into the chat with
+the agent coordinating tether. That agent records the results in
 `docs/design/research/` and decides from them. The file holds the checklist answers,
 notes, the event log and every measurement.
 
