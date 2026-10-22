@@ -1,97 +1,34 @@
 //! The auth layers over a real socket (auth.md "Carrying the token", "Endpoints"):
 //! every route sits behind the Tailscale check; only the two `/auth` routes skip the
-//! device check; a bad token on the WebSocket gets the upgrade and then close 4401.
+//! device check, so every `/fs` route needs a token; a bad token on the WebSocket gets
+//! the upgrade and then close 4401.
 
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use tether::auth::{Auth, Store};
-use tether::http::{self, App};
-use tether::hub::{self, Endpoints};
-use tether::proto::HostInfo;
-use tether::tmux::{Endpoint, Socket};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
-const LOGIN: &str = "jimmy@github";
-const WAIT: Duration = Duration::from_secs(5);
+#[path = "support/daemon.rs"]
+mod daemon;
 
-struct Daemon {
-    port: u16,
-    store: Store,
-    dir: PathBuf,
-}
+use daemon::{LOGIN, WAIT, request, start};
 
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-async fn start(name: &str) -> Daemon {
-    let dir = std::env::temp_dir().join(format!("tether-http-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let store = Store::open(dir.join("state")).expect("a state dir");
-    let paste_dir = dir.join("paste");
-    std::fs::create_dir_all(&paste_dir).expect("a paste dir");
-    // No tmux server is ever asked for: these sockets never watch a window.
-    let endpoint = Endpoint {
-        program: PathBuf::from("tmux"),
-        socket: Socket::Name(format!("tether-http-test-{}", std::process::id())),
-    };
-    let (hub, _task) = hub::spawn(Endpoints { main: endpoint });
-    let app = App {
-        auth: Auth::new(store.clone(), vec![LOGIN.to_owned()]),
-        hub,
-        host: HostInfo {
-            id: store.host_id().expect("a host id"),
-            name: "test".to_owned(),
-        },
-        paste_dir,
-    };
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
-    let port = listener.local_addr().expect("an address").port();
-    tokio::spawn(http::serve(listener, app, std::future::pending()));
-    Daemon { port, store, dir }
-}
-
-/// One HTTP/1.1 request; the status and the body.
-async fn request(
-    port: u16,
-    method: &str,
-    path: &str,
-    headers: &[(&str, &str)],
-    body: &str,
-) -> (u16, String) {
-    let mut stream = TcpStream::connect(("127.0.0.1", port))
-        .await
-        .expect("connected");
-    let mut text = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
-    for (name, value) in headers {
-        text.push_str(&format!("{name}: {value}\r\n"));
-    }
-    if !body.is_empty() {
-        text.push_str(&format!(
-            "Content-Type: application/json\r\nContent-Length: {}\r\n",
-            body.len()
-        ));
-    }
-    text.push_str("\r\n");
-    text.push_str(body);
-    stream.write_all(text.as_bytes()).await.expect("sent");
-    let mut response = String::new();
-    tokio::time::timeout(WAIT, stream.read_to_string(&mut response))
-        .await
-        .expect("an answer in time")
-        .expect("read");
-    let status = response[9..12].parse().expect("a status");
-    let body = response.split_once("\r\n\r\n").map_or("", |(_, body)| body);
-    (status, body.to_owned())
-}
+/// Every `/fs` route, with a body where it takes one.
+const FS_ROUTES: [(&str, &str, &str); 10] = [
+    ("GET", "/fs/roots", ""),
+    ("POST", "/fs/roots/add", r#"{"path":"/tmp"}"#),
+    ("POST", "/fs/roots/remove", r#"{"path":"/tmp"}"#),
+    ("POST", "/fs/uploads-dir", r#"{"path":"/tmp"}"#),
+    ("GET", "/fs/list/", ""),
+    ("GET", "/fs/list/tmp", ""),
+    ("GET", "/fs/dirs/", ""),
+    ("GET", "/fs/dirs/tmp", ""),
+    ("GET", "/fs/raw/etc/hostname", ""),
+    ("POST", "/fs/upload?name=a.jpg", "{}"),
+];
 
 /// Opens `/ws` with these headers and subprotocols: the upgrade's outcome.
 async fn open(
@@ -129,12 +66,13 @@ async fn every_route_needs_the_tailscale_login() {
     let daemon = start("tailscale").await;
     let port = daemon.port;
     let enroll = r#"{"code":"AAAA-AAAA","deviceName":"x"}"#;
-    for (method, path, body) in [
+    let routes = [
         ("GET", "/auth/info", ""),
         ("POST", "/auth/enroll", enroll),
         ("GET", "/ws", ""),
         ("GET", "/no-such-route", ""),
-    ] {
+    ];
+    for (method, path, body) in routes.into_iter().chain(FS_ROUTES) {
         let missing = request(port, method, path, &[], body).await;
         assert_eq!(missing.0, 403, "{method} {path} without a login");
         let stranger = [("Tailscale-User-Login", "someone@else")];
@@ -178,6 +116,28 @@ async fn only_the_auth_routes_skip_the_device_check() {
     let bearer = format!("Bearer {token}");
     let with_token = [("Tailscale-User-Login", LOGIN), ("Authorization", &bearer)];
     assert_ne!(request(port, "GET", "/ws", &with_token, "").await.0, 401);
+    // Every file route: refused by the layer without a token, reached with one.
+    let wrong = [
+        ("Tailscale-User-Login", LOGIN),
+        ("Authorization", "Bearer tether_nope"),
+    ];
+    for (method, path, body) in FS_ROUTES {
+        for headers in [&login[..], &wrong[..]] {
+            let (status, refused) = request(port, method, path, headers, body).await;
+            assert_eq!(
+                (status, refused.as_str()),
+                (401, r#"{"error":"auth_required"}"#),
+                "{method} {path}"
+            );
+        }
+        // The handler answers: a refusal of its own, if any, not the layers'.
+        let (status, answer) = request(port, method, path, &with_token, body).await;
+        let layers = [r#"{"error":"auth_required"}"#, r#"{"error":"forbidden"}"#];
+        assert!(
+            !layers.contains(&answer.as_str()),
+            "{method} {path}: {status} {answer}"
+        );
+    }
 
     let (mut socket, protocol) = open(
         port,

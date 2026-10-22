@@ -47,7 +47,7 @@ pub(super) async fn run(
         let input = tokio::select! {
             Some((client, msg)) = pump_out.recv() => Input::Pump(client, msg),
             msg = inbox.recv() => match msg {
-                None => break,
+                None | Some(HubMsg::Stop) => break,
                 Some(HubMsg::Connect(reply)) => match io.connect(reply) {
                     Some(conn) => Input::Connected(conn),
                     None => continue,

@@ -12,7 +12,7 @@ Rules the code relies on, which are easy to break:
 - Every write of `auth.toml` goes through `Store::update`, which holds the flock for
   the whole read-modify-write, lands by temp file, fsync, rename and directory fsync,
   and writes nothing when nothing changed. A file that doesn't parse is never
-  overwritten.
+  overwritten. fs's `config.toml` writes hold the same lock (`Store::lock`).
 - Checks read the file each time, so `tether device remove` reaches a running daemon
   with no IPC. Don't add a cache.
 - Only hashes are stored. A token or code exists in memory for one response or one

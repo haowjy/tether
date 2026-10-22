@@ -9,7 +9,8 @@ use std::time::{Duration, SystemTime};
 use clap::{Parser, Subcommand};
 use tether::auth::identity::{Node, ServeConfig};
 use tether::auth::{Auth, Store};
-use tether::config::{self, Config};
+use tether::config::{self, Config, ConfigFile};
+use tether::fs;
 use tether::http::{self, App};
 use tether::hub::{self, Endpoints};
 use tether::proto::HostInfo;
@@ -70,10 +71,11 @@ enum DeviceCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let result = Config::load(cli.config.as_deref())
+    let result = ConfigFile::resolve(cli.config.as_deref())
+        .and_then(|file| Ok((file.load()?, file)))
         .map_err(Into::into)
-        .and_then(|config| match cli.command {
-            Command::Serve { allow_login } => serve(config, allow_login),
+        .and_then(|(config, file)| match cli.command {
+            Command::Serve { allow_login } => serve(config, file, allow_login),
             Command::Enroll { ttl } => enroll(&config, ttl),
             Command::Device(command) => device(command),
         });
@@ -94,14 +96,15 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
     Ok(runtime)
 }
 
-fn serve(config: Config, allow_login: Vec<String>) -> Result<()> {
+fn serve(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<()> {
     init_tracing();
     // An error reaches stderr, and so the journal, through `main`.
-    runtime()?.block_on(daemon(config, allow_login))
+    runtime()?.block_on(daemon(config, file, allow_login))
 }
 
-async fn daemon(config: Config, allow_login: Vec<String>) -> Result<()> {
+async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<()> {
     let store = Store::open(config::state_dir()?)?;
+    let home = config::home()?;
     let host_id = store.host_id()?;
     let port = config.port;
     let node = Node::read()
@@ -143,16 +146,20 @@ async fn daemon(config: Config, allow_login: Vec<String>) -> Result<()> {
     // Only once the port is ours: a second daemon started by mistake must not delete
     // the running one's pastes.
     let paste_dir = empty_dir(&config::runtime_dir()).await?;
+    start_file_api(&config, &home).await;
 
     let endpoint = config.endpoint();
     let (hub, mut hub_task) = hub::spawn(Endpoints {
         main: endpoint.clone(),
     });
+    let hub_stop = hub.clone();
     let app = App {
         auth: Auth::new(store, allow.clone()),
         hub,
         host: HostInfo { id: host_id, name },
         paste_dir,
+        config: file,
+        home,
     };
     let signalled = async move {
         tokio::select! {
@@ -168,10 +175,13 @@ async fn daemon(config: Config, allow_login: Vec<String>) -> Result<()> {
 
     tokio::select! {
         served = &mut server => served?,
-        // The hub ends only once every handle is gone, which `serve` holds: it panicked.
+        // The hub ends only once stopped or every handle is gone: it panicked.
         joined = &mut hub_task => return Err(format!("the hub ended: {joined:?}").into()),
     }
-    // Every handle is gone now, so the hub closes its control clients' stdin and ends.
+    // A request still stuck at shutdown holds a handle: stop the hub regardless, so it
+    // closes its control clients' stdin and ends.
+    let _ = hub_stop.stop().await;
+    drop(hub_stop);
     match tokio::time::timeout(HUB_WAIT, hub_task).await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(cause)) => Err(format!("the hub ended: {cause}").into()),
@@ -191,6 +201,26 @@ async fn empty_dir(dir: &Path) -> Result<PathBuf> {
     tokio::fs::create_dir_all(dir).await?;
     tokio::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).await?;
     Ok(dir.to_owned())
+}
+
+/// Deletes the part files of uploads a daemon that died left, and warns of roots that
+/// fs ignores. Only once the port is ours, as for the paste directory.
+async fn start_file_api(config: &Config, home: &Path) {
+    for entry in config.roots.iter().chain([&config.uploads_dir]) {
+        if fs::expand(entry, home).is_none() {
+            warn!(%entry, "a root in config.toml isn't absolute or ~/: ignored");
+        }
+    }
+    let Some(uploads) = fs::expand(&config.uploads_dir, home) else {
+        return;
+    };
+    let dir = uploads.clone();
+    match tokio::task::spawn_blocking(move || fs::upload::sweep(&dir)).await {
+        Ok(Ok(0)) => {}
+        Ok(Ok(removed)) => info!(removed, dir = %uploads.display(), "deleted unfinished uploads"),
+        Ok(Err(cause)) => warn!(%cause, dir = %uploads.display(), "can't sweep the uploads folder"),
+        Err(cause) => warn!(%cause, "the uploads sweep failed"),
+    }
 }
 
 /// Logs to stderr, which systemd puts in the journal (with its own timestamps).

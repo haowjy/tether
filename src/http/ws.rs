@@ -1,7 +1,8 @@
 //! One WebSocket connection (daemon-core.md §4.6–4.7, §5.2, §6; auth.md "Carrying the
 //! token"): the handshake, the timer that enforces the idle timeout and re-checks the
-//! device, pastes written to files, and the hub's `ToConn` moved through an `Outbox`
-//! onto the socket, every charge returned as `FromConn::Credit`.
+//! device, pastes written to files, the `dir` check on new windows and sessions, and
+//! the hub's `ToConn` moved through an `Outbox` onto the socket, every charge returned
+//! as `FromConn::Credit`.
 //!
 //! One task per socket, one `select!` loop. The frame being written and the charges
 //! not yet flushed live in `Conn`, not in the write future, so `select!` may drop that
@@ -298,6 +299,12 @@ impl Conn<'_> {
             }
             ClientMsg::Paste { watch, text } => self.paste(watch, text).await,
             msg => {
+                if let Some((req, dir)) = start_dir(&msg) {
+                    if let Err(cause) = check_dir(dir.to_owned()).await {
+                        self.refuse(Some(req), None, ErrorCode::BadRequest, cause);
+                        return Ok(());
+                    }
+                }
                 if let ClientMsg::Unwatch { watch } = &msg {
                     self.outbox.unwatch(*watch);
                 }
@@ -312,7 +319,8 @@ impl Conn<'_> {
     async fn paste(&mut self, watch: u32, text: String) -> Result<(), End> {
         if text.len() > MAX_PASTE {
             self.refuse(
-                watch,
+                None,
+                Some(watch),
                 ErrorCode::InputTooLarge,
                 "a paste is at most 256 KiB",
             );
@@ -320,7 +328,8 @@ impl Conn<'_> {
         }
         let Ok(slot) = self.ctx.pastes.clone().try_acquire_owned() else {
             self.refuse(
-                watch,
+                None,
+                Some(watch),
                 ErrorCode::Busy,
                 "too many pastes are waiting for tmux",
             );
@@ -332,7 +341,12 @@ impl Conn<'_> {
         if let Err(cause) = write_private(&path, text.as_bytes()).await {
             warn!(%cause, path = %path.display(), "can't write a paste file");
             let _ = tokio::fs::remove_file(&path).await;
-            self.refuse(watch, ErrorCode::Busy, "can't write the paste file");
+            self.refuse(
+                None,
+                Some(watch),
+                ErrorCode::Busy,
+                "can't write the paste file",
+            );
             return Ok(());
         }
         let file = PasteFile::new(path, slot);
@@ -368,10 +382,11 @@ impl Conn<'_> {
         (self.heard + IDLE).min(self.checked + RECHECK)
     }
 
-    fn refuse(&mut self, watch: u32, code: ErrorCode, message: &str) {
+    /// The connection's own `error`, uncharged.
+    fn refuse(&mut self, req: Option<u32>, watch: Option<u32>, code: ErrorCode, message: &str) {
         self.own.push_back(encode(&ServerMsg::Error {
-            req: None,
-            watch: Some(watch),
+            req,
+            watch,
             code,
             message: message.to_owned(),
         }));
@@ -389,8 +404,33 @@ impl Conn<'_> {
 
 /// Resolves on shutdown, or if the sender is gone. Its guard on the value never
 /// outlives it, which keeps the connection's future `Send`.
-async fn stopped(shutdown: &mut watch::Receiver<bool>) {
+pub(super) async fn stopped(shutdown: &mut watch::Receiver<bool>) {
     let _ = shutdown.wait_for(|stop| *stop).await;
+}
+
+/// The `dir` of a `newWindow` or `newSession`, with its `req`.
+fn start_dir(msg: &ClientMsg) -> Option<(u32, &str)> {
+    match msg {
+        ClientMsg::NewWindow {
+            req,
+            dir: Some(dir),
+            ..
+        }
+        | ClientMsg::NewSession {
+            req,
+            dir: Some(dir),
+            ..
+        } => Some((*req, dir)),
+        _ => None,
+    }
+}
+
+/// `fs::check_dir` off the runtime, with no fs slot: a `stat`, and no config, so a
+/// broken `config.toml` never blocks a new window. tmux gets `dir` as given.
+async fn check_dir(dir: String) -> Result<(), &'static str> {
+    tokio::task::spawn_blocking(move || crate::fs::check_dir(&dir))
+        .await
+        .unwrap_or(Err("can't check the directory"))
 }
 
 /// One read from the socket: a decoded text message, nothing (a control frame), or how

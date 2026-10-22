@@ -222,8 +222,9 @@ impl Store {
         Ok(result)
     }
 
-    /// Held until dropped.
-    fn lock(&self) -> Result<File, StoreError> {
+    /// The state directory's `flock`, held until dropped: every tether writer holds it
+    /// for its read-modify-write, of `auth.toml` and of `config.toml` (fs.md).
+    pub fn lock(&self) -> Result<File, StoreError> {
         let path = self.dir.join(LOCK);
         let file = OpenOptions::new()
             .create(true)

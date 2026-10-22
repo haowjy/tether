@@ -1,3 +1,0 @@
-- `newWindow` and `newSession` pass `dir` to the hub unchecked. The connection should
-  call `fs::check_dir` first (absolute, an existing directory; not the file roots), as
-  docs/design/fs.md "Path resolution" says; that waits for `src/fs/`.

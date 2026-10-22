@@ -161,6 +161,7 @@ enum HubMsg {
     Connect(ConnectReply),
     Conn(ConnId, FromConn),
     OneShot(Tag, Result<Reply, TmuxError>),
+    Stop,
 }
 
 /// Where the hub answers `connect`: the connection's id and the channel it sends on.
@@ -196,10 +197,16 @@ impl HubHandle {
             .await
             .map_err(|_| HubGone)
     }
+
+    /// Ends the hub at shutdown, however many handles are left: an HTTP connection
+    /// still stuck at shutdown keeps its handle until the runtime drops it.
+    pub async fn stop(&self) -> Result<(), HubGone> {
+        self.inbox.send(HubMsg::Stop).await.map_err(|_| HubGone)
+    }
 }
 
-/// Starts the hub task. It runs until every `HubHandle` is dropped, then closes its
-/// control clients. Must be called inside the tokio runtime.
+/// Starts the hub task. It runs until every `HubHandle` is dropped or one calls
+/// `stop`, then closes its control clients. Must be called inside the tokio runtime.
 pub fn spawn(endpoints: Endpoints) -> (HubHandle, JoinHandle<()>) {
     let (inbox, receiver) = mpsc::channel(INBOX);
     let state = State::new(endpoints, std::time::Instant::now());

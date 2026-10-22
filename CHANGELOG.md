@@ -5,6 +5,14 @@ version section on release.
 
 ## [Unreleased]
 
+- The file API (`/fs/*`): project roots and an uploads folder set from the app and
+  saved in `config.toml` (comments and unknown keys kept), directory listings and a
+  `$HOME` folder picker, file bytes with Range for the viewers and the native video
+  player, and photo uploads. Every path is checked against the roots on the descriptor
+  actually opened, so `..`, symlinks out of a root and FIFOs are refused. A new window
+  or session's start directory must be an existing absolute directory. Every accepted
+  socket uses 64 KiB kernel buffers, and shutdown no longer waits on a stalled
+  response.
 - The app restores the last tab on screen and keeps the cursor row visible when
   the keyboard opens, without resizing tmux.
 - Visual web UI: tab bar with connection states, session sheets, new window and

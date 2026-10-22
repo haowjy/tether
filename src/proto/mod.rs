@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod frames;
+pub mod fs;
 mod messages;
 #[cfg(test)]
 mod typescript;

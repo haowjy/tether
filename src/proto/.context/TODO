@@ -1,0 +1,7 @@
+- `fs.rs`'s types derive `TS` but aren't rendered into `web/proto/generated/` yet:
+  add `Roots`, `RootStatus`, `PathBody`, `Listing`, `Entry`, `EntryKind` and
+  `Uploaded` to `declarations()` (or a second file for the HTTP bodies), regenerate,
+  and commit the file with the web file manager.
+- `ClientMsg::NewWindow.dir`'s doc comment still says "Checked against the file
+  roots"; the connection checks only shape and that it is a directory (fs.md "Path
+  resolution"). Fix it in the same regeneration, since the comment is rendered.

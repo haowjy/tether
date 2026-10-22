@@ -2,8 +2,9 @@
 
 The daemon's HTTP surface: axum on `127.0.0.1` only, published by `tailscale serve`.
 `mod.rs` builds the router and both auth layers and serves until shutdown; `enroll.rs`
-holds `/auth/info` and `/auth/enroll`; `ws.rs` runs one task per WebSocket, which
-drives the hub through `HubHandle`. Nothing here names a tmux type.
+holds `/auth/info` and `/auth/enroll`; `fs.rs` the thin `/fs/*` handlers over
+[`src/fs/`](../fs/AGENTS.md); `ws.rs` runs one task per WebSocket, which drives the hub
+through `HubHandle`. Nothing here names a tmux type.
 
 Rules the code relies on, which are easy to break:
 
@@ -25,3 +26,11 @@ Rules the code relies on, which are easy to break:
 - The connection's own limits (sockets, inbound size, paste size and slots, the hello
   deadline, idle and re-check) are constants at the top of `ws.rs`; their values come
   from [daemon-core.md §6](../../docs/design/daemon-core.md).
+- Every accepted socket gets 64 KiB `SO_SNDBUF`/`SO_RCVBUF` (`tap_io` in `serve`): the
+  unit is charged for kernel buffers, which RSS doesn't show.
+- Shutdown is bounded: graceful shutdown waits for every response, a stalled raw one
+  too, so `serve` gives up after `SHUTDOWN_WAIT`. A connection left running keeps its
+  `Arc<Ctx>`, and with it a `HubHandle`; `main` ends the hub with `HubHandle::stop`
+  rather than waiting for every handle to drop.
+- `newWindow`/`newSession` `dir` is checked in `ws.rs` with `fs::check_dir` (shape and
+  a directory, not the roots, no config) and passed to the hub as given.
