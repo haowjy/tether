@@ -101,8 +101,8 @@ refuses to start with Funnel on ([plan.md](plan.md#security)). Probed on the dev
    calls `GET /auth/info` and shows the host's name for confirmation.
 4. The app sends `POST /auth/enroll {code, deviceName}`. It passes the Tailscale check
    first, and the login is recorded as `enrolled_by`.
-5. The daemon takes the `flock` (in `spawn_blocking`) and, holding it, reads the state
-   file and checks the code against `pending` (constant time, unexpired):
+5. On the auth lane, the daemon takes the state-directory `flock` (`files::lock`),
+   reads the state file and checks the code against `pending` (constant time, unexpired):
    - **right:** generate the token, add the device with the token's hash, remove
      `pending`, and write the file once. Consuming the code and adding the device is
      one atomic write, so a crash leaves either both or neither.
@@ -260,8 +260,8 @@ Tailscale check; only the two `/auth` routes skip the token check.
 | Route | Request | Response | Errors |
 |---|---|---|---|
 | `GET /auth/info` | | `{hostId, name, daemonVersion, protocol: {min, max}}` | |
-| `POST /auth/enroll` | `{code, deviceName}`, `Content-Type: application/json`, body at most 4 KiB | `{token, deviceName}` | 403 `bad_code` (wrong, expired or none pending); `bad_request` (below); 500 `internal` |
-| `GET /ws` | subprotocol token | upgrade | bad token: upgrade, then close 4401; unreadable `auth.toml`: upgrade, then close 4503 |
+| `POST /auth/enroll` | `{code, deviceName}`, `Content-Type: application/json`, body at most 4 KiB | `{token, deviceName}` | 403 `bad_code` (wrong, expired or none pending); 400/415/422 `bad_request`; 413 `too_large`; 500 `internal`; 503 `busy` (auth lane wait) |
+| `GET /ws` | subprotocol token | upgrade | bad token: upgrade, then close 4401; unreadable `auth.toml` or an auth-lane timeout: upgrade, then close 4503 |
 | every other route (`/fs/*`, `/complete`, debug) | `Authorization: Bearer` | | 401 `auth_required`; 503 `auth_unavailable` |
 
 Errors on any route, besides those in the table:
@@ -270,8 +270,10 @@ Errors on any route, besides those in the table:
 |---|---|---|
 | 403 | `forbidden` | The Tailscale check failed: not a loopback peer, or a login outside the allowlist. Sent for every route, unknown paths included, before anything else |
 | 400, 415, 422 | `bad_request` | A body that isn't the route's JSON, with the status axum's `Json` extractor gives: 415 when it isn't `application/json`, 400 or 422 for malformed or mistyped JSON |
-| 500 | `internal` | The enrolment transaction failed (the state file can't be read or written, or its task died); the cause is logged, never sent. A broken `auth.toml` shows up here for `POST /auth/enroll`, which no token check guards |
-| 503 | `auth_unavailable` | The token check can't read or parse `auth.toml`; retryable (see [Carrying the token](#carrying-the-token)) |
+| 413 | `too_large` | The enrolment JSON body exceeds 4 KiB |
+| 500 | `internal` | The enrolment transaction failed (the state file can't be read or written); the cause is logged, never sent. A broken `auth.toml` shows up here for `POST /auth/enroll`, which no token check guards |
+| 503 | `busy` | The auth lane has no thread within 10 s for enrolment |
+| 503 | `auth_unavailable` | The token check cannot read or parse `auth.toml`, or its auth-lane wait expires; retryable (see [Carrying the token](#carrying-the-token)) |
 
 `/auth/info.name` (and `welcome.host.name`) is the config key `name`, else the machine
 name from tailscaled's MagicDNS name ([plan.md](plan.md#config)). It is a label for the
@@ -279,7 +281,9 @@ host list; the host's identity is `hostId`.
 
 ### Module shape
 
-`src/auth/` is plain functions over the state file; it owns no task.
+`src/auth/` is plain functions over the state file; it owns no task. File reads, writes
+and the shared state-directory flock use `files` on the auth lane. `Auth::recheck`
+uses `token::find` just like the initial token check.
 
 - `identity.rs`: the LocalAPI client, the allowlist, the Tailscale check.
 - `token.rs`: pure `generate() -> String`, `hash(&str) -> [u8; 32]`, and

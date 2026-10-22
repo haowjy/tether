@@ -1,0 +1,5 @@
+- Enrolment waits for the state directory's flock while holding one of the auth lane's
+  two threads. A config.toml write blocked on a hung mount (config.toml symlinked
+  there) holds that flock, so two enrolment attempts would pin both auth threads and
+  stall device checks. Device checks themselves take no lock. A fix: try the lock with
+  LOCK_NB in a short retry loop and answer 503 busy, instead of blocking in flock.

@@ -22,9 +22,8 @@ auth is [auth.md](auth.md). Decisions and the alternatives rejected are in
 | scans at once | 1 | wait |
 | raw responses at once | 2 | wait |
 | uploads at once | 1 | `503 busy` at once |
-| fs blocking slots | 4 of the runtime's 8 blocking threads | wait |
-| wait for a slot | 10 s | `503 busy`, `Retry-After: 1` |
-| requests waiting for any slot | 8 | `503 busy` at once |
+| fs lane | 4 of the runtime's 8 blocking threads; includes scan and raw-response slot waits | wait up to 10 s |
+| fs lane waiters | 8 across all fs slots and blocking calls | `503 busy` at once; timed-out requests get `Retry-After: 1` |
 | raw read and upload write chunk | 64 KiB | |
 | raw stall deadline | 30 s for the socket to take the next chunk | the response is aborted, its slot freed |
 | upload size | 128 MiB | `413 too_large`; the partial file is deleted |
@@ -92,7 +91,9 @@ and the picker returns no file names and no contents.
 ### Writing `config.toml`
 
 Writers are the daemon (the routes above) and Jimmy's editor; a future CLI command
-would follow the same steps. In a blocking task:
+would follow the same steps. The daemon runs this blocking work on the fs lane.
+`files::lock` provides the shared state-directory flock; `files::Temp` writes the
+replacement:
 
 1. Take the `flock` on `$XDG_STATE_HOME/tether/lock`, the one auth's writers hold
    ([auth.md](auth.md#state-on-disk)), for the whole read-modify-write.
@@ -110,10 +111,13 @@ would follow the same steps. In a blocking task:
    config_unavailable`.
 4. Change only the top-level `roots` or `uploads_dir`. `toml_edit` keeps comments,
    order and unknown keys, so a newer daemon's keys survive an older one's write.
-5. Remove a stale `<name>.tmp` beside the file, write the new text there with the
-   original's mode (new files 0600) and `fsync` it. `stat` the original again: if it
-   changed since step 3, start over from step 3 (at most 3 tries, then `503 busy`).
-   Otherwise `rename` the temp file over it and `fsync` the directory.
+5. Remove a stale `<name>.tmp`, then create it relative to the open directory with
+   `openat`, `O_EXCL` and the exact original mode (new files 0600); write the text and
+   `fsync` it. `files::Temp` compares the target stamp without following a symlink: if
+   it changed since step 3,
+   delete the temp and start over from step 3 (at most 3 tries, then `503 busy`).
+   Otherwise rename the temp over it and `fsync` the directory. A `Temp` is not deleted
+   by `Drop`; cleanup runs on a blocking lane, never on the runtime thread.
 
 A target on a read-only filesystem, one Jimmy can't write (a home-manager link into
 `/nix/store`), or a symlink to nothing (step 2), is `409 config_read_only`. Readers never see a partial file, since each
@@ -134,9 +138,8 @@ is a value, not a bare list of paths, because the picker's refusal differs: the
 effective roots answer `outside_roots`, `[$HOME]` (the picker) answers `outside_home`,
 and `[/]` (path completion, [complete.md](complete.md#paths)) refuses nothing that
 exists. A third `Want`, `Parent`, belongs to v2's writes
-([below](#v2-what-this-must-not-preclude)) and doesn't exist yet. `open` runs inside a
-blocking task holding an fs slot (completion's directory slot when completion calls
-it), and does, in order:
+([below](#v2-what-this-must-not-preclude)) and doesn't exist yet. `open` runs on the fs lane (the dir lane for completion listings), and does, in
+order:
 
 1. **Shape.** `path` must be absolute, at most 4,096 bytes and free of NUL; otherwise
    `bad_request`. Paths on the wire are UTF-8 strings, so a non-UTF-8 name can't be
@@ -168,8 +171,8 @@ reads or writes is inside its scope.**
 
 **`newWindow` and `newSession` `dir` are not root-checked.** The roots scope the file
 API; tmux runs as Jimmy, and the web's start-directory prompt offers the tab's cwd or
-any typed path. The connection calls `fs::check_dir(dir)` in a blocking task (no fs
-slot): step 1's shape rules, then `stat` (following links) must find a directory. It passes `dir` to tmux as given, so
+any typed path. The connection calls `fs::check_dir(dir)` on the dir lane, with a 300 ms wait: step
+1's shape rules, then `stat` (following links) must find a directory. It passes `dir` to tmux as given, so
 the shell shows the path Jimmy chose. A refusal is `error { req, code: badRequest,
 message }`, the message naming the cause ("not an absolute path", "no such
 directory"). It reads no config, so a broken `config.toml` never blocks a new window.
@@ -237,7 +240,7 @@ Entry   = { name: string,
 `fs::open(…, File)`, then the bytes, holding a raw-response slot. A directory, FIFO,
 socket or device is `409 not_a_file`; the file manager's web code expects that answer
 when a link leads to a folder. A producer task
-`pread`s 64 KiB chunks from the descriptor (each in a blocking task under an fs slot)
+`pread`s 64 KiB chunks from the descriptor (each on the fs lane)
 into a channel of capacity 1 that feeds the response body. If a send waits past the
 stall deadline (a paused player, a sleeping phone), the producer drops the channel
 with an error, which aborts the response and frees the slot. For a file over 8 MiB,
@@ -249,13 +252,14 @@ to the start because the kernel reads ahead in large folios, and a folio that ex
 past a 64 KiB range survives a drop of that range (a per-chunk drop left a whole
 1 GiB download cached on Linux 7.1, ext4). It stops at the current position, not the
 end of the file: dropping ahead would evict the readahead and read it twice. The drop
-is Linux-only and a no-op elsewhere. Use std file calls inside `spawn_blocking`, never
-`tokio::fs::File`, whose buffer grows to 2 MiB.
+is Linux-only and a no-op elsewhere. Use std file calls through the fs lane, never
+`tokio::fs::File`, whose buffer grows to 2 MiB. All blocking work goes through `src/blocking.rs`; Tokio's `fs` feature is
+disabled.
 
 | Header | Value |
 |---|---|
 | `Content-Type` | from the extension table below |
-| `ETag` | strong: `"<ino>-<size>-<mtime_ns>"` in hex, from the `fstat` at open |
+| `ETag` | strong: `"<ino>-<size>-<mtime_ns>"` in hex, from `files::Stamp` of the `fstat` at open |
 | `Accept-Ranges` | `bytes` |
 | `Cache-Control` | `private, no-cache` |
 | `X-Content-Type-Options` | `nosniff` |
@@ -325,7 +329,7 @@ the cap against `Content-Length` up front, when sent, and against the running co
    path, a shell metacharacter or a hidden name into the folder.
 4. Create `.tether-upload-<random>.part` relative to the directory's descriptor with
    `O_CREAT | O_EXCL | O_NOFOLLOW`, mode 0600 (never executable). Write each body chunk
-   in a blocking task under an fs slot. Every 2 MiB, `fdatasync` and
+   on the fs lane. Every 2 MiB, `fdatasync` and
    `posix_fadvise(DONTNEED)` what was written, so the upload's dirty pages stay small
    on a disk the unit reaches at idle I/O priority. Dirty pages can't be reclaimed
    until they are written, so the 2 MiB between flushes is memory the unit holds: the
@@ -340,6 +344,9 @@ the cap against `Content-Length` up front, when sent, and against the running co
    fallback: the rename fails, the part file is deleted and the answer is `500
    internal`, since a check-then-rename could replace a file. No final `fsync`: a photo
    lost to a power cut is re-sent.
+
+If cleanup cannot get a thread from the fs lane, a `.part` file is left behind; startup
+sweeps stale part files from the uploads directory.
 6. Answer `201 { path, size }`, `path` the absolute canonical path, which native
    inserts, quoted, into the tab ([ios-shell.md](ios-shell.md#files-and-sharing)).
 
@@ -374,11 +381,11 @@ rejections.
 
 ## Limits and the memory ceiling
 
-fs runs its file I/O in tokio's blocking pool, capped at 8 threads for `TasksMax`
-([plan.md](plan.md#resource-budget)), and takes at most 4 of them, so a slow disk can
-stall the file manager but never starve auth's `auth.toml` reads or the paste files.
-Every wait but the upload flush has a deadline, at most 8 requests wait at once, and nothing is held
-between requests: no listing cache, no cursor, no open descriptor.
+File I/O runs on the four-thread fs lane in the 8-thread blocking pool
+([plan.md](plan.md#resource-budget)). A slow disk can stall the file manager but cannot
+consume auth's two threads. Every wait but the upload flush has a deadline; at most 8
+callers wait across fs slots and blocking work. Nothing is held between requests: no
+listing cache, no cursor, no open descriptor.
 
 **Shutdown must not wait on a stream.** `http::serve` bounds its graceful wait to 2 s,
 as it does for sockets. axum never force-closes a connection, so the connection task of
@@ -427,12 +434,12 @@ without a disk.
 |---|---|
 | `fs/mod.rs` | `Roots::load()` (config read, canonicalization), `FsError` with its status and code |
 | `fs/open.rs` | `fs::open`, `Scope`, `fs::check_dir`, the platform descriptor-path lookup |
-| `fs/slots.rs` | the fs slots, the scan, raw-response and upload permits, and `Slots::blocking`, which moves a permit into the blocking closure so a dropped request frees its slot only when its thread is done |
+| `fs/slots.rs` | scan, raw-response and upload permits, with waits counted against the fs lane |
 | `fs/list.rs` | the scan; pure sort and page; the picker's directories-only filter |
-| `fs/raw.rs` | pure `parse_range`, `etag` and `If-Range`; the chunk producer |
+| `fs/raw.rs` | pure `parse_range` and `If-Range`; the chunk producer; ETags come from `files::Stamp` |
 | `fs/mime.rs` | the extension table |
 | `fs/upload.rs` | pure name generation; part file, flush, rename, startup sweep |
-| `fs/config_write.rs` | the `toml_edit` change (pure, string in, string out) and the locked write |
+| `fs/config_write.rs` | the `toml_edit` change (pure, string in, string out) and locked write through `files::Temp` |
 
 Wire types go in `src/proto/fs.rs` and are generated for TypeScript like the WebSocket
 messages ([daemon-core.md §5.5](daemon-core.md#55-type-generation)); Swift hand-writes

@@ -22,8 +22,7 @@ Decisions and the alternatives rejected are in [decisions.md](decisions.md#compl
 | requests in flight | 4 | `503 busy` at once |
 | chips per response | 20; history at most 3 of them | the rest are dropped |
 | chip description | 100 bytes | cut |
-| completion blocking slots | 2 of the runtime's 8 blocking threads: an index slot (history, PATH), a directory slot (`check_dir`, listings) | wait, up to the slot wait |
-| slot wait | 300 ms | that source is skipped for this request |
+| completion lanes | index: 1 thread; dir: 1 thread shared with `newWindow` and `newSession` directory checks | each source waits at most 300 ms, then is skipped |
 | history file read | its last 1 MiB | older entries are ignored |
 | history lines scored | 12,000 distinct lines, newest first | an older entry only adds to a line already scored; it never starts a new one |
 | history entries kept | 10,000 distinct lines, highest score | the rest dropped |
@@ -162,7 +161,7 @@ text, and it ranks command chips: a line outside the kept 10,000 adds nothing to
 command's score.
 
 **Freshness.** Each request `stat`s the file; when `(dev, ino, size, mtime)` differs
-from the index's, the file is re-parsed under the index slot and the new index swapped
+from the index's, the file is re-parsed on the index lane and the new index swapped
 in whole. A shell that writes history only on exit leaves its own commands out until
 then; [the snippet](#the-shell-snippet) appends after each command.
 
@@ -179,7 +178,7 @@ to one, with an execute bit, deduplicated. `PATH` is `[complete] path` in
 `config.toml`, else the daemon's own environment, the systemd user manager's. That one
 lacks whatever Jimmy's rc files add (nvm, bun, Go), so installing sets the key
 ([Installing](#installing)). The index is built on the first request that needs it,
-under the index slot. Each later request that needs it `stat`s every `PATH` directory
+on the index lane. Each later request that needs it `stat`s every `PATH` directory
 and rebuilds the whole index when any mtime differs from the build's; there is no
 watcher. The dev box's user-manager `PATH` holds 2,272 names.
 
@@ -208,8 +207,7 @@ changes. Measured: `checkout ""` gives refs only and `checkout -` the 40 flags;
 `checkout origin/` gives `origin/main`; `ls src/` lists `src/`; `chmod u+` gives
 `u+r`, `u+x` and the rest. The cache key is `(cwd, cmd, arg1…argN, stem)`. Before a
 run (not on a cache hit), the request's `cwd` must pass `fs::check_dir`
-([fs.md](fs.md#path-resolution-fsopen)) under the directory slot; otherwise carapace
-is skipped.
+([fs.md](fs.md#path-resolution-fsopen)) on the dir lane; otherwise carapace is skipped.
 
 **Known commands only.** On first use, `carapace --list`, run like any other run,
 gives the commands carapace covers (984 in 1.8.0). Only those are run. A list run that
@@ -299,7 +297,7 @@ directory Jimmy can read, as the shell's own Tab does; the roots stay the scope 
 everything that reads files.
 
 The listing reads names and `d_type` through the descriptor up to the listing cap,
-`fstatat`-ing only links and unknown types, under the directory slot. It is cached for
+`fstatat`-ing only links and unknown types, on the dir lane. It is cached for
 the last directory and reused while a fresh open's `fstat` shows the same mtime. `.`
 and `..` are never offered; other names starting with `.` only when the typed prefix
 starts with `.`; names that aren't UTF-8 are skipped. Matches sort by name with ASCII
@@ -378,14 +376,15 @@ the unit, a release binary gets none of the effect measured above; how musl's al
 returns freed memory is unmeasured. The budget run must read the RSS after an idle
 drop for whichever binary the unit runs.
 
-**Blocking threads.** Completion takes at most 2 of the runtime's 8 blocking threads,
-beside fs's 4. The index slot runs history parsing and the PATH scan; the directory
-slot runs `check_dir` and path listings. Each permit moves into its blocking closure,
-as fs's do, so a call stuck on a hung mount (an automount, a dead NFS server) holds
-its slot rather than leaking threads: path and carapace sources then stop, while
-history and commands keep working. A source that can't get its slot within 300 ms is
-skipped for that request. carapace is a child process awaited asynchronously and takes
-no blocking thread. In tether's `TasksMax`, a run counts only `systemd-run` until it
+**Blocking lanes.** Completion uses the one-thread index lane for history parsing and
+the PATH scan, and the one-thread dir lane for `check_dir` and path listings. The dir
+lane is shared with `newWindow` and `newSession` checks. Each lane has a 300 ms wait; a
+source that cannot get a thread in time is skipped. A call stuck on a hung mount holds
+its lane rather than permitting more work to accumulate. File API work uses its own
+four-thread fs lane; auth has two threads. The eight threads sum to
+`BLOCKING_THREADS` in `src/blocking.rs`. carapace is awaited asynchronously and takes
+no blocking thread. All blocking work uses these lanes; Tokio filesystem APIs are
+disabled. In tether's `TasksMax`, a run counts only `systemd-run` until it
 moves into its scope.
 
 **CPU.** Every lookup is a scan of an in-memory index (10,000 lines at most); the
@@ -485,11 +484,12 @@ parts are tested without a disk or a process.
 
 | File | Contents |
 |---|---|
-| `complete/mod.rs` | `Completer`: the indexes as `Arc` snapshots swapped whole, the two slots, the idle drop, merge and the caps |
+| `complete/mod.rs` | `Completer`: the indexes as `Arc` snapshots swapped whole, index and dir lanes, the idle drop, merge and the caps; `Settings::new(config, Environment)` resolves config and daemon environment (`home`, `PATH`, `XDG_DATA_HOME`, and systemd status) |
 | `complete/context.rs` | the lexer, `context(before, after) -> Query`, and `literal`, the escaping the lexer reads back (pure) |
-| `complete/history.rs` | the three parsers, scoring and the contiguous index (pure); the stat-and-reload |
-| `complete/commands.rs` | the PATH scan and its mtime check |
-| `complete/carapace.rs` | stems, argv and JSON → values (pure); the runner task, scope wrapper and LRU |
+| `complete/history.rs` | the three parsers, scoring and the contiguous index (pure); the stat-and-reload (`files::Stamp`) |
+| `complete/commands.rs` | the PATH scan and its mtime check (`files::Stamp`) |
+| `complete/carapace.rs` | stems, argv and JSON → values (pure), plus shared cache state |
+| `complete/runner.rs` | child process task, scope wrapper and run serialization |
 | `complete/paths.rs` | splitting (pure); the listing through `fs::open` |
 | `complete/packed.rs` | strings stored end to end in one buffer, which every index uses, so an index is two allocations and goes back to the kernel when freed |
 

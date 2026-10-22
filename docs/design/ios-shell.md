@@ -420,7 +420,7 @@ a mismatch can only happen in dev mode and shows an error banner.
 
 | Web → native | Reply | Purpose |
 |---|---|---|
-| `ready` | `boot { bridgeVersion, hosts, tabs, active, settings, viewport, locked }` | Start; restore the saved tabs and the active one ([payloads](#boot-and-host-payloads)) |
+| `ready` | `boot { bridgeVersion, hosts, tabs, active, viewport, locked }` | Start; restore the saved tabs and the active one ([payloads](#boot-and-host-payloads)) |
 | `token { host }` | `{ token }`, `{ locked }` or `{ notEnrolled }` | WebSocket token ([auth.md](auth.md#carrying-the-token)) |
 | `hostRejected { host }` | | The host closed the socket with 4401: mark it "not enrolled". The web halts that host's tabs as unauthorized until a tap on a pill retries |
 | `recreateWebView` | | Two consecutive connect timeouts on a host's socket ([plan.md](plan.md#reconnect)): discard the web view and load a fresh one. No data, no reply. All state that matters is on the server and in native's saved tabs |
@@ -463,7 +463,7 @@ SavedTab  = { id: string,        // the web's tab id, kept across launches
               name: string }     // the title; follows windowRenamed (plan.md)
 boot      = { bridgeVersion, hosts: HostEntry[], tabs: SavedTab[],
               active: string | null,   // the SavedTab id native last saw on screen
-              settings: { [key]: json }, viewport, locked }
+              viewport, locked }
 ```
 
 - **`baseURL` is explicit.** Native builds it when Add host takes the MagicDNS name
@@ -475,9 +475,6 @@ boot      = { bridgeVersion, hosts: HostEntry[], tabs: SavedTab[],
 - **`active`** is the tab id the last `saveTabs` named; native persists it with the list
   so the app reopens on the tab Jimmy left. `null`, or an id not in `tabs`, means the
   first tab.
-- **`settings` is a free record**: no setting is defined yet, so it is an object of
-  JSON values that native fills and the web reads by key. A shape is added with the
-  first setting that needs one.
 
 Every bridge type, `HostEntry`, `SavedTab` and `Boot` included, is written twice, in `web/native/bridge.ts` and
 `ios/TetherKit/Sources/TetherKit/Bridge.swift`; both test suites decode the same

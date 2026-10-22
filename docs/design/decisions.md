@@ -1785,6 +1785,7 @@ review. The product calls behind it are Jimmy's
 
 ### The file API's limits, socket buffers, and the memory ceiling
 
+- **Superseded in part by:** [Blocking lanes](#blocking-lanes).
 - **What:** 4 of the 8 blocking threads, 1 scan, 2 raw responses, 1 upload, 64 KiB
   chunks, 10 s slot waits with at most 8 waiting; std file calls in `spawn_blocking`,
   not `tokio::fs::File`. `SO_SNDBUF` and `SO_RCVBUF` of 64 KiB on every accepted
@@ -2082,6 +2083,7 @@ the p61 review. The product calls behind it are Jimmy's
 
 ### Completion takes two blocking slots, and the unit pins glibc's mmap threshold
 
+- **Superseded in part by:** [Blocking lanes](#blocking-lanes).
 - **What:** an index slot (history, PATH) and a directory slot (`check_dir`,
   listings), each permit held inside its blocking closure.
   `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072` in the unit.
@@ -2298,3 +2300,53 @@ the p61 review. The product calls behind it are Jimmy's
 - **Why:** with a control client attached and the pane flooding, `respawn-pane -k`
   sent over control mode kills the whole tmux server (4 of 4 runs), taking every
   session with it. The one-shot form, `kill-pane` and `kill-window` did not crash.
+
+## Blocking lanes
+
+- **Decided:** 2026-10-22, tech lead (p72, `a5e231c`).
+- **What:** the Tokio blocking pool has 8 threads split into four lanes: fs 4 (10 s
+  wait, 8 waiting callers shared across fs slots and blocking calls), index 1 (300 ms),
+  dir 1 (300 ms), auth 2 (10 s, no waiter cap). Every blocking call uses its lane;
+  Tokio's `fs` feature is disabled. A lane permit stays with its blocking closure until
+  work ends. A panic returns `busy`.
+- **Why:** a hung filesystem mount must not consume threads used for authentication. Auth waiters are
+  uncapped because device checks arrive in bursts, such as a thumbnail grid. Directory
+  checks share one lane because paths supplied by users may name hung mounts;
+  fs slot waiters count against the same bounded queue as fs blocking work.
+- **Rejected:** one shared pool, which lets hung filesystem work starve auth; a separate
+  `newWindow` lane, which would add another pool share for the same directory checks;
+  listing individual `tokio::fs` APIs as forbidden, instead of disabling the feature.
+
+## Shared HTTP error contract
+
+- **Decided:** 2026-10-22, tech lead (p72, `a5e231c`).
+- **What:** every route refusal uses `proto::HttpError` and the JSON body
+  `ErrorBody { error: HttpError }`. `http::Refusal` maps the code to one status table;
+  it preserves axum's 400/415/422 JSON-rejection status, maps oversized bodies to 413
+  `too_large`, adds `Retry-After: 1` to `busy` and `Content-Range` to `bad_range`, and
+  maps auth failures to the same HTTP status and WebSocket close code.
+- **Why:** route handlers share one wire contract, status mapping and auth mapping.
+- **Rejected:** separate refusal builders and duplicated HTTP/WebSocket auth-code maps;
+  treating an oversized enrolment body as generic `bad_request`.
+
+## Shared file primitives
+
+- **Decided:** 2026-10-22, tech lead (p72, `a5e231c`).
+- **What:** `files::Stamp`, `Dir`, `Temp`, the state-directory lock and TOML error-line
+  extraction serve auth, config writes, uploads, history, PATH and file listings. `Temp`
+  has no `Drop` cleanup; callers clean up explicitly on a blocking lane, and the upload
+  part-file startup sweep removes leftovers.
+- **Why:** cleanup can block on a hung mount. A lane may refuse work and drop its
+  closure on the runtime thread, so `Drop` must not unlink a temp file there.
+- **Rejected:** unlinking from `Drop`, which can block the runtime thread; keeping stamp,
+  lock and temp-write implementations duplicated in `fs` and `auth`.
+
+## No shared base32 helper
+
+- **Decided:** 2026-10-22, tech lead (p72, `a5e231c`).
+- **What:** auth's Crockford enrolment-code and lowercase host-id encodings, and paste-name
+  encoding, remain separate.
+- **Why:** the copies encode different alphabets/values and express different
+  contracts.
+- **Rejected:** a helper crossing `fs` and `auth`, which reintroduces their dependency;
+  a nearly empty shared module that only hides two purpose-specific encoders.

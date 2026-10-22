@@ -6,8 +6,8 @@ design: what tether does and how it looks and behaves on the phone. Each subsyst
 has its own spec, and every decision, with the alternatives rejected, is logged in
 [decisions.md](decisions.md).
 
-No code is written yet. Before building a subsystem, settle its spec, run the spikes
-that gate it ([Spikes](#spikes)), and log decisions in decisions.md.
+Build each subsystem to its settled spec, run its gating spikes ([Spikes](#spikes)),
+and record decisions in decisions.md.
 
 ## The design documents
 
@@ -179,7 +179,7 @@ Versions verified 2026-10-21 ([libraries.md](research/libraries.md),
 
 | Area | Pick | Notes |
 |---|---|---|
-| Runtime | tokio, current-thread runtime, `max_blocking_threads` capped | see [Resource budget](#resource-budget) |
+| Runtime | tokio, current-thread runtime, 8 blocking threads split into bounded-wait lanes | see [Resource budget](#resource-budget) |
 | HTTP | axum 0.8, tower-http 0.7 | `/fs/raw` stays custom, so root checks and range limits are tether's own |
 | Web assets | none in the daemon | the web UI is bundled in the iOS app |
 | Device-token auth | sha2, subtle, getrandom | [auth.md](auth.md#crates) |
@@ -188,7 +188,7 @@ Versions verified 2026-10-21 ([libraries.md](research/libraries.md),
 | Protocol types | ts-rs (TypeScript); Swift hand-written for the auth DTOs | [daemon-core.md §5.5](daemon-core.md#55-type-generation) |
 | tmux parser | hand-written, pure, fixture-tested | libtmux-rs studied for ideas only |
 | Server-side emulator | none | xterm.js on the phone is the only emulator |
-| Renderer | xterm.js 6 with addons webgl, search, web-links, serialize, unicode11 | WebGL with DOM fallback; behind `term/`, so ghostty-web can be tried later |
+| Renderer | xterm.js 6 with addons webgl, web-links, unicode11 | WebGL with DOM fallback; behind `term/`, so ghostty-web can be tried later |
 | App shell | Preact 11, Vite, TypeScript strict | |
 | File viewer | markdown-it + DOMPurify; Shiki on demand with a language allowlist; Mermaid on demand with `securityLevel: "strict"` (v2) | DOMPurify is mandatory: no Markdown parser sanitizes |
 | Completion | carapace-bin 1.8, pinned; export JSON parsed loosely | absence or failure means no flag suggestions |
@@ -228,6 +228,19 @@ and buffer use.
   screen shows it, and unviewed panes are paused in tmux.
 - **Everything bounded:** every queue, buffer and cap, and the resulting memory
   ceiling, is in [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling).
+- **Blocking work is isolated:** the 8-thread Tokio blocking pool is split into lanes;
+  a hung filesystem operation cannot consume auth threads. All blocking work enters
+  through `src/blocking.rs`; Tokio filesystem APIs are disabled. Lane budgets:
+
+  | Lane | Threads | Wait | Waiting callers | Work |
+  |---|---:|---:|---:|---|
+  | `fs` | 4 | 10 s | 8 shared across scans, raw responses and blocking calls | file API |
+  | `index` | 1 | 300 ms | uncapped | history and PATH indexes |
+  | `dir` | 1 | 300 ms | uncapped | directory checks and completion listings |
+  | `auth` | 2 | 10 s | uncapped | auth files and paste files |
+
+  A caller that exceeds its lane wait receives `busy` or skips that completion source;
+  the permit stays with work that is still running.
   Uploads stream to disk; listings are paged; previews truncated; scrollback comes in
   fixed chunks.
 - **Completion is lazy:** the PATH index is built on first use and refreshed when a
@@ -639,6 +652,8 @@ src/tmux/      sans-IO control client (parser, Session, snapshot), pump, one-sho
 src/hub/       sans-IO hub State, reconcile, per-connection Outbox, the hub task
 src/proto/     wire messages (source of the TypeScript types), handshake
 src/http/      axum routes (/ws, /fs/*, /auth/*, /complete), the auth middleware
+src/blocking.rs blocking pool lanes; the only owner of spawn_blocking
+src/files.rs   shared stamps, state-file lock, and whole-file temp writes
 src/auth/      LocalAPI identity, device tokens, enrolment (auth.md)
 src/fs/        the only place paths are resolved and checked against roots
 src/complete/  /complete: history, PATH index, carapace runner (bounded, cached; complete.md)
