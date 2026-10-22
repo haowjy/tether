@@ -259,21 +259,31 @@ impl State {
             let message = "history end is before its start";
             return self.refuse(conn, Some(req), Some(watch), ErrorCode::BadRequest, message);
         }
-        let (_, owner, pane) = match self.user_target(conn, watch) {
-            Ok(target) => target,
-            Err(refusal) => return self.refuse_for(conn, Some(req), watch, refusal),
-        };
         if self.captures() >= CAPTURE_SLOTS || !self.can_reserve(conn, CAPTURE_RESERVATION) {
             return self.refuse_for(conn, Some(req), watch, Refusal::Busy);
         }
         self.reserve(conn, CAPTURE_RESERVATION);
         let end = end.min(start.saturating_add(HISTORY_ROWS - 1));
+        self.capture_history(conn, req, watch, start, end);
+    }
+
+    /// Captures rows `start..=end` under a reservation the caller holds, which goes back
+    /// if the capture can't be asked for.
+    fn capture_history(&mut self, conn: ConnId, req: u32, watch: u32, start: i32, end: i32) {
+        let (_, owner, pane) = match self.user_target(conn, watch) {
+            Ok(target) => target,
+            Err(refusal) => {
+                self.unreserve(conn, CAPTURE_RESERVATION);
+                return self.refuse_for(conn, Some(req), watch, refusal);
+            }
+        };
         let tag = self.next_tag();
         let work = Work::History {
             conn,
             watch,
             req,
             start,
+            end,
         };
         self.request(owner, tag, Op::History { pane, start, end }, work);
     }
@@ -284,8 +294,16 @@ impl State {
         watch: u32,
         req: u32,
         start: i32,
+        end: i32,
         result: Result<Reply, TmuxError>,
     ) {
+        if matches!(result, Err(TmuxError::TooLarge)) && start < end {
+            // Over the reply cap: ask again for the first half, under the same
+            // reservation and in the slot this answer freed. The client gets a shorter
+            // chunk and asks again from where it ends.
+            let half = (end - start + 1) / 2;
+            return self.capture_history(conn, req, watch, start, start + half - 1);
+        }
         self.unreserve(conn, CAPTURE_RESERVATION);
         let rows = match result {
             Ok(Reply::History(rows)) => rows,
@@ -309,6 +327,10 @@ impl State {
             }
             size += cost;
             fit += 1;
+        }
+        if fit == 0 && !rows.is_empty() {
+            // Not even the first row fits, and an empty chunk would be asked for again.
+            return self.refuse_tmux(conn, Some(req), Some(watch), &TmuxError::TooLarge);
         }
         let lines = rows.into_iter().take(fit).map(Base64).collect();
         self.send(conn, &chunk(lines), None);

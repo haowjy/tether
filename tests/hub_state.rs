@@ -407,8 +407,12 @@ impl Hub {
                     start.parse().map_err(|_| "bad")?,
                     end.parse().map_err(|_| "bad")?,
                 );
-                let row =
-                    |row| format!("{:w<width$}", format!("row {row}"), width = self.row_width);
+                // Not `format!` padding: its width can't reach a row too large to send.
+                let row = |row| {
+                    let row = format!("row {row}");
+                    let pad = self.row_width.saturating_sub(row.len());
+                    row + &"w".repeat(pad)
+                };
                 return Ok((start..=end).map(row).collect());
             }
             return Ok(Vec::new());
@@ -936,6 +940,33 @@ fn history_and_listings_need_a_capture_slot_and_credit() {
     let rows = chunk[0]["data"]["lines"].as_array().map_or(0, Vec::len);
     assert!(rows > 0 && rows < 200, "{rows} rows");
     assert!(chunk[0].to_string().len() as u64 <= CAPTURE_RESERVATION);
+    // Rows over tmux's reply cap are asked again by halves.
+    hub.credit(conn, CREDIT as u32);
+    hub.row_width = 6000;
+    hub.send(conn, history.clone());
+    hub.settle();
+    assert!(hub.lines(client).ends_with(&[
+        "capture-pane -p -e -t %0 -S -199 -E 0".to_owned(),
+        "capture-pane -p -e -t %0 -S -199 -E -100".to_owned(),
+    ]));
+    let chunk = hub.take_json(conn);
+    assert_eq!(
+        chunk[0]["data"]["lines"].as_array().map(Vec::len),
+        Some(100)
+    );
+    // Down to one row, which fails if it still doesn't fit.
+    hub.credit(conn, CREDIT as u32);
+    hub.row_width = 800_000;
+    let one = json!({"type": "history", "data": {"req": 9, "watch": 1, "start": -1, "end": 0}});
+    hub.send(conn, one);
+    hub.settle();
+    assert!(hub.lines(client).ends_with(&[
+        "capture-pane -p -e -t %0 -S -1 -E 0".to_owned(),
+        "capture-pane -p -e -t %0 -S -1 -E -1".to_owned(),
+    ]));
+    let refused = hub.take_json(conn);
+    assert_eq!(refused[0]["data"]["code"], "tmux");
+    assert_eq!(refused[0]["data"]["req"], 9);
     let listing = json!({"type": "listSessions", "data": {"req": 5}});
     hub.send(conn, listing.clone());
     hub.settle();

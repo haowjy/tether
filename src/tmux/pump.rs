@@ -2,20 +2,33 @@
 //! moves its stdout to the hub as raw bytes and the hub's lines to its stdin. It never
 //! parses or decides; the hub's `Session` does.
 
+use std::collections::VecDeque;
+use std::fs::File;
+use std::io::{self, ErrorKind, Read};
 use std::pin::pin;
 use std::process::Stdio;
 use std::time::Duration;
 
 use bytes::Bytes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::unix::pipe::Receiver;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::{Instant, sleep_until};
 
 use super::{ClientId, Endpoint, MAX_IN_FLIGHT, SessionId, command};
 
 /// Bytes per stdout read, so the most one `PumpMsg::Bytes` holds.
 pub const READ_SIZE: usize = 16 * 1024;
+/// Bytes one read turn takes at most, the default pipe's size, so a turn ends while
+/// tmux keeps the pipe full.
+const TURN_BYTES: usize = 64 * 1024;
+/// At most `TURNS` read turns per `GATE`. More than one, because tmux writes a
+/// command's reply and the output it causes separately: a keystroke's echo is the
+/// second turn, and must not wait out the gate.
+const TURNS: usize = 4;
+const GATE: Duration = Duration::from_millis(2);
 /// How much of tmux's stderr is kept for the log.
 const STDERR_TAIL: usize = 4 * 1024;
 /// How long an ending client gets to exit before it is killed.
@@ -75,15 +88,15 @@ async fn run(
     };
     let pump = async {
         let mut reading = pin!(forward(stdout, client, out));
-        // Until tmux ends the client (stdout ends), the hub closes it or has gone, or
-        // stdin breaks. Whichever side is left drops here, closing stdin.
+        // Until tmux ends the client (stdout ends or fails), the hub closes it or has
+        // gone, or stdin breaks. Whichever side is left drops here, closing stdin.
         let ended = tokio::select! {
-            () = &mut reading => true,
+            _ = &mut reading => true,
             () = write(stdin, lines) => false,
         };
         let exit = async {
             if !ended {
-                reading.await;
+                let _ = reading.await;
             }
             child.wait().await
         };
@@ -95,22 +108,92 @@ async fn run(
     stderr_tail
 }
 
-/// Sends stdout to the hub until it ends or the hub has gone.
+/// Sends stdout to the hub until it ends, a read fails, or the hub has gone.
+///
+/// tmux writes each `%output` line separately, so reading whenever stdout is readable
+/// wakes the task once per line. Instead each turn drains the pipe, and past `TURNS`
+/// turns in `GATE` the reader takes stdout out of epoll and waits out the gate, so
+/// tmux's writes wake nothing and a flood is read in batches. A quiet pipe is waited on
+/// in epoll, so the first bytes after a quiet spell are read at once.
 async fn forward(
-    mut stdout: ChildStdout,
+    stdout: ChildStdout,
     client: ClientId,
     out: &mpsc::Sender<(ClientId, PumpMsg)>,
-) {
+) -> io::Result<()> {
+    // `into_owned_fd` hands back a blocking fd, which would stall the runtime;
+    // `from_owned_fd` makes it non-blocking.
+    let mut stdout = Stdout::Polled(Receiver::from_owned_fd(stdout.into_owned_fd()?)?);
     let mut buffer = vec![0; READ_SIZE];
+    // When the last `TURNS` turns that read anything ended, oldest first.
+    let mut turns = VecDeque::with_capacity(TURNS);
     loop {
-        let read = match stdout.read(&mut buffer).await {
-            Ok(0) | Err(_) => return,
-            Ok(read) => read,
-        };
-        let bytes = Bytes::copy_from_slice(&buffer[..read]);
-        if out.send((client, PumpMsg::Bytes(bytes))).await.is_err() {
-            return;
+        if turns.len() == TURNS {
+            let open = turns[0] + GATE;
+            if open > Instant::now() {
+                stdout = stdout.unpolled()?;
+                sleep_until(open).await;
+            }
         }
+        let mut turn = 0;
+        while turn < TURN_BYTES {
+            let read = match stdout.read(&mut buffer) {
+                Ok(0) => return Ok(()),
+                Ok(read) => read,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                Err(error) => return Err(error),
+            };
+            let bytes = Bytes::copy_from_slice(&buffer[..read]);
+            if out.send((client, PumpMsg::Bytes(bytes))).await.is_err() {
+                return Ok(());
+            }
+            turn += read;
+            // A short read emptied the pipe.
+            if read < READ_SIZE {
+                break;
+            }
+        }
+        if turn == 0 {
+            stdout = stdout.readable().await?;
+        } else {
+            if turns.len() == TURNS {
+                turns.pop_front();
+            }
+            turns.push_back(Instant::now());
+        }
+    }
+}
+
+/// A control client's non-blocking stdout: in epoll while the reader waits for tmux to
+/// write, out of it while the gate holds reads back.
+enum Stdout {
+    Polled(Receiver),
+    Unpolled(File),
+}
+
+impl Stdout {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        match self {
+            // Through tokio, so that running dry clears the readiness it saw.
+            Self::Polled(pipe) => pipe.try_read(buffer),
+            Self::Unpolled(file) => file.read(buffer),
+        }
+    }
+
+    fn unpolled(self) -> io::Result<Self> {
+        Ok(match self {
+            Self::Polled(pipe) => Self::Unpolled(pipe.into_nonblocking_fd()?.into()),
+            unpolled @ Self::Unpolled(_) => unpolled,
+        })
+    }
+
+    /// Waits in epoll until there is something to read or stdout has ended.
+    async fn readable(self) -> io::Result<Self> {
+        let pipe = match self {
+            Self::Polled(pipe) => pipe,
+            Self::Unpolled(file) => Receiver::from_file(file)?,
+        };
+        pipe.readable().await?;
+        Ok(Self::Polled(pipe))
     }
 }
 

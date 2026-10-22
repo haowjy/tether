@@ -241,6 +241,7 @@ pub(super) enum Work {
         watch: u32,
         req: u32,
         start: i32,
+        end: i32,
     },
     Input {
         conn: ConnId,
@@ -712,7 +713,8 @@ impl State {
                 watch,
                 req,
                 start,
-            } => self.history_answered(conn, watch, req, start, result),
+                end,
+            } => self.history_answered(conn, watch, req, start, end, result),
             Work::Input { conn, watch } => {
                 if let Err(error) = result {
                     self.refuse_tmux(conn, None, Some(watch), &error);

@@ -33,6 +33,12 @@ version section on release.
   A detached control client ends its tabs; a crashed one is restarted once. Every byte
   to a connection is bounded by its credit, so a slow phone starves only its own tab,
   which catches up by snapshot.
+- The control-client pump reads tmux's output in batches: a pane flooding short lines
+  costs the daemon about 2% of a core instead of 47%. Typing echo is unchanged when
+  idle, and up to about 3 ms later while a pane floods.
+- A history request whose rows exceed tmux's 1 MiB reply cap is retried by the hub
+  with half the rows, down to one row, so the client gets a shorter `historyChunk`
+  instead of an error and asks again from where it ends.
 
 ## [0.0.1] - 2026-10-22
 
