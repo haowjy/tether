@@ -1,6 +1,8 @@
 // The file API client (fs.md). Hand-written wire types until src/proto/fs.rs is generated
 // for TypeScript like the WebSocket messages; keep them in step with fs.md "Routes".
 
+import type { ErrorBody, HttpError } from "../proto/generated/messages";
+
 export interface RootEntry {
   /** As stored in config.toml. */
   path: string;
@@ -54,11 +56,14 @@ export interface TextPreview {
 export type Probe = { kind: "file"; mime: string | null; size: number | null } | { kind: "dir" };
 
 /**
- * A refusal from the daemon (`{"error": code}`), from native's proxy (`incompatible`), or
- * `network` when nothing answered.
+ * The daemon's generated codes, plus the client's own: `network` when nothing answered,
+ * `incompatible` from native's proxy, `http_<status>` for a refusal without a code.
  */
+export type ErrorCode = HttpError | "network" | "incompatible" | `http_${string}`;
+
+/** A refusal: the daemon's `{"error": code}` ({@link ErrorBody}), or one of the client's codes. */
 export class FsError extends Error {
-  constructor(readonly status: number, readonly code: string) {
+  constructor(readonly status: number, readonly code: ErrorCode) {
     super(code);
   }
 }
@@ -94,7 +99,7 @@ export async function send(target: string, init: RequestInit = {}, retries = BUS
       throw new FsError(0, "network");
     }
     if (res.ok) return res;
-    const code = await res.json().then((b: unknown) => (b as { error?: unknown }).error, () => undefined);
+    const code = await res.json().then((b: unknown) => (b as Partial<ErrorBody> | null)?.error, () => undefined);
     const err = new FsError(res.status, typeof code === "string" ? code : `http_${String(res.status)}`);
     if (err.code !== "busy" || attempt >= retries) throw err;
     const wait = Number(res.headers.get("Retry-After")) || 1;
