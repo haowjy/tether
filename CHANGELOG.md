@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- Save browser/iPhone design, interactive mockups, clipboard research, and Mac handoff in `docs/design/client/`.
+
 - A window or session created from another tmux client (a laptop terminal) shows up
   in the window list right away.
 - Tapping a URL in the terminal opens it in Safari. Window lists fail fast with

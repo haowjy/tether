@@ -1,0 +1,22 @@
+# Terminal interaction sources
+
+Consulted 2026-10-22. These are compact source notes, not claims of on-device verification. Older platform articles explain mechanisms; current iOS behavior remains a device test. Source snapshot versions matter: tether pins xterm.js 6.0.0; local tmux is 3.4.
+
+1. xterm Terminal API: https://xtermjs.org/docs/api/terminal/classes/terminal/ — public selection/focus methods, including getSelection/select/getSelectionPosition. Prefer renderer-owned serialization to generic DOM text extraction.
+2. xterm IBufferLine: https://xtermjs.org/docs/api/terminal/interfaces/ibufferline/ — isWrapped identifies continuation from preceding buffer row; getCell/translateToString expose cells/text. Pinned-source research covers exact API stability and behavior.
+3. xterm IModes: https://xtermjs.org/docs/api/terminal/interfaces/imodes/ — separate mouseTrackingMode and bracketedPasteMode. Alternate screen alone is not a declaration that the app accepts mouse events.
+4. xterm 6.0.0 SelectionService: https://github.com/xtermjs/xterm.js/blob/6.0.0/src/browser/services/SelectionService.ts — authoritative pinned implementation, study with local packaged src rather than assuming latest website docs match.
+5. xterm 6.0.0 Clipboard: https://github.com/xtermjs/xterm.js/blob/6.0.0/src/browser/Clipboard.ts — reference implementation of text clipboard/paste conversion. Avoid duplicate wrapping when tmux already performs bracketed paste.
+6. Upstream touch-support issue: https://github.com/xtermjs/xterm.js/issues/5377 — maintainer describes desktop-centered interaction; subsequent touch fixes do not establish complete native mobile selection. Supporting evidence, not a compatibility guarantee.
+7. Upstream touch-copy issue: https://github.com/xtermjs/xterm.js/issues/3727 — concrete iPad reports of touch selection/copy gaps. Do not assume CSS user-select makes canvas terminal cells native-selectable.
+8. tmux 3.4 capture source: https://github.com/tmux/tmux/blob/3.4/cmd-capture-pane.c — joined capture consults GRID_LINE_WRAPPED before appending LF. Local probe compares physical/-N/-J output.
+9. tmux 3.4 paste source: https://github.com/tmux/tmux/blob/3.4/cmd-paste-buffer.c — application mode controls bracketed markers; local raw-input receiver verifies bytes and LF→CR conversion.
+10. WebKit clipboard: https://webkit.org/blog/10855/async-clipboard-api/ — secure-context and user-gesture requirements; spontaneous background clipboard reads are not the right design. Prefer ordinary user copy/paste events; handle rejection, never silently announce success.
+11. Clipboard standard: https://www.w3.org/TR/clipboard-apis/ — clipboardData within actual clipboard events supports text/image items. Synthetic paste events do not paste data or prove permission. Copy can supply explicit text/plain and cancel default DOM serialization.
+12. Input Events Level 2: https://www.w3.org/TR/input-events-2/ — textarea editing includes replacement, composition and paste intents. Let the local draft use native editing rather than infer all text from keydown. Working draft, not proof of uniform implementation.
+13. Pointer Events: https://www.w3.org/TR/pointerevents3/ — pan/zoom ownership uses touch-action; pointercancel and contextmenu ordering must be handled. Changing touch-action after a gesture begins does not reliably reclaim it. This property does not implement text selection.
+14. Visual viewport: https://developer.mozilla.org/en-US/docs/Web/API/VisualViewport and https://developer.chrome.com/blog/viewport-resize-behavior — keyboard can shrink visual viewport independently of layout viewport; account for offsets/scale as well as height. Shrink alone also happens with zoom, so it is not an exact keyboard-visible signal.
+15. UIKit keyboard guide: https://developer.apple.com/documentation/uikit/adjusting-your-layout-with-keyboard-layout-guide — use the keyboard layout guide for docked/floating states rather than hardcoded height; native and browser detection are not interchangeable.
+16. UIKit paste: https://developer.apple.com/documentation/uikit/uipastecontrol?language=objc — user-driven paste control avoids arbitrary programmatic-paste prompting; native text view supplies native text-editing affordances.
+
+Research output intentionally distinguishes standards/platform guidance, pinned source findings, local runtime observations, and unresolved hardware behavior. No screenshot or synthetic event substitutes for testing an actual iPhone's selection handles, keyboard, dictation, and clipboard permissions.

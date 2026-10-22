@@ -1,5 +1,12 @@
 # iOS shell: the native app
 
+> **Client UX update (2026-10-22):** Start with [client design and Mac handoff](client/README.md).
+> Its approved browser/mobile navigation and minimal layout supersede conflicting
+> UI rules below. Subsystem invariants remain in force; touch, clipboard, and local
+> draft proposals retain explicit prototype/device gates.
+
+This document is a target design, not a claim that the production app exists. Only the keyboard spike is currently available in `ios/spikes/keyboard`.
+
 tether's phone client is a Swift app: a `WKWebView` runs the web UI (terminal, tabs,
 sheets, file manager), and native code owns the keyboard, auth, media and lifecycle.
 The web UI is bundled in the app and served from a custom scheme. The app connects to
@@ -215,36 +222,28 @@ empty, the double-space period, swipe typing.
 
 ### The accessory
 
-`TerminalInputView.inputAccessoryView` is a `UIInputView(inputViewStyle: .keyboard)`
-holding, top to bottom:
+For the minimal client, the required keyboard-open surface is a local multiline
+`UITextView` draft editor. Return inserts a newline. Explicit Insert sends one paste
+without an additional Enter, identically to mobile browser. Hiding the keyboard must
+not discard the draft. Retention after insertion or tab closure remains to settle;
+see [the local-draft design](client/terminal-interaction-design.md).
 
-- **Compose field** (hidden by default; toggled per tab from the key row): a native
-  `UITextView` with autocorrect, dictation and every keyboard. Return inserts a
-  newline; the send button sends the text as a paste followed by Enter
-  ([plan.md](plan.md#select-copy-and-paste)). Switching between compose and terminal
-  swaps first responder between two native views, which leaves the keyboard up.
-- **Key row:** the groups from [plan.md](plan.md#key-row-groups) in a paging scroll
-  view, plus hide-keyboard fixed at the end. `^V img` opens the media menu
-  ([below](#files-and-sharing)). Keys are `UIControl`s, which never take first
-  responder.
-- **Paste:** a `UIPasteControl`, which pastes without iOS's "Allow Paste" prompt. Its
-  target is `TerminalInputView`, whose `pasteConfiguration` accepts text and images:
-  text is sent as a paste, images go to upload. Cmd+V on a hardware keyboard reaches
-  the same `paste(itemProviders:)`, which doesn't prompt either.
+The native focus controller owns transitions between terminal and draft. The draft's
+`compose` focus state is native/internal; it is not a new web bridge `focus` mode.
+Any web-controlled draft toggle needs an explicit reviewed bridge action before
+implementation, rather than sending an undocumented mode.
 
-The tab bar and suggestion strip stay in the web: the tab bar must also show with the
-keyboard hidden, when there is no accessory, and the chips are computed from the web
-terminal's buffer. The accessory holds only what must be native: keys with haptics,
-the paste control, and the text view that allows dictation.
-
-The key row's configuration is native, in `UserDefaults`. Reordering it is v2.
-
-**Modifiers** live in native `ModifierState`: Ctrl and Alt are sticky for one key,
-locked by double tap, and apply to the next key from any source (key row, software or
-hardware keyboard). With Ctrl locked, ^C and ^D ask for confirmation in a native
-alert. Ctrl + a letter becomes the key `C-<letter>`; Alt + a key becomes `M-<key>`.
+Placement and native keyboard geometry must be prototyped on a real iPhone. The
+older paging key row, sticky modifiers, suggestion chips, and dedicated media key
+are deferred UI options, not initial requirements. The diagrams and ownership table
+above illustrate platform boundaries, not an approved accessory layout. The spike
+may retain extra controls as instrumentation. Standard user-driven paste remains
+required; evaluate `UIPasteControl` or native paste menus without forcing extra
+persistent controls into the minimal layout.
 
 ### Hardware keyboard
+
+> Key delivery remains required. Custom application shortcuts below are deferred; do not add a shortcut system to the minimal client.
 
 - `pressesBegan`/`pressesEnded` on `TerminalInputView` handle keys that aren't plain
   text: Esc, Tab, Shift+Tab, arrows, Home/End/PgUp/PgDn, F-keys, anything with Ctrl
@@ -281,7 +280,7 @@ InputEvent = { text: string }    // literal text
 
 - The web maps these onto the protocol's `input` and `paste` messages
   ([daemon-core.md §5.3](daemon-core.md#53-json-messages)). The compose field's send
-  is a `paste` followed by `{ key: "Enter" }`. A tab sends input only once its watch
+  is a single `paste`, without a following Enter event. A tab sends input only once its watch
   is bound (`watching`).
 - Key names are plain strings checked by the daemon's allowlist
   ([daemon-core.md §3.4](daemon-core.md#34-commands-commandrs)). The contract is the

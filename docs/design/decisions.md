@@ -2350,3 +2350,22 @@ the p61 review. The product calls behind it are Jimmy's
   contracts.
 - **Rejected:** a helper crossing `fs` and `auth`, which reintroduces their dependency;
   a nearly empty shared module that only hides two purpose-specific encoders.
+
+## Browser/mobile client direction and portable design record
+
+- **Decided:** 2026-10-22, Jimmy (layout approval and mobile local-draft requirement).
+- **What:** support desktop browser, mobile browser, and native iPhone. Promote
+  the [client contract, mockup, and research](client/README.md) into this repository.
+  That contract supersedes conflicting navigation/layout rules in the original plan.
+  Desktop has a three-icon rail; mobile prioritizes terminal space and ordinary
+  browser keyboard input. Both mobile clients need local multiline drafts while
+  the keyboard is open. Native focus and backend constraints remain in force.
+- **Why:** a Mac session must be able to build the iPhone client without private
+  work-directory artifacts or conversation history; normal browsers are first-class
+  clients, not developer terminal harnesses.
+- **Rejected:** native-only access; expanded desktop sidebar; Files in terminal +;
+  custom browser keyboard; dot separators/status markers. Detailed alternatives
+  are in [decision reconciliation](client/browser-review-decisions.md).
+- **Not settled by approval:** touch implementation, wrap-preserving snapshot/history,
+  production browser auth/serving, draft retention after insert/tab closure, and
+  hardware behavior. See the research gates before coding those boundaries.

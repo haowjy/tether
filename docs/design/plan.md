@@ -1,5 +1,10 @@
 # tether: product and UX spec
 
+> **Client UX update (2026-10-22):** Start with [client design and Mac handoff](client/README.md).
+> Its approved browser/mobile navigation and minimal layout supersede conflicting
+> UI rules below. Subsystem invariants remain in force; touch, clipboard, and local
+> draft proposals retain explicit prototype/device gates.
+
 tether is a phone-first client for the tmux sessions on Jimmy's dev server, reached
 only over his tailnet. This document is the product and UX spec and the index of the
 design: what tether does and how it looks and behaves on the phone. Each subsystem
@@ -119,22 +124,16 @@ tether's cgroup.
 
 ### Tabs and the session sheet
 
-**Model.** 1 tab = 1 tmux window, showing that window's active pane full screen. If a
-window gets split, the tab follows whichever pane is active. A tab's title is its
-window's name and follows the daemon's `windowRenamed`.
+One tab opens one tmux window and follows its active pane. Display actual
+`session / window` names, with the real window index when labels collide;
+identity is the stable server/window ID, never the display name.
 
-**The "+" sheet:**
-
-- **Attach:** sessions → windows (name, last activity, "attached on laptop"). Tapping
-  a window opens a tab. The listing loads when the sheet opens or is pulled to
-  refresh, and refreshes on the daemon's `sessionsChanged` hint while open. "Attached
-  on laptop" counts non-control clients only.
-- **New tmux window or session:** name and start directory (a picker over the project
-  roots, plus path completion). Disabled when no tmux server runs.
-- **Scratch shell** (after the core MVP): a shell in its own tmux session on a private
-  server, shown with a striped "⚠ scratch" pill. It survives reconnects and tether
-  restarts; closing its tab ends it. At most 2
-  ([daemon-core.md §3.8](daemon-core.md#38-one-shots-and-endpoints-oneshotrs)).
+Terminal + opens the existing-session picker only. Creation lives on Home as
+labelled New session and New window actions, with optional name and absolute start
+directory. Session/window search is local; refresh is event-driven. Another-client
+attachment does not identify a laptop. Closing a tab never kills its tmux process.
+See [the interaction contract](client/browser-behaviors.md) for the full behavior.
+Scratch shells are outside this minimal client pass.
 
 ### Reconnect
 
@@ -285,70 +284,24 @@ and buffer use.
 
 ## Layout
 
-Modelled on Jimmy's Termius screenshots, with tabs at the bottom: the host pill
-becomes a horizontally scrollable row of tab pills. CSS grid and flex sized to the web
-view, which native code sizes to the area above the keyboard
-([ios-shell.md](ios-shell.md#keyboard-geometry)); columns and rows are recomputed on
-rotation. Landscape and a future iPad get the same UI with wider pills. In portrait
-the Dynamic Island's top inset (~59–62 pt) holds no UI, in landscape neither do the
-side insets; every bar respects `env(safe-area-inset-*)` with `viewport-fit=cover`.
+The [client interaction contract](client/browser-behaviors.md) and
+[interactive mockup](client/mockups/index.html) define current layout for all three
+clients. Desktop has a Home/Terminal/Files icon rail and top terminal tabs, without a
+back arrow. Mobile Home has Sessions/Files navigation; full-screen terminal has one
+compact bottom toolbar with Home/back, tabs, attach +, and keyboard controls.
 
-**Collapsed** (keyboard hidden; the default when reading):
+Use actual tmux names, typography and color, not dot markers or dot separators.
+No rename/kill controls, extended-key/files sheet, or custom browser keyboard is part
+of this minimal pass. Native accessory shortcuts and suggestion UI below are deferred
+options, not required initial product controls.
 
-```text
-┌──────────────────────────────────────┐ ← safe-area top (status bar)
-│ jimyao@pop-os:~/proj$ claude         │
-│ …full-screen terminal…               │
-│                                      │
-│                                 [⤓]  │ ← jump-to-bottom (only when scrolled up)
-├──────────────────────────────────────┤
-│ [<] (●main:1 ×)(◌api:2 ×)(●lo…▸ [+] [⌨] │ ← floating bottom bar, scrolls sideways
-└──────────────────────────────────────┘ ← safe-area bottom (home indicator)
-```
-
-- `[<]` goes back to the session home and the file manager entry point.
-- Tab pill: `session:window` name, a state dot, and ×. The dot shows ● connected, ◌
-  pulsing while reconnecting (indefinitely, with the next retry time; tap to retry
-  now), or ✕ grey briefly when the window is gone, before the pill goes. Scratch tabs
-  are striped. Activity and bell dots come in v2.
-- Tapping a pill switches tab and keeps the keyboard state. Long-press offers rename,
-  detach, or kill session (with confirmation).
-- `[+]` opens the session sheet; `[⌨]` opens or closes the keyboard and is the one-tap
-  recovery when iOS closes it.
-
-The tmux window size is computed from this collapsed layout and stays fixed while the
-keyboard opens and closes.
-
-**Keyboard shown** (who owns each bar: [ios-shell.md](ios-shell.md#what-is-native-and-what-is-web)):
-
-```text
-┌──────────────────────────────────────┐
-│ terminal (same rows; pans so the     │
-│ cursor row stays above the bars)     │
-│ [<] (●main:1 ×)(◌api:2 ×)…   [+] [⊞] │ ← same tab bar; ⊞ = extended keys / files panel
-│ git checkout ‹feat/›‹main›‹--track›  │ ← suggestion strip, only while suggestions exist
-├──────────────────────────────────────┤
-│ ┌ Use voice typing here… ───[Paste]┐ │ ← compose field (native; dictation, sent on send)
-│ esc  tab  ctrl  ⇧tab ▸swipe     [⌨̲]  │ ← key row (group 1); last key hides the keyboard
-├──────────────────────────────────────┤
-│           iOS keyboard               │ ← no ⌃ ⌄ ✓ bar: it belongs to WebKit form fields
-└──────────────────────────────────────┘
-```
-
-- Above the line is web, below it the native input accessory. Native ends the web
-  view at the top of the accessory, so the web never measures the keyboard.
-- When the keyboard opens, the terminal keeps its rows and slides so the cursor row
-  sits just above the bars; covered rows are reachable by scrolling. No SIGWINCH goes
-  to the app or the laptop on a keyboard toggle.
-- The compose field is optional per tab, for dictation and longer prompts: edited
-  locally, sent as a paste plus Enter. iOS autocorrect is allowed only there.
-- `[Paste]` pastes the clipboard. `[AI]` is a placeholder for a snippet picker.
-- The key row follows Termius: groups of 4 keys, the first always visible and the
-  rest a swipe away ([Key-row groups](#key-row-groups)).
-- Ctrl and Alt are sticky for one key, or locked by double tap. A locked modifier is
-  shown unmistakably, and Ctrl+C or Ctrl+D while Ctrl is locked asks for confirmation.
-- `[⊞]` opens a sheet with the extended keyboard, the file manager, history and (v2)
-  snippets.
+Keyboard opening does not resize tmux. The viewport pans to reveal the cursor while
+respecting platform safe areas; actual browser/native behavior needs device probes.
+Both mobile versions need an ordinary multiline local draft editor while the software
+keyboard is open. Enter edits the draft; explicit Insert sends one paste **without
+adding Enter**. Draft saving, target binding and remaining retention choices are in
+[the touch/input design](client/terminal-interaction-design.md). Its keyboard-open
+layout is not yet demonstrated by the approved keyboard-hidden mockup.
 
 ## Keyboard
 
@@ -369,6 +322,8 @@ this is in [ios-shell.md](ios-shell.md#keyboard); spike 1 tests it on the phone.
   as a paste.
 
 ### Suggestion strip
+
+> Deferred UI option, not part of the minimal approved client layout. Revisit after core input/device probes.
 
 A row of chips above the key row; tapping a chip sends the remaining characters (a
 diff against what's typed). The backend, with each source's parsing, caching, limits
@@ -405,6 +360,8 @@ after Tab, ↑ or readline edits.
   `/complete` is plain HTTP in `src/complete/` and never touches tmux.
 
 ### Key-row groups
+
+> Deferred UI option, not part of the minimal approved client layout. Revisit after core input/device probes.
 
 Termius-style groups of 4; group 1 sits next to the hide-keyboard key, the rest a
 swipe away. Built from what the agent CLIs bind
@@ -488,22 +445,21 @@ Core MVP. Spikes 5–8 prototype these before feature work.
 
 ### Select, copy and paste
 
-- **Selection.** Long-press enters selection mode. The WebGL renderer can't be
-  selected natively, so the visible rows (plus loaded history) are rendered as DOM text
-  in an overlay with the same metrics; iOS's selection handles, loupe and Copy menu
-  then work. Double-tap selects a word, triple-tap a line, and "Select output" selects
-  the last command's output when OSC 133 marks are present.
-- **Copy:** WebKit's Copy menu on the overlay's selection.
-- **Paste** (`[Paste]` or the long-press menu) goes through tmux: `load-buffer` from a
-  private temp file, then `paste-buffer -p -d`, so multi-line text never passes
-  through tmux's command parser. With `-p`, tmux adds bracketed-paste markers only if
-  the app enabled bracketed paste.
-- **Reading the clipboard** is native: a `UIPasteControl` in the key row and Cmd+V
-  paste without the "Allow Paste" prompt; image paste goes to upload
-  ([ios-shell.md](ios-shell.md#the-accessory)).
-- **Clipboard sync (v2):** an app's OSC 52 write reaches the phone in the output
-  stream, and native code can write the iOS clipboard without a gesture (behind a
-  setting). Phone copies can optionally go into a tmux buffer.
+The [researched interaction design](client/terminal-interaction-design.md) is the
+current direction. Long-press selection must not trigger a remote click. Prototype
+native selection handles with a bounded, immutable logical-text snapshot; rendering
+one DOM node per physical terminal row is not enough to preserve copied newlines.
+Current snapshot restoration loses wrap metadata, so capture/restore must be resolved
+before correct copy after reconnect/history can be promised. Unicode cell mapping,
+streaming output, native menus, and gesture arbitration require device verification.
+
+Paste goes through tmux `load-buffer` and `paste-buffer -p -d`; tmux adds bracketed
+markers only when the receiving application requests them. Draft Insert uses this
+same route without adding Enter. Embedded or trailing newlines may still execute
+commands. Clipboard access uses real user gestures and platform-supported controls;
+no background read or synthetic paste event is a substitute. Images use the existing
+upload/path-insertion route. Custom multi-tap selection and clipboard sync are outside
+the minimal pass.
 
 ### Reading on a small screen
 
@@ -712,18 +668,19 @@ The spikes come first; spike 1 gates the native app's keyboard design.
   LocalAPI; a device token per phone behind Face ID; one middleware on every route;
   strict CSP.
 - **Tabs and layout:** 1 tab = 1 window; collapsed and keyboard states; safe areas;
-  the "+" sheet (attach, new window or session); pinch font size per tab; landscape.
+  the attach-only "+" sheet and Home creation actions; pinch font size per tab; landscape.
 - **Reconnect:** indefinite "reconnecting" with backoff and instant retry; the connect
   timeout with web view recreation; a snapshot on every (re)watch; prompt release of
   server state; WebGL context loss handled by recreating the renderer, with DOM
   fallback.
-- **Keyboard:** rarely closes, one-tap recovery; agent key groups; modifier locks with
-  ^C/^D confirmation; compose field with Paste and dictation; hardware keyboard.
+- **Keyboard:** one-tap recovery, local draft with explicit Insert (no added Enter),
+  ordinary mobile-browser editing, and native focus ownership. Extra key groups and
+  modifier-lock UI are deferred. Verify dictation/IME and hardware keyboards.
 - **Touch:** momentum scroll with lazy history, wheel translation, jump-to-bottom,
   trackpad and tap-to-position, DOM selection with copy, paste through tmux.
 - **Display:** xterm.js 6 WebGL, Nerd Font, `unicode11`, tappable URLs.
-- **Suggestion strip:** history, PATH and paths, with the OSC 133 snippet; carapace
-  flags if installed.
+- **Suggestion strip (deferred client UI):** backend completion capabilities do not
+  require suggestion controls in the minimal client.
 - **Files:** browse the roots; view code, markdown and images; stream video in the
   native player; photo pick or paste → uploads folder → path insert.
 - **After the core MVP:** the scratch shell.
@@ -817,8 +774,7 @@ Mac), on its own `-L` socket.
   keyboard shown). Whether the file manager should hide the keyboard while it is open
   in landscape, or keep it (the keyboard rule in
   [Keyboard behaviour](#keyboard-behaviour) says nothing closes it), is undecided.
-- **Protocol gap:** the tab pill's long-press offers rename, detach and kill session,
-  but the protocol has no message for any of them yet; define them (user one-shots,
-  like `newWindow`) before building that menu.
+- **Touch/copy and local draft gates:** see [the client research](client/terminal-interaction-design.md).
+  Rename/kill menus are not in scope and need no new protocol for this pass.
 - Open risks per subsystem: [daemon-core.md](daemon-core.md#9-open-risks),
   [ios-shell.md](ios-shell.md#open-risks), [auth.md](auth.md#open-risks).
