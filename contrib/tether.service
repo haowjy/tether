@@ -1,0 +1,37 @@
+# tether, as a systemd user unit (plan.md "Resource budget"). Install and run it as
+# docs/running.md says; it isn't installed for you.
+#
+# tether attaches to your tmux server and never starts it: a tmux server started from
+# this unit would live in its cgroup and die with it.
+
+[Unit]
+Description=tether: phone-first client for tmux, over Tailscale
+Documentation=https://github.com/haowjy/tether/blob/main/docs/running.md
+# Restarts back off instead (RestartSteps below): at boot tailscaled, a system unit
+# this user unit can't order itself after, may not be up yet.
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+ExecStart=%h/.cargo/bin/tether serve
+# SIGTERM goes to tether alone, which closes its sockets with 4004 and its tmux
+# control clients itself. Signalled directly, a control client exits as if detached,
+# and a phone could be told "detached" instead of reconnecting.
+KillMode=mixed
+Restart=on-failure
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=60
+
+MemoryHigh=48M
+MemoryMax=64M
+CPUWeight=20
+Nice=10
+IOWeight=10
+IOSchedulingClass=idle
+TasksMax=32
+# The kernel kills tether before tmux or the agents in it.
+OOMScoreAdjust=500
+
+[Install]
+WantedBy=default.target

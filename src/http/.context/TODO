@@ -1,0 +1,3 @@
+- `newWindow` and `newSession` pass `dir` to the hub unchecked. daemon-core.md §5.3
+  has the connection check it against the file roots first; that waits for `src/fs/`,
+  the only place paths are resolved against the roots (plan.md "File manager").

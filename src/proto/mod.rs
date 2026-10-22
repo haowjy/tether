@@ -2,6 +2,7 @@
 //! binary frames, and the version range. A leaf: it names no other tether module.
 //! The TypeScript types in `web/proto/generated/` are rendered from these.
 
+pub mod auth;
 pub mod frames;
 mod messages;
 #[cfg(test)]

@@ -39,6 +39,17 @@ version section on release.
 - A history request whose rows exceed tmux's 1 MiB reply cap is retried by the hub
   with half the rows, down to one row, so the client gets a shorter `historyChunk`
   instead of an error and asks again from where it ends.
+- tether runs as a daemon: `tether serve` listens on `127.0.0.1` (port 7850 by
+  default, from `~/.config/tether/config.toml`) for `tailscale serve` to publish, and
+  serves the WebSocket the web UI drives tmux through. It refuses to start if Funnel
+  exposes its port, accepts only your Tailscale login, and requires an enrolled
+  device's token on everything but enrolment. Idle with no phone connected it uses
+  about 4 MB and no CPU. `docs/running.md` covers setup; `contrib/tether.service` is
+  the systemd user unit.
+- Added phone enrolment: `tether enroll` prints a one-time code (10 minutes, 5 wrong
+  tries) for the app's Add host, and `tether device list|add|remove` manages enrolled
+  devices. A removed device's open sockets close within 10 s. The daemon keeps only
+  hashes, in `~/.local/state/tether/`.
 
 ## [0.0.1] - 2026-10-22
 
