@@ -37,6 +37,12 @@ Layout approval does not settle browser authentication/asset serving, touch gest
 implementation, or the snapshot/history changes needed for correct copy. Retaining a
 draft after Insert is proposed; closed-tab draft retention remains undecided.
 
+## Browser and PWA setup
+
+The phone browser must be installable as a PWA. See [browser setup research](browser-setup.md)
+for recommended hosting, authentication, platform boundaries, offline drafts, updates,
+and implementation order. This is not implemented; its security design still needs review.
+
 ## Open the mockup on a Mac
 
 From the repository root:

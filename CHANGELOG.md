@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- Document browser deployment research and required phone PWA installation, offline drafts, and update behavior.
+
 - Save browser/iPhone design, interactive mockups, clipboard research, and Mac handoff in `docs/design/client/`.
 
 - A window or session created from another tmux client (a laptop terminal) shows up

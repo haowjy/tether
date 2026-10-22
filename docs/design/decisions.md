@@ -2369,3 +2369,14 @@ the p61 review. The product calls behind it are Jimmy's
 - **Not settled by approval:** touch implementation, wrap-preserving snapshot/history,
   production browser auth/serving, draft retention after insert/tab closure, and
   hardware behavior. See the research gates before coding those boundaries.
+
+## Installable phone browser
+
+- **Decided:** 2026-10-22, Jimmy.
+- **What:** the phone browser client must be installable as a PWA, sharing the browser UI.
+  Native iPhone remains a separate platform shell.
+- **Why:** Home Screen launch should be available without installing the native app.
+- **Rejected:** treating PWA as an optional future feature or a separate terminal client.
+- **Research, not final security spec:** [browser setup](client/browser-setup.md) recommends
+  same-origin tailnet hosting, reviewed browser credentials, offline shell/drafts and
+  controlled updates. No offline command replay; production auth and device gates stay open.

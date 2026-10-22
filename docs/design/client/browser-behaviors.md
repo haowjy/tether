@@ -6,6 +6,7 @@ Interactive mockup: [mockups/index.html](mockups/index.html). All sessions, term
 
 ## Product boundaries and vocabulary
 
+- Phone browser must support installation as a PWA with standalone launch; installation is optional for use, not for implementation scope. It shares browser behavior, preserves local drafts offline, and never queues terminal commands for later execution. See [browser setup](browser-setup.md) for research and gates.
 - Three environments: desktop browser, mobile browser, native iPhone app. Shared workspace behavior; platform-specific navigation and input. No three independent terminal implementations.
 - Host is the server, e.g. pop-os. Session is a real tmux session, e.g. a1 or bio2. A session contains windows. A tether tab opens one tmux window, showing its active pane as in the existing daemon contract.
 - Home and picker show actual session names grouped with their windows. Terminal tab label is `session / window` (include actual index when window names collide); host is separate context. Mock names tether, notes, website, scratch demonstrate hierarchy only.
