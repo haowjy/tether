@@ -1,42 +1,147 @@
+<!-- Describe the PR's final state, not its history. A reviewer should get the
+     purpose, the decisions, the surrounding work and the full scope from the
+     sections up to Summary, before any detail. -->
+
 ## Why
 
-<!-- Problem or motivation. What breakage, gap, or need makes this PR worth merging? -->
+<!-- State the problem or opportunity and why it matters. Include before-state
+     evidence when it exists: failing output, timings, a reproduction. -->
+
+## Core design decisions
+
+<!-- Name the core design decisions behind the change: the underlying
+     problems, not just their symptoms. For each, say what was wrong, what this
+     PR decides, and what it rules out. Quote the owner's rulings where they
+     set a decision. Write "None." when the change involves no design choice. -->
+
+1. **<decision>.** <the problem>. <what this PR decides>. Ruled out: <alternative and why>.
 
 ## Goal
 
-<!-- Intended outcome. What should be true after this merges? -->
+<!-- Start with the long-term goal this PR serves: the direction it moves
+     toward, even when this PR is one step of it. Write "None." when the PR
+     stands alone. Then state what must be true after merge. -->
 
-## Summary
+**Long term.** <the direction this PR moves toward, or "None.">
 
-<!-- What changed? Paste the agent-generated summary, then adjust for clarity. -->
+**This PR.**
 
-## Resulting Behavior
-
-<!-- User-facing end state. What can someone do after this merges that they could not do before? Prefer examples/CLI outcomes over implementation details. -->
-
-## Changes
-
-<!-- Notable implementation details, behavior changes, risks, and follow-ups. -->
+- <what must be true after merge>
 
 ## Work Item
 
-<!-- Meridian work item slug, for example: harness-aware-agent-inventory -->
+<!-- Name the work item, issue, design, or plan this PR delivers; otherwise
+     say this was direct maintenance. Under it, list other related work: PRs
+     this builds on or unblocks, and issues it fixes or prepares for. Deferred
+     work goes under Deferred. Write "None." when nothing is related. -->
+
+<work item, issue, design, or plan, or "Direct maintenance.">
+
+**Related work.**
+
+- #N: <how it relates>
+
+## Summary
+
+<!-- List every part of the PR: each change a reviewer could ask "why is this
+     here?" about, including follow-on fixes, safety work the main change
+     forced, and anything added mid-review. For each, say what it does and why
+     it is in this PR. A change missing from this list should not be in the
+     diff. Keep it current as parts are added. -->
+
+1. **<part>.** <what it does>. Why it's here: <reason>.
+
+## Diff
+
+<!-- One row per Summary part, same numbers. Part sizes are approximate when
+     parts share a file. The Total row is exact: `git diff --numstat` against
+     the base, excluding generated files (`Cargo.lock`, built web assets). -->
+
+| # | Part | Source | Tests | Docs |
+|---|---|---|---|---|
+| 1 | <part> | +N / -N | +N / -N | +N / -N |
+| | **Total (N files)** | **+N / -N** | **+N / -N** | **+N / -N** |
+
+## Before / After
+
+<!-- List each concrete change as its own item; do not collapse the PR into one
+     paragraph. Label a bug fix explicitly ("Bug fix: ...") so it doesn't blend
+     into feature description. For a bug fix or changed behavior, give Before
+     and After; keep Before brief or omit it when no meaningful prior state
+     exists. For a new capability, describe After only. Prefer CLI commands and
+     their output over prose. -->
+
+- **Bug fix: <what was broken>.** Before: ... After: ...
+- **<capability or behavior change>.** After: ...
+
+## Code Changes
+
+<!-- For each part in the Summary, explain how it works and name its key
+     paths. Explain substantial additions. Aim to lower net-new code over time
+     by simplifying, refactoring, and removing duplication/dead paths—not by
+     shrinking this diff. -->
+
+**1. <part>.** <how it works and why it is built this way>
+
+- Added:
+- Refactored:
+- Deleted:
+
+## State / Protocol Changes
+
+<!-- Remove if none. Covers the config file (~/.config/tether/config.toml),
+     stored auth state (passkeys, sessions), the wire protocol between daemon
+     and web app, and the tmux options tether expects. For each: old → new
+     shape, how existing state upgrades, what an older daemon or a cached older
+     web app sees, and how to roll back. Diagram changed relationships in
+     Mermaid when it helps. -->
+
+## Testing
+
+<!-- List tests added/refactored/deleted and the contract or risk each protects
+     (or why removal is safe). Don't add tests for volume or coverage; consider
+     deleting redundant tests and development scaffolding. -->
+
+- Added:
+- Refactored:
+- Deleted:
 
 ## Verification
 
-<!-- What was run or checked? Include tests, smoke checks, type/lint, or why verification is not applicable. -->
+<!-- Describe how to exercise changed behavior, then record what was tested and
+     observed. Include setup, steps, expected/actual results, and workflows a
+     probe covered. Probe against an isolated tmux server (`tmux -L <name>`),
+     never the real sessions. Say which tmux versions (3.4, 3.7b) and which
+     clients (iPhone installed app, Safari, desktop browser) were exercised
+     live. If no manual path exists, say why. For anything on a hot path, report
+     RSS and CPU on the dev box against the resource budget, with method and
+     workload. -->
+
+- Gates (`scripts/preflight.sh full`):
+- Live check (setup, steps, expected / observed):
+- Not exercised live:
+- Resources (when relevant):
+
+## Deferred
+
+<!-- List deferred work and its tracking home: issue for cross-cutting work;
+     nearest .context/TODO or .context/FUTURE for local work. Temporary code or
+     cleanup deferred for speed/product clarity needs a removal trigger. Say if none. -->
+
+- [ ] Tracking home for each deferral; removal/cleanup trigger when applicable, or none
 
 ## Knowledge Updates
 
-<!-- Were .context/, KB, docs, or other durable knowledge artifacts updated?
-     If not, note why (for example: no new behavior, docs not applicable). -->
+<!-- List durable guidance updated (colocated AGENTS.md / .context/, docs/, KB),
+     or say why none was needed. -->
+
+- [ ] `.context/` / docs / KB updates are included, or not needed
 
 ## Spawn Trace
 
-<!-- Direct/top-level Meridian spawn IDs only: role and short purpose, for example:
+<!-- List delegated agents and roles, or say the work was done directly:
      - p123 coder — implemented catalog filtering
-     - p124 qa-lead — reviewed/updated tests
-     - p125 kb-lead — updated durable knowledge
+     - p124 reviewer — structural review
 -->
 
 ## Release Label Guide
