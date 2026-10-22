@@ -1,0 +1,18 @@
+[package]
+name = "tether"
+version = "0.0.0"
+edition = "2024"
+description = "Phone-first client for tmux sessions on a dev server, over Tailscale"
+repository = "https://github.com/haowjy/tether"
+publish = false
+
+[[bin]]
+name = "tether"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+strip = true
+lto = "thin"

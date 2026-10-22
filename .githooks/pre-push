@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ZERO_SHA="0000000000000000000000000000000000000000"
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+needs_full=0
+
+block_release_tag() {
+  local message="$1"
+  printf 'ERROR: %s\n' "$message" >&2
+  printf 'Release tags (v*) are CI-owned. Push normal changes to main; CI creates release tags.\n' >&2
+  printf 'Note: enforce server-side protection for refs/tags/v* in GitHub; local hooks are bypassable.\n' >&2
+  exit 1
+}
+
+check_release_tag_auth() {
+  local ref="$1"
+  local local_sha="$2"
+  local remote_sha="$3"
+  local tag="${ref#refs/tags/}"
+
+  [[ "$local_sha" != "$ZERO_SHA" ]] || block_release_tag "refusing to delete release tag $tag"
+  [[ "$remote_sha" = "$ZERO_SHA" ]] || block_release_tag "refusing to update release tag $tag"
+  block_release_tag "refusing direct push of release tag $tag"
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/*)
+      # Skip deletion pushes — preflight only matters when pushing code.
+      [[ "$local_sha" != "$ZERO_SHA" ]] && needs_full=1
+      ;;
+    refs/tags/v*)
+      check_release_tag_auth "$remote_ref" "$local_sha" "$remote_sha"
+      ;;
+    refs/tags/*)
+      ;;
+  esac
+done
+
+if [[ "$needs_full" = 1 ]]; then
+  # Hooks inherit Git's local repository environment. The preflight suite
+  # creates temporary git repositories; leaving GIT_DIR/GIT_WORK_TREE set makes
+  # those nested git commands operate on this checkout instead of their temp
+  # repos.
+  unset $(git rev-parse --local-env-vars)
+  exec "$ROOT_DIR/scripts/preflight.sh" full
+fi

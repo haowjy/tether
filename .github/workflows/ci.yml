@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  pr-release-label:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Report release label
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          labels="$(jq -r '.[] | select(startswith("release:"))' <<<"${LABELS_JSON}")"
+          if [[ -n "${labels}" ]]; then
+            echo "::notice::Release label(s): ${labels//$'\n'/, }"
+          else
+            echo "::warning::No release:* label set. Merging to main will publish a prerelease (RC); add release:skip to publish nothing."
+          fi
+
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Shared preflight
+        run: scripts/preflight.sh full

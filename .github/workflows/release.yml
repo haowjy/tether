@@ -1,0 +1,147 @@
+name: Release
+
+# The only publish path. Auto-release calls it after tagging; a manual v* tag
+# push (backfill via scripts/manually-release.sh) triggers it directly.
+on:
+  push:
+    tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  verify-provenance:
+    name: Verify release provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Verify tag provenance
+        run: |
+          TAG_VERSION="${RELEASE_TAG#v}"
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+          if [[ ! "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::Tag version ($TAG_VERSION) must be stable X.Y.Z or RC X.Y.Z-rc.N"
+            exit 1
+          fi
+
+          if [[ "$TAG_VERSION" != "$CARGO_VERSION" ]]; then
+            echo "::error::Tag version ($TAG_VERSION) != Cargo.toml ($CARGO_VERSION)"
+            exit 1
+          fi
+
+          escaped_tag_version="$(sed 's/[][\\.^$*+?(){}|/-]/\\&/g' <<<"${TAG_VERSION}")"
+          if ! grep -qE "^## \\[${escaped_tag_version}\\] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md missing release section for ${TAG_VERSION} (expected '## [${TAG_VERSION}] - YYYY-MM-DD')"
+            exit 1
+          fi
+
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
+          RELEASE_SHA="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::Tagged commit is not reachable from $DEFAULT_BRANCH"
+            exit 1
+          fi
+
+          COMMIT_MSG=$(git log -1 --format=%s "$RELEASE_SHA")
+          if [[ "$COMMIT_MSG" != "release: v$TAG_VERSION" ]]; then
+            echo "::error::Release commit message doesn't match expected format: release: v$TAG_VERSION"
+            exit 1
+          fi
+
+          echo "Provenance verified for v$TAG_VERSION"
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: verify-provenance
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native runners for every target: no cross toolchain, and the smoke
+          # test below runs the binary that ships.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            artifact: tether-linux-x64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            artifact: tether-linux-arm64
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            artifact: tether-darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Smoke test
+        run: |
+          bin=target/${{ matrix.target }}/release/tether
+          out="$("$bin" --version)"
+          echo "$out"
+          [[ "$out" == "tether ${RELEASE_TAG#v}" ]] || { echo "::error::unexpected --version output: $out"; exit 1; }
+          if [[ "${{ matrix.target }}" == *musl ]]; then
+            file "$bin"
+            file "$bin" | grep -Eq 'static(ally|-pie) linked' || { echo "::error::binary is not statically linked"; exit 1; }
+          fi
+          cp "$bin" ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  github-release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: tether-*
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: artifacts
+        run: sha256sum tether-* > SHA256SUMS && cat SHA256SUMS
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-rc.') }}
+          generate_release_notes: true
+          files: |
+            artifacts/tether-*
+            artifacts/SHA256SUMS

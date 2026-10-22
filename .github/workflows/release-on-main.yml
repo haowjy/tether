@@ -1,0 +1,680 @@
+name: Release on main
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    if: "${{ !startsWith(github.event.head_commit.message, 'release: v') && !contains(github.event.head_commit.message, 'release:skip') }}"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.push_release.outputs.tag || steps.push_missing_tag.outputs.tag || steps.release_guard.outputs.existing_release_tag }}
+    concurrency:
+      group: release-on-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Anchor release on current main
+        env:
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          git fetch origin main --force
+          git checkout -B main origin/main
+
+          if ! git cat-file -e "${TRIGGER_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "::error::Trigger commit ${TRIGGER_SHA} is not available in local checkout."
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "${TRIGGER_SHA}" HEAD; then
+            echo "::error::Trigger commit ${TRIGGER_SHA} is not an ancestor of current main tip $(git rev-parse HEAD)."
+            exit 1
+          fi
+
+          echo "Anchored release workspace to main tip $(git rev-parse HEAD) for trigger ${TRIGGER_SHA}."
+
+      - name: Resolve release intent
+        id: release_intent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGER_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          prs_json="$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${REPOSITORY}/commits/${TRIGGER_SHA}/pulls")"
+
+          exact_candidates="$(jq --arg trigger_sha "${TRIGGER_SHA}" '
+            [ .[]
+              | select(
+                  .merged_at != null
+                  and .base.ref == "main"
+                  and .merge_commit_sha == $trigger_sha
+                )
+            ]
+          ' <<<"${prs_json}")"
+          candidate_count="$(jq 'length' <<<"${exact_candidates}")"
+          selected_candidates="${exact_candidates}"
+          selection_reason="exact merge_commit_sha match"
+
+          if [[ "${candidate_count}" -eq 0 ]]; then
+            fallback_candidates="$(jq '
+              [ .[]
+                | select(
+                    .merged_at != null
+                    and .base.ref == "main"
+                  )
+              ]
+            ' <<<"${prs_json}")"
+            candidate_count="$(jq 'length' <<<"${fallback_candidates}")"
+            selected_candidates="${fallback_candidates}"
+            selection_reason="merged PR targeting main fallback"
+          fi
+
+          if [[ "${candidate_count}" -eq 0 ]]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No associated PR found; skipping auto-release. Use scripts/manually-release.sh for a backfill release."
+            exit 0
+          fi
+
+          if [[ "${candidate_count}" -gt 1 ]]; then
+            echo "::error::Ambiguous merged PR selection for trigger ${TRIGGER_SHA}. Found ${candidate_count} candidates after ${selection_reason}."
+            jq -r '.[] | "- #\(.number) \(.html_url) (merge_commit_sha=\(.merge_commit_sha // "null"))"' <<<"${selected_candidates}"
+            exit 1
+          fi
+
+          selected_pr="$(jq '.[0]' <<<"${selected_candidates}")"
+          selected_pr_number="$(jq -r '.number' <<<"${selected_pr}")"
+          echo "::notice::Selected PR #${selected_pr_number} via ${selection_reason}."
+
+          labels="$(jq -r '.labels[]?.name' <<<"${selected_pr}" | sort -u)"
+          if grep -qx 'release:skip' <<<"${labels}"; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::release:skip label present; skipping release."
+            exit 0
+          fi
+
+          release_labels="$(grep '^release:' <<<"${labels}" || true)"
+          if [[ -z "${release_labels}" ]]; then
+            echo "::notice::No release:* label present; defaulting to prerelease (rc)."
+            release_labels="release:rc"
+          fi
+
+          unknown_release_labels="$(grep '^release:' <<<"${labels}" | grep -vxE 'release:(skip|patch|stable|minor|major|rc)' || true)"
+          has_patch_label=false
+          has_minor_label=false
+          has_major_label=false
+          has_rc_label=false
+
+          if grep -qxE 'release:(patch|stable)' <<<"${release_labels}"; then
+            has_patch_label=true
+          fi
+          if grep -qx 'release:minor' <<<"${release_labels}"; then
+            has_minor_label=true
+          fi
+          if grep -qx 'release:major' <<<"${release_labels}"; then
+            has_major_label=true
+          fi
+          if grep -qx 'release:rc' <<<"${release_labels}"; then
+            has_rc_label=true
+          fi
+
+          bump_kind="patch"
+          if [[ "${has_major_label}" == "true" ]]; then
+            bump_kind="major"
+          elif [[ "${has_minor_label}" == "true" ]]; then
+            bump_kind="minor"
+          elif [[ "${has_patch_label}" == "true" ]]; then
+            bump_kind="patch"
+          fi
+
+          release_kind="rc"
+          if [[ -n "${unknown_release_labels}" ]]; then
+            echo "::notice::Unknown release label(s) detected (${unknown_release_labels//$'\n'/, }); defaulting to prerelease (rc)."
+          elif [[ "${has_rc_label}" == "true" ]]; then
+            echo "::notice::release:rc label present; creating prerelease (rc)."
+          elif [[ "${has_patch_label}" == "true" || "${has_minor_label}" == "true" || "${has_major_label}" == "true" ]]; then
+            release_kind="stable"
+            echo "::notice::Stable release label present; creating stable ${bump_kind} release."
+          else
+            echo "::notice::release:* label present without explicit stable label; defaulting to prerelease (rc)."
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "release_kind=${release_kind}" >> "$GITHUB_OUTPUT"
+          echo "bump_kind=${bump_kind}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Resolved release kind: ${release_kind}, bump kind: ${bump_kind}."
+
+      - name: Skip when trigger already released
+        if: steps.release_intent.outputs.should_release == 'true'
+        id: release_guard
+        env:
+          TRIGGER_SHA: ${{ github.sha }}
+          RELEASE_KIND: ${{ steps.release_intent.outputs.release_kind }}
+        run: |
+          is_stable_tag() {
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
+          }
+
+          is_rc_tag() {
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$' <<<"$1"
+          }
+
+          git fetch --tags --force
+
+          release_kind="${RELEASE_KIND:-rc}"
+          best_rank=99
+          selected_mode=""
+          selected_tag=""
+          selected_commit=""
+
+          while IFS=$'\t' read -r commit_hash commit_subject; do
+            if ! git show -s --format=%B "${commit_hash}" | grep -Fxq "Release-Trigger: ${TRIGGER_SHA}"; then
+              continue
+            fi
+
+            if [[ ! "${commit_subject}" =~ ^release:\ (v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?)$ ]]; then
+              continue
+            fi
+            subject_tag="${BASH_REMATCH[1]}"
+
+            subject_is_stable=false
+            subject_is_rc=false
+            if is_stable_tag "${subject_tag}"; then
+              subject_is_stable=true
+            elif is_rc_tag "${subject_tag}"; then
+              subject_is_rc=true
+            fi
+
+            commit_stable_tag=""
+            commit_rc_tag=""
+            while IFS= read -r commit_tag; do
+              [[ -n "${commit_tag}" ]] || continue
+              if is_stable_tag "${commit_tag}" && [[ -z "${commit_stable_tag}" ]]; then
+                commit_stable_tag="${commit_tag}"
+              elif is_rc_tag "${commit_tag}" && [[ -z "${commit_rc_tag}" ]]; then
+                commit_rc_tag="${commit_tag}"
+              elif grep -Eq '^v' <<<"${commit_tag}"; then
+                echo "::notice::Ignoring non-release tag ${commit_tag} on release commit ${commit_hash}."
+              fi
+            done < <(git tag --points-at "${commit_hash}" --list 'v*' --sort=-version:refname)
+
+            candidate_rank=99
+            candidate_mode=""
+            candidate_tag=""
+            if [[ -n "${commit_stable_tag}" ]]; then
+              candidate_rank=1
+              candidate_mode="existing"
+              candidate_tag="${commit_stable_tag}"
+            elif [[ "${release_kind}" == "rc" && -n "${commit_rc_tag}" ]]; then
+              candidate_rank=2
+              candidate_mode="existing"
+              candidate_tag="${commit_rc_tag}"
+            elif [[ "${subject_is_stable}" == "true" ]]; then
+              if [[ "${release_kind}" == "stable" ]]; then
+                candidate_rank=2
+              else
+                candidate_rank=3
+              fi
+              candidate_mode="missing"
+              candidate_tag="${subject_tag}"
+            elif [[ "${release_kind}" == "rc" && "${subject_is_rc}" == "true" ]]; then
+              candidate_rank=4
+              candidate_mode="missing"
+              candidate_tag="${subject_tag}"
+            fi
+
+            if (( candidate_rank < best_rank )); then
+              best_rank="${candidate_rank}"
+              selected_mode="${candidate_mode}"
+              selected_tag="${candidate_tag}"
+              selected_commit="${commit_hash}"
+            fi
+          done < <(git log --format=$'%H\t%s' main)
+
+          if (( best_rank < 99 )); then
+            echo "already_released=true" >> "$GITHUB_OUTPUT"
+            if [[ "${selected_mode}" == "existing" ]]; then
+              echo "tag_missing=false" >> "$GITHUB_OUTPUT"
+              echo "existing_release_tag=${selected_tag}" >> "$GITHUB_OUTPUT"
+              echo "existing_release_commit=${selected_commit}" >> "$GITHUB_OUTPUT"
+              echo "::notice::Trigger ${TRIGGER_SHA} already released by ${selected_tag} on commit ${selected_commit}."
+            else
+              echo "tag_missing=true" >> "$GITHUB_OUTPUT"
+              echo "missing_tag=${selected_tag}" >> "$GITHUB_OUTPUT"
+              echo "missing_tag_commit=${selected_commit}" >> "$GITHUB_OUTPUT"
+              echo "::notice::Found existing release commit ${selected_commit} for trigger ${TRIGGER_SHA} but missing tag ${selected_tag}; recreating tag."
+            fi
+          else
+            echo "already_released=false" >> "$GITHUB_OUTPUT"
+            echo "tag_missing=false" >> "$GITHUB_OUTPUT"
+            echo "existing_release_tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push missing release tag
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.tag_missing == 'true'
+        id: push_missing_tag
+        env:
+          MISSING_TAG: ${{ steps.release_guard.outputs.missing_tag }}
+          MISSING_TAG_COMMIT: ${{ steps.release_guard.outputs.missing_tag_commit }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_PUSH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --tags --force
+          release_remote_url="https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
+
+          push_tag_with_retry() {
+            local tag_ref="$1"
+            local expected_commit="$2"
+
+            validate_local_tag_commit() {
+              local validate_tag_ref="$1"
+              local validate_expected_commit="$2"
+              local validate_context="$3"
+
+              if git rev-parse -q --verify "refs/tags/${validate_tag_ref}" >/dev/null; then
+                local observed_commit
+                observed_commit="$(git rev-parse "${validate_tag_ref}^{commit}")"
+                if [[ "${observed_commit}" != "${validate_expected_commit}" ]]; then
+                  echo "::error::Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
+                  return 1
+                fi
+              fi
+            }
+
+            resolve_remote_tag_commit() {
+              local resolve_tag_ref="$1"
+              local resolve_remote_url="$2"
+              local remote_refs
+              local peeled_commit
+              local ref_commit
+
+              if ! remote_refs="$(git ls-remote --tags "${resolve_remote_url}" "refs/tags/${resolve_tag_ref}" "refs/tags/${resolve_tag_ref}^{}")"; then
+                echo "::warning::Failed to query remote tag ${resolve_tag_ref}; will retry push."
+                return 2
+              fi
+
+              peeled_commit="$(awk '$2 ~ /\^\{\}$/ { print $1; exit }' <<<"${remote_refs}")"
+              if [[ -n "${peeled_commit}" ]]; then
+                echo "${peeled_commit}"
+                return 0
+              fi
+
+              ref_commit="$(awk '$2 !~ /\^\{\}$/ { print $1; exit }' <<<"${remote_refs}")"
+              if [[ -n "${ref_commit}" ]]; then
+                echo "${ref_commit}"
+                return 0
+              fi
+
+              return 1
+            }
+
+            if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "before push"; then
+              return 1
+            fi
+
+            for attempt in 1 2 3; do
+              if git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${tag_ref}"; then
+                return 0
+              fi
+
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after failed push attempt ${attempt}"; then
+                return 1
+              fi
+
+              if [[ "${attempt}" -eq 3 ]]; then
+                echo "::error::Failed to push tag ${tag_ref} after ${attempt} attempts."
+                return 1
+              fi
+
+              echo "::warning::Push for tag ${tag_ref} failed on attempt ${attempt}; refetching tags and retrying."
+              git fetch --tags --force
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after refetch on failed attempt ${attempt}"; then
+                return 1
+              fi
+              local remote_tag_commit=""
+              local remote_status=0
+              remote_tag_commit="$(resolve_remote_tag_commit "${tag_ref}" "${release_remote_url}")" && remote_status=0 || remote_status=$?
+              if [[ "${remote_status}" -eq 0 ]]; then
+                if [[ "${remote_tag_commit}" == "${expected_commit}" ]]; then
+                  echo "::notice::Remote tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+                  return 0
+                fi
+                echo "::error::Remote tag ${tag_ref} resolves to ${remote_tag_commit}; expected ${expected_commit}."
+                return 1
+              fi
+              if [[ "${remote_status}" -eq 1 ]]; then
+                echo "::notice::Remote tag ${tag_ref} not found yet after failed push attempt ${attempt}; retrying."
+              fi
+              sleep $((attempt * 2))
+            done
+          }
+
+          if git rev-parse -q --verify "refs/tags/${MISSING_TAG}" >/dev/null; then
+            tag_commit="$(git rev-parse "${MISSING_TAG}^{commit}")"
+            if [[ "${tag_commit}" != "${MISSING_TAG_COMMIT}" ]]; then
+              echo "::error::Tag ${MISSING_TAG} already exists on ${tag_commit}, expected ${MISSING_TAG_COMMIT}."
+              exit 1
+            fi
+            echo "::notice::Tag ${MISSING_TAG} already exists on expected release commit ${MISSING_TAG_COMMIT}."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${MISSING_TAG}" "${MISSING_TAG_COMMIT}" -m "Release ${MISSING_TAG#v}"
+            push_tag_with_retry "${MISSING_TAG}" "${MISSING_TAG_COMMIT}"
+            echo "::notice::Created missing tag ${MISSING_TAG} for existing release commit ${MISSING_TAG_COMMIT}."
+          fi
+
+          echo "tag=${MISSING_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure release identity
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run shared preflight
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        run: scripts/preflight.sh full
+
+      - name: Compute next release version
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        id: next_version
+        env:
+          RELEASE_KIND: ${{ steps.release_intent.outputs.release_kind }}
+          BUMP_KIND: ${{ steps.release_intent.outputs.bump_kind }}
+        run: |
+          bump_patch() {
+            local version="$1"
+            local major minor patch
+            IFS='.' read -r major minor patch <<<"${version}"
+            patch=$((patch + 1))
+            echo "${major}.${minor}.${patch}"
+          }
+
+          bump_minor() {
+            local version="$1"
+            local major minor patch
+            IFS='.' read -r major minor patch <<<"${version}"
+            minor=$((minor + 1))
+            echo "${major}.${minor}.0"
+          }
+
+          bump_major() {
+            local version="$1"
+            local major minor patch
+            IFS='.' read -r major minor patch <<<"${version}"
+            major=$((major + 1))
+            echo "${major}.0.0"
+          }
+
+          bump_kind="${BUMP_KIND:-patch}"
+          bump_version() {
+            local version="$1"
+            case "${bump_kind}" in
+              major) bump_major "${version}" ;;
+              minor) bump_minor "${version}" ;;
+              patch) bump_patch "${version}" ;;
+              *)
+                echo "::error::Unsupported bump kind '${bump_kind}'."
+                exit 1
+                ;;
+            esac
+          }
+
+          git fetch --tags --force
+
+          base_tag=""
+          while IFS= read -r candidate_tag; do
+            if grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"${candidate_tag}"; then
+              base_tag="${candidate_tag}"
+              break
+            fi
+          done < <(git tag --list 'v*' --sort=-version:refname)
+
+          if [[ -z "${base_tag}" ]]; then
+            base_version="0.0.0"
+            echo "::notice::No stable v* tags found. Bootstrapping from ${base_version}."
+          else
+            base_version="${base_tag#v}"
+            echo "::notice::Using latest stable release tag ${base_tag}."
+          fi
+
+          next_base_version="$(bump_version "${base_version}")"
+          if [[ "${RELEASE_KIND}" == "stable" ]]; then
+            next_version="${next_base_version}"
+            while git rev-parse -q --verify "refs/tags/v${next_version}" >/dev/null; do
+              colliding_tag="v${next_version}"
+              colliding_commit="$(git rev-parse "${colliding_tag}^{commit}")"
+              colliding_subject="$(git show -s --format=%s "${colliding_commit}")"
+              echo "::notice::Stable tag collision at ${colliding_tag} (commit=${colliding_commit}, subject='${colliding_subject}'); selecting next candidate version."
+              base_version="${next_version}"
+              next_base_version="$(bump_version "${base_version}")"
+              next_version="${next_base_version}"
+            done
+          else
+            escaped_next_base="$(sed 's/\./\\./g' <<<"${next_base_version}")"
+            max_rc=0
+            while IFS= read -r rc_tag; do
+              if [[ "${rc_tag}" =~ ^v${escaped_next_base}-rc\.([0-9]+)$ ]]; then
+                rc_number="${BASH_REMATCH[1]}"
+                if (( rc_number > max_rc )); then
+                  max_rc="${rc_number}"
+                fi
+              fi
+            done < <(git tag --list "v${next_base_version}-rc.*")
+
+            next_rc=$((max_rc + 1))
+            next_version="${next_base_version}-rc.${next_rc}"
+          fi
+
+          echo "next_version=${next_version}" >> "$GITHUB_OUTPUT"
+          echo "release_kind=${RELEASE_KIND}" >> "$GITHUB_OUTPUT"
+          echo "bump_kind=${bump_kind}" >> "$GITHUB_OUTPUT"
+          echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
+          echo "Computed next ${RELEASE_KIND} ${bump_kind} version ${next_version} from base ${base_version}."
+
+      - name: Update release files
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+        run: |
+          sed -i -E "0,/^version = \".*\"/s//version = \"${NEXT_VERSION}\"/" Cargo.toml
+
+          cargo check --quiet
+
+          if grep -q '^## \[Unreleased\]$' CHANGELOG.md; then
+            today="$(date -u +%Y-%m-%d)"
+            tmp_file="$(mktemp)"
+            awk -v version="${NEXT_VERSION}" -v date="${today}" '
+              BEGIN { promoted = 0 }
+              {
+                if (!promoted && $0 == "## [Unreleased]") {
+                  print "## [Unreleased]"
+                  print ""
+                  print "## [" version "] - " date
+                  promoted = 1
+                  next
+                }
+                print
+              }
+            ' CHANGELOG.md > "${tmp_file}"
+            mv "${tmp_file}" CHANGELOG.md
+          else
+            echo "::warning::CHANGELOG.md missing '## [Unreleased]'; skipping changelog promotion."
+          fi
+
+      - name: Commit release changes
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        id: commit_release
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git commit -m "release: v${NEXT_VERSION}" -m "Release-Trigger: ${TRIGGER_SHA}"
+          echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Push release commit and tag
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        id: push_release
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+          TRIGGER_SHA: ${{ github.sha }}
+          RELEASE_COMMIT_SHA: ${{ steps.commit_release.outputs.release_commit_sha }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_PUSH_TOKEN: ${{ github.token }}
+        run: |
+          release_commit_sha="${RELEASE_COMMIT_SHA}"
+          release_remote_url="https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
+
+          push_tag_with_retry() {
+            local tag_ref="$1"
+            local expected_commit="$2"
+
+            validate_local_tag_commit() {
+              local validate_tag_ref="$1"
+              local validate_expected_commit="$2"
+              local validate_context="$3"
+
+              if git rev-parse -q --verify "refs/tags/${validate_tag_ref}" >/dev/null; then
+                local observed_commit
+                observed_commit="$(git rev-parse "${validate_tag_ref}^{commit}")"
+                if [[ "${observed_commit}" != "${validate_expected_commit}" ]]; then
+                  echo "::error::Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
+                  return 1
+                fi
+              fi
+            }
+
+            resolve_remote_tag_commit() {
+              local resolve_tag_ref="$1"
+              local resolve_remote_url="$2"
+              local remote_refs
+              local peeled_commit
+              local ref_commit
+
+              if ! remote_refs="$(git ls-remote --tags "${resolve_remote_url}" "refs/tags/${resolve_tag_ref}" "refs/tags/${resolve_tag_ref}^{}")"; then
+                echo "::warning::Failed to query remote tag ${resolve_tag_ref}; will retry push."
+                return 2
+              fi
+
+              peeled_commit="$(awk '$2 ~ /\^\{\}$/ { print $1; exit }' <<<"${remote_refs}")"
+              if [[ -n "${peeled_commit}" ]]; then
+                echo "${peeled_commit}"
+                return 0
+              fi
+
+              ref_commit="$(awk '$2 !~ /\^\{\}$/ { print $1; exit }' <<<"${remote_refs}")"
+              if [[ -n "${ref_commit}" ]]; then
+                echo "${ref_commit}"
+                return 0
+              fi
+
+              return 1
+            }
+
+            if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "before push"; then
+              return 1
+            fi
+
+            for attempt in 1 2 3; do
+              if git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${tag_ref}"; then
+                return 0
+              fi
+
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after failed push attempt ${attempt}"; then
+                return 1
+              fi
+
+              if [[ "${attempt}" -eq 3 ]]; then
+                echo "::error::Failed to push tag ${tag_ref} after ${attempt} attempts."
+                return 1
+              fi
+
+              echo "::warning::Push for tag ${tag_ref} failed on attempt ${attempt}; refetching tags and retrying."
+              git fetch --tags --force
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after refetch on failed attempt ${attempt}"; then
+                return 1
+              fi
+              local remote_tag_commit=""
+              local remote_status=0
+              remote_tag_commit="$(resolve_remote_tag_commit "${tag_ref}" "${release_remote_url}")" && remote_status=0 || remote_status=$?
+              if [[ "${remote_status}" -eq 0 ]]; then
+                if [[ "${remote_tag_commit}" == "${expected_commit}" ]]; then
+                  echo "::notice::Remote tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+                  return 0
+                fi
+                echo "::error::Remote tag ${tag_ref} resolves to ${remote_tag_commit}; expected ${expected_commit}."
+                return 1
+              fi
+              if [[ "${remote_status}" -eq 1 ]]; then
+                echo "::notice::Remote tag ${tag_ref} not found yet after failed push attempt ${attempt}; retrying."
+              fi
+              sleep $((attempt * 2))
+            done
+          }
+
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              release_commit_sha="$(git rev-parse HEAD)"
+              break
+            fi
+
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "::error::Failed to push release commit to main after ${attempt} attempts."
+              exit 1
+            fi
+
+            echo "::warning::Push to main failed on attempt ${attempt}; rebasing onto latest origin/main and retrying."
+            git fetch origin main --force
+            if ! git merge-base --is-ancestor "${TRIGGER_SHA}" origin/main; then
+              echo "::error::Trigger commit ${TRIGGER_SHA} is no longer an ancestor of origin/main; refusing to release."
+              exit 1
+            fi
+            git rebase origin/main
+          done
+
+          if git rev-parse -q --verify "refs/tags/v${NEXT_VERSION}" >/dev/null; then
+            tag_commit="$(git rev-parse "v${NEXT_VERSION}^{commit}")"
+            if [[ "${tag_commit}" != "${release_commit_sha}" ]]; then
+              echo "::error::Tag v${NEXT_VERSION} already exists on ${tag_commit}, expected ${release_commit_sha}."
+              exit 1
+            fi
+            echo "::notice::Tag v${NEXT_VERSION} already exists on release commit ${release_commit_sha}."
+          else
+            git tag -a "v${NEXT_VERSION}" "${release_commit_sha}" -m "Release ${NEXT_VERSION}"
+          fi
+
+          push_tag_with_retry "v${NEXT_VERSION}" "${release_commit_sha}"
+          echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+
+  # Tags pushed with GITHUB_TOKEN don't trigger other workflows, so publish is
+  # called directly. release.yml also runs on manual v* tag pushes (backfill).
+  publish:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
