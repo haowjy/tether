@@ -262,6 +262,16 @@ async fn settings_writes_keep_a_hand_written_symlinked_config() {
         (reply.status, reply.text()),
         (413, r#"{"error":"too_large"}"#)
     );
+
+    // A link to nothing is refused, and neither the link nor its target changes.
+    std::fs::remove_file(&real).expect("removed");
+    let reply = post(&daemon, "/fs/roots/add", &path_body(&notes), true).await;
+    assert_eq!(
+        (reply.status, reply.text()),
+        (409, r#"{"error":"config_read_only"}"#)
+    );
+    let link = std::fs::symlink_metadata(&daemon.config).expect("the link");
+    assert!(link.is_symlink() && !real.exists());
 }
 
 #[tokio::test]

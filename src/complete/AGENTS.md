@@ -5,11 +5,12 @@ suggestion strip offers for the text before the cursor. It knows nothing of axum
 never touches tmux or the hub; `http/complete.rs` parses the body, checks `cwd`'s shape,
 takes one of 4 in-flight permits and calls `Completer::complete`, which never fails.
 
-- `context.rs`: the shell lexer and `context(before, after) -> Query` (pure).
+- `context.rs`: the shell lexer, `context(before, after) -> Query`, and `literal`, the
+  escaping the lexer reads back (pure).
 - `history.rs`: the bash, zsh and fish parsers, scoring, and the stat-and-reload.
 - `commands.rs`: the `PATH` index and its mtime check.
 - `carapace.rs`: stems, the JSON, the LRU, and the runner task that owns the child.
-- `paths.rs`: splitting, escaping, and the cached listing through `fs::open`.
+- `paths.rs`: splitting and the cached listing through `fs::open`.
 - `packed.rs`: strings end to end in one buffer, which every index uses (not in the
   spec's module table).
 - `mod.rs`: `Completer`, its two slots, the idle drop, merge and the caps.
@@ -19,10 +20,20 @@ Rules the code relies on, which are easy to break:
 - **Never log typed text:** not `before`, `after` or `cwd`, not history lines or
   counts per line, not chips, not carapace's arguments or output. The debug line per
   request carries the word source's kind and counts only. carapace's stderr tail is
-  logged only for `--list`, which carries no typed words.
-- **A chip only extends what is typed:** every source matches by prefix and `chip()`
-  drops an insert that is empty or holds a control character. Path and carapace
-  inserts go through `paths::escape`, which the lexer reads back.
+  logged only for `--list`, which carries no typed words. A parser's error message
+  quotes its input, so a failure logs a fixed kind and a position (`Failure::Json`),
+  never serde's `Display`.
+- **A chip only extends what is typed, and the shell reads it literally:** every
+  source matches by prefix, and every chip is built by `chip()`, which drops a control
+  character and escapes every source's text through `context::literal` except
+  history's, which is shell syntax Jimmy wrote. Never build a `Chip` elsewhere. The
+  lexer reads the escapes back; a quoted leading `~` comes back as `./~`, so paths
+  and carapace don't take it for `$HOME`.
+- **History's memory is bounded by distinct lines, not bytes:** `SCORED` caps the
+  dedup map (its comment proves the cap can't change the 10,000 kept), and the word
+  index holds the kept lines' first words as indexes into `lines`. A per-entry or
+  per-distinct-line structure over the whole 1 MiB read breaks the allowance: 1 MiB of
+  short distinct lines is 150,000 of them.
 - **Blocking work runs through `blocking()`** under one of the two slots, with the
   permit moved into the closure: the index slot for history, the `PATH` scan and
   resolving the carapace binary; the directory slot for `check_dir` and listings. Never
@@ -45,4 +56,5 @@ Tests: the lexer table (`context.rs`); each history format, ranking and the tail
 listing outside the roots (`paths.rs`); the parser on golden carapace 1.8.0 output in
 `tests/fixtures/carapace/` and the runner's timeout, newer-key kill, abandoned request
 and group kill against a fake script (`carapace.rs`); insert-only-extends across every
-source and the missing binary (`mod.rs`); `tests/http_auth.rs` for the auth layers.
+source, the missing binary, and bash reading hostile names back from command, path and
+carapace chips (`mod.rs`, needs `bash`); `tests/http_auth.rs` for the auth layers.

@@ -238,19 +238,36 @@ fn below_home(path: &str, home: &Path) -> Result<String, FsError> {
 }
 
 /// The file to write: a symlink's target, so a dotfiles link stays a link. A missing
-/// file is written where it was looked for, its directory created 0700.
+/// file is written where it was looked for, its directory created 0700. A link whose
+/// target is missing, the file's or a directory's on the way, is refused and both are
+/// left alone: renaming over it would replace the link with a copy, and following it
+/// would create a file, or directories, wherever it points.
 fn target(path: &Path) -> Result<PathBuf, FsError> {
+    let refuse = |why: &str| FsError::ConfigReadOnly(io::Error::other(why));
     match fs::canonicalize(path) {
         Ok(target) => Ok(target),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // Missing, yet there: a link to nothing.
+            if fs::symlink_metadata(path).is_ok() {
+                return Err(refuse("it is a symlink to nothing"));
+            }
             let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
                 return Err(FsError::Internal(error));
             };
-            fs::DirBuilder::new()
+            // `mkdir` meets a dangling link to a directory as an entry that is there
+            // but isn't a directory.
+            let created = fs::DirBuilder::new()
                 .recursive(true)
                 .mode(0o700)
-                .create(dir)
-                .map_err(write_error)?;
+                .create(dir);
+            match created {
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(refuse(
+                        "a directory on the way is a symlink to nothing or a file",
+                    ));
+                }
+                created => created.map_err(write_error)?,
+            }
             Ok(fs::canonicalize(dir).map_err(FsError::Internal)?.join(name))
         }
         Err(error) => Err(FsError::Internal(error)),

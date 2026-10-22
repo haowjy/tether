@@ -19,6 +19,14 @@ use super::packed::Packed;
 const READ: u64 = 1 << 20;
 /// Distinct lines kept, best first.
 const KEEP: usize = 10_000;
+/// Distinct lines scored. Entries are read newest first, and once this many distinct
+/// lines are scored, later entries only add to those: that bounds the dedup map
+/// whatever the file holds, and changes nothing kept. A line left out is, at its
+/// newest, at least 2,000 entries older than each of the first 10,000 lines scored at
+/// theirs; a line's weights sum to at most 289 times its newest one (the geometric
+/// series of a 200-entry half-life); and 289 × 2^(-2000/200) < 1, so each of those
+/// 10,000 outscores it.
+const SCORED: usize = KEEP + 2_000;
 /// An occurrence this many entries old counts half.
 const HALF_LIFE: f64 = 200.0;
 
@@ -71,10 +79,9 @@ pub struct History {
     stamp: Option<Stamp>,
     /// Best first.
     lines: Packed,
-    /// Sorted.
-    words: Packed,
-    /// Each word's score, as `words` is ordered.
-    scores: Vec<f32>,
+    /// One per distinct first word of `lines`, sorted by it: a line that starts with
+    /// the word, and the summed score of every line that does.
+    words: Vec<(u32, f32)>,
 }
 
 impl History {
@@ -94,26 +101,37 @@ impl History {
         })
     }
 
-    /// The summed score of the lines whose first word is `word`: commands rank by it.
+    /// The summed score of the kept lines whose first word is `word`: commands rank by
+    /// it.
     pub fn score(&self, word: &str) -> f32 {
-        self.words.find(word).map_or(0.0, |at| self.scores[at])
+        let found = self
+            .words
+            .binary_search_by(|&(line, _)| self.word(line).cmp(word));
+        found.map_or(0.0, |at| self.words[at].1)
+    }
+
+    /// The first word of line `line`.
+    fn word(&self, line: u32) -> &str {
+        let line = self.lines.get(line as usize);
+        line.split_whitespace().next().unwrap_or_default()
     }
 
     /// `entries` holds one valid entry per `\n`-terminated line, oldest first.
     fn build(entries: &[u8]) -> Self {
-        let mut scores: HashMap<&str, f64> = HashMap::new();
+        let count = entries.iter().filter(|&&b| b == b'\n').count();
+        let mut scores: HashMap<&str, f64> = HashMap::with_capacity(count.min(SCORED));
         let mut lines = entries.split(|&b| b == b'\n').rev();
         // The empty piece after the last newline.
         lines.next();
         for (age, line) in lines.enumerate() {
             // `decode` kept only UTF-8.
             let line = std::str::from_utf8(line).unwrap_or_default();
-            *scores.entry(line).or_default() += 0.5f64.powf(age as f64 / HALF_LIFE);
-        }
-        let mut words: HashMap<&str, f64> = HashMap::new();
-        for (line, score) in &scores {
-            let word = line.split_whitespace().next().unwrap_or_default();
-            *words.entry(word).or_default() += score;
+            let weight = 0.5f64.powf(age as f64 / HALF_LIFE);
+            if let Some(score) = scores.get_mut(line) {
+                *score += weight;
+            } else if scores.len() < SCORED {
+                scores.insert(line, weight);
+            }
         }
         let mut best: Vec<(&str, f64)> = scores.into_iter().collect();
         let rank = |a: &(&str, f64), b: &(&str, f64)| b.1.total_cmp(&a.1).then(a.0.cmp(b.0));
@@ -122,24 +140,31 @@ impl History {
             best.truncate(KEEP);
         }
         best.sort_unstable_by(rank);
-        let mut words: Vec<(&str, f64)> = words.into_iter().collect();
-        words.sort_unstable_by(|a, b| a.0.cmp(b.0));
-        Self {
-            stamp: None,
-            lines: pack(&best),
-            words: pack(&words),
-            scores: words.iter().map(|(_, score)| *score as f32).collect(),
+        let bytes = best.iter().map(|(line, _)| line.len()).sum();
+        let mut lines = Packed::with_capacity(bytes, best.len());
+        for (line, _) in &best {
+            lines.push(line);
         }
+        let mut index = Self {
+            stamp: None,
+            lines,
+            words: Vec::new(),
+        };
+        // `KEEP` fits a `u32`.
+        let mut words: Vec<(u32, f32)> = (0..best.len() as u32)
+            .zip(best.iter().map(|&(_, score)| score as f32))
+            .collect();
+        words.sort_unstable_by(|a, b| index.word(a.0).cmp(index.word(b.0)));
+        words.dedup_by(|later, kept| {
+            let same = index.word(later.0) == index.word(kept.0);
+            if same {
+                kept.1 += later.1;
+            }
+            same
+        });
+        index.words = words;
+        index
     }
-}
-
-fn pack(pieces: &[(&str, f64)]) -> Packed {
-    let bytes = pieces.iter().map(|(piece, _)| piece.len()).sum();
-    let mut packed = Packed::with_capacity(bytes, pieces.len());
-    for (piece, _) in pieces {
-        packed.push(piece);
-    }
-    packed
 }
 
 /// Rewrites `bytes[from..]` in place as the valid entries, oldest first, each ended by

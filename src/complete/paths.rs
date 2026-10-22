@@ -1,8 +1,8 @@
 //! Path chips (complete.md "Paths"): the current word split into a directory and a
 //! name prefix, the directory listed through `fs::open` with `/` as the scope. Names,
 //! never contents, from any directory Jimmy can read, as the shell's own Tab does.
-//! Splitting and escaping are pure; the last directory's listing is kept while a fresh
-//! open shows the same mtime.
+//! Splitting is pure; inserts are escaped by `chip`. The last directory's listing is
+//! kept while a fresh open shows the same mtime.
 
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
@@ -45,19 +45,6 @@ pub fn split(value: &str, cwd: Option<&str>, home: &Path) -> Option<Target> {
         dir,
         prefix: prefix.to_owned(),
     })
-}
-
-/// Every ASCII character outside `[A-Za-z0-9._+,:@%=/~-]` backslash-escaped, which
-/// bash and zsh read the same way; non-ASCII characters as they are.
-pub fn escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for c in text.chars() {
-        if c.is_ascii() && !c.is_ascii_alphanumeric() && !"._+,:@%=/~-".contains(c) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
-    escaped
 }
 
 /// One directory's names, and what identifies its state.
@@ -109,14 +96,13 @@ impl Listing {
         found
             .into_iter()
             .filter_map(|(name, dir)| {
-                let mut insert = escape(&name[prefix.len()..]);
-                insert.push(if dir { '/' } else { ' ' });
-                let label = if dir {
-                    format!("{name}/")
+                let rest = &name[prefix.len()..];
+                let (end, label) = if dir {
+                    ("/", format!("{name}/"))
                 } else {
-                    name.to_owned()
+                    (" ", name.to_owned())
                 };
-                chip(insert, label, ChipSource::Path, None)
+                chip(ChipSource::Path, rest, end, label, None)
             })
             .take(CHIPS)
             .collect()
@@ -125,7 +111,7 @@ impl Listing {
 
 /// The chip for a bare `~`.
 pub fn tilde() -> Vec<Chip> {
-    chip("/".to_owned(), "~/".to_owned(), ChipSource::Path, None)
+    chip(ChipSource::Path, "", "/", "~/".to_owned(), None)
         .into_iter()
         .collect()
 }

@@ -24,7 +24,6 @@ use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
 use super::packed::Packed;
-use super::paths::escape;
 use super::{CHIPS, chip, lock};
 use crate::proto::complete::{Chip, ChipSource};
 
@@ -167,15 +166,19 @@ impl Values {
             .filter_map(|i| {
                 let value = self.pieces.get(i * 3);
                 let rest = value.strip_prefix(cur)?;
-                let mut insert = escape(rest);
                 let last = value.chars().next_back()?;
-                if self.nospace != "*" && !self.nospace.contains(last) {
-                    insert.push(' ');
-                }
+                let spaced = self.nospace != "*" && !self.nospace.contains(last);
+                let end = if spaced { " " } else { "" };
                 let display = self.pieces.get(i * 3 + 1);
                 let label = if display.is_empty() { value } else { display };
                 let description = Some(self.pieces.get(i * 3 + 2));
-                chip(insert, label.to_owned(), ChipSource::Carapace, description)
+                chip(
+                    ChipSource::Carapace,
+                    rest,
+                    end,
+                    label.to_owned(),
+                    description,
+                )
             })
             .take(CHIPS)
             .collect()
@@ -269,7 +272,7 @@ impl Shared {
     fn store(&mut self, key: Key, result: Result<Vec<u8>, Failure>, now: Instant) -> Outcome {
         match key {
             Key::List => {
-                let list = result.and_then(|json| parse_list(&json).map_err(Failure::Json));
+                let list = result.and_then(|json| parse_list(&json).map_err(Failure::from));
                 match list {
                     Ok(list) => {
                         let list = Arc::new(list);
@@ -287,7 +290,7 @@ impl Shared {
                 }
             }
             Key::Values { .. } => {
-                let values = result.and_then(|json| Values::parse(&json).map_err(Failure::Json));
+                let values = result.and_then(|json| Values::parse(&json).map_err(Failure::from));
                 let values = values.unwrap_or_else(|failure| {
                     debug!(%failure, "a carapace run failed");
                     Values::default()
@@ -358,8 +361,31 @@ enum Failure {
     Exit { status: ExitStatus, stderr: Vec<u8> },
     #[error("reading its output: {0}")]
     Io(io::Error),
-    #[error("its JSON doesn't parse: {0}")]
-    Json(serde_json::Error),
+    /// Only where, never serde's message: it quotes the output, which can echo the
+    /// words typed.
+    #[error("its JSON doesn't parse: {kind} at line {line}, column {column}")]
+    Json {
+        kind: &'static str,
+        line: usize,
+        column: usize,
+    },
+}
+
+impl From<serde_json::Error> for Failure {
+    fn from(error: serde_json::Error) -> Self {
+        use serde_json::error::Category;
+        let kind = match error.classify() {
+            Category::Io => "a read error",
+            Category::Syntax => "bad syntax",
+            Category::Data => "an unexpected shape",
+            Category::Eof => "cut short",
+        };
+        Self::Json {
+            kind,
+            line: error.line(),
+            column: error.column(),
+        }
+    }
 }
 
 impl Failure {

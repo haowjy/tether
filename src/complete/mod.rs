@@ -184,7 +184,7 @@ impl Completer {
                 let lines = history
                     .matching(&request.before)
                     .filter_map(|(line, rest)| {
-                        chip(rest.to_owned(), line.to_owned(), ChipSource::History, None)
+                        chip(ChipSource::History, rest, "", line.to_owned(), None)
                     });
                 chips.extend(lines.take(HISTORY_CHIPS));
             }
@@ -197,8 +197,8 @@ impl Completer {
                     let score = |name: &str| history.as_ref().map_or(0.0, |h| h.score(name));
                     let names = commands.matching(prefix, score).into_iter();
                     let found = names.filter_map(|name| {
-                        let insert = format!("{} ", &name[prefix.len()..]);
-                        chip(insert, name.to_owned(), ChipSource::Command, None)
+                        let rest = &name[prefix.len()..];
+                        chip(ChipSource::Command, rest, " ", name.to_owned(), None)
                     });
                     chips.extend(found.take(CHIPS));
                 }
@@ -391,15 +391,27 @@ where
     .ok()
 }
 
-/// A chip, unless `insert` is empty or holds a control character: a chip can never
-/// press Enter or send an escape sequence.
+/// A chip that types `rest`, then `end`. History's `rest` is typed as it is: a line
+/// Jimmy wrote, in shell syntax he chose. Every other source's is a name or value, which
+/// `context::literal` escapes so the shell reads back exactly it. `None` when that is
+/// empty or `rest` holds a control character: a chip can never press Enter or send an
+/// escape sequence.
 fn chip(
-    insert: String,
-    label: String,
     source: ChipSource,
+    rest: &str,
+    end: &str,
+    label: String,
     description: Option<&str>,
 ) -> Option<Chip> {
-    if insert.is_empty() || insert.chars().any(char::is_control) {
+    if rest.chars().any(char::is_control) {
+        return None;
+    }
+    let mut insert = match source {
+        ChipSource::History => rest.to_owned(),
+        _ => context::literal(rest),
+    };
+    insert.push_str(end);
+    if insert.is_empty() {
         return None;
     }
     let description = description.filter(|text| !text.is_empty()).map(|text| {
@@ -556,6 +568,114 @@ esac
         assert_eq!(extending("ls > RE", &chips), [pair(Path, "ADME.md ")]);
         // The history entry with an escape sequence is never offered.
         assert!(ask(&completer, &tree, "ec").await.is_empty());
+    }
+
+    /// Names a shell reads as syntax or expands, unless each character is escaped.
+    const HOSTILE: [&str; 24] = [
+        "a b",
+        "x;printf INJECTED",
+        "$(printf INJECTED)",
+        "`printf INJECTED`",
+        "${HOME}",
+        "*",
+        "?x",
+        "[ab]",
+        "{a,b}",
+        "!x",
+        "'q'",
+        "\"q\"",
+        "#x",
+        "a&b",
+        "a|b",
+        "<x",
+        "\\x",
+        "~",
+        "~root",
+        "=ls",
+        "a=~root",
+        "x=a:~root",
+        "-n",
+        "caf\u{e9} \u{fc}",
+    ];
+
+    /// What bash prints for `line`, where `cat` and `git` print each argument and a NUL.
+    fn bash(line: &str, cwd: &Path, path: &Path) -> String {
+        let path = path.to_str().expect("UTF-8");
+        let print = "{ printf '%s\\0' \"$@\"; }";
+        let script = format!("PATH='{path}'\ncat() {print}\ngit() {print}\n{line}");
+        let ran = std::process::Command::new("bash")
+            .args(["-c", &script])
+            .current_dir(cwd)
+            .env("HOME", cwd)
+            .output()
+            .expect("bash ran");
+        assert!(ran.stderr.is_empty(), "{line:?}: {ran:?}");
+        String::from_utf8(ran.stdout).expect("UTF-8")
+    }
+
+    /// The chip labelled `label` that `before` gets.
+    async fn labelled(completer: &Completer, before: &str, cwd: &Path, label: &str) -> Chip {
+        let request = CompleteRequest {
+            before: before.to_owned(),
+            after: String::new(),
+            cwd: Some(cwd.to_str().expect("UTF-8").to_owned()),
+        };
+        let chips = completer.complete(request).await.chips;
+        let chip = chips.iter().find(|chip| chip.label == label);
+        chip.unwrap_or_else(|| panic!("{before:?} gets no {label:?}: {chips:?}"))
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn bash_reads_every_completed_name_back_as_itself() {
+        let tree = Tree::new("completer-hostile");
+        // Builtins only: its `PATH` is the one directory.
+        let carapace = "#!/bin/sh\n[ \"$1\" = --list ] && { echo '{\"git\":[]}'; exit 0; }\n\
+                        IFS= read -r json < values.json; printf '%s\\n' \"$json\"\n";
+        executable(&tree.path("carapace"), carapace);
+        for (i, &name) in HOSTILE.iter().enumerate() {
+            // Each name alone in its directory, on its `PATH` and in carapace's answer.
+            let (cwd, bin) = (
+                tree.path(&format!("{i}/cwd")),
+                tree.path(&format!("{i}/bin")),
+            );
+            tree.mkdir(&format!("{i}/cwd"));
+            tree.mkdir(&format!("{i}/bin"));
+            std::fs::write(cwd.join(name), b"").expect("written");
+            let values = serde_json::json!({ "values": [{ "value": name }] });
+            std::fs::write(cwd.join("values.json"), values.to_string()).expect("written");
+            let own_name = "#!/bin/sh\nprintf '%s\\0' \"${0##*/}\"\n";
+            executable(&bin.join(name), own_name);
+            let completer = Completer::new(Settings {
+                home: cwd.clone(),
+                history: None,
+                data_home: cwd.clone(),
+                path: bin.clone().into_os_string(),
+                carapace: Some(tree.path("carapace")),
+                scoped: false,
+            });
+            let read = format!("{name}\0");
+
+            let chip = labelled(&completer, "", &cwd, name).await;
+            assert_eq!(chip.source, ChipSource::Command);
+            assert_eq!(bash(&chip.insert, &cwd, &bin), read, "{chip:?}");
+
+            // A path from the word's start, and after its first character, as a chip
+            // would have typed it: the lexer reads the escape back.
+            let first = name.chars().next().expect("a name");
+            for typed in [String::new(), context::literal(&first.to_string())] {
+                let before = format!("cat {typed}");
+                let chip = labelled(&completer, &before, &cwd, name).await;
+                assert_eq!(chip.source, ChipSource::Path);
+                let line = format!("{before}{}", chip.insert);
+                assert_eq!(bash(&line, &cwd, &bin), read, "{chip:?}");
+            }
+
+            let chip = labelled(&completer, "git ", &cwd, name).await;
+            assert_eq!(chip.source, ChipSource::Carapace);
+            let line = format!("git {}", chip.insert);
+            assert_eq!(bash(&line, &cwd, &bin), read, "{chip:?}");
+        }
     }
 
     #[tokio::test]

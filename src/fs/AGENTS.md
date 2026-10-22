@@ -21,7 +21,9 @@ Rules the code relies on, which are easy to break:
 - `Roots::load` reads `config.toml` each time; a file that exists and doesn't parse
   fails every route with `config_unavailable` and is never written.
   `config_write::apply` holds auth's state lock (`Store::lock`) for the whole
-  read-modify-write and changes only `roots` or `uploads_dir`.
+  read-modify-write and changes only `roots` or `uploads_dir`. It writes a symlinked
+  file at its target and refuses (`config_read_only`) a link to nothing, the file's or
+  a directory's on the way: `canonicalize` failing doesn't mean the file is absent.
 - `DONTNEED` must cover whole folios: the raw producer drops from the response's first
   byte to the current position, and the upload drops the whole file after each
   `fdatasync`. A chunk-sized drop drops nothing (readahead builds large folios).
@@ -29,7 +31,8 @@ Rules the code relies on, which are easy to break:
   the upload's `fdatasync`. A part file is deleted on every failure, including a
   request dropped mid-body (`Part`'s `Drop`).
 - Logs carry paths, sizes and codes, never file contents, upload bytes, the client's
-  upload name, or `config.toml`'s text.
+  upload name, or `config.toml`'s text: a parse error is logged by line number, never
+  by the parser's message, which quotes the text.
 
 Tests: `open.rs` (escapes, links, FIFOs, the swapped component), `list.rs`, `raw.rs`
 (Range, ETag), `mime.rs` (the allowlist), `upload.rs`, `config_write.rs` (comments and

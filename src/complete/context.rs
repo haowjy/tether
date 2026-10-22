@@ -1,5 +1,6 @@
 //! Which sources a request runs (complete.md "Answering a request"): a small shell
-//! lexer over the text before the cursor. Pure.
+//! lexer over the text before the cursor, and `literal`, the escaping it reads back.
+//! Pure.
 
 /// What one request asks of the sources.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,7 +11,9 @@ pub struct Query {
     pub word: Option<Word>,
 }
 
-/// The current word's source. Every string is a value: escapes and quotes removed.
+/// The current word's source. Every string is a value: escapes and quotes removed. A
+/// current word whose leading `~` is quoted or escaped gets `./` before it: the same
+/// file, which paths and carapace then can't read as a home directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Word {
     /// The first word of a command: names on `PATH` starting with it.
@@ -111,7 +114,11 @@ impl Lexer {
             return None;
         }
         let Command { mut words, target } = self.command;
-        let value = current.value;
+        let value = if current.value.starts_with('~') && !current.raw.starts_with('~') {
+            format!("./{}", current.value)
+        } else {
+            current.value
+        };
         Some(if target {
             Word::Path(value)
         } else if words.is_empty() {
@@ -296,6 +303,26 @@ fn assignment(raw: &str) -> bool {
         && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
+/// `value` as shell text that bash and zsh both read back as exactly `value`, at any
+/// position in a word: every ASCII character outside `[A-Za-z0-9._+,:@%/-]`
+/// backslash-escaped, and non-ASCII characters as they are, since neither shell gives
+/// those meaning. That covers blanks, separators, quotes, `$`, backticks, globs, `!`,
+/// braces and `#`, and `~` and `=` everywhere: bash expands `~` at a word's start and
+/// after `=` or `:` in `name=…` arguments, and zsh expands a leading `=cmd`, and `~`
+/// or `=` after `=` or `:` with `MAGIC_EQUAL_SUBST`; bash's own Tab escapes both too.
+/// A backslash before a newline would join lines, so callers drop control characters
+/// first. Every path, command and carapace insert goes through this; history doesn't.
+pub fn literal(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_ascii() && !c.is_ascii_alphanumeric() && !"._+,:@%/-".contains(c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +389,11 @@ mod tests {
             ("cd \"My Dir\"/s", arg("cd", &[], "My Dir/s")),
             ("echo \"a\\b\\\"c\"", arg("echo", &[], "a\\b\"c")),
             ("echo 'it''s'", arg("echo", &[], "its")),
+            // A quoted leading `~` is a file's name, not a home directory.
+            ("cat \\~ro", arg("cat", &[], "./~ro")),
+            ("cat '~'/s", arg("cat", &[], "./~/s")),
+            ("cat ~/s", arg("cat", &[], "~/s")),
+            ("cat a\\~", arg("cat", &[], "a~")),
             // Skipped: an open quote or escape, an expansion, a glob.
             ("echo 'unterminated", None),
             ("echo \"unterminated", None),

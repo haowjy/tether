@@ -12,7 +12,9 @@ version section on release.
 - Completion for the suggestion strip (`POST /complete`): chips from shell history
   (bash, zsh or fish, ranked by recency and frequency), commands on `PATH`, carapace
   for subcommands, flags and values, and directory listings for paths. A chip only
-  extends what is typed and never holds a control character. Under systemd each
+  extends what is typed and never holds a control character, and a command, file or
+  carapace value is escaped so the shell reads exactly that name (`~` and `=`
+  included); history lines go in as written. Under systemd each
   carapace run gets its own transient scope, so its memory never counts against
   tether's; everything completion holds is freed five idle minutes after the last
   request. `[complete]` in `config.toml` sets the history file, the interactive
@@ -23,7 +25,8 @@ version section on release.
 - The fs and completion request and response types are generated into
   `web/proto/generated/messages.ts`.
 - The file API (`/fs/*`): project roots and an uploads folder set from the app and
-  saved in `config.toml` (comments and unknown keys kept), directory listings and a
+  saved in `config.toml` (comments and unknown keys kept, a symlinked file written
+  at its target, a symlink to nothing refused and left alone), directory listings and a
   `$HOME` folder picker, file bytes with Range for the viewers and the native video
   player, and photo uploads. Every path is checked against the roots on the descriptor
   actually opened, so `..`, symlinks out of a root and FIFOs are refused. A new window
