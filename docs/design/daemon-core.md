@@ -15,8 +15,9 @@ output stream, and it is the only way a terminal catches up: on open, reconnect,
 resize or overflow. Each watched window has one *owner* control client, found by
 asking tmux where the window is (*Locate*); only the owner's output counts. Ongoing
 tmux work is *desired state* the hub reconciles when a control client has room; only
-user requests can be refused as `busy`. Each connection's outbox drops output when it
-overflows and pulls a snapshot once the socket drains.
+user requests can be refused as `busy`. The hub sends each connection only as many
+bytes as that connection's *credit* allows; a watch whose output doesn't fit starves
+and catches up by snapshot once the socket has drained.
 
 ```mermaid
 flowchart LR
@@ -53,6 +54,7 @@ flowchart LR
 | **boundary** | Where a snapshot's replies sit in the control client's byte stream: pane output before it is inside the snapshot, output after it is live. |
 | **size vote** | A per-window size set with `refresh-client -C '@W:CxR'`; it caps that window (§3.6). |
 | **desired state** | What tmux should be doing for the current watches: wanted panes, votes, cwd subscriptions, needed snapshots and Locates (§4.4). |
+| **credit** | The bytes the hub may still have outstanding to one connection: sent on `ToConn` and not yet returned as written or discarded (§4.6). |
 | **linger** | The time (§6) a control client stays attached after it owns no watched window. Nothing else lingers. |
 
 ## 2. Tasks and channels
@@ -73,8 +75,8 @@ Tasks share no mutable state; they talk over channels.
   keeps writing lines to stdin and a connection keeps moving `ToConn` into its outbox.
 - **Out of the hub, nothing waits.** The hub uses `try_send`. A pump's line channel
   is as deep as its in-flight cap (§3.3), so it can't fill; if it does, the hub kills
-  that client. A full connection channel means the connection is wedged: dropped,
-  close 4002.
+  that client. A connection's channel is sized from its credit (§4.6), so it can't
+  fill either; if it does, the connection is wedged: dropped, close 4002.
 - **One ordered stream per control client.** Replies, output and notifications reach
   the hub as raw bytes in tmux's order, and are parsed there.
 
@@ -449,12 +451,12 @@ impl State {
 `handle` feeds pump bytes to the client's session, applies events and client
 messages, runs `reconcile` (§4.4) and returns the effects. `run.rs` only executes
 them and sleeps until `next_deadline()`: a linger end, a group's reply deadline,
-a crash respawn. With nothing pending there is no timer.
+a crash respawn, a starved watch's snapshot spacing. With nothing pending there is no timer.
 
 State: `clients` (endpoint, session, `tmux::Session`, `Starting`/`Ready`, applied
 votes and subscriptions, linger deadline, last crash); `windows` (owner, session,
 active pane, cwd, Locate state, watches); `streams`; `watches` (window, size);
-connection senders; the live server instance per endpoint; and `pending`, which maps
+connections (sender, credit outstanding, reservations); the live server instance per endpoint; and `pending`, which maps
 each tag to what its reply is for.
 
 ### 4.2 Windows, owners and Locate
@@ -501,8 +503,9 @@ A moved window keeps its tab: new owner, fresh snapshot.
 struct Stream {
     window: WindowRef, owner: ClientId, size: Size,
     live: bool,                 // false: drop output until a snapshot lands
-    inflight: Option<Tag>,      // the snapshot whose reply can make it live
-    awaiting: Set<WatchKey>,    // watches that get the next snapshot
+    inflight: Option<(Tag, Set<WatchKey>)>,  // the snapshot that can make it live,
+                                // and the watches whose credit it reserved
+    awaiting: Set<WatchKey>,    // watches that get the next snapshot, and no output
     watches: Set<WatchKey>,
 }
 ```
@@ -510,15 +513,14 @@ struct Stream {
 | Event | Effect |
 |---|---|
 | created (first watch on the pane) | not live; snapshot needed |
-| `Output` from the owner, live | `Output { watch, bytes }` to every watch |
+| `Output` from the owner, live | `Output { watch, bytes }` to every watch not awaiting, if its connection's credit fits it (§4.6); a watch it doesn't fit starts awaiting |
 | `Output` not live, or from another client | dropped: the coming snapshot holds it |
 | `Snapshot` whose tag isn't `inflight` | dropped |
-| `Snapshot`, not live | live; size from it; sent to every watch |
-| `Snapshot`, live | sent to `awaiting` only; live watches are undisturbed |
+| `Snapshot` | live; size from it; sent to the watches it reserved for, which stop awaiting; the rest keep awaiting; live watches are undisturbed |
 | **break:** new size in `Layout`, `Gap`, new owner | not live; every watch awaiting; `inflight` forgotten (a snapshot sent before the break may predate its cause); snapshot needed |
-| a watch joins, sends `resync`, or its outbox pulls | awaiting; snapshot needed |
+| a watch joins or sends `resync` | awaiting; snapshot needed |
 | snapshot fails: pane gone | the window re-locates |
-| snapshot fails: torn 3 times, or `TooLarge` | `watchEnded { error }` for every watch, naming hooks or screen size; stream dropped |
+| snapshot fails: torn 3 times, or `TooLarge` (restore bytes over the capture reservation included) | `watchEnded { error }` for every watch, naming hooks or screen size; stream dropped |
 | a watch leaves | removed from `watches` and `awaiting` |
 | last watch leaves | stream dropped; the pane stops being wanted |
 
@@ -533,16 +535,17 @@ of windows and streams.
 | wanted panes | streams C owns | `Snapshot` when one is needed; `Release` for a wanted pane C owns no stream for |
 | size votes | windows C owns with a watch: the latest `watch` or `resize` size | `Vote`; `ClearVote` once the window has no watch |
 | cwd subscriptions | windows C owns with a watch | `Subscribe`; `Unsubscribe` once it has none |
-| snapshots | streams not live, or with awaiting watches, and nothing in flight | `Snapshot` |
+| snapshots | streams with awaiting watches, nothing in flight, and at least one awaiting watch whose connection can reserve credit (§4.6) | `Snapshot` |
 | Locates | windows needing one, none in flight | `Locate` on any `Ready` client, else a one-shot |
 | session checks | exited clients (§4.5) | `LocateSession`, the same way |
 
 **Capacity** (numbers in §6). A control client has a cap on groups in flight.
 Maintenance may use all of it; a user request is accepted only below a lower
 threshold, else `error { busy }`, so users can never starve maintenance. Snapshots
-and history share a few capture slots daemon-wide; a snapshot waits for one, a
-history request gets `busy`. Each reply frees capacity and runs `handle`, so waiting
-work goes out at once.
+and history share a few capture slots daemon-wide, and each also needs its
+connection's credit (§4.6); a snapshot waits for both, a history request without
+either gets `busy`. Each reply and each credit return runs `handle`, so waiting work
+goes out at once.
 
 What the hub sent counts as applied (votes and subscriptions are recorded per
 client; wanted panes live in the session): tmux runs groups in order, and a failure
@@ -582,33 +585,62 @@ drops (busy, unknown watch, connection gone) emits `RemoveFile`.
     server instance is unchanged; a second crash within 60 s ends the watches with
     `watchEnded { error }`.
 
-### 4.6 Outbox: backpressure and coalescing
+### 4.6 Credit and the outbox
+
+Every byte bound between the hub and a socket is one number per connection, its
+credit (§6), and the hub's bookkeeping is its only copy. The hub debits the credit
+for every `ToConn` it sends; the connection returns those bytes over `FromConn` once
+a frame is written to the socket or discarded unwritten. Payloads waiting in the
+channel, in the outbox, and in the frame being written all count until then.
+
+- **Charge.** `ToConn::charge()`, one pure function both sides call: the payload's
+  length (restore bytes, output bytes, encoded JSON text), at least 64 bytes. The hub
+  encodes JSON itself, so a message's charge is its exact size.
+- **Output is gated.** Output that fits goes out. Output that doesn't is dropped and
+  that watch starts awaiting (§4.3); its catch-up is the next snapshot. Only that
+  watch starves; the connection's other watches keep their output while it fits.
+- **Captures reserve first.** A snapshot reserves the capture reservation (§6) on
+  each awaiting watch's connection before its group is issued; watches whose
+  connection can't reserve stay awaiting for a later snapshot. A history request
+  that can't reserve gets `error { busy }`; `listSessions` reserves the smaller
+  listing reservation the same way. When the reply arrives, the hub charges the
+  encoded size and returns the rest of the reservation to the credit. A snapshot
+  whose restore bytes exceed the reservation fails `TooLarge`; a `historyChunk` keeps
+  the rows that fit and the client asks again from where it ends; a listing that
+  doesn't fit gets `error { tmux }`. A reservation whose reply never comes back to
+  this connection (the snapshot was superseded by a break, its client exited, the
+  connection closed) is returned when the hub drops the tag.
+- **Waiting snapshots go first.** While a connection has a snapshot waiting for
+  credit, output to it fits only above that reservation, so a flooding watch can't
+  hold off another watch's catch-up; it starves too, and both snapshot as credit
+  returns.
+- **Snapshot spacing** (§6): a watch that started awaiting because its output didn't
+  fit is snapshotted no sooner than the spacing after its previous snapshot, so a
+  flood on a slow link costs a few captures a second, not one per credit return.
+- **Control JSON is never refused.** Every other `ToConn::Msg` (`watching`,
+  `watchEnded`, closure broadcasts, `error`, `created`, `pong`) is charged but sent
+  regardless, and may overdraw the credit by up to the overdraft (§6). A connection
+  past its overdraft is wedged: dropped, close 4002. tmux names and error texts in
+  these messages are cut to the name limit (§6), which bounds each one.
 
 `hub::Outbox` is pure and owned by each connection task, which moves every `ToConn`
-into it at once and writes frames from it when the socket is ready.
+into it at once and writes frames from it when the socket is ready. It holds no
+limits of its own; the credit bounds everything in it.
 
-- **Per watch:** an ordered queue of output and snapshot frames, and a state, `Live`
-  or `Starved`, with a flag for an outstanding snapshot request. A new watch starts
-  `Starved` with its request outstanding (the `watch` message). JSON goes on one
+- **Per watch:** an ordered queue of output and snapshot frames. JSON goes on one
   connection-wide FIFO, written first.
-- **Output** joins a `Live` watch's queue (merged with queued output); a `Starved`
-  watch drops it. **A snapshot** replaces the watch's queued frames, makes it `Live`
-  and clears the request.
-- **Budget** of queued output per connection (§6). Past it, every watch's queued
-  output is dropped and every watch starves.
-- **Pull, don't push.** A `Starved` watch with no request outstanding emits
-  `NeedSnapshot` once everything queued for it is written and the pull spacing (§6)
-  has passed since its last request, so snapshots follow what the link delivers, not
-  the pane's output rate.
-- **JSON FIFO** (§6): past its cap the connection is wedged (4002).
+- **A snapshot** replaces the watch's queued frames; the frames it replaces count as
+  discarded.
 - **Coalescing** (leading edge, interval in §6): a watch's output goes at once if its
   last frame left at least one interval ago, else when the interval ends, merged into
   one frame. Keystroke echoes are never delayed, and a flood goes out at most once
   per interval.
 - The outbox forgets a watch on the client's `unwatch` (a closed tab sends one too)
-  and on `watchEnded`, never on an `error`: errors refuse one request and leave the
-  watch as it was.
-- `Outbox::next(now) -> Next::{Frame, WaitUntil(Instant), Idle}`; `Outbox::written(watch)`.
+  and on `watchEnded`, discarding its queue, never on an `error`: errors refuse one
+  request and leave the watch as it was.
+- **Returning credit.** `Outbox::written()` and every discard add to a running
+  total; the connection sends it as one `FromConn::Credit` after each socket write.
+- `Outbox::next(now) -> Next::{Frame, WaitUntil(Instant), Idle}`.
 
 ### 4.7 Public interface
 
@@ -621,11 +653,11 @@ impl HubHandle {
 pub enum FromConn {
     Client(proto::ClientMsg),   // all but hello, ping, paste
     Paste { watch: WatchId, file: PasteFile },   // deleting it frees its slot
-    NeedSnapshot { watch: WatchId },
+    Credit { bytes: u32 },   // charged bytes written or discarded since the last one
     Closed,
 }
-pub enum ToConn {
-    Msg(proto::ServerMsg),
+pub enum ToConn {                // ToConn::charge(): see §4.6
+    Msg(proto::Encoded),         // JSON text, encoded by the hub
     Snapshot { watch: WatchId, size: Size, restore: Bytes },
     Output { watch: WatchId, bytes: Bytes },
 }
@@ -719,7 +751,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `windowRenamed` | `window, name` | |
 | `sessionsChanged` | | refetch the listing if the sheet is open |
 | `sessions` | `req, tmux: notRunning \| { server, version, sessions: [{ id, name, attachedElsewhere, windows: [{ id, index, name, active, activity }] }] }` | `activity` in unix seconds |
-| `historyChunk` | `req, watch, start, lines: [base64]` | `capture-pane -e` bytes per row |
+| `historyChunk` | `req, watch, start, lines: [base64]` | `capture-pane -e` bytes per row, from `start`; may hold fewer rows than asked (§4.6), and the client asks again from where it ends |
 | `created` | `req, window, session` | |
 | `error` | `req?, watch?, code, message` | refuses one request; a watch it names stays as it was. `badRequest, noServer, tooManySessions, inputTooLarge, busy, tmux` |
 
@@ -769,10 +801,13 @@ Every daemon constant lives here; other documents link to this table.
 | parser partial line / replies per group | 1 MiB / 1 MiB | group fails `TooLarge` |
 | pump read size; pump → hub channel | 16 KiB; 128 chunks | the pump waits |
 | connection → hub channel | 128 messages | the connection waits |
-| hub → connection channel | 256 messages | wedged, 4002 |
-| outbox output budget per connection | 256 KiB | every watch starves |
-| outbox JSON FIFO | 256 messages | wedged, 4002 |
-| snapshot pull spacing | 250 ms | |
+| credit per connection | 2 MiB outstanding | output: that watch starves; snapshot: waits; history, listing: `busy` |
+| capture reservation (snapshot, history) | 1 MiB | snapshot: `TooLarge`; history: fewer rows |
+| listing reservation | 256 KiB | `error { tmux }` |
+| control JSON overdraft | 64 KiB past the credit | wedged, 4002 |
+| hub → connection channel | (credit + overdraft) / 64 B charge floor = 33,792 messages, so it can't fill | wedged, 4002 |
+| tmux names and error texts in messages | 256 bytes | cut |
+| snapshot spacing for a starved watch | 250 ms | |
 | output coalescing | 33 ms, frames ≤ 64 KiB | |
 | one-shots | 1 at a time, 2 s timeout | user one-shots: `busy` |
 | crash respawn | after 1 s; a second crash in 60 s ends the watches | |
@@ -795,13 +830,13 @@ Every daemon constant lives here; other documents link to this table.
 | control clients | 3 × 5.3 MB measured | 16 |
 | one-shot `tmux` | 1 × 4.9 MB measured | 5 |
 | carapace | 1 run, unmeasured | ~15 |
-| tmux chunks, queued and in transit to connections | 2 × 128 × 16 KiB | 4 |
-| reply bodies | large ones only in the 2 capture slots | 2 |
-| snapshots awaiting delivery | 3 connections × (2 pending + 1 being written) × 1 MiB | 9 |
-| outboxes | 3 × (256 KiB + JSON FIFO) | 1.5 |
+| tmux chunks, pump → hub | 128 × 16 KiB | 2 |
+| reply bodies | large ones only in the 2 capture slots × 1 MiB | 2 |
+| payloads hub → socket: channel, outbox, frame being written | 3 connections × (2 MiB credit + 64 KiB overdraft) | 6.5 |
+| WebSocket writer's copy of the frame being written | 3 × 1 MiB | 3 |
 | inbound messages | 3 × (512 KiB + decoded copy) | 3 |
 | paste files on tmpfs | 4 slots × 256 KiB | 1 |
-| **ceiling** | | **~62** |
+| **ceiling** | | **~59** |
 
 That fits the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)) with little
 room, and carapace is a guess; the
@@ -825,7 +860,7 @@ How each failure ends; §4.5 has the control-client details.
 | client crashed, killed, wedged (10 s) or `Fatal` | EOF without `%exit`, timer, parser | one respawn; a second within 60 s: `watchEnded { error }` |
 | user requests at the threshold | in-flight count | `error { busy }` |
 | connection socket dies | `FromConn::Closed` | its watches end; votes and subscriptions clear if no watch remains |
-| connection wedged | channel full or JSON FIFO overflow | close 4002; the client reconnects |
+| connection wedged | control JSON past the overdraft, or its channel full | close 4002; the client reconnects |
 | hub panics | `main` awaits it | exit 1; systemd restarts; clients reconnect and resync |
 | device removed | the 10 s re-check | close 4401 |
 | shutdown (SIGTERM) | `main` | close sockets with 4004, close control clients' stdin, exit; tmux is unaffected |
@@ -853,7 +888,9 @@ Locate on live, killed and moved windows; paste, including a missing file;
 - **`snapshot::compose`:** per-mode unit tests, and restore bytes fed to `vt100` (a
   dev-dependency) compared with the capture.
 - **`hub::State` and `Outbox`:** scripted inputs → effects. A watch joining a live
-  stream; starvation and pull spacing; an active-pane change or a resize during a
+  stream; output past the credit starving one watch, waiting snapshots ahead of output,
+  and snapshot spacing; history and listings refused for credit, and a chunk cut to its
+  reservation; every reservation returned when its tag is dropped; an active-pane change or a resize during a
   snapshot; a move to another session; a linked window watched from two sessions; the
   owner exiting after its window moved; user requests filling capacity while
   maintenance waits; every paste path deleting its file.

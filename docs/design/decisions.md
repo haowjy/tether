@@ -454,6 +454,39 @@ All 2026-10-21, decided by Jimmy.
   internal queue (the hub never awaits it), and close 4008 for a JSON overflow (folded
   into wedged).
 
+### Credit-based flow control per connection
+
+- **Decided:** 2026-10-22, tech lead, from the verification review of the round 2
+  revision (p24). Replaces the outbox budget, the outbox's starved state and snapshot
+  pull, and the JSON FIFO and hub → connection message caps as memory bounds, from
+  "Backpressure: one budget, starve every watch, pull snapshots" above.
+- **What:** the hub holds a byte credit per connection (2 MiB) and debits it for every
+  `ToConn`; the connection returns credit over `FromConn::Credit` once a frame is
+  written or discarded. A snapshot or history capture reserves 1 MiB before its group
+  is issued: a snapshot that can't stays desired, a history request gets `busy`, and
+  the reply is charged at its encoded size. Output that doesn't fit starves that watch
+  alone, which catches up by snapshot, no sooner than 250 ms after its last one.
+  Control JSON is never refused and may overdraw by 64 KiB; past that the connection
+  is wedged (4002). The outbox keeps ordering, replacement and coalescing, and no
+  limits ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)). The memory
+  ceiling drops from about 62 MB to about 59 MB.
+- **Why:** count-bounded queues carrying variable-size payloads escaped the byte
+  budget. A legal 200-row history capture at 500 columns encoded to 134 KB, so 256
+  queued in one JSON FIFO were 34 MB; snapshots and output in the 256-message
+  `ToConn` channel had the same gap. One number in the hub, which already decides what
+  to send, bounds production, transit, outbox residence and the frame being written,
+  and keeps the no-shared-state rule: the connection only reports bytes.
+  Starvation moves into the hub, reversing the earlier rejection of a hub-side starved
+  flag: with the credit in the hub, the outbox no longer tracks it, so nothing is
+  duplicated. Wedged (4002) now means control JSON past its overdraft or a full
+  channel, no longer a JSON FIFO overflow.
+- **Rejected:** end-to-end permits (a response permit object carried from the capture
+  to the socket and dropped on delivery: the same bound, but shared state across
+  tasks, which the hub/connection split forbids); per-message byte caps (each message
+  bounded, but the count still multiplies them: 256 × a capped `historyChunk` is the
+  failure above); keeping the outbox budget beside the credit (two limits on the same
+  bytes, and the outbox would starve watches the hub thinks are live).
+
 ### Wedged closes with 4002
 
 - **Decided:** 2026-10-21, design (p21).
