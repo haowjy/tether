@@ -1201,7 +1201,8 @@ hand-coded on each side with golden byte fixtures in `tests/fixtures/proto/`:
 ## 6. Limits and the memory ceiling
 
 Every daemon constant lives here, except the file API's, which are in
-[fs.md](fs.md#constants); other documents link to this table.
+[fs.md](fs.md#constants), and completion's, in [complete.md](complete.md#constants);
+other documents link to this table.
 
 | Limit | Value | When hit |
 |---|---|---|
@@ -1231,7 +1232,7 @@ Every daemon constant lives here, except the file API's, which are in
 | inbound WebSocket message | 512 KiB | close 4009 |
 | input / paste per message | 4 KiB / 256 KiB | `error { inputTooLarge }` |
 | paste slots (files awaiting tmux) | 4 daemon-wide | `error { busy }`, before writing |
-| completion: carapace run | 300 ms timeout, 1 at a time | no flag suggestions |
+| completion: carapace, history, PATH, paths | [complete.md](complete.md#constants) | |
 | history per request | 200 rows | clamped |
 | `hello` deadline | 10 s | close 4003 |
 | ping / idle timeout | every 10 s / 25 s silent | close 4000; the 10 s timer also re-checks auth (removed: 4401; unreadable file: 4503) |
@@ -1246,7 +1247,7 @@ Every daemon constant lives here, except the file API's, which are in
 | daemon: code, runtime, tasks | budget target | 5 |
 | control clients | 3 × 5.3 MB measured | 16 |
 | one-shot `tmux` | 1 × 4.9 MB measured | 5 |
-| carapace | 1 run, unmeasured | ~15 |
+| completion: indexes, caches, a carapace launch (carapace itself runs in its own scope) | [complete.md](complete.md#memory-cpu-and-threads) | 11 |
 | tmux chunks, pump → hub | 128 × 16 KiB | 2 |
 | reply bodies | large ones only in the 2 capture slots × 1 MiB | 2 |
 | payloads hub → socket: channel, outbox, frame being written | 3 connections × (2 MiB credit + 64 KiB overdraft) | 6.5 |
@@ -1255,13 +1256,13 @@ Every daemon constant lives here, except the file API's, which are in
 | paste files on tmpfs | 4 slots × 256 KiB | 1 |
 | file API: a scan, raw responses, an upload | [fs.md](fs.md#limits-and-the-memory-ceiling) | 3 |
 | kernel socket buffers, charged to the unit | 2 × 128 KiB (`SO_SNDBUF`, `SO_RCVBUF`, [fs.md](fs.md#constants)) per socket with data queued: the 3 WebSockets, 2 raw responses, 1 upload, and a couple of JSON replies (the fs waiter cap keeps the rest idle) | 2 |
-| **ceiling** | | **~64** |
+| **ceiling** | | **~60** |
 
-That reaches the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)), with
-carapace a guess; the [budget measurement](plan.md#resource-budget) checks it, reading
+That is within 4 MB of the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)); the [budget measurement](plan.md#resource-budget) checks it, reading
 the unit's `memory.peak` (which counts kernel buffers and page cache), not RSS. If it
 doesn't fit, lower the control-client cap first. The normal case, one control client
-and one watch, is about 11 MB.
+and one watch, is about 11 MB, plus up to 11 MB of completion state while Jimmy types
+and for five minutes after.
 
 ## 7. Failure handling
 

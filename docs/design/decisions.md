@@ -3,7 +3,7 @@
 Every design decision behind tether's specs: what was decided, why, the alternatives
 rejected, when, and who decided. The specs ([plan.md](plan.md),
 [daemon-core.md](daemon-core.md), [ios-shell.md](ios-shell.md), [auth.md](auth.md),
-[fs.md](fs.md))
+[fs.md](fs.md), [complete.md](complete.md))
 state only the current rule; this log keeps the reasoning and the history.
 
 **Who decides.** *Jimmy* owns product calls, and his decisions are marked as his.
@@ -15,7 +15,7 @@ runner p33, and the hub and wire protocol p35, whose builds corrected the daemon
 spec; the HTTP layer, auth, CLI and config build p40, commit b1dcb8c; the web host
 layer p42, commit a43014f; the hub fixes after review p43, commit cb7548e; the web boot
 p45, commit b115c2b; the hub refactor after the structural review p49 was applied in
-p51, commit 97f8c39; the web fixes p52, commit 0342137; the file API spec p53). Reviews:
+p51, commit 97f8c39; the web fixes p52, commit 0342137; the file API spec p53; the completion spec p60). Reviews:
 round 1 of the plan is [plan-review.md](plan-review.md); round 1 of the subsystem specs
 was p10–p14; round 2 was p16 (structure) and p17 (correctness).
 
@@ -1788,6 +1788,169 @@ review. The product calls behind it are Jimmy's
   ([auth.md](auth.md#carrying-the-token)).
 - **Rejected:** answering `OPTIONS` in the daemon (it would open a CORS path that
   auth.md keeps shut for browsers on the tailnet).
+
+## Completion
+
+Decided 2026-10-22 by design (p60), writing [complete.md](complete.md), revised after
+the p61 review. The product calls behind it are Jimmy's
+([Shell integration](#shell-integration)); the route and the cwd source are in
+[Completion is HTTP, and cwd comes from tmux](#completion-is-http-and-cwd-comes-from-tmux).
+
+### The request is `{before, after, cwd}`, and a chip only extends what is typed
+
+- **What:** the client sends the input before and after the cursor as two strings,
+  and `cwd` or null. Each chip carries `insert`, the literal text typed at the cursor,
+  with no control characters; every source matches by prefix, so no chip deletes.
+  Changes `{line, cursor, cwd}` in the entry above.
+- **Why:** a cursor index needs a character unit both JavaScript (UTF-16) and Rust
+  (UTF-8 bytes) agree on; two strings need none. Prefix-only chips make the diff
+  against what's typed a plain suffix, which the client sends like typed text, and
+  dropping control characters means a chip can never press Enter.
+- **Rejected:** `{line, cursor}` (the unit problem); a `shell` field (the client
+  can't know the shell; the daemon picks the history file); replace ranges with a
+  delete count and fuzzy matches (backspaces through readline and vi modes behave
+  differently, and the counts need the same unit agreement).
+
+### History: one file, parsed into a cached index, ranked by entry age
+
+- **What:** one history file, from `[complete] history` or the most recently
+  modified default (zsh, bash, fish), its format from its name; the last 1 MiB parsed
+  into 10,000 distinct lines scored by `0.5^(age / 200 entries)` per occurrence, held
+  in one contiguous buffer, revalidated by `(dev, ino, size, mtime)` on each request.
+  Never logged.
+- **Why:** a `stat` per request costs nothing, and a re-parse happens once per change;
+  entry age ranks without timestamps, which bash doesn't write by default; one large
+  buffer goes back to the kernel when the idle drop frees it.
+- **Rejected:** reading the file on every request (a 1 MiB parse per keystroke); an
+  inotify watcher (tether has no watchers); merging every shell's file (Jimmy uses
+  one shell); time-based recency (no timestamps in bash's default format); detecting
+  the format from content (plain zsh and bash lines look the same, and only zsh's
+  needs unmetafying).
+
+### The snippet appends history after each command
+
+- **What:** `contrib/shell/tether.bash` runs `history -a` before each prompt;
+  `tether.zsh` sets `INC_APPEND_HISTORY`. `TETHER_NO_HISTORY_APPEND=1` opts out.
+- **Why:** bash writes history only on exit, so the commands Jimmy ran in open shells,
+  the ones he most likely wants again, were missing from the strip.
+- **Rejected:** leaving the default (stale suggestions); reading a shell's in-memory
+  history (needs a channel into every shell).
+
+### The PATH index uses the daemon's PATH and an mtime check
+
+- **What:** the names in `[complete] path`, else the daemon's own `PATH`, built on
+  first use; each request that needs it `stat`s every `PATH` directory and rebuilds on
+  any change.
+- **Why:** a dozen `stat`s per request is cheaper than any watcher. The user
+  manager's `PATH` holds `~/.local/bin` and `~/.cargo/bin` on the dev box but not what
+  Jimmy's rc files add (nvm, bun, Go), so installing writes his interactive `PATH`
+  into the key.
+- **Rejected:** a watcher; the tmux global environment (`/complete` never touches
+  tmux); a pane's `/proc/<pid>/environ` (the environment at exec, before the rc files
+  change `PATH`).
+
+### carapace runs in its own transient scope
+
+- **What:** under systemd, each run is `systemd-run --user --scope --collect
+  --description="tether completion" -p MemoryMax=128M -p TasksMax=64 -p CPUWeight=20
+  -p IOWeight=10 -p RuntimeMaxSec=2 -- carapace …`; outside systemd it is spawned
+  directly.
+- **Why:** measured on the dev box, carapace 1.8.0's RSS is 17–44 MB per run and a
+  scope's peak up to 49 MB warm and 74 MB with its 95 MB binary cold in the page
+  cache, while the unit's ceiling already sits at its 64 MB `MemoryMax`
+  ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)). Scoped, the
+  unit's peak rose 1.1 MB per run, for about 27 ms of scope setup inside the 300 ms
+  timeout. Its threads also leave the unit's `TasksMax`. The review (p61) found two
+  things the bare command needs: the default description is the command line, so
+  every run's arguments, the words Jimmy typed, reached the user journal; and a kill
+  landing before `systemd-run` execs (5–20 ms after spawn) leaked an empty scope that
+  stayed active, which `RuntimeMaxSec=2` reaps and which also bounds helpers that
+  outlive a crashed tether.
+- **Rejected:** running it in the unit (it alone can exceed `MemoryMax`); raising
+  `MemoryMax` (the limit protects the overloaded box, and a 74 MB peak would need it
+  doubled); a sub-cgroup with `Delegate=yes` (tether would manage cgroups itself);
+  a long-lived carapace process (carapace has no server mode, and one would hold its
+  20–40 MB while idle).
+
+### carapace: run per stem, latest wins, 30-second cache
+
+- **What:** carapace gets the current word cut back to its **stem** (through its last
+  `/ = : , @ +`, else `-` for a flag, else empty) and tether filters its values by the
+  whole word; the key is `(cwd, cmd, args before the current word, stem)`. Only
+  commands in `carapace --list` are run. One runner task owns the child: one run at a
+  time, a request for another key kills the run in flight, one for the same key
+  waits, and an aborted request kills nothing. Results, timeouts and failures
+  included, are cached 30 s in a 64-entry, 1 MiB LRU.
+- **Why:** one run serves every keystroke until the stem changes. An empty current
+  word, as first written, returns no flags (`git checkout ""` gives refs only; `-`
+  gives the 40 flags), nothing after a `/` (`origin/m`) and no multi-part values
+  (`chmod u+`); the review (p61) measured all three. Latest-wins matches typing,
+  where the older answer is already stale; a runner that owns the child keeps the
+  phone's aborts from killing every run. The TTL lets new git branches appear and
+  stops a command that always times out from costing 300 ms per keystroke.
+- **Rejected:** an always-empty current word (above); passing the whole word and
+  keying on it (a run per keystroke); queueing runs (a stale run delays the fresh one
+  by up to 300 ms); runs owned by their request (aborts kill them, so fast typing
+  never gets chips); an LRU with no expiry (branches go stale); trying every command
+  (a scope and a process for every unknown command); routing every word with a `/` to
+  paths (`git checkout origin/m` needs carapace).
+
+### Completion takes two blocking slots, and the unit pins glibc's mmap threshold
+
+- **What:** an index slot (history, PATH) and a directory slot (`check_dir`,
+  listings), each permit held inside its blocking closure.
+  `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072` in the unit.
+- **Why:** a listing stuck on a hung mount holds only the directory slot, so history
+  and commands keep working and threads don't pile up. glibc raises its dynamic mmap
+  threshold after the first large free, so later indexes landed in the heap and
+  stayed resident after the idle drop (checked with a C probe on the dev box's glibc:
+  without the tunable the second 1.1 MiB block came from the heap, with it every one
+  was mmapped).
+- **Rejected:** one shared slot (a hung listing stops every source); `check_dir`
+  outside any slot (stuck threads pile toward the pool's 8); `malloc_trim` or
+  `mallopt` (an `unsafe` FFI call under `#![forbid(unsafe_code)]`).
+
+### Path chips list names in any readable directory
+
+- **What:** path completion opens the directory with `fs::open` and scope `/`, and
+  returns names only.
+- **Why:** the roots keep file contents and viewer bugs inside the trees Jimmy
+  picked; completion reads no contents, and the shell's own Tab already lists any
+  directory. Scoping it would break completion in the common places.
+- **Rejected:** the effective roots (no completion in `~`, `/tmp` or a repo not yet
+  added; the default config has no roots); `$HOME` plus the roots (still none in
+  `/tmp` or `/etc`, for no protection, since only names are returned).
+
+### Completion state is dropped after 5 idle minutes
+
+- **What:** one timer, re-armed by each request, frees every index and cache 5 minutes
+  after the last request.
+- **Why:** the idle budget is ~5 MB with no phone connected, and completion can hold
+  ~11 MB; one wakeup per idle period keeps the box quiet.
+- **Rejected:** keeping the indexes for the process's life (breaks the idle budget);
+  dropping when the last WebSocket closes (`complete` doesn't see the hub's
+  connections, by design).
+
+### The snippet: OSC 133 from prompt hooks and `PS1`, plus OSC 7
+
+- **What:** D, A and OSC 7 from the first prompt hook; B appended to `PS1` by the last
+  hook, re-added each prompt; C from `PS0` (bash) or `preexec` (zsh); raw OSC with
+  BEL. The client prefers the OSC 7 path of the current prompt over `watching`'s cwd.
+- **Why:** prompt hooks see `$?` before anything else changes it; prompt themes
+  rebuild `PS1` in their own hooks, so B must be re-added after them; `PS0` gives bash
+  a pre-exec point with no `DEBUG` trap. OSC 7 at the prompt is current at once, where
+  tmux's subscription lags a `cd` by up to a second; tmux's cwd stays the fallback,
+  so completion still works without the snippet.
+- **Rejected:** a `DEBUG`-trap preexec (bash-preexec: heavier, and it competes with
+  other traps); wrapping the marks in tmux's DCS passthrough (not needed: control mode
+  sees them raw); OSC 7 as the only cwd source (already rejected above: no cwd without
+  the snippet or inside TUIs).
+- **Amends** [Completion is HTTP, and cwd comes from tmux](#completion-is-http-and-cwd-comes-from-tmux):
+  tmux's cwd stays the source without the snippet, but an OSC 7 from the current
+  prompt is now preferred.
+- **The bash wrapper** makes an existing `PROMPT_COMMAND` an array on bash 5.1+ and
+  joins it with newlines before that: joined with `;`, one ending in `&` broke every
+  prompt and one ending in a comment swallowed the B hook (p61).
 
 ## Documentation
 

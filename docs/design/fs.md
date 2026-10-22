@@ -121,8 +121,10 @@ Want   = Dir | File | Parent     // Parent: v2 writes (below)
 Opened = { fd: OwnedFd, path: String /* canonical */, root: usize, meta: Metadata }
 ```
 
-`scope` is the canonical effective roots, or `[$HOME]` for the picker. It runs inside
-a blocking task holding an fs slot, and does, in order:
+`scope` is the canonical effective roots, `[$HOME]` for the picker, or `[/]` for
+path completion ([complete.md](complete.md#paths)). It runs inside a blocking task
+holding an fs slot (completion's directory slot when completion calls it), and does,
+in order:
 
 1. **Shape.** `path` must be absolute, at most 4,096 bytes and free of NUL; otherwise
    `bad_request`. Paths on the wire are UTF-8 strings, so a non-UTF-8 name can't be

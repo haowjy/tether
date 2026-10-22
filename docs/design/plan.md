@@ -344,12 +344,14 @@ this is in [ios-shell.md](ios-shell.md#keyboard); spike 1 tests it on the phone.
 ### Suggestion strip
 
 A row of chips above the key row; tapping a chip sends the remaining characters (a
-diff against what's typed). Sources, ranked:
+diff against what's typed). The backend, with each source's parsing, caching, limits
+and the shell snippet, is [complete.md](complete.md). Sources, ranked:
 
 1. **Shell history:** the history file (zsh, bash or fish format; path from config or
    the shell's default), deduplicated, ranked by recency and frequency, filtered by
    the prefix.
-2. **Commands on PATH:** an index built once and cached.
+2. **Commands on PATH:** an index built on first use, rebuilt when a `PATH`
+   directory changes.
 3. **Subcommands and flags: carapace** ([carapace-bin](https://github.com/carapace-sh/carapace-bin)),
    one Go binary covering 1000+ commands, independent of the shell, run only when a
    chip is needed after a command word: `carapace <cmd> export "" <args…>`, with the
@@ -368,8 +370,10 @@ after Tab, ↑ or readline edits.
 - Without the snippet, the client falls back to reading from the prompt end to the
   cursor with a prompt regex, and shows nothing when unsure. Inside TUIs there is no
   prompt, so the strip hides.
-- The client asks for chips with `POST /complete {line, cursor, cwd}` through its
-  host's scheme-handler origin. `cwd` is the tab's current directory from `watching`
+- The client asks for chips with `POST /complete {before, after, cwd}`
+  ([complete.md](complete.md#request-and-response)) through its host's scheme-handler
+  origin. `cwd` is the snippet's OSC 7 path when the prompt sent one, else the tab's
+  current directory from `watching`
   ([daemon-core.md §3.7](daemon-core.md#37-cwd-subscription)), which needs no snippet.
   `/complete` is plain HTTP in `src/complete/` and never touches tmux.
 
