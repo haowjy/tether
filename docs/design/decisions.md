@@ -2,7 +2,8 @@
 
 Every design decision behind tether's specs: what was decided, why, the alternatives
 rejected, when, and who decided. The specs ([plan.md](plan.md),
-[daemon-core.md](daemon-core.md), [ios-shell.md](ios-shell.md), [auth.md](auth.md))
+[daemon-core.md](daemon-core.md), [ios-shell.md](ios-shell.md), [auth.md](auth.md),
+[fs.md](fs.md))
 state only the current rule; this log keeps the reasoning and the history.
 
 **Who decides.** *Jimmy* owns product calls, and his decisions are marked as his.
@@ -13,7 +14,8 @@ author while writing it; the spawn that wrote each spec is named for traceabilit
 runner p33, and the hub and wire protocol p35, whose builds corrected the daemon-core
 spec; the HTTP layer, auth, CLI and config build p40, commit b1dcb8c; the web host
 layer p42, commit a43014f; the hub fixes after review p43, commit cb7548e; the web boot
-p45, commit b115c2b). Reviews:
+p45, commit b115c2b; the hub refactor after the structural review p49 was applied in
+p51, commit 97f8c39; the web fixes p52, commit 0342137; the file API spec p53). Reviews:
 round 1 of the plan is [plan-review.md](plan-review.md); round 1 of the subsystem specs
 was p10–p14; round 2 was p16 (structure) and p17 (correctness).
 
@@ -261,6 +263,34 @@ All 2026-10-21, decided by Jimmy.
   re-sent, and a reply that still arrives produces no `Snapshot`.
 - **Why:** every snapshot list starts with `continue`; a retry after the pane was
   released would resume a pane the session just unwanted and paused.
+- **Changed 2026-10-22 (p51):** the reply is no longer silent; see "A released snapshot
+  is answered `Released`" below.
+
+### A released snapshot is answered `Released`
+
+- **Decided:** 2026-10-22, tech lead, from the structural review of the hub (p49),
+  applied in p51 (commit 97f8c39). Partly reverses "A Release invalidates snapshot
+  attempts" above, whose rule that none is re-sent stands and whose "no event of any
+  kind" does not
+  ([daemon-core.md §3.3](daemon-core.md#33-session-the-sans-io-control-client-sessionrs)).
+- **What:** when the group of a snapshot attempt that a `Release` outdated ends,
+  whatever its replies, `Session` emits `Done { tag, Err(TmuxError::Released) }`, in
+  stream order. It still never retries and never emits `Snapshot` for it. The hub no
+  longer works out what a Release invalidates: `Work::Release { invalidates }` is gone
+  (a Release is maintenance like any other), with the computation of the invalidated
+  tags, `forget_snapshot`, `Inflight.client`, `Work::Snapshot.pane`, the `Option`
+  around its window and `abandon`'s lookup in `pending`, about 80 lines. A tag leaves a
+  client's `pending`, and frees its capture slot, when its own answer arrives. The
+  `snapshot-released` fixture was re-recorded on tmux 3.4: only its `.events` golden
+  changed (`+done tag=1 error Released`), its `.in` did not, and replaying the old
+  recording had already failed only that golden. The recorder scenario now requires
+  exactly this answer.
+- **Why:** the session already knows which of its groups are snapshots of the pane and
+  what a retry would resume, but the hub rebuilt that: it computed the tags a Release
+  invalidated, remembered them, and freed their slots when the Release was answered, so
+  two components had to agree on one rule. With an answer, a snapshot's tag ends on
+  its own reply like every other tag.
+- **Rejected:** the silent drop with the hub inferring the invalidated tags (above).
 
 ### The daemon composes restore bytes
 
@@ -846,6 +876,9 @@ All 2026-10-21, decided by Jimmy.
 - **Why:** tmux sends these notifications to every control client, so each would be
   broadcast once per client.
 - **Rejected:** broadcasting from every client (N copies).
+- **Extended 2026-10-22 (p51):** the reporter's close notifications for unwatched
+  windows are turned into `sessionsChanged` too, coalesced per input; see "An unwatched
+  window's close broadcasts `sessionsChanged`, once per input" below.
 
 ### The stream is part of the window; `state.rs` is split three ways
 
@@ -1036,6 +1069,131 @@ All 2026-10-21, decided by Jimmy.
 - **Open:** a connection that drops its receiver without sending `Closed` stays
   registered until the hub next sends to it. `http/ws.rs` sends `Closed` on every path
   but a panic or the runtime's shutdown, so no machinery was added.
+
+### An unwatched window's close broadcasts `sessionsChanged`, once per input
+
+- **Decided:** 2026-10-22, tech lead, in the brief for the hub refactor (p51, commit
+  97f8c39). Adds to "One reporter per endpoint for renames and session changes" above
+  and answers the gap in "The web prunes its tabs against `sessions` listings" below
+  ([daemon-core.md §4.5](daemon-core.md#45-control-clients)).
+- **What:** when the endpoint's reporter hears `%window-close` or
+  `%unlinked-window-close` for a window the hub holds no entry for (no watch is on it,
+  in any phase), the hub sets a flag; the reporter's `%sessions-changed` sets the same
+  flag; and `handle` broadcasts one `sessionsChanged` at the end of an input that set
+  it. Closing a watched window is still `windowClosed` with no relist, and a client
+  that isn't the reporter sends nothing. The web already relists on `sessionsChanged`,
+  debounced, and prunes against the listing. Measured on real tmux 3.4:
+
+  | Action | `sessionsChanged` sent, before → after |
+  |---|---|
+  | kill an unwatched window | 0 → 1 |
+  | kill a 4-window session | 1 → 1 (not 5) |
+  | move an unwatched window | 0 → 1 |
+  | kill the watched window | `windowClosed`, no relist |
+
+  Throwaway unit probes also showed the non-reporting client sends none, and two
+  separate chunks send two.
+- **Why:** the hub tracks a window only while a watch is on it, so a kill under a tab
+  that isn't on screen sent nothing, and the tab was found dead only on the next connect
+  or sheet. The close notification already reaches the reporter; a flag turns it into
+  the hint the web's listing needs, with no window state and no tmux command. The flag
+  is cleared per input so one kill that closes many windows is one hint.
+- **Cost:** "once" means once per input. A burst split across two reads of the pump's
+  pipe sends two, which the web's debounce absorbs.
+- **Rejected:**
+  - A Locate per unwatched window: work and state for windows nobody views, which "A
+    watch exists only while its tab is on screen" avoids.
+  - A broadcast per closed window: five for a 4-window session.
+  - A timed debounce in the hub: a new timer, and the web already debounces.
+
+### `Starting` is folded into `Locating { after, on }`
+
+- **Decided:** 2026-10-22, tech lead, from the structural review (p49), applied in p51
+  (commit 97f8c39). Changes the phases of "How ownership and Locate interact" and the
+  state diagram of [daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate).
+- **What:** a window's phases are `Locating { after, on }`, `Bound` and `Orphaned`. `on`
+  is the control client the window was found to belong to, which may still be starting
+  or waiting out a crash delay; the Locate runs on it once it is `Ready`. `join` always
+  goes to `Locating` with `on` set, and the loop in `client_ready` that moved waiting
+  windows out of `Starting` is gone, because `learned` and `located` already redo its
+  server check. `on` moved from the Locate record into the phase, so "`on` is set only
+  while locating" holds by construction and the `on = None` resets in `bind` and
+  `release_windows` are gone. `Window::client()` (the owner when `Bound`, `on` when
+  `Locating`, none when `Orphaned`) replaces four hand-written matches. About 24 lines
+  fewer for `Starting` alone.
+- **Why:** `Starting` was a `Locating` window with a client to wait for, kept as a second
+  phase beside a separate `on` field that had to be cleared by hand wherever a window
+  left the phase. One phase carrying `on` has one set of exits, and the field cannot
+  outlive the phase. Forcing the respawn's "awaited" check to false fails the two crash
+  tests, so the tests cover the fold.
+- **Rejected:** keeping `Starting` as its own phase.
+
+### Reserved credit stays a counter, with a debug check
+
+- **Decided:** 2026-10-22, tech lead, from the structural review (p49), applied in p51
+  (commit 97f8c39). The brief was to derive each connection's reserved credit from the
+  work in flight instead of keeping a counter, unless that cost more than about 50 ns
+  per chunk; it did ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)).
+- **What:** `Conn.reserved` stays a counter. Debug builds derive what it must be (a
+  capture reservation per watch a snapshot in flight reserved for and per history
+  capture in flight, plus the listing's) and `debug_assert_eq!` it for every connection
+  at the end of each `handle` (`check_reservations` in `credit.rs`). Taking out the
+  `unreserve` in `listed`, or the ones in `abandon`, each fails a hub test.
+- **Why:** measured in a release build pinned to one core, the median cost of one
+  `%output` chunk through `State::handle`:
+
+  | Scenario | Counter | Derived |
+  |---|---|---|
+  | one connection, one watch | ~210 ns | ~227 ns (+17) |
+  | 3 connections × 2 watches | ~298 ns | ~375 ns (+77) |
+  | same, 20 inputs in flight per client | ~298 ns | ~625 ns (+325) |
+
+  Deriving scans every client's pending work for every watch on every chunk, so it
+  costs most when the box is busiest.
+- **Rejected:** deriving it on the output path (above); scanning once per chunk (still
+  about +100 ns loaded); a `State`-level map of captures (a second structure mirroring
+  `pending`).
+
+### Other moves of the hub refactor
+
+- **Decided:** 2026-10-22, tech lead, from the structural review (p49), applied in p51
+  (commit 97f8c39). Hot-path cost measured against a clone of the previous commit: at
+  parity (+0 to 10 ns per chunk).
+- **What:**
+  - **`tmux/reply.rs`.** Each format tmux is asked to print sits beside the parser of its
+    reply, moved out of `command.rs`, `session.rs` and `oneshot.rs`; `ServerInstance`
+    has `FromStr`, which the hub's `parse_server` uses. A pure move: the commands'
+    text is byte-identical, and the fixture replays, which require the exact lines,
+    pass. The formats were not changed to `#{pid}-#{start_time}`, which would mean
+    re-recording every fixture.
+  - **`tmux/fake.rs` and hub tests that assert ops.** The hub tests' fake tmux splits
+    lines into commands, decodes `display-message` and `capture-pane`, expands formats
+    from a lookup of tmux variables and frames replies
+    ([daemon-core.md §8](daemon-core.md#8-testing)). The 22-field state row and the 33
+    command-string literals in the tests are gone; assertions build their op lines with
+    `command::op`. The review's probe, quoting the Locate target, used to fail 22 of 23
+    hub tests and now fails none.
+  - **One `due()`.** The control clients' timers come from one `due()`, which feeds
+    both `next_deadline` and `timers`. Snapshot spacing stays out of it: it has no timer
+    action of its own (the input that crosses it is dirty, and reconcile snapshots), and
+    putting it in made `timers` scan every watch on every chunk, +35 to 45 ns per chunk
+    (3 connections). It is chained into `next_deadline` only, and its formula now
+    lives once, in `Watch::spaced_until`, which reconcile's eligibility also uses.
+  - **`state.rs` split further** into `credit.rs`, `names.rs` and `time.rs`, pure
+    moves; `state.rs` went from 1,140 to 952 lines. Credit and names alone left it at
+    1,024.
+  - **Smaller:** `quote` and `named` share `command::literal`; the auth store's `read`
+    and `read_async` share `loaded`; the real-tmux tests share `setup`, `SERIAL`,
+    `tmux()` and `socket()` in `tests/support/tmux_server.rs` (`hub_real`'s socket prefix
+    became `tether-test-`) and use `hub::INBOX` instead of a literal 128.
+- **Why:** each removes a place where two components had to agree (a format and its
+  parser, a command's spelling and a test's copy of it, two encodings of the spacing
+  rule) or a file that held three concerns.
+- **Rejected:**
+  - Narrowing `FromConn::Client`: it needs a second enum mirroring `ClientMsg`, or a
+    split wire enum that changes the generated TypeScript, just to remove one ignored
+    match arm.
+  - Spacing inside `due()` (above).
 
 ## Daemon service, as built
 
@@ -1233,6 +1391,9 @@ found each point while running the daemon.
   leaving it, so a dead tab is found on selection (the pill claims a window that is
   gone); the daemon diffing listings to send `windowClosed` (it would keep a copy of
   the listing).
+- **Extended 2026-10-22 (p51):** the daemon now sends `sessionsChanged` when tmux closes
+  or moves a window nobody watches, so the web's relisting follows the kill; see "An
+  unwatched window's close broadcasts `sessionsChanged`, once per input" above.
 
 ### A host entry carries its base URL
 
@@ -1282,6 +1443,50 @@ found each point while running the daemon.
   changed it, so a rename in tmux left the pill stale, and the daemon already sends the
   rename.
 - **Rejected:** a title fixed at open.
+
+### The tmux size sits inside every safe-area inset, and a `keyboard` viewport keeps the full-screen insets
+
+- **Decided:** 2026-10-22, tech lead, from the web fixes (p52, commit 0342137). Settles
+  the open question in [ios-shell.md](ios-shell.md#keyboard-geometry) and drops the
+  "vertical safe area" open risk.
+- **What:** `collapsedHeight` is the web view's height with the keyboard hidden, which
+  is the full screen, safe-area bands included. The web computes the tmux size from it
+  and the width less the safe area: the columns from `width` less the left and right
+  insets, each side at least 4 px (`--term-edge`); the rows from `collapsedHeight` less
+  the top and bottom insets, the tab bar and the suggestion strip. Every `viewport`,
+  `keyboard` ones included, carries the `safeArea` of the full-screen layout.
+- **Why:** the sizer and the CSS padding (`--safe-*`) both use the numbers in
+  `viewport`. A web view that ends above the keyboard has a bottom inset of 0 in its
+  own `env()`, and a `rotation` viewport with that value would give the rows of a
+  layout with no home-indicator band while the keyboard is up. The 4 px edge keeps text
+  off the bezel in portrait, where the side insets are 0. It costs one column there
+  (56 to 55 at 393 pt wide) and none in landscape, where the insets already exceed it.
+- **Rejected:** live insets in a `keyboard` viewport (the bottom-inset case above); a
+  wider edge (another column on a 393-pt phone).
+
+### The keyboard pan belongs to the renderer and follows the cursor
+
+- **Decided:** 2026-10-22, tech lead, from the web fixes (p52, commit 0342137). Fills
+  in the pan that [plan.md](plan.md#layout) and [ios-shell.md](ios-shell.md#keyboard-geometry)
+  promise.
+- **What:** `term/xterm.ts` watches the terminal area's height and the cursor and
+  slides the terminal up by `cursorPan` (`term/size.ts`): just far enough that the
+  bottom of the cursor row meets the bottom of the area, never down, never past the last
+  row, zero while every row fits. The slide animates only when the area resizes, with
+  the keyboard's duration and curve; a cursor move jumps. Measured against a real daemon
+  with the keyboard shown: tmux stays 55×44 in portrait and 104×20 in landscape; with
+  the cursor on the last row the terminal slid 388 px (44 rows × 16 px less the 316 px
+  visible); cursor on row 18 slid 0 and on row 19 slid 4 px; hiding the keyboard slid
+  it back to 0.
+- **Why:** the keyboard shortens the area without resizing tmux ("never for the
+  keyboard", [plan.md](plan.md#product-rules)), so the rows under the keyboard are
+  covered and the cursor must stay above them. The area's height already says whether
+  the keyboard is up, so the pan needs no flag.
+- **Cost:** xterm's scrollbar moves with the slide, so part of it is hidden while the
+  keyboard shows.
+- **Rejected:** a keyboard flag in `App` driving the pan (the container's height already
+  says it); snapping the pan to whole rows (leaves a gap under the cursor row, where the
+  plan says "just above").
 
 ## Auth
 
@@ -1377,6 +1582,212 @@ found each point while running the daemon.
   subprocess to run on an overloaded box, and the client already exists for the login
   allowlist.
 - **Rejected:** shelling out to `tailscale serve status --json`.
+
+## File API
+
+Decided 2026-10-22 by design (p53), writing [fs.md](fs.md), revised after the p56
+review. The product calls behind it are Jimmy's
+([Files](#files-view-and-upload-now-three-write-operations-in-v2)).
+
+### One resolution function that returns a checked descriptor
+
+- **What:** `fs::open` canonicalizes with `realpath`, checks the result against the
+  canonical roots component by component, opens with `O_NOFOLLOW | O_NONBLOCK`, then
+  reads the descriptor's real path (`/proc/self/fd`, `F_GETPATH`) and checks it again.
+  Callers get the descriptor, never a path to reopen. In-root symlinks are followed;
+  `..` is resolved by `realpath`, not lexically.
+- **Why:** checking the file actually opened closes the check-then-open race for one
+  syscall, and v2 writes need a checked parent descriptor anyway. `O_NONBLOCK` keeps a
+  FIFO in a repo from pinning a blocking thread.
+- **Rejected:** canonicalize-check-open alone (racy, and a later route would be
+  tempted to reopen by path); `openat2(RESOLVE_BENEATH)` (Linux only, and refuses
+  absolute symlinks that stay inside the root, common in repos); `RESOLVE_IN_ROOT`
+  (chroot semantics: an absolute link resolves to the wrong file); lexical `..`
+  rejection (wrong after a symlink, and `realpath` already handles it).
+
+### Roots are a scope; the `$HOME` picker shows directory names only
+
+- **What:** the roots keep the file API inside the trees Jimmy picked; they are not an
+  authorization boundary, because a device token already runs commands in tmux. The
+  picker is a listing scoped to the canonical `$HOME` that returns directories only,
+  with no sizes or times. Adding a root or setting `uploads_dir` from the app needs a
+  directory strictly below `$HOME`; `config.toml` may name any directory.
+- **Why:** stating what the roots protect against (a mis-tap, a crafted symlink, a
+  viewer bug) is what makes showing names outside them safe. Confining the app below
+  `$HOME` keeps it from widening the scope to `$HOME` itself (`~/.ssh`) or to `/`.
+- **Rejected:** a picker that lists files too (reveals more than choosing a directory
+  needs); a picker free of `$HOME` (no use case, and `/proc` and `/etc` become
+  browsable); `$HOME` as a root from the app (defeats the scope); treating roots as
+  security against the token holder (they can't be).
+
+### fs reads `roots` from `config.toml` on every request
+
+- **What:** `roots` and `uploads_dir` are read and canonicalized per fs request, from
+  the path `Config::load` resolved at startup, with its missing-file rule. A file that
+  exists but can't be read or parsed fails closed as `503 config_unavailable`.
+- **Why:** the same reasoning as auth's per-check read: a small file, no watcher, no
+  cache to invalidate, and a hand edit applies at once. Re-canonicalizing per request
+  also follows a root that is itself a symlink being repointed.
+- **Rejected:** loading roots once at startup (a hand edit would need a restart, and
+  the daemon's own writes would need an in-memory copy kept in sync); a cache keyed on
+  the file's `stat` (an optimisation for a cost nobody has measured).
+
+### Config writes: `toml_edit`, auth's lock, temp file and rename, re-stat before rename
+
+- **What:** writes take the `flock` on `$XDG_STATE_HOME/tether/lock`, `canonicalize`
+  the config path to write a symlink's target, edit only `roots` or `uploads_dir` with
+  `toml_edit`, write `<name>.tmp` in the same directory, re-stat the original, and
+  rename (retrying up to 3 times if it changed). A file that doesn't parse is never
+  written; an unwritable target is `409 config_read_only`.
+- **Why:** `toml_edit` keeps Jimmy's comments and any keys a newer daemon wrote;
+  following the symlink keeps a dotfiles link intact; the re-stat catches most editor
+  saves that land mid-write; one lock for every tether writer is simpler than two.
+  Editors that rewrite in place can still race it in a microsecond window; accepted.
+- **Rejected:** serializing `Config` with serde (drops comments and unknown keys,
+  breaking "an older daemon reads a newer config"); a separate `config.lock` in
+  `~/.config/tether` (clutter in a dotfiles directory); renaming over the symlink
+  (silently replaces the dotfiles link with a copy).
+
+### Paths ride in the URL path
+
+- **What:** `/fs/list/{*path}`, `/fs/raw/{*path}`, `/fs/dirs/{*path}`, each segment
+  percent-encoded. Paths on the wire are absolute UTF-8 strings. Path and query
+  rejections are answered in the JSON error shape.
+- **Why:** AVFoundation sees the file's extension in the URL, and a relative image in
+  Markdown resolves against the document's own raw URL with plain URL resolution.
+- **Rejected:** `?path=` query strings (no extension in the URL, and the Markdown
+  viewer would need its own relative-path joining); root-index-plus-relative paths
+  (every caller converts, and `cwd`, `dir` and upload paths are absolute already).
+
+### Non-UTF-8 names are listed but not openable
+
+- **What:** listed with U+FFFD and `utf8: false`, greyed in the web, refused by the
+  routes because they can't be named in a UTF-8 path.
+- **Why:** they don't occur in Jimmy's trees in practice; the terminal handles them.
+- **Rejected:** byte-exact names in base64 on every entry and route (every client pays
+  for a case that doesn't occur); hiding them (the directory would look wrong).
+
+### Listings: one scan per page, sorted, paged by offset, nothing kept
+
+- **What:** each page re-reads the directory with names and `d_type`, `stat`ing only
+  symlinks and `DT_UNKNOWN` entries, up to 5,000 entries or 1 MiB of names; sorts
+  directories first, then case-folded names; and `stat`s the 200 entries on the page.
+  Dotfiles are filtered on the server unless `hidden=1`. Link targets aren't
+  root-checked until opened. The `$HOME` picker is the same listing, directories only.
+- **Why:** sorting needs the whole directory, and holding it between pages would be
+  state for a viewer nobody may come back to. A symlinked directory must sort as a
+  directory, which `d_type` alone can't tell. Filtering hidden names on the server
+  keeps pages full.
+- **Rejected:** a server-side cursor or cached listing (memory held between requests);
+  `readdir` order without sorting (useless on a phone); a `stat` per scanned entry
+  (5,000 syscalls on an overloaded disk for one page); client-side hidden filtering
+  (pages with holes); an unpaged picker (up to ~1 MiB of JSON in one response).
+
+### Content types: an extension allowlist that never sends HTML or script
+
+- **What:** one table by extension; HTML, JavaScript, CSS and XML are served as
+  `text/plain; charset=utf-8`; SVG as `image/svg+xml`; unknown as
+  `application/octet-stream`. The daemon itself sets `nosniff` and `sandbox` on raw
+  responses, as the scheme handler also does.
+- **Why:** the native player bypasses the scheme handler, so the daemon must send the
+  headers; with `nosniff`, the declared type is the only type, so an allowlist makes
+  "nothing renders as a page" a property of one table. `<img>` runs no SVG script.
+- **Rejected:** `mime_guess` (its broad table includes `text/html` and script types,
+  and the allowlist is the point); content sniffing (reads every file's first bytes
+  on a busy disk, and `nosniff` exists to stop it); serving SVG as text (the image
+  viewer would need to rasterize it itself).
+
+### Raw: single Range, strong ETag from `stat`, exact length, no `304`
+
+- **What:** `bytes=a-b | a- | -n` gets `206`; a range list or an unparsable header gets
+  the whole file; `416` past the end. ETag `"<ino>-<size>-<mtime_ns>"`, honoured by
+  `If-Range`. The body is exactly the length `fstat` gave at open; a file that shrinks
+  mid-stream aborts the response. A producer task feeds the body through a channel of
+  one chunk, and a send that waits 30 s aborts the response. Sent pages are dropped
+  with `posix_fadvise(DONTNEED)`.
+- **Why:** the viewers and AVFoundation send single ranges only; an ETag from `stat`
+  costs nothing and changes when the file does. Without the send deadline, a paused
+  player holds its slot, and the daemon's shutdown, forever, because hyper stops
+  polling a body whose socket is full. Without `DONTNEED`, a streamed video fills the
+  unit's page cache and throttles every task in it at `MemoryHigh`.
+- **Rejected:** multipart ranges (no client sends them); a content-hash ETag (reads the
+  whole file); `If-None-Match` and `304` (WebKit doesn't cache custom-scheme
+  responses, so nothing would send it); tower-http's `ServeFile` (plan.md keeps
+  `/fs/raw` custom so the root check and the limits are tether's).
+
+### Uploads: raw body, server-chosen UTC name, part file then no-replace rename
+
+- **What:** `POST /fs/upload?name=…` with the bytes as the body, 128 MiB cap, one at a
+  time, a 30 s idle timeout. The file is `YYYYMMDD-HHMMSSZ-xxxx.<ext>` in
+  `uploads_dir`, written as a 0600 `.tether-upload-*.part` file, flushed with
+  `fdatasync` and `DONTNEED` every 8 MiB, and renamed without replacing; no final
+  `fsync`. `uploads_dir` is created before the roots are read. The response is
+  `201 { path, size }`.
+- **Why:** a raw body streams straight to disk with nothing to parse; taking only the
+  extension from the client's name keeps paths, quotes and dotfiles out of the folder
+  and out of the path typed into the terminal; the part file means an agent never sees
+  a half-written photo at the final name. The periodic flush bounds the dirty pages
+  charged to the unit on a disk it reaches at idle priority. UTC needs no time-zone
+  crate.
+- **Rejected:** multipart (a parser and a crate for one file); base64 in JSON (+33% and
+  buffering); keeping the client's file name (`IMG_0001.jpg` collides and can carry
+  shell metacharacters); local time (needs `chrono` or `jiff`; the `time` crate can't
+  read the local offset in a multithreaded process on Linux); a final `fsync` (the
+  phone still has the photo); 2+ uploads at once (native sends one at a time, and each
+  costs a hyper read buffer).
+
+### The file API's limits, socket buffers, and the memory ceiling
+
+- **What:** 4 of the 8 blocking threads, 1 scan, 2 raw responses, 1 upload, 64 KiB
+  chunks, 10 s slot waits with at most 8 waiting; std file calls in `spawn_blocking`,
+  not `tokio::fs::File`. `SO_SNDBUF` and `SO_RCVBUF` of 64 KiB on every accepted
+  socket (axum's `ListenerExt::tap_io`). About 3 MB for the file API and 2 MB of kernel
+  socket buffers in the ceiling, taking it to ~64 MB; the budget run reads the unit's
+  `memory.peak`.
+- **Why:** a slow disk must not starve auth or pastes of blocking threads;
+  `tokio::fs::File` buffers up to 2 MiB per file; hyper's per-connection buffers (up
+  to ~400 KiB) dominate each response's cost. `MemoryMax` charges kernel socket
+  buffers, which RSS doesn't show: a stalled loopback reader let 4 MiB queue in one
+  sender's buffer on the dev box (`tcp_wmem` max 4 MiB, measured by p56), and the
+  WebSockets were never counted either. Each of tether's sockets is the loopback hop
+  from `tailscale serve`, where 64 KiB per round trip is over 1 GB/s, so the small
+  buffers don't slow the phone.
+- **Rejected:** unbounded concurrency (the ceiling has no room); refusing raw requests
+  at once when slots are full (AVFoundation and lazy image loads would fail instead of
+  waiting a moment); 3 raw slots (no room in the ceiling); the kernel's default
+  socket buffers (up to 4 MiB each, uncounted); larger buffers for raw responses only
+  (p57, on the reading that the socket runs to the phone; it ends at tailscaled);
+  dropping the pages of every file read (evicts pages a build is using: only files
+  over 8 MiB).
+
+### `dir` on `newWindow` and `newSession` is checked for shape, not roots
+
+- **What:** the connection calls `fs::check_dir`: an absolute path of at most 4,096
+  bytes with no NUL that `stat`s as a directory. It is passed to tmux as given. A
+  refusal is `error { badRequest }` with a message naming the cause. This replaces the
+  root check daemon-core §5.3 named and the pass-through recorded in
+  [Daemon service, as built](#dir-on-newwindow-and-newsession-passes-through-until-srcfs-exists).
+- **Why:** the roots scope the file API; tmux already runs as Jimmy. The web's
+  start-directory prompt (`askDir` in `web/app/app.ts`) offers the tab's cwd or any
+  typed path, and the default config has no roots, so a root check would refuse a new
+  window in `~`, `/tmp` or any repo not yet added, and a broken `config.toml` would
+  block every new window. Passing the path as given keeps a symlinked `~/code` showing
+  as `~/code`.
+- **Rejected:** checking `dir` against the roots, as §5.3 first said (the failures
+  above, for no protection tmux doesn't already bypass); restricting the prompt to
+  roots (a product change Jimmy hasn't asked for); passing the canonical path (the
+  shell would show the link's target).
+
+### The scheme handler forwards methods and bodies, and answers preflights itself
+
+- **What:** ios-shell.md's proxy forwards `GET`, `POST` (and v2's `PUT`) with their
+  bodies and `Content-Type`, and answers CORS preflights for `tether-app://ui`
+  without contacting the daemon. It no longer lists `If-None-Match`.
+- **Why:** the Settings routes are JSON `POST`s from `tether-app://ui` to
+  `tether-app://h-{host}`, which need a preflight, and the daemon answers none
+  ([auth.md](auth.md#carrying-the-token)).
+- **Rejected:** answering `OPTIONS` in the daemon (it would open a CORS path that
+  auth.md keeps shut for browsers on the tailnet).
 
 ## Documentation
 

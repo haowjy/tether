@@ -87,10 +87,14 @@ origin:
   `/complete`) over HTTPS, with `Authorization: Bearer`
   ([auth.md](auth.md#carrying-the-token)). Each host gets its own origin, different
   from the UI's, so the UI's `script-src 'self'` can never cover a daemon response.
-  The handler streams the response; passes the request headers `Range`, `If-Match`,
-  `If-None-Match` and the response headers `Content-Range`, `ETag`, `Content-Type`;
-  adds the security headers below and `Access-Control-Allow-Origin: tether-app://ui`,
-  since the page fetches these cross-origin. After `webView(_:stop:)` it cancels the
+  The handler forwards the method (`GET`, `POST`, and `PUT` in v2) and the body;
+  streams the response; passes the request headers `Range`, `If-Match`, `Content-Type`
+  and the response headers `Content-Range`, `ETag`, `Content-Type`; adds the security
+  headers below and `Access-Control-Allow-Origin: tether-app://ui`, since the page
+  fetches these cross-origin. It answers a CORS preflight (`OPTIONS`) itself, allowing
+  `tether-app://ui`, those methods and those request headers, and never forwards one:
+  the daemon answers no preflight ([auth.md](auth.md#carrying-the-token)). The routes
+  are in [fs.md](fs.md). After `webView(_:stop:)` it cancels the
   upstream request and never calls that task again (WebKit raises an exception if it
   does).
   - **Compatibility gate:** the handler proxies to a host only once that host's
@@ -348,18 +352,32 @@ Native sizes the web view, so the web never measures the keyboard.
 - On every change native sends `viewport { width, height, safeArea, keyboard: bool,
   collapsedHeight, reason }`, `reason` being `initial`, `keyboard` or `rotation`.
   `collapsedHeight` is the web view's height with the keyboard hidden in the current
-  orientation.
+  orientation: the full screen height, safe-area bands included, and `safeArea` is that
+  layout's insets.
+- **Every `viewport` carries the full-screen layout's `safeArea`, a `keyboard` one
+  included.** The web view that ends above the keyboard has no bottom inset of its own
+  (its `env(safe-area-inset-bottom)` is 0), but the web sizes tmux from the collapsed
+  layout and sets its padding from `safeArea` (`--safe-*` in `web/ui/tokens.css`).
+  Native therefore sends the insets of the full-screen layout in every message, so a
+  rotation while the keyboard is up gives the rows the collapsed layout has.
 - The web computes the tmux size from `collapsedHeight` and width only, and resizes
   tmux only on `initial`, `rotation` and font-size changes. A `keyboard` change never
-  resizes tmux: the terminal keeps its rows and pans so the cursor row sits above the
-  tab bar ([plan.md](plan.md#layout)). The columns come from `width` minus the left and
-  right safe area; the rows from `collapsedHeight` minus the tab bar and the suggestion
-  strip, at the current cell size (`web/term/size.ts`; the daemon clamps what it
-  receives, [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
-  **Open question:** whether `collapsedHeight` already excludes
-  the top and bottom safe area. The web subtracts only the left and right insets today,
-  so native and web must agree before the first device run
-  ([Open risks](#open-risks)).
+  resizes tmux. The columns come from `width` minus the left and right insets, each
+  side at least a 4 px edge inset (`--term-edge`) so text never touches the glass; the
+  rows from `collapsedHeight` minus the top and bottom insets, the tab bar and the
+  suggestion strip, at the current cell size (`web/term/size.ts`; the daemon clamps what
+  it receives, [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)). The
+  edge inset costs a column in a 393-wide portrait view (56 to 55 columns, measured in
+  the dev shim) and none in landscape, where the side insets are larger.
+- **The pan.** With the keyboard up the terminal area (above the tab bar and strip) is
+  shorter than the terminal's rows, and the terminal keeps its rows
+  ([plan.md](plan.md#layout)). The renderer (`web/term/xterm.ts`, `cursorPan`) slides
+  the terminal up just far enough that the bottom of the cursor row meets the bottom of
+  that area: never down, never past the last row, and not at all while every row fits.
+  The area's height and the cursor row decide it, so the web keeps no keyboard flag for
+  it, and it follows the cursor as well as the keyboard. The slide animates with the
+  keyboard's curve and duration when the area changes size (`--ease-keyboard`,
+  `--dur-keyboard`); a cursor move jumps, as text does.
 - `webView.scrollView`: `contentInsetAdjustmentBehavior = .never`, `bounces = false`,
   `keyboardDismissMode = .none`; zoom off in the viewport meta.
 
@@ -484,8 +502,9 @@ control). Then:
    the upload goes to that host, and its path to that tab.
 2. `ImageConverter` (ImageIO) re-encodes HEIC to JPEG at quality 0.9, longest side
    2048 px unless "Send original" is on.
-3. `Uploader` posts to the host's `/fs/upload` with the Bearer token, reporting
-   progress in `upload` messages.
+3. `Uploader` posts the bytes to the host's `/fs/upload?name=<file name>` with the
+   Bearer token ([fs.md](fs.md#post-fsupload)), one upload at a time, retrying a `503
+   busy` after its `Retry-After`, and reports progress in `upload` messages.
 4. On success, the `upload` message carries the absolute path. The web queues an
    insertion for `tab`: the path, shell-quoted, as `text` input, without Enter. It is
    applied at once if the tab's watch is bound, otherwise when that tab's next
@@ -568,10 +587,6 @@ WebSocket messages get the same treatment.
 - **WKWebView adjusting for a keyboard it doesn't own**, fighting the frame resize.
   Spike 1, both geometry variants.
 - **Bridge latency under load**: unmeasured on iOS 26. Spike 1.
-- **Vertical safe area in `viewport`** (open): whether `collapsedHeight` already
-  excludes the top and bottom insets. The web's sizer subtracts only the left and right
-  insets from the width and the tab bar and strip from the height, so a mismatch gives
-  wrong rows. Settle it when native's `KeyboardGeometry` is written.
 - **Token fetch replies** (open): the web code that asks native for a host's token must
   handle `{ locked }` and `{ notEnrolled }`; neither the waiting nor the pill states are
   specified. It also needs the app boot code that routes `lifecycle`, `network`,

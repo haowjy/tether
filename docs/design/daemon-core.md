@@ -106,13 +106,20 @@ src/tmux/
   parse.rs     pure: bytes -> lines (blocks, notifications, %output decoding)
   session.rs   pure: Session, the sans-IO control client
   command.rs   pure: command builders, quoting, key-name validation
+  reply.rs     pure: the formats asked of tmux, each beside the parser of its reply
   snapshot.rs  pure: state format, typed replies -> restore bytes
   layout.rs    pure: layout string -> pane sizes
   pump.rs      I/O: spawn `tmux -u -N -C`, bytes out, lines in
   oneshot.rs   I/O: one-shot `tmux -u -N` commands
+  fake.rs      test support: a fake tmux server for the hub's tests (§8)
 ```
 
 Everything but `pump.rs` and `oneshot.rs` is pure and tested from recorded fixtures.
+`command.rs` puts a format into a command and `reply.rs` parses what tmux prints for it,
+so each format and its parser change together; the snapshot's state format stays with
+its parser in `snapshot.rs`. `fake.rs` is not part of the bridge: it reads the command
+text `command.rs` writes, and the hub's tests use it (it is compiled in because the
+integration tests in `tests/` need it).
 
 ### 3.1 Invoking tmux
 
@@ -213,9 +220,12 @@ Its rules:
   when output is queued ([tmux-control-mode.md §6](research/tmux-control-mode.md)).
   A `Release` also invalidates the pane's outstanding snapshot attempts: none is
   re-sent (a list starts with `continue`, which would resume the pane just released),
-  and a reply that still arrives produces no event of any kind (no `Snapshot`, no
-  `Done`). The Release itself is the answer: Snapshot, Release, Snapshot of one pane
-  leaves the first unanswered even though the pane is wanted again.
+  and when such an attempt's group ends, whatever its replies (torn ones included), the
+  session answers `Done { tag, Err(Released) }`: no `Snapshot`, no retry. The Release
+  marks the attempts outstanding when it is requested: Snapshot, Release, Snapshot of
+  one pane answers the first `Released` even though the pane is wanted again, and the
+  second is a new request. So a snapshot's tag always gets an answer, in stream order,
+  and the hub needs no knowledge of what a Release invalidates (§4.4).
 - **Pause tracking is bounded by work in flight.** A pane counts as pausing only while
   a pause of it (the session's own or a Release) is in flight or waiting for a slot;
   tmux 3.4 sends nothing from a pane after its pause reply. Output that arrives later
@@ -276,6 +286,10 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
   server, found: Option<{ session, pane, size }> }`; an empty `session_id` is gone.
   For a window linked into several sessions it names one; run on a client attached
   to one of them, that one.
+- **Release unwants and pauses a pane, and answers the snapshots it outdates.** Its own
+  group is `refresh-client -A '%P:pause'` and answers `Reply::Ok`. Each snapshot attempt
+  of that pane still outstanding when it is requested is answered
+  `TmuxError::Released` once its group ends (§3.3), never retried.
 - **Input and paste target the window**: `-t @W` resolves to its active pane inside
   tmux, so keys can't race an active-pane change.
 - **Text goes as `-H` hex**: no quoting, any byte, never a key name. Named keys go by
@@ -563,6 +577,7 @@ pub enum Reply {
 }
 pub enum TmuxError {
     Command(String), PaneGone, Torn, TooLarge, BadRequest(&'static str), BadReply,
+    Released,   // a snapshot attempt a Release outdated (§3.3)
     NoServer, Timeout, Spawn(String),
 }
 pub struct Listing { server: ServerInstance, version: TmuxVersion, sessions: Vec<ListedSession> }
@@ -611,16 +626,19 @@ always the last message.
 src/hub/
   mod.rs        spawn, HubHandle, FromConn, ToConn, the limits (§6)
   state.rs      pure: State::handle(input, now) -> effects; the model, tmux events,
-                pane streams, credit and sending
+                pane streams
   owners.rs     pure: Locate answers, binding, control clients, exits, server instances
   requests.rs   pure: what connections ask (watch, input, paste, history, listings)
   reconcile.rs  pure: desired state -> ops, within capacity
+  credit.rs     pure: each connection's credit, its reservations, sending to it
+  time.rs       pure: what waits on time (next_deadline, timers)
+  names.rs      pure: spelling servers, windows and sessions for control JSON
   outbox.rs     pure: per-connection delivery queue
   run.rs        the hub task: inboxes, timer, executing effects
 ```
 
-`state.rs`, `owners.rs`, `requests.rs` and `reconcile.rs` are one `impl State` split by
-concern; `State` is one value.
+`state.rs`, `owners.rs`, `requests.rs`, `reconcile.rs`, `credit.rs`, `time.rs` and
+`names.rs` are one `impl State` split by concern; `State` is one value.
 
 ### 4.1 `State::handle`
 
@@ -683,23 +701,26 @@ State:
 
 ### 4.2 Windows, owners and Locate
 
-A window's phase is `Locating` (no owner yet), `Starting` (found in a session whose
-control client is starting or waiting out a crash delay), `Bound` (owner, session and
+A window's phase is `Locating { after, on }` (no owner yet), `Bound` (owner, session and
 pane known) or `Orphaned` (the control client it belonged to, or was to bind to, exited;
-waiting for the session check, §4.5). The hub holds a window only while a watch is on it
-(it is created by the first `watch` and dropped with the last), so only such a window can
-be located and reported closed.
+waiting for the session check, §4.5). In `Locating`, `on` is the control client the
+window was found to belong to, which may still be starting or waiting out a crash
+delay: the window is located on it and binds only from its answer (item 3). `after` is
+how the window's previous owner ended (§4.5), applied by the first answer that finds the
+window still in that owner's session. Both are set only while `Locating`, so a window
+that isn't locating has no `on` to clear. The hub holds a window only while a watch is on
+it (it is created by the first `watch` and dropped with the last), so only such a window
+can be located and reported closed.
 
 ```mermaid
 stateDiagram-v2
   [*] --> Locating: first watch
-  Locating --> Starting: found in a session whose client is not Ready
-  Starting --> Locating: that client is Ready
+  Locating --> Locating: answer names a session, wait on its client
   Locating --> Bound: the owner's own client answered the Locate
   Bound --> Bound: re-Locate names the same owner and pane
   Bound --> Locating: re-Locate names another session
   Bound --> Orphaned: its client exited
-  Starting --> Orphaned: its client exited
+  Locating --> Orphaned: the client it waits on exited
   Orphaned --> Locating: session check answered
   Locating --> [*]: gone, windowClosed
   Bound --> [*]: last watch left
@@ -719,15 +740,16 @@ stateDiagram-v2
    Otherwise the watch joins the window, or creates it `Locating`. It awaits a
    snapshot; a `Bound` window's new watch gets `watching` at once.
 2. **Locate** is one per window in flight; a trigger during it re-runs it afterwards.
-   A `Bound` window locates on its owner, and one about to bind on the control client
-   it will bind to; otherwise it runs on any `Ready` client of the endpoint with room,
-   else as a one-shot.
+   A `Bound` window locates on its owner, and a `Locating` one with an `on` on that
+   control client, once it is `Ready`; otherwise it runs on any `Ready` client of the
+   endpoint with room, else as a one-shot.
 3. **A window binds only from a Locate its future owner answered itself.** A control
    client's replies are ordered with its own notifications only, so after an owner's
    answer every later `ActivePane` or unlink reaches the hub behind it. An answer from
    another client or a one-shot may predate a change the owner already reported, so it
-   only names the session: the hub finds or spawns that session's client (the window
-   waits while it starts, `Starting`) and Locates again on it.
+   only names the session: the hub finds or spawns that session's client, the window
+   stays `Locating` with `on` set to it (it waits while the client starts), and Locates
+   again on it.
 4. **Result:**
    - another server instance, or no server: the window's server is gone (§4.5);
    - empty: broadcast `windowClosed`, drop the window, its watches and stream (no
@@ -737,7 +759,8 @@ stateDiagram-v2
      - *The owner's own answer binds.* If the owner and pane are those it already has,
        nothing changes: the window stays bound and live, with no new snapshot. If not,
        the stream breaks (§4.3) and needs a snapshot from the new owner or pane.
-     - *Any other answer* leaves `Locating` or `Starting` as in 3.
+     - *Any other answer* leaves the window `Locating` on that session's client, as in
+       3.
 
    Each watch whose last `watching` is out of date gets a new one.
 5. **A Locate or session check that fails** with anything but `NoServer` (tmux can't
@@ -748,7 +771,9 @@ stateDiagram-v2
    close notifications for moves too), the owner exiting, a snapshot failing because the
    pane is gone. A `Bound` window stays bound, and its stream live, while the Locate
    runs: an unlink in some other session of a linked window changes nothing until an
-   answer names another owner or pane.
+   answer names another owner or pane. For a window the hub doesn't hold, which no watch
+   is on, there is nothing to locate: a `WindowUnlinked` from the endpoint's reporter
+   (§4.5) asks for a relisting instead, and `sessionsChanged` is broadcast (§5.3).
 7. **Only the owner counts:** `Output`, `ActivePane`, `Layout` and `Cwd` are taken
    from the owner only. Other sessions' clients see a linked window's output too, but
    don't want the pane and pause it (§3.3); a former owner that still wants it gets
@@ -769,7 +794,7 @@ struct Stream {                 // one per window
     size: Size,
     inflight: Option<Inflight>, // the snapshot that can make it live
 }
-struct Inflight { tag: Tag, client: ClientId, reserved: Set<WatchKey> }
+struct Inflight { tag: Tag, reserved: Set<WatchKey> }
                                 // reserved: the watches whose credit it holds
 // per watch, on its connection: awaiting (gets the next snapshot, and no output),
 // starved (awaiting because its output didn't fit), last snapshot time, last `watching`
@@ -819,13 +844,14 @@ that control client exits, its unanswered Locates, session checks and snapshots 
 needed again, and the next `reconcile` sends them elsewhere. (A Locate or session
 check that is answered with a failure is not retried: §4.2.) Nothing is sent to a
 client before it is `Ready`. Releases, cleared votes and unsubscribes go
-first, then Locates, session checks, subscriptions, votes, snapshots. A `Release`
-invalidates that pane's snapshot attempts still outstanding on the client (§3.3), so
-the hub stops waiting for them: their reservations go back at once (§4.6), but each tag
-stays in the client's `pending` and keeps its capture slot until the Release is
-answered, when the tags are dropped. The same holds for any snapshot the hub abandons
-(a stream break, the window ending): its slot is held until tmux answers or the client
-ends. A `Paste` the hub refuses or drops (busy, unknown watch, connection gone) emits
+first, then Locates, session checks, subscriptions, votes, snapshots. A snapshot the hub
+stops waiting for (a stream break, the window ending, its last watch leaving) gives its
+reservations back at once (§4.6), but its tag stays in the client's `pending` and keeps
+its capture slot until tmux answers it or the client ends. A `Release` adds nothing for
+the hub to work out: `Session` answers the pane's outstanding attempts `Released`
+(§3.3), so those tags are answered like any other and their slots free then. (The hub
+sends a Release only once no bound window of the client shows the pane, and the break
+that left it has already returned the attempts' reservations.) A `Paste` the hub refuses or drops (busy, unknown watch, connection gone) emits
 `RemoveFile`.
 
 ### 4.5 Control clients
@@ -868,10 +894,18 @@ ends. A `Paste` the hub refuses or drops (busy, unknown watch, connection gone) 
     error or the reply timeout: the hub respawns it after 1 s, kept only if the
     server instance is unchanged; a second crash within 60 s ends the watches with
     `watchEnded { error }`.
-- **One reporter per endpoint.** Every control client receives `%window-renamed` and
-  `%sessions-changed`, so the hub turns them into `windowRenamed` and `sessionsChanged`
-  only from the endpoint's lowest-id `Ready` client; otherwise each would be broadcast
-  once per client.
+- **One reporter per endpoint.** Every control client receives `%window-renamed`,
+  `%sessions-changed` and the window close notifications, so the hub turns them into
+  `windowRenamed` and `sessionsChanged` only from the endpoint's lowest-id `Ready`
+  client; otherwise each would be broadcast once per client.
+- **`sessionsChanged` is coalesced per input.** It is sent for tmux's own
+  `%sessions-changed` (and `%session-renamed`), and for a close or unlink notification
+  about a window the hub doesn't hold (§4.2 item 6), both only from the reporter. Each
+  sets a flag that `handle` clears, broadcasting once, when it finishes the input. So
+  killing a session of four windows sends one `sessionsChanged`, not one per
+  notification (measured on tmux 3.4). A burst split across two reads of the pipe is
+  two inputs and sends two; the web debounces its relisting (§5.3). Closing a watched
+  window sends `windowClosed` and no `sessionsChanged` of its own.
 
 ### 4.6 Credit and the outbox
 
@@ -899,6 +933,16 @@ channel, in the outbox, and in the frame being written all count until then.
   this connection (the snapshot was superseded by a break, its client exited, the
   connection closed) is returned as soon as the hub stops waiting for it, which may
   be before tmux answers (§4.4).
+- **Reserved credit is a counter, checked in debug builds.** What a connection has
+  reserved is one number (`Conn.reserved`), moved by `reserve` and `unreserve` on every
+  path above, because the output path reads it for every chunk and deriving it there
+  means scanning the clients' pending work
+  ([decisions.md](decisions.md#reserved-credit-stays-a-counter-with-a-debug-check)).
+  Its invariant: it equals one capture reservation per watch a snapshot in flight
+  reserved for and per history capture in flight, plus the listing reservation while a
+  listing runs. Debug builds derive that sum and `debug_assert` it equals the counter
+  for every connection at the end of each `handle` (`check_reservations`, `credit.rs`),
+  so a path that forgets to return a reservation fails a hub test.
 - **Two watches on one connection snapshot one at a time under load.** Credit is
   2 MiB and a reservation 1 MiB, so two reservations fit together only while nothing
   else is outstanding to the connection. With output or an earlier snapshot in flight,
@@ -1089,7 +1133,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `paste` | `watch, text` | through `paste-buffer -p` |
 | `history` | `req, watch, start, end` | scrollback rows by tmux line number (negative is history) |
 | `listSessions` | `req: u32` | the session sheet |
-| `newWindow` | `req, session: SessionRef, name?, dir?` | tmux refuses a `session` from another server instance, a restarted server or an earlier run of the daemon, on a hub that has never seen the live instance too (§3.8): the hub broadcasts `serverExited` for that instance and answers `error { noServer }`; no window is created. `dir` is checked against the file roots by the connection. **TODO:** `src/fs/` doesn't exist yet, so until it does `dir` passes through unchecked (`src/http/.context/TODO`) |
+| `newWindow` | `req, session: SessionRef, name?, dir?` | tmux refuses a `session` from another server instance, a restarted server or an earlier run of the daemon, on a hub that has never seen the live instance too (§3.8): the hub broadcasts `serverExited` for that instance and answers `error { noServer }`; no window is created. The connection checks `dir` with `fs::check_dir` (absolute, an existing directory; not the file roots) and passes it as given; a refusal is `error { badRequest }` ([fs.md](fs.md#path-resolution-fsopen)). **TODO:** until `src/fs/` is built, `dir` passes through unchecked (`src/http/.context/TODO`) |
 | `newSession` | `req, name?, dir?, scratch?: bool` | `dir` as for `newWindow`, with the same TODO. `scratch` after the core MVP; until then `scratch: true` gets `error { badRequest }` |
 
 **Daemon → client**
@@ -1100,11 +1144,11 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `pong` | `t` | |
 | `watching` | `watch, window, session: SessionRef, pane, cwd: string \| null` | bound; re-sent when session, pane or cwd changes. `cwd` is null until tmux reports it |
 | `watchEnded` | `watch, reason: detached \| error, message?` | the only way a watch ends from the daemon's side, apart from closure broadcasts; retryable: a tap sends a new `watch` |
-| `windowClosed` | `window` | the window is gone: close its tabs. Sent only for a window that has a watch: the hub tracks a window only while one is on it (§4.2), so a tab that isn't on screen gets none, and the web prunes such tabs against `sessions` listings ([plan.md](plan.md#reconnect)) |
+| `windowClosed` | `window` | the window is gone: close its tabs. Sent only for a window that has a watch: the hub tracks a window only while one is on it (§4.2), so a tab that isn't on screen gets none. Its window's close reaches the web as `sessionsChanged` (below), and the web prunes such tabs against the `sessions` listing that prompts ([plan.md](plan.md#reconnect)) |
 | `sessionClosed` | `session` | the session is gone; tabs close only on `windowClosed`, since windows move |
 | `serverExited` | `server` | closes every tab on that server |
 | `windowRenamed` | `window, name` | |
-| `sessionsChanged` | | refetch the listing if the sheet is open |
+| `sessionsChanged` | | the listing changed: tmux reported a session created, closed or renamed, or a window nobody watches was closed or moved. At most one per input the hub handles, however many changes it brought (§4.5). The web refetches the listing, debounced, which also prunes its tabs ([plan.md](plan.md#reconnect)) |
 | `sessions` | `req, tmux: TmuxListing \| null` | `null` when no tmux server is running. `TmuxListing` is `{ server, version, sessions: [{ id, name, attachedElsewhere, windows: [{ id, index, name, active, activity }] }] }`; `activity` in unix seconds |
 | `historyChunk` | `req, watch, start, lines: [base64]` | `capture-pane -e` bytes per row, from `start`; may hold fewer rows than asked (§4.6), and the client asks again from where it ends |
 | `created` | `req, window, session` | |
@@ -1156,7 +1200,8 @@ hand-coded on each side with golden byte fixtures in `tests/fixtures/proto/`:
 
 ## 6. Limits and the memory ceiling
 
-Every daemon constant lives here; other documents link to this table.
+Every daemon constant lives here, except the file API's, which are in
+[fs.md](fs.md#constants); other documents link to this table.
 
 | Limit | Value | When hit |
 |---|---|---|
@@ -1208,13 +1253,15 @@ Every daemon constant lives here; other documents link to this table.
 | WebSocket writer's copy of the frame being written | 3 × 1 MiB | 3 |
 | inbound messages | 3 × (512 KiB + decoded copy) | 3 |
 | paste files on tmpfs | 4 slots × 256 KiB | 1 |
-| **ceiling** | | **~59** |
+| file API: a scan, raw responses, an upload | [fs.md](fs.md#limits-and-the-memory-ceiling) | 3 |
+| kernel socket buffers, charged to the unit | 2 × 128 KiB (`SO_SNDBUF`, `SO_RCVBUF`, [fs.md](fs.md#constants)) per socket with data queued: the 3 WebSockets, 2 raw responses, 1 upload, and a couple of JSON replies (the fs waiter cap keeps the rest idle) | 2 |
+| **ceiling** | | **~64** |
 
-That fits the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)) with little
-room, and carapace is a guess; the
-[budget measurement](plan.md#resource-budget) checks it. If it doesn't fit, lower the
-control-client cap first. The normal case, one control client and one watch, is about
-11 MB.
+That reaches the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)), with
+carapace a guess; the [budget measurement](plan.md#resource-budget) checks it, reading
+the unit's `memory.peak` (which counts kernel buffers and page cache), not RSS. If it
+doesn't fit, lower the control-client cap first. The normal case, one control client
+and one watch, is about 11 MB.
 
 ## 7. Failure handling
 
@@ -1225,7 +1272,7 @@ How each failure ends; §4.5 has the control-client details.
 | tmux server exits | pumps hit EOF; `LocateSession` finds no server | `serverExited`; `sessions` has `tmux: null` |
 | session killed | its client exits; `LocateSession` finds it gone | `sessionClosed`; windows re-locate |
 | watched window closed | close notification, then an empty Locate | `windowClosed` |
-| unwatched window closed | nothing: the hub doesn't track it | none; the web finds it in the next `sessions` listing |
+| unwatched window closed | a close notification from the endpoint's reporter for a window the hub doesn't hold | `sessionsChanged` (once per input); the web relists and prunes the tab |
 | `newWindow` for another server instance | the one-shot's `if-shell` guard (§3.8) | `serverExited` for that instance, `error { noServer }` |
 | window moved, even a session's last one | close notification or client exit, then Locate finds another session | new owner, snapshot, `watching` |
 | active pane exits | `ActivePane` | watches move to the new pane |
@@ -1254,7 +1301,8 @@ does and drives a real `Session` over its pipes; set-up the daemon never does (s
 hooks, moves) goes through one-shot `tmux` commands. Each scenario writes the raw
 stdout (`.out`), every request with the stdout offset it was made at (`.script`) and
 every line `Session` wrote (`.in`). Scenarios: startup; output from unwanted panes;
-a pause at the reply cap; the snapshot boundary under a numbered flood; snapshots of
+a pause at the reply cap; the snapshot boundary under a numbered flood; a snapshot
+released while outstanding, which must be answered `Released`; snapshots of
 an alternate screen, of styled text (SGR carried across rows, wide and combining
 characters, an OSC 8 link, custom tab stops, wrap off, hidden cursor), of a scroll
 region under origin mode, and of an alternate-screen TUI; a pane that is gone; hooks;
@@ -1288,10 +1336,20 @@ box, 3.7b on the Mac, both committed.
   behind it must match tmux.
 - **`hub::State` and `Outbox`** (`tests/hub_state.rs`, and a unit test in
   `outbox.rs`): scripted inputs → effects, against a fake tmux that answers the lines
-  the hub writes. A watch joining a live stream; output past the credit starving one
+  the hub writes. The fake is built on `tmux/fake.rs`, which splits a line into its
+  commands the way tmux's parser does (quotes and escapes removed), decodes
+  `display-message` (target and format) and `capture-pane`, expands `#{name}` formats,
+  and frames replies (`%begin`/`%end`/`%error`, numbered, none after an error). The
+  test's fake keeps a model of tmux and answers any format from a lookup of tmux
+  variables, so no test spells a state row by hand. Assertions name the ops the hub
+  sent through `command::op`, never tmux command text, so a change in how a command is
+  spelled (quoting a target, say) breaks `command.rs`'s fixture replays and nothing in
+  the hub tests. A watch joining a live stream; output past the credit starving one
   watch, waiting snapshots ahead of output, and snapshot spacing; history and listings
   refused for credit, and a chunk cut to its reservation; every reservation returned
-  when the hub stops waiting for its tag, and every charge returned exactly once (the
+  when the hub stops waiting for its tag (every test also checks the reservation
+  counter against the work in flight after each input, in debug builds, §4.6), and
+  every charge returned exactly once (the
   outbox test covers coalescing, a snapshot replacing queued frames, and the credit
   returned); an active-pane change or a resize during a snapshot; a move to another
   session; a linked window watched from two sessions; binding only from the owner's

@@ -17,6 +17,7 @@ that gate it ([Spikes](#spikes)), and log decisions in decisions.md.
 | [daemon-core.md](daemon-core.md) | `src/tmux/`, `src/hub/`, `src/proto/`: control mode, snapshots, pane streams, the WebSocket protocol, and every daemon limit |
 | [ios-shell.md](ios-shell.md) | The native iOS app: keyboard, focus, bridge, scheme handler, lifecycle, media |
 | [auth.md](auth.md) | Device tokens, enrolment, the Face ID lock, the auth routes |
+| [fs.md](fs.md) | `src/fs/`: roots, path resolution, the `/fs/*` routes, uploads, their limits |
 | [spike-1-keyboard.md](spike-1-keyboard.md) | The keyboard spike Jimmy runs on the phone |
 | [decisions.md](decisions.md) | The decision log: what, why, alternatives rejected, who, when |
 | [plan-review.md](plan-review.md) | The first review of this plan, kept as a record |
@@ -102,7 +103,7 @@ Inside the daemon ([layout](#code-structure-and-standards)):
   pane streams, scrollback (`history`), the WebSocket protocol.
 - **completion** (`/complete`): history, PATH, carapace, paths; lazy
   ([Suggestion strip](#suggestion-strip)).
-- **file API** (`/fs/*`): rooted, range-capable, uploads ([File manager](#file-manager)).
+- **file API** (`/fs/*`): rooted, range-capable, uploads ([fs.md](fs.md)).
 - **auth**: the Tailscale check and device tokens on every route ([auth.md](auth.md)).
 
 **tether never starts Jimmy's tmux server.** A tmux server first started from inside a
@@ -161,10 +162,12 @@ watched.
   so a window killed under another tab would leave that tab open. The web therefore
   asks each host for a `sessions` listing on every connect and prunes against it, and
   prunes against every later listing too (the sheet opening, a pull to refresh, the
-  `sessionsChanged` refetch). A tab goes when no window in the listing has its
-  `WindowRef` (instance and id): another `server` instance counts as gone, and a listing
-  of `tmux: null` has no windows, so it closes the host's tabs as `serverExited`
-  would. The listing covers the `main` tmux server only, so it never prunes scratch
+  `sessionsChanged` refetch, debounced). The daemon sends `sessionsChanged` when tmux
+  closes or moves a window nobody watches, so a kill under an off-screen tab is pruned
+  within moments instead of at the next listing. A tab goes when no window in the
+  listing has its `WindowRef` (instance and id): another `server` instance counts as
+  gone, and a listing of `tmux: null` has no windows, so it closes the host's tabs as
+  `serverExited` would. The listing covers the `main` tmux server only, so it never prunes scratch
   tabs (after the core MVP). A refused or failed listing prunes nothing.
 
 ### Stack
@@ -202,7 +205,7 @@ and the note on `TMUX_TMPDIR` under systemd, are in [running.md](../running.md).
 | `[tmux] program` | `tmux` | the tmux executable; an absolute path if the unit's `PATH` doesn't find it |
 | `[tmux] socket_name` | none | `tmux -L <name>` |
 | `[tmux] socket_path` | none | `tmux -S <path>`; not together with `socket_name` |
-| `roots`, `uploads_dir` | none, `~/tether-uploads` | project roots and the uploads folder ([File manager](#file-manager)); read once `src/fs/` exists |
+| `roots`, `uploads_dir` | none, `~/tether-uploads` | project roots and the uploads folder; read on every file request, written by the Settings sheet ([fs.md](fs.md#roots)) |
 
 With neither socket key, tether uses tmux's default socket.
 
@@ -502,40 +505,24 @@ width.
 
 Opened from `[⊞]` or `[<]`, as a sheet over the terminal; the keyboard stays put.
 
-**Roots.**
+**Roots.** Project roots are chosen in the app: a Settings sheet browses from `$HOME`
+one directory at a time and adds or removes them, and sets the uploads folder
+(`uploads_dir`, default `~/tether-uploads`), which is browsable like a root. Both are
+saved in `~/.config/tether/config.toml`. A tab opens the file manager at its cwd (from
+`watching`) if that's inside a root, otherwise at the root picker. No file watcher:
+listings are read on open, on pull-to-refresh, and after tether's own file operations.
 
-- Chosen in the app: a Settings sheet browses from `$HOME` one directory at a time and
-  adds or removes project roots, saved in `~/.config/tether/config.toml`
-  (`roots = [...]`).
-- The uploads folder `uploads_dir` defaults to `~/tether-uploads`, is set in the same
-  sheet, and is browsable like a root.
-- Config writes are atomic (temp file, then rename); unknown keys are ignored.
-- A tab opens the file manager at its cwd (from `watching`) if that's inside a root,
-  otherwise at the root picker.
-- No file watcher: listings are read on open, on pull-to-refresh, and after tether's
-  own file operations.
-- `src/fs/` is the only place paths are resolved: `canonicalize` (resolving symlinks),
-  then a check against the roots.
-
-**API.** Every route sits behind the auth middleware. The daemon's routes carry no
-host; the web reaches them through its host's scheme-handler origin,
-`tether-app://h-{host}/fs/…` ([ios-shell.md](ios-shell.md#where-the-web-ui-comes-from)).
-
-| Route | Phase | Notes |
-|---|---|---|
-| `GET /fs/list` | MVP | paged |
-| `GET /fs/raw` | MVP | single Range, ETag, correct MIME type; how video streams to the native player |
-| `POST /fs/upload` | MVP: single file streamed to disk; v2: chunked, resumable, multi-file | size cap |
-| `PUT /fs/file` | v2 | save an edit: the body is the new content, `If-Match` the ETag it was opened at; `412` if the file changed |
-| `POST /fs/create` | v2 | new empty file; fails if the path exists (`O_EXCL`) |
-| `POST /fs/rename` | v2 | new name in the same directory; fails if the target exists (`renameat2 RENAME_NOREPLACE` on Linux, `renamex_np RENAME_EXCL` on macOS) |
+**API.** The routes, path resolution, roots management, limits and errors are in
+[fs.md](fs.md). The web reaches them through its host's scheme-handler origin,
+`tether-app://h-{host}/fs/…` ([ios-shell.md](ios-shell.md#where-the-web-ui-comes-from));
+video goes to the native player instead. MVP: list, raw (Range) and upload. v2: save
+an edit, new file, rename.
 
 **Editing (v2).** With no file watcher, the conflict check is the ETag taken at open:
 a save whose `If-Match` no longer matches is refused, and the editor offers reload or
-overwrite. Saves are atomic (temp file in the same directory, `fsync`, rename) and
-keep the file's mode. Only UTF-8 text under a size cap opens in the editor
-(CodeMirror 6, loaded on demand). It borrows the keyboard from the terminal input while
-open ([ios-shell.md](ios-shell.md#focus-one-controller-native)).
+overwrite. Creates and renames never replace a file. Only UTF-8 text under a size cap
+opens in the editor (CodeMirror 6, loaded on demand). It borrows the keyboard from the
+terminal input while open ([ios-shell.md](ios-shell.md#focus-one-controller-native)).
 
 **Photo → terminal (MVP),** native ([ios-shell.md](ios-shell.md#files-and-sharing)):
 pick, take or paste a photo (`^V img`, or the file manager's upload button); HEIC is
@@ -599,7 +586,8 @@ file contents. File writes are logged by path and action.
 
 **File safety:** a roots allowlist with canonicalized paths, checked for every write's
 target as well as every read; creates and renames never replace a file; size caps on
-upload and edit; nothing in the uploads folder is ever executed by tether.
+upload and edit; nothing in the uploads folder is ever executed by tether
+([fs.md](fs.md#path-resolution-fsopen)).
 
 ## Long-term
 

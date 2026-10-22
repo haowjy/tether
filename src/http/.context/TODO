@@ -1,3 +1,3 @@
-- `newWindow` and `newSession` pass `dir` to the hub unchecked. daemon-core.md §5.3
-  has the connection check it against the file roots first; that waits for `src/fs/`,
-  the only place paths are resolved against the roots (plan.md "File manager").
+- `newWindow` and `newSession` pass `dir` to the hub unchecked. The connection should
+  call `fs::check_dir` first (absolute, an existing directory; not the file roots), as
+  docs/design/fs.md "Path resolution" says; that waits for `src/fs/`.
