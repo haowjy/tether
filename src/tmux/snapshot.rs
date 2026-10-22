@@ -1,5 +1,7 @@
-//! The snapshot list's replies, typed (daemon-core.md §3.5). Turning them into
-//! restore bytes (`compose`) is the composer's job and lives here too.
+//! The snapshot list's replies, typed, and the restore bytes composed from them
+//! (daemon-core.md §3.5).
+
+use std::io::Write as _;
 
 use bytes::Bytes;
 
@@ -53,6 +55,97 @@ pub struct PaneSnapshot {
     pub pending: Bytes,
     /// The saved primary grid while `alternate_on` (`-a`); meaningless otherwise.
     pub saved: Vec<Bytes>,
+}
+
+/// Restore bytes: written to a freshly reset terminal of the snapshot's size, they
+/// rebuild the pane's screens, cursor, modes, scroll region and tab stops, then leave
+/// the parser where tmux's was, so the live output after the snapshot's boundary
+/// continues from here. A fresh terminal has every mode off, so only what is on is
+/// switched on.
+///
+/// What tmux 3.4 doesn't report is not restored: the current SGR pen, a pending wrap
+/// (a cursor past the last column is clamped), the cursor shape, character sets,
+/// bracketed paste, focus reporting and the title.
+pub fn compose(snapshot: &PaneSnapshot) -> Bytes {
+    let state = &snapshot.state;
+    let (cols, rows) = (u32::from(state.size.cols), u32::from(state.size.rows));
+    let (last_col, last_row) = (cols.saturating_sub(1), rows.saturating_sub(1));
+    let mut out = Vec::new();
+
+    // A too-wide line (the saved primary grid keeps its old size while the alternate
+    // screen is on, and Unicode widths drift) must not wrap and scroll the screen.
+    out.extend_from_slice(b"\x1b[?7l");
+    if state.alternate_on {
+        paint(&mut out, &snapshot.saved, rows);
+        // `?1049h` saves the pen with the cursor, and the primary's pen is unknown.
+        out.extend_from_slice(b"\x1b[0m");
+        // `u32::MAX` after `?47h` or `?1047h`, which save no cursor: a corner.
+        cup(
+            &mut out,
+            state.alternate_saved_y.min(last_row),
+            state.alternate_saved_x.min(last_col),
+        );
+        out.extend_from_slice(b"\x1b[?1049h");
+    }
+    paint(&mut out, &snapshot.active, rows);
+    out.extend_from_slice(b"\x1b[0m");
+
+    out.extend_from_slice(b"\x1b[3g");
+    for tab in state.pane_tabs.iter().filter(|tab| **tab < cols) {
+        cup(&mut out, 0, *tab); // `ESC H` sets a stop at the cursor's column
+        out.extend_from_slice(b"\x1bH");
+    }
+    let region = (state.scroll_region_upper, state.scroll_region_lower);
+    let (top, bottom) = if region.0 < region.1 && region.1 < rows {
+        region
+    } else {
+        (0, last_row)
+    };
+    if (top, bottom) != (0, last_row) {
+        write!(out, "\x1b[{};{}r", top + 1, bottom + 1).expect("write to a Vec");
+    }
+    let mut cursor_y = state.cursor_y.min(last_row);
+    if state.origin_flag {
+        out.extend_from_slice(b"\x1b[?6h");
+        // Rows count from the region's top; a cursor outside it can't be addressed.
+        cursor_y = cursor_y.clamp(top, bottom) - top;
+    }
+
+    let modes: [(bool, &[u8]); 9] = [
+        (state.wrap_flag, b"\x1b[?7h"),
+        (state.keypad_cursor_flag, b"\x1b[?1h"),
+        (state.keypad_flag, b"\x1b="),
+        (state.insert_flag, b"\x1b[4h"),
+        (state.mouse_standard_flag, b"\x1b[?1000h"),
+        (state.mouse_button_flag, b"\x1b[?1002h"),
+        (state.mouse_all_flag, b"\x1b[?1003h"),
+        // xterm.js keeps one encoding, the last set, and tmux prefers SGR to UTF-8.
+        (state.mouse_utf8_flag, b"\x1b[?1005h"),
+        (state.mouse_sgr_flag, b"\x1b[?1006h"),
+    ];
+    for (_, sequence) in modes.iter().filter(|(on, _)| *on) {
+        out.extend_from_slice(sequence);
+    }
+    cup(&mut out, cursor_y, state.cursor_x.min(last_col));
+    if !state.cursor_flag {
+        out.extend_from_slice(b"\x1b[?25l");
+    }
+    out.extend_from_slice(&snapshot.pending);
+    Bytes::from(out)
+}
+
+/// Each captured row at its line. `-e` carries the SGR state from row to row, so
+/// nothing resets between them; an empty row has nothing to draw.
+fn paint(out: &mut Vec<u8>, captured: &[Bytes], rows: u32) {
+    for (line, row) in (0..rows).zip(captured).filter(|(_, row)| !row.is_empty()) {
+        cup(out, line, 0);
+        out.extend_from_slice(row);
+    }
+}
+
+/// CUP to a zero-based row and column.
+fn cup(out: &mut Vec<u8>, row: u32, col: u32) {
+    write!(out, "\x1b[{};{}H", row + 1, col + 1).expect("write to a Vec");
 }
 
 /// A reply body, one entry per line, without line ends.
@@ -123,4 +216,170 @@ fn parse_state(line: &[u8]) -> Option<PaneState> {
         },
     };
     next().is_none().then_some(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use vt100::{MouseProtocolEncoding as Encoding, MouseProtocolMode as Mouse};
+
+    use super::*;
+    use crate::tmux::parse::{Line, Parser};
+
+    /// The snapshot lists in a recorded stream, as tmux answered them.
+    fn recorded(name: &str) -> Vec<PaneSnapshot> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tmux/3.4")
+            .join(format!("{name}.out"));
+        let mut lines = Vec::new();
+        Parser::default().push(&std::fs::read(path).expect("read fixture"), &mut lines);
+        let mut replies: Vec<Rows> = Vec::new();
+        let mut ours = false;
+        for line in lines {
+            match line {
+                Line::Begin { flag } => {
+                    ours = flag == 1;
+                    if ours {
+                        replies.push(Rows::new());
+                    }
+                }
+                Line::Body(row) if ours => replies.last_mut().expect("open reply").push(row),
+                _ => {}
+            }
+        }
+        replies
+            .windows(5)
+            .filter(|list| {
+                list[1]
+                    .first()
+                    .is_some_and(|row| parse_state(row).is_some())
+            })
+            .map(|list| from_replies(list.to_vec()).expect("a snapshot list"))
+            .collect()
+    }
+
+    fn blank(size: Size) -> vt100::Parser {
+        let nonzero = |n| std::num::NonZeroU16::new(n).expect("a pane has size");
+        vt100::Parser::new(nonzero(size.rows), nonzero(size.cols), 0)
+    }
+
+    fn rows_of(term: &vt100::Parser, size: Size) -> Vec<String> {
+        term.screen().rows_formatted(0, size.cols).collect()
+    }
+
+    /// What tmux's capture shows: its rows drawn on a clean screen.
+    fn drawn(rows: &[Bytes], size: Size) -> vt100::Parser {
+        let mut term = blank(size);
+        term.process(&rows.join(&b"\r\n"[..]));
+        term
+    }
+
+    /// Restore bytes rebuild what tmux reported about the pane, on the screen in use
+    /// and, through `?1049l`, on the primary screen behind an alternate one.
+    #[test]
+    fn restore_bytes_rebuild_the_screens_cursor_and_modes_tmux_reported() {
+        let mut checked = 0;
+        for name in [
+            "snapshot-alternate",
+            "snapshot-styled",
+            "snapshot-region",
+            "snapshot-tui",
+        ] {
+            for snapshot in recorded(name) {
+                let (state, size) = (&snapshot.state, snapshot.state.size);
+                let mut term = blank(size);
+                term.process(&compose(&snapshot));
+                let screen = term.screen();
+                let label = format!("{name} cursor {},{}", state.cursor_x, state.cursor_y);
+
+                assert_eq!(
+                    rows_of(&term, size),
+                    rows_of(&drawn(&snapshot.active, size), size),
+                    "{label}: screen"
+                );
+                assert_eq!(
+                    screen.cursor_position(),
+                    (state.cursor_y as u16, state.cursor_x as u16),
+                    "{label}: cursor"
+                );
+                assert_eq!(screen.hide_cursor(), !state.cursor_flag, "{label}");
+                assert_eq!(screen.alternate_screen(), state.alternate_on, "{label}");
+                assert_eq!(
+                    screen.application_cursor(),
+                    state.keypad_cursor_flag,
+                    "{label}"
+                );
+                assert_eq!(screen.application_keypad(), state.keypad_flag, "{label}");
+                let mouse = match (
+                    state.mouse_all_flag,
+                    state.mouse_button_flag,
+                    state.mouse_standard_flag,
+                ) {
+                    (true, _, _) => Mouse::AnyMotion,
+                    (_, true, _) => Mouse::ButtonMotion,
+                    (_, _, true) => Mouse::PressRelease,
+                    _ => Mouse::None,
+                };
+                assert_eq!(screen.mouse_protocol_mode(), mouse, "{label}");
+                let encoding = match (state.mouse_sgr_flag, state.mouse_utf8_flag) {
+                    (true, _) => Encoding::Sgr,
+                    (_, true) => Encoding::Utf8,
+                    _ => Encoding::Default,
+                };
+                assert_eq!(screen.mouse_protocol_encoding(), encoding, "{label}");
+
+                if state.alternate_on {
+                    term.process(b"\x1b[?1049l");
+                    let behind = (
+                        state.alternate_saved_y as u16,
+                        state.alternate_saved_x as u16,
+                    );
+                    assert_eq!(
+                        rows_of(&term, size),
+                        rows_of(&drawn(&snapshot.saved, size), size),
+                        "{label}: primary"
+                    );
+                    assert_eq!(
+                        term.screen().cursor_position(),
+                        behind,
+                        "{label}: primary cursor"
+                    );
+                }
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 6);
+    }
+
+    /// The oracle has no insert mode, wrap flag or tab stops: check their bytes.
+    #[test]
+    fn insert_wrap_and_tab_stops_reach_the_restore_bytes() {
+        let restore = |state: &str| {
+            let state = parse_state(state.as_bytes()).expect("a state line");
+            compose(&PaneSnapshot {
+                state,
+                active: vec![],
+                pending: Bytes::new(),
+                saved: vec![],
+            })
+        };
+        let has = |restore: &Bytes, sequence: &str| {
+            restore
+                .windows(sequence.len())
+                .any(|window| window == sequence.as_bytes())
+        };
+        let plain = restore(
+            "%0\t80\t24\t0\t4294967295\t4294967295\t0\t0\t1\t0\t0\t0\t0\t0\t0\t23\t0\t0\t0\t0\t0\t8,16",
+        );
+        assert!(!has(&plain, "\x1b[4h") && !has(&plain, "\x1b[?7h"));
+        assert!(has(&plain, "\x1b[3g\x1b[1;9H\x1bH\x1b[1;17H\x1bH"));
+
+        let busy = restore(
+            "%0\t80\t24\t0\t4294967295\t4294967295\t0\t0\t1\t1\t0\t0\t1\t0\t0\t23\t0\t0\t0\t0\t0\t4",
+        );
+        assert!(has(&busy, "\x1b[4h") && has(&busy, "\x1b[?7h"));
+        assert!(has(&busy, "\x1b[3g\x1b[1;5H\x1bH"), "only the custom stop");
+        assert!(!has(&busy, "\x1b[1;9H"));
+    }
 }

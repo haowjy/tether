@@ -9,6 +9,12 @@ version section on release.
   reply matching with the in-flight cap, pausing panes nobody watches, snapshots with
   torn-list retries, gaps, layouts, cwd subscriptions, and typed commands for locate,
   votes, history, input and paste. Tested against recorded tmux 3.4 streams.
+- Added the snapshot restore-byte composer (`tmux::snapshot::compose`): bytes that
+  rebuild a pane's screen (primary and alternate), cursor, modes, scroll region and
+  tab stops in a freshly reset terminal, so clients carry no restore logic.
+  `Event::Snapshot` now carries the pane size and these bytes. Checked against
+  `vt100` and tmux's own capture on recorded styled, scroll-region and
+  alternate-screen panes.
 
 ## [0.0.1] - 2026-10-22
 

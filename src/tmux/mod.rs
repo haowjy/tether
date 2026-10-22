@@ -14,7 +14,6 @@ pub mod session;
 pub mod snapshot;
 
 pub use session::{MAX_IN_FLIGHT, Session, Step};
-pub use snapshot::{PaneSnapshot, PaneState};
 
 macro_rules! tmux_id {
     ($(#[$doc:meta])* $name:ident, $sigil:literal) => {
@@ -224,11 +223,13 @@ pub enum Event {
         pane: PaneId,
         bytes: Bytes,
     },
-    /// A snapshot, at its boundary: output before this event is inside it.
+    /// A snapshot, at its boundary: output before this event is inside `restore`, which
+    /// rebuilds the pane in a reset terminal of `size`.
     Snapshot {
         tag: Tag,
         pane: PaneId,
-        snapshot: PaneSnapshot,
+        size: Size,
+        restore: Bytes,
     },
     Done {
         tag: Tag,

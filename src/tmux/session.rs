@@ -435,7 +435,8 @@ impl Session {
                         return step.events.push(Event::Snapshot {
                             tag,
                             pane,
-                            snapshot,
+                            size: snapshot.state.size,
+                            restore: snapshot::compose(&snapshot),
                         });
                     }
                     Err(error) => Err(error),

@@ -45,6 +45,9 @@ const SCENARIOS: &[(&str, Scenario)] = &[
     ("pause-at-cap", pause_at_cap),
     ("snapshot-boundary", snapshot_boundary),
     ("snapshot-alternate", snapshot_alternate),
+    ("snapshot-styled", snapshot_styled),
+    ("snapshot-region", snapshot_region),
+    ("snapshot-tui", snapshot_tui),
     ("snapshot-gone", snapshot_gone),
     ("hooks", hooks),
     ("gap", gap),
@@ -182,6 +185,22 @@ impl Server {
         self.run(&["send-keys", "-t", pane, "-l", line])?;
         self.run(&["send-keys", "-t", pane, "Enter"])?;
         Ok(())
+    }
+
+    /// Runs `body` as a shell script in a pane; the file goes when the guard drops.
+    fn start_script(&self, pane: &str, body: &str) -> Result<TempScript> {
+        let path = env::temp_dir().join(format!("{}.sh", self.socket));
+        fs::write(&path, body)?;
+        self.type_line(pane, &format!("sh {}", path.display()))?;
+        Ok(TempScript(path))
+    }
+}
+
+struct TempScript(PathBuf);
+
+impl Drop for TempScript {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -488,6 +507,87 @@ fn snapshot_alternate(r: &mut Recorder) -> Result<()> {
     expect_ok(r.run(Op::Release { pane: PaneId(0) })?)?;
     r.server.run(&["send-keys", "-t", "%0", "C-c"])?;
     r.settle()
+}
+
+/// SGR styles (one carried from a row to the next), bg-filled and full-width rows, wide and combining characters, a link,
+/// custom tab stops, wrap off, a hidden cursor and bracketed paste (not in the state).
+const STYLED: &str = r#"stty -echo
+printf '\033[2J\033[H'
+printf '\033[1;31mbold red\033[0m plain \033[4;38;5;33munderline 256\033[0m \033[7mreverse\033[0m\n'
+printf '\033[38;2;10;200;30mtruecolor\033[48;2;40;40;90m bg\033[0m \033[2mdim\033[0m\n'
+printf '\033[44m\033[Kblue bar to the end of the line\r\nand the pen carries to the next row\033[K\033[0m\n'
+printf 'wide: \346\274\242\345\255\227\343\201\213\343\201\252 \360\237\230\200 e\314\201 end\n'
+printf '0123456789012345678901234567890123456789012345678901234567890123456789012345678\033[31m9\033[0m\n'
+printf '\033[3mitalic \033[9mstrike\033[0m \033]8;;http://x.example\033\\link\033]8;;\033\\ done\n'
+printf '\033[3g\033[5G\033H\033[11G\033H'
+printf '\033[?7l\033[?25l\033[?2004h\033[7;10H'
+sleep 30
+"#;
+
+/// Origin mode inside a scroll region, any-motion mouse tracking, then output that
+/// scrolls the region.
+const REGION: &str = r#"stty -echo
+printf '\033[2J\033[H'
+i=1; while [ $i -le 23 ]; do printf 'line %02d\r\n' $i; i=$((i+1)); done; printf 'line 24'
+printf '\033[5;15r\033[?6h\033[?1003h\033[?1006h'
+printf '\033[3;7H\033[1mregion 3;7\033[0m\033[4;1H'
+read a
+printf '\033[1;1H\033[32mrelative top\033[0m\033[11;1Hbottom\r\nscrolled\r\n'
+printf '\033[38;5;208mtwo\033[0m\r\nlines'
+printf '\033[2;4HPART2-DONE'
+read a
+"#;
+
+/// A full-screen program on the alternate screen over a primary with content: header
+/// and status rows, a scrolling body region, hidden cursor, application keys, button
+/// mouse tracking.
+const TUI: &str = r#"stty -echo
+printf '\033[2J\033[Hprimary one\nprimary two \033[32mgreen\033[0m\n$ '
+printf '\033[?1049h\033[H\033[2J'
+printf '\033[1;7m tui header \033[K\033[0m'
+printf '\033[24;1H\033[44;37m status \033[K\033[0m'
+printf '\033[2;23r\033[2;1H'
+i=1; while [ $i -le 30 ]; do printf 'row %02d \033[3%dmcolor\033[0m\r\n' $i $((i%7+1)); i=$((i+1)); done
+printf '\033[?1h\033=\033[?1002h\033[?1006h\033[?25l\033[10;5H'
+read a
+printf '\033[23;1H\r\nmore\r\nbody lines\033[24;1H\033[44;37m status 2 PART2-DONE\033[K\033[0m\033[10;5H*'
+read a
+printf '\033[?1049l\033[?1l\033>\033[?1002l\033[?1006l\033[?25h\033[r'
+"#;
+
+/// One snapshot of `STYLED`.
+fn snapshot_styled(r: &mut Recorder) -> Result<()> {
+    let _script = r.server.start_script("%0", STYLED)?;
+    thread::sleep(Duration::from_millis(300));
+    r.settle()?;
+    r.run(Op::Snapshot { pane: PaneId(0) })?;
+    expect_ok(r.run(Op::Release { pane: PaneId(0) })?)?;
+    r.server.run(&["send-keys", "-t", "%0", "C-c"])?;
+    r.settle()
+}
+
+/// A script stopped at its `read`s: a snapshot at each, with the output of the part in
+/// between live. Enter releases a `read`.
+fn two_part_script(r: &mut Recorder, script: &str) -> Result<()> {
+    let _script = r.server.start_script("%0", script)?;
+    thread::sleep(Duration::from_millis(300));
+    r.settle()?;
+    r.run(Op::Snapshot { pane: PaneId(0) })?;
+    r.settle()?;
+    r.server.run(&["send-keys", "-t", "%0", "Enter"])?;
+    r.wait_for_output(b"PART2-DONE")?;
+    r.settle()?;
+    r.run(Op::Snapshot { pane: PaneId(0) })?;
+    r.server.run(&["send-keys", "-t", "%0", "Enter"])?;
+    r.settle()
+}
+
+fn snapshot_region(r: &mut Recorder) -> Result<()> {
+    two_part_script(r, REGION)
+}
+
+fn snapshot_tui(r: &mut Recorder) -> Result<()> {
+    two_part_script(r, TUI)
 }
 
 /// A snapshot of a pane that is gone fails mid-list; history of one fails at once.

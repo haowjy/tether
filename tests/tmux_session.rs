@@ -196,37 +196,79 @@ fn a_pause_beyond_the_in_flight_cap_waits_for_a_reply() {
     assert_eq!(locations, MAX_IN_FLIGHT);
 }
 
+/// The restore bytes of the snapshot events in `replay`, and the pane output between
+/// each event and the next.
+fn restores_with_output(replay: &Replay) -> Vec<(Size, &Bytes, Vec<u8>)> {
+    let mut found: Vec<(Size, &Bytes, Vec<u8>)> = Vec::new();
+    for event in &replay.events {
+        match event {
+            Event::Snapshot { size, restore, .. } => found.push((*size, restore, Vec::new())),
+            Event::Output { bytes, .. } => {
+                if let Some((_, _, after)) = found.last_mut() {
+                    after.extend_from_slice(bytes);
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+fn terminal(size: Size) -> vt100::Parser {
+    let nonzero = |n| std::num::NonZeroU16::new(n).expect("a pane has size");
+    vt100::Parser::new(nonzero(size.rows), nonzero(size.cols), 0)
+}
+
+/// What a terminal shows and how it reacts to input: each cell's text and style, the
+/// cursor, and the modes that change what a client sends. A blank is a blank whether
+/// tmux drew it as a space or left it empty, and tmux clears a cell to its background
+/// only, so a blank's foreground doesn't count.
+fn look(term: &vt100::Parser, size: Size) -> impl PartialEq + std::fmt::Debug {
+    let screen = term.screen();
+    let cells = (0..size.rows)
+        .flat_map(|row| (0..size.cols).map(move |col| (row, col)))
+        .map(|(row, col)| {
+            let cell = screen.cell(row, col).expect("cell in bounds");
+            let (text, fg) = match cell.contents() {
+                "" | " " => (" ", vt100::Color::Default),
+                text => (text, cell.fgcolor()),
+            };
+            let style = [
+                cell.bold(),
+                cell.dim(),
+                cell.italic(),
+                cell.underline(),
+                cell.inverse(),
+            ];
+            (text.to_owned(), fg, cell.bgcolor(), style)
+        })
+        .collect::<Vec<_>>();
+    (
+        cells,
+        screen.cursor_position(),
+        (screen.hide_cursor(), screen.alternate_screen()),
+        (screen.application_cursor(), screen.application_keypad()),
+        (
+            screen.mouse_protocol_mode(),
+            screen.mouse_protocol_encoding(),
+        ),
+    )
+}
+
 /// Output before the `Snapshot` event is inside it, output after is not: the numbered
-/// lines continue from the capture's last row without a gap or a repeat.
+/// lines continue from the restored screen's last row without a gap or a repeat.
 #[test]
 fn a_snapshot_sits_at_its_boundary_in_the_output_stream() {
     let replay = whole("snapshot-boundary");
-    let (index, snapshot) = replay
-        .events
-        .iter()
-        .enumerate()
-        .filter_map(|(index, event)| match event {
-            Event::Snapshot {
-                tag: Tag(2),
-                snapshot,
-                ..
-            } => Some((index, snapshot)),
-            _ => None,
-        })
-        .next()
-        .expect("second snapshot");
-    let mut after = Vec::new();
-    for event in &replay.events[index + 1..] {
-        if let Event::Output { bytes, .. } = event {
-            after.extend_from_slice(bytes);
-        }
-    }
-    let rows = snapshot
-        .active
-        .iter()
-        .map(|row| String::from_utf8_lossy(row).trim_end().to_owned())
+    let (size, restore, after) = &restores_with_output(&replay)[1];
+    let mut restored = terminal(*size);
+    restored.process(restore);
+    let rows = restored
+        .screen()
+        .rows(0, size.cols)
+        .map(|row| row.trim_end().to_owned())
         .collect::<Vec<_>>();
-    let cursor_row = snapshot.state.cursor_y as usize;
+    let cursor_row = usize::from(restored.screen().cursor_position().0);
     let mut text = String::new();
     for row in &rows[..cursor_row] {
         text.push_str(row);
@@ -234,7 +276,7 @@ fn a_snapshot_sits_at_its_boundary_in_the_output_stream() {
     }
     // The cursor row may hold a line the pane was half-way through printing.
     text.push_str(&rows[cursor_row]);
-    text.push_str(&String::from_utf8_lossy(&after).replace("\r\n", "\n"));
+    text.push_str(&String::from_utf8_lossy(after).replace("\r\n", "\n"));
     let numbers = text
         .lines()
         .filter_map(|line| line.strip_prefix('L')?.parse::<u32>().ok())
@@ -253,32 +295,39 @@ fn a_snapshot_sits_at_its_boundary_in_the_output_stream() {
     assert_eq!(numbers.last(), Some(&3000));
 }
 
+/// The restore promise end to end: a terminal restored from one snapshot and fed the
+/// pane's output up to the next ends as a terminal restored from that next snapshot,
+/// including through a scroll region, origin mode and the alternate screen.
 #[test]
-fn snapshot_replies_arrive_typed() {
+fn live_output_after_a_restore_ends_where_the_next_restore_begins() {
+    for name in ["snapshot-boundary", "snapshot-region", "snapshot-tui"] {
+        let replay = whole(name);
+        let snapshots = restores_with_output(&replay);
+        assert_eq!(snapshots.len(), 2, "{name}");
+        let (size, restore, live) = &snapshots[0];
+        assert!(!live.is_empty(), "{name}: no output between the snapshots");
+        let mut continued = terminal(*size);
+        continued.process(restore);
+        continued.process(live);
+        let mut next = terminal(*size);
+        next.process(snapshots[1].1);
+        assert_eq!(look(&continued, *size), look(&next, *size), "{name}");
+    }
+}
+
+#[test]
+fn a_snapshot_event_carries_the_pane_size_and_restore_bytes_ending_in_the_pending_ones() {
     let replay = whole("snapshot-alternate");
-    let snapshot = replay
-        .events
-        .iter()
-        .find_map(|event| match event {
-            Event::Snapshot { snapshot, .. } => Some(snapshot),
-            _ => None,
-        })
-        .expect("a snapshot");
-    let state = &snapshot.state;
-    assert_eq!(state.pane, PaneId(0));
-    assert_eq!(state.size, Size { cols: 80, rows: 24 });
-    assert!(state.alternate_on && state.keypad_cursor_flag && state.keypad_flag);
-    assert!(state.insert_flag && state.mouse_standard_flag && state.mouse_sgr_flag);
-    assert!(!state.mouse_all_flag && !state.mouse_button_flag && !state.origin_flag);
-    assert_eq!(
-        (state.scroll_region_upper, state.scroll_region_lower),
-        (2, 19)
+    let snapshots = restores_with_output(&replay);
+    let [(size, restore, _)] = &snapshots[..] else {
+        panic!("one snapshot: {}", snapshots.len());
+    };
+    assert_eq!(*size, Size { cols: 80, rows: 24 });
+    assert!(restore.starts_with(b"\x1b[?7l"));
+    assert!(
+        restore.ends_with(b"\x1b[3"),
+        "the unfinished sequence tmux holds"
     );
-    assert_eq!(state.pane_tabs[..3], [8, 16, 24]);
-    assert_eq!(snapshot.pending, Bytes::from_static(b"\x1b[3"));
-    assert_eq!(snapshot.active.len(), 24);
-    assert_eq!(snapshot.active[1].trim_ascii_end(), b"  ALT");
-    assert!(snapshot.saved.iter().any(|row| row.starts_with(b"PRIMARY")));
     assert_eq!(replay.session.wanted().count(), 0, "released");
 }
 
@@ -537,21 +586,12 @@ fn render(events: &[Event]) -> String {
             Event::Snapshot {
                 tag,
                 pane,
-                snapshot,
+                size,
+                restore,
             } => {
-                let state = &snapshot.state;
-                format!(
-                    "snapshot tag={} {pane} {}x{} alt={} cursor={},{} rows={} pending={:?} saved={}",
-                    tag.0,
-                    state.size.cols,
-                    state.size.rows,
-                    u8::from(state.alternate_on),
-                    state.cursor_x,
-                    state.cursor_y,
-                    snapshot.active.len(),
-                    String::from_utf8_lossy(&snapshot.pending),
-                    snapshot.saved.len(),
-                )
+                // What `restore` holds is `snapshot.rs`'s to test, not the session's.
+                assert!(!restore.is_empty());
+                format!("snapshot tag={} {pane} {}x{}", tag.0, size.cols, size.rows)
             }
             Event::Done { tag, result } => {
                 let result = match result {

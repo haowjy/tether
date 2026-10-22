@@ -1,0 +1,144 @@
+%begin 1792643615 271 0
+%end 1792643615 271 0
+%session-changed $0 fixture
+%begin 1792643615 276 1
+3.4	4121104	1792643615	80	24
+%end 1792643615 276 1
+%begin 1792643615 277 1
+%end 1792643615 277 1
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%extended-output %0 0 : sh /tmp/tether-fixture-4120825-7.sh
+%extended-output %0 0 : \015\012
+%extended-output %0 0 : \033[2J\033[Hprimary one\015\012primary two \033[32mgreen\033[0m\015\012$ \033[?1049h\033[H\033[2J\033[1;7m tui header \033[K\033[0m\033[24;1H\033[44;37m status \033[K\033[0m\033[2;23r\033[2;1Hrow 01 \033[32mcolor\033[0m\015\015\012row 02 \033[33mcolor\033[0m\015\015\012row 03 \033[34mcolor\033[0m\015\015\012
+%extended-output %0 0 : row 04 \033[35mcolor\033[0m\015\015\012row 05 \033[36mcolor\033[0m\015\015\012row 06 \033[37mcolor\033[0m\015\015\012row 07 \033[31mcolor\033[0m\015\015\012row 08 \033[32mcolor\033[0m\015\015\012row 09 \033[33mcolor\033[0m\015\015\012row 10 \033[34mcolor\033[0m\015\015\012row 11 \033[35mcolor\033[0m\015\015\012
+%extended-output %0 0 : row 12 \033[36mcolor\033[0m\015\015\012row 13 \033[37mcolor\033[0m\015\015\012row 14 \033[31mcolor\033[0m\015\015\012row 15 \033[32mcolor\033[0m\015\015\012row 16 \033[33mcolor\033[0m\015\015\012row 17 \033[34mcolor\033[0m\015\015\012row 18 \033[35mcolor\033[0m\015\015\012row 19 \033[36mcolor\033[0m\015\015\012
+%extended-output %0 0 : row 20 \033[37mcolor\033[0m\015\015\012row 21 \033[31mcolor\033[0m\015\015\012row 22 \033[32mcolor\033[0m\015\015\012row 23 \033[33mcolor\033[0m\015\015\012row 24 \033[34mcolor\033[0m\015\015\012row 25 \033[35mcolor\033[0m\015\015\012row 26 \033[36mcolor\033[0m\015\015\012
+%extended-output %0 0 : row 27 \033[37mcolor\033[0m\015\015\012row 28 \033[31mcolor\033[0m\015\015\012row 29 \033[32mcolor\033[0m\015\015\012row 30 \033[33mcolor\033[0m\015\015\012\033[?1h\033=\033[?1002h\033[?1006h\033[?25l\033[10;5H
+%begin 1792643616 284 1
+%pause %0
+%end 1792643616 284 1
+%begin 1792643616 285 1
+%continue %0
+%end 1792643616 285 1
+%begin 1792643616 286 1
+%0	80	24	1	2	2	4	9	0	0	1	1	1	0	1	22	0	1	0	0	1	8,16,24,32,40,48,56,64,72
+%end 1792643616 286 1
+%begin 1792643616 287 1
+[1;7m tui header [0m        
+row 10 [34mcolor[39m        
+row 11 [35mcolor[39m        
+row 12 [36mcolor[39m        
+row 13 [37mcolor[39m        
+row 14 [31mcolor[39m        
+row 15 [32mcolor[39m        
+row 16 [33mcolor[39m        
+row 17 [34mcolor[39m        
+row 18 [35mcolor[39m        
+row 19 [36mcolor[39m        
+row 20 [37mcolor[39m        
+row 21 [31mcolor[39m        
+row 22 [32mcolor[39m        
+row 23 [33mcolor[39m        
+row 24 [34mcolor[39m        
+row 25 [35mcolor[39m        
+row 26 [36mcolor[39m        
+row 27 [37mcolor[39m        
+row 28 [31mcolor[39m        
+row 29 [32mcolor[39m        
+row 30 [33mcolor[39m        
+
+[37m[44m status [39m                                                                        
+%end 1792643616 287 1
+%begin 1792643616 288 1
+
+%end 1792643616 288 1
+%begin 1792643616 289 1
+primary one         
+primary two [32mgreen[39m   
+$                   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%end 1792643616 289 1
+%extended-output %0 0 : \033[23;1H\015\015\012more\015\015\012body lines\033[24;1H\033[44;37m status 2 PART2-DONE\033[K\033[0m\033[10;5H*
+%begin 1792643616 292 1
+%end 1792643616 292 1
+%begin 1792643616 293 1
+%0	80	24	1	2	2	5	9	0	0	1	1	1	0	1	22	0	1	0	0	1	8,16,24,32,40,48,56,64,72
+%end 1792643616 293 1
+%begin 1792643616 294 1
+[1;7m tui header [0m        
+row 12 [36mcolor[39m        
+row 13 [37mcolor[39m        
+row 14 [31mcolor[39m        
+row 15 [32mcolor[39m        
+row 16 [33mcolor[39m        
+row 17 [34mcolor[39m        
+row 18 [35mcolor[39m        
+row 19 [36mcolor[39m        
+row *0 [37mcolor[39m        
+row 21 [31mcolor[39m        
+row 22 [32mcolor[39m        
+row 23 [33mcolor[39m        
+row 24 [34mcolor[39m        
+row 25 [35mcolor[39m        
+row 26 [36mcolor[39m        
+row 27 [37mcolor[39m        
+row 28 [31mcolor[39m        
+row 29 [32mcolor[39m        
+row 30 [33mcolor[39m        
+
+more                
+body lines          
+[37m[44m status 2 PART2-DONE[39m                                                            
+%end 1792643616 294 1
+%begin 1792643616 295 1
+
+%end 1792643616 295 1
+%begin 1792643616 296 1
+primary one         
+primary two [32mgreen[39m   
+$                   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%end 1792643616 296 1
+%extended-output %0 0 : \033[?1049l\033[?1l\033>\033[?1002l\033[?1006l\033[?25h\033[r
+%extended-output %0 0 : $ 
+%exit

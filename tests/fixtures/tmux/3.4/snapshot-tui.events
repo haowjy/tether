@@ -1,0 +1,6 @@
+ready server=4121104-1792643615 version=3.4
+layout @0 %0:80x24
+snapshot tag=1 %0 80x24
+output %0 events=1 bytes=77
+snapshot tag=2 %0 80x24
+output %0 events=2 bytes=42
