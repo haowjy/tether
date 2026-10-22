@@ -7,7 +7,8 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check": "tsc --noEmit && eslint . && vitest run && vite build"
   },
   "dependencies": {
     "@xterm/addon-search": "0.16.0",

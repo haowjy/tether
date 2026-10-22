@@ -20,6 +20,11 @@ case "$MODE" in
     run_step cargo clippy --all-targets --locked -- -D warnings
     run_step cargo test --locked
     run_step cargo build --release --locked
+    # npm ci only when the lockfile changed since the last install.
+    if [[ ! web/node_modules/.package-lock.json -nt web/package-lock.json ]]; then
+      run_step npm --prefix web ci
+    fi
+    run_step npm --prefix web run check
     ;;
   *)
     printf 'Usage: preflight.sh [fast|full]\n' >&2

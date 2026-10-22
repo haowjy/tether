@@ -33,6 +33,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # preflight.sh full also checks web/.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Anchor release on current main
         env:
           TRIGGER_SHA: ${{ github.sha }}
