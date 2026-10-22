@@ -1,10 +1,12 @@
-//! Typed command builders (daemon-core.md §3.4). Nothing else writes tmux commands,
-//! and none of them waits: a waiting command would stall every later reply.
+//! Typed command builders (daemon-core.md §3.4, §3.8): lines for a control client and
+//! arguments for `tmux` itself. Nothing else writes tmux commands, and none of them
+//! waits: a waiting command would stall every later reply.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use super::snapshot::STATE_FORMAT;
-use super::{InputItem, Op, PaneId, SessionId, Size, Tag, TmuxError, WindowId};
+use super::{InputItem, OneShotCmd, Op, PaneId, SessionId, Size, Tag, TmuxError, WindowId};
 
 /// One line for a control client: commands joined by ` ; `, answered by one reply
 /// block per command that runs.
@@ -32,6 +34,22 @@ impl Group {
 
 /// Bytes per `send-keys -H` command.
 const HEX_CHUNK: usize = 512;
+
+/// Where a window is: server instance, then its session, active pane and that pane's
+/// size. tmux leaves the target fields empty for a window that is gone.
+const LOCATE_FORMAT: &str =
+    "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_width}\t#{pane_height}";
+/// Server instance and session id, the id empty for a session that is gone.
+const LOCATE_SESSION_FORMAT: &str = "#{pid}\t#{start_time}\t#{session_id}";
+/// The listing's first line.
+const LISTING_SERVER_FORMAT: &str = "#{version}\t#{pid}\t#{start_time}";
+/// One line per client: its session and whether it is a control client.
+const LISTING_CLIENT_FORMAT: &str = "#{session_id}\t#{client_control_mode}";
+/// One line per window. A window name can hold a tab, so it goes last; a session name
+/// can't (tmux escapes it).
+const LISTING_WINDOW_FORMAT: &str = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{window_name}";
+/// A created window, with the server instance that names it.
+const CREATED_FORMAT: &str = "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}";
 
 /// The control client's first line: version, server instance, and the size of the
 /// session's current window.
@@ -127,16 +145,105 @@ pub fn subscription_name(window: WindowId) -> String {
 }
 
 fn locate(window: WindowId) -> Group {
-    Group::one(format!(
-        "display-message -p -t {window} \
-         '#{{pid}}\t#{{start_time}}\t#{{session_id}}\t#{{window_id}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}'"
-    ))
+    Group::one(format!("display-message -p -t {window} '{LOCATE_FORMAT}'"))
 }
 
 fn locate_session(session: SessionId) -> Group {
     Group::one(format!(
-        "display-message -p -t '{session}' '#{{pid}}\t#{{start_time}}\t#{{session_id}}'"
+        "display-message -p -t '{session}' '{LOCATE_SESSION_FORMAT}'"
     ))
+}
+
+/// A control client's arguments after `tmux -u -N <socket>` (§3.1). `pause-after`
+/// bounds what tmux queues for a client that falls behind.
+pub fn attach(session: SessionId) -> Vec<String> {
+    let session = session.to_string();
+    owned(&[
+        "-C",
+        "attach-session",
+        "-t",
+        &session,
+        "-f",
+        "pause-after=3",
+    ])
+}
+
+/// A one-shot's arguments after `tmux -u -N <socket>` (§3.8). tmux takes each
+/// argument as it is, with no quoting, except that one ending in `;` ends a command.
+pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
+    Ok(match cmd {
+        // Clients before windows: a window name with a line break in it can then only
+        // garble window lines.
+        OneShotCmd::List => owned(&[
+            "display-message",
+            "-p",
+            LISTING_SERVER_FORMAT,
+            ";",
+            "list-clients",
+            "-F",
+            LISTING_CLIENT_FORMAT,
+            ";",
+            "list-windows",
+            "-a",
+            "-F",
+            LISTING_WINDOW_FORMAT,
+        ]),
+        OneShotCmd::Locate { window } => owned(&[
+            "display-message",
+            "-p",
+            "-t",
+            &window.to_string(),
+            LOCATE_FORMAT,
+        ]),
+        OneShotCmd::LocateSession { session } => owned(&[
+            "display-message",
+            "-p",
+            "-t",
+            &session.to_string(),
+            LOCATE_SESSION_FORMAT,
+        ]),
+        OneShotCmd::NewWindow { session, name, dir } => {
+            let mut args = owned(&["new-window", "-d", "-t", &session.to_string()]);
+            named(&mut args, "-n", name.as_deref())?;
+            named(&mut args, "-c", dir.as_deref().map(path).transpose()?)?;
+            args.extend(owned(&["-P", "-F", CREATED_FORMAT]));
+            args
+        }
+        OneShotCmd::NewSession { name, dir } => {
+            let mut args = owned(&["new-session", "-d"]);
+            named(&mut args, "-s", name.as_deref())?;
+            named(&mut args, "-c", dir.as_deref().map(path).transpose()?)?;
+            args.extend(owned(&["-P", "-F", CREATED_FORMAT]));
+            args
+        }
+    })
+}
+
+fn owned(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| (*arg).to_owned()).collect()
+}
+
+fn path(path: &Path) -> Result<&str, TmuxError> {
+    path.to_str()
+        .ok_or(TmuxError::BadRequest("directory is not UTF-8"))
+}
+
+/// Adds `flag value` for a user's value: `#` doubled (tmux format-expands names and
+/// directories) and a final `;` sent as `\;`, which tmux reads back as `;` rather
+/// than the end of the command. Control characters are refused, as in `quote`.
+fn named(args: &mut Vec<String>, flag: &str, value: Option<&str>) -> Result<(), TmuxError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.chars().any(char::is_control) {
+        return Err(TmuxError::BadRequest("control character in argument"));
+    }
+    let mut value = value.replace('#', "##");
+    if value.ends_with(';') {
+        value.insert(value.len() - 1, '\\');
+    }
+    args.extend([flag.to_owned(), value]);
+    Ok(())
 }
 
 /// Text and bytes go as `-H` hex (no quoting, any byte, never a key name); keys go by

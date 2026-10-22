@@ -579,7 +579,7 @@ fn tab_fields(row: &[u8]) -> Option<Vec<&str>> {
     Some(std::str::from_utf8(row).ok()?.split('\t').collect())
 }
 
-fn parse_server(pid: &str, start_time: &str) -> Option<ServerInstance> {
+pub(super) fn parse_server(pid: &str, start_time: &str) -> Option<ServerInstance> {
     Some(ServerInstance {
         pid: pid.parse().ok()?,
         start_time: start_time.parse().ok()?,
@@ -607,7 +607,7 @@ fn parse_startup(row: &[u8]) -> Option<(TmuxVersion, ServerInstance, Size)> {
 
 /// `pid start_time session_id window_id pane_id pane_width pane_height`; the target
 /// fields are empty for a window that is gone.
-fn parse_location(row: &[u8]) -> Option<Location> {
+pub(super) fn parse_location(row: &[u8]) -> Option<Location> {
     let [pid, start_time, session, _window, pane, cols, rows] = tab_fields(row)?[..] else {
         return None;
     };
@@ -629,7 +629,7 @@ fn parse_location(row: &[u8]) -> Option<Location> {
 }
 
 /// `pid start_time session_id`, the id empty for a session that is gone.
-fn parse_session_location(row: &[u8]) -> Option<SessionLocation> {
+pub(super) fn parse_session_location(row: &[u8]) -> Option<SessionLocation> {
     let [pid, start_time, session] = tab_fields(row)?[..] else {
         return None;
     };

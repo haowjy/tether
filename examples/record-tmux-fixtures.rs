@@ -13,13 +13,17 @@
 
 #[path = "../tests/support/script.rs"]
 mod script;
+#[path = "../tests/support/tmux_server.rs"]
+mod tmux_server;
+
+use tmux_server::{SESSION, Server};
 
 use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -29,13 +33,13 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use tether::tmux::{
     Event, InputItem, Op, PaneId, Reply, Session, SessionId, Size, Tag, TmuxError, WindowId,
+    command,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const WAIT: Duration = Duration::from_secs(5);
 const QUIET: Duration = Duration::from_millis(150);
-const SESSION: &str = "fixture";
 
 type Scenario = fn(&mut Recorder) -> Result<()>;
 
@@ -87,7 +91,10 @@ fn main() -> Result<()> {
             continue;
         }
         eprintln!("recording {name}");
-        let server = Server::start(&tmux, index)?;
+        let server = Server::start(
+            &tmux,
+            format!("tether-fixture-{}-{index}", std::process::id()),
+        )?;
         let mut recorder = Recorder::attach(&server)?;
         if let Err(error) = scenario(&mut recorder) {
             // Keep what tmux sent, to see why.
@@ -97,128 +104,6 @@ fn main() -> Result<()> {
         recorder.finish(&out, name)?;
     }
     Ok(())
-}
-
-/// A private tmux server, killed and its socket removed on drop.
-struct Server {
-    tmux: PathBuf,
-    socket: String,
-}
-
-impl Server {
-    fn start(tmux: &Path, index: usize) -> Result<Self> {
-        let server = Self {
-            tmux: tmux.to_owned(),
-            socket: format!("tether-fixture-{}-{index}", std::process::id()),
-        };
-        // The recorder may start a server; the daemon never does (it always passes -N).
-        server.run_starting(&[
-            "new-session",
-            "-d",
-            "-s",
-            SESSION,
-            "-x",
-            "80",
-            "-y",
-            "24",
-            "-c",
-            "/tmp",
-            "/bin/sh",
-        ])?;
-        server.run(&["set-option", "-g", "default-shell", "/bin/sh"])?;
-        Ok(server)
-    }
-
-    fn command(&self) -> Command {
-        let mut command = Command::new("nice");
-        command
-            .args(["-n", "10"])
-            .arg(&self.tmux)
-            .args(["-L", &self.socket, "-f", "/dev/null"])
-            .env("PS1", "$ ")
-            .env_remove("TMUX");
-        command
-    }
-
-    fn run_starting(&self, args: &[&str]) -> Result<String> {
-        let output = self.command().args(args).output()?;
-        if !output.status.success() {
-            return Err(format!(
-                "tmux {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )
-            .into());
-        }
-        Ok(String::from_utf8(output.stdout)?)
-    }
-
-    /// A one-shot command that never starts a server.
-    fn run(&self, args: &[&str]) -> Result<String> {
-        let mut with_n = vec!["-N"];
-        with_n.extend_from_slice(args);
-        self.run_starting(&with_n)
-    }
-
-    /// A terminal client attached to the session, in a pty from `script`.
-    fn attach_terminal(&self) -> Result<Child> {
-        let tmux = format!(
-            "nice -n 10 {} -N -L {} attach-session -t {SESSION}",
-            self.tmux.display(),
-            self.socket
-        );
-        let mut script = Command::new("script");
-        if cfg!(target_os = "macos") {
-            script.args(["-q", "/dev/null", "sh", "-c", &tmux]);
-        } else {
-            script.args(["-qfec", &tmux, "/dev/null"]);
-        }
-        let child = script
-            .env_remove("TMUX")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
-        thread::sleep(Duration::from_millis(300));
-        Ok(child)
-    }
-
-    /// Types a shell line into a pane, outside the control client.
-    fn type_line(&self, pane: &str, line: &str) -> Result<()> {
-        self.run(&["send-keys", "-t", pane, "-l", line])?;
-        self.run(&["send-keys", "-t", pane, "Enter"])?;
-        Ok(())
-    }
-
-    /// Runs `body` as a shell script in a pane; the file goes when the guard drops.
-    fn start_script(&self, pane: &str, body: &str) -> Result<TempScript> {
-        let path = env::temp_dir().join(format!("{}.sh", self.socket));
-        fs::write(&path, body)?;
-        self.type_line(pane, &format!("sh {}", path.display()))?;
-        Ok(TempScript(path))
-    }
-}
-
-struct TempScript(PathBuf);
-
-impl Drop for TempScript {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.command().arg("-N").arg("kill-server").output();
-        if let Ok(uid) = Command::new("id").arg("-u").output() {
-            let uid = String::from_utf8_lossy(&uid.stdout).trim().to_owned();
-            let dir = env::var_os("TMUX_TMPDIR").unwrap_or_else(|| "/tmp".into());
-            let _ = fs::remove_file(
-                PathBuf::from(dir)
-                    .join(format!("tmux-{uid}"))
-                    .join(&self.socket),
-            );
-        }
-    }
 }
 
 struct Recorder<'a> {
@@ -240,15 +125,8 @@ impl<'a> Recorder<'a> {
         // As the daemon spawns it (§3.1), on the private socket.
         let mut child = server
             .command()
-            .args([
-                "-N",
-                "-C",
-                "attach-session",
-                "-t",
-                "$0",
-                "-f",
-                "pause-after=3",
-            ])
+            .arg("-N")
+            .args(command::attach(SessionId(0)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

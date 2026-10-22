@@ -1,18 +1,23 @@
-//! The tmux bridge's pure core: ids, the ops a control client runs, and the events it
-//! reports. `Session` is the sans-IO control client; see daemon-core.md §3.
+//! The tmux bridge: ids, the work a control client or a one-shot runs, and what tmux
+//! answers. `Session` is the sans-IO control client; `pump` and `oneshot` are the only
+//! files that run tmux. See daemon-core.md §3.
 
 use std::fmt;
 use std::path::PathBuf;
+use std::process::Stdio;
 
 use bytes::Bytes;
 use thiserror::Error;
 
 pub mod command;
 pub mod layout;
+pub mod oneshot;
 pub mod parse;
+pub mod pump;
 pub mod session;
 pub mod snapshot;
 
+pub use pump::PumpMsg;
 pub use session::{MAX_IN_FLIGHT, Session, Step};
 
 macro_rules! tmux_id {
@@ -69,6 +74,57 @@ pub struct Size {
 /// The caller's name for one request; returned in the request's `Done` or `Snapshot`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Tag(pub u64);
+
+/// The caller's name for one control client; tags everything its pump sends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ClientId(pub u64);
+
+/// A tmux server tether talks to (§3.8): the tmux executable and the server's socket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoint {
+    pub program: PathBuf,
+    pub socket: Socket,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Socket {
+    /// tmux's default socket.
+    Default,
+    /// `-L name`: a socket of that name in tmux's socket directory.
+    Name(String),
+    /// `-S path`.
+    Path(PathBuf),
+}
+
+impl Endpoint {
+    /// `tmux -u -N` on this endpoint's socket, which `pump` and `oneshot` give their
+    /// arguments and run: piped stdout and stderr, stdin closed, killed when dropped.
+    ///
+    /// - `-N`: with no server running, every command fails instead of starting one.
+    /// - `-u`: tmux replaces non-ASCII in formats (names, paths) with `_` for a client
+    ///   whose locale doesn't say UTF-8, and a systemd unit's may not.
+    /// - No `TMUX`: it would choose the socket when none is configured.
+    fn command(&self) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new(&self.program);
+        command.args(["-u", "-N"]);
+        match &self.socket {
+            Socket::Default => {}
+            Socket::Name(name) => {
+                command.arg("-L").arg(name);
+            }
+            Socket::Path(path) => {
+                command.arg("-S").arg(path);
+            }
+        }
+        command
+            .env_remove("TMUX")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        command
+    }
+}
 
 /// One run of a tmux server: `"<pid>-<start_time>"`. A restarted server reuses ids, so
 /// every id is only meaningful together with the instance it came from.
@@ -203,6 +259,31 @@ pub enum Op {
     },
 }
 
+/// Work for a one-shot `tmux -N` (§3.8): when no control client can run it, or when it
+/// must not run on one. Answered with a `Reply` like an `Op`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OneShotCmd {
+    /// The session sheet: answered by `Reply::Listing`.
+    List,
+    Locate {
+        window: WindowId,
+    },
+    LocateSession {
+        session: SessionId,
+    },
+    /// Answered by `Reply::Created`.
+    NewWindow {
+        session: SessionId,
+        name: Option<String>,
+        dir: Option<PathBuf>,
+    },
+    /// Answered by `Reply::Created`.
+    NewSession {
+        name: Option<String>,
+        dir: Option<PathBuf>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputItem {
     Text(String),
@@ -264,6 +345,7 @@ pub enum Event {
     Fatal(SessionError),
 }
 
+/// What tmux answered for an `Op` or a `OneShotCmd`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reply {
     Ok,
@@ -271,6 +353,44 @@ pub enum Reply {
     SessionLocation(SessionLocation),
     /// `capture-pane -e` rows, without line ends.
     History(Vec<Bytes>),
+    Listing(Listing),
+    Created(Created),
+}
+
+/// Every session and its windows, for the session sheet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listing {
+    pub server: ServerInstance,
+    pub version: TmuxVersion,
+    pub sessions: Vec<ListedSession>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedSession {
+    pub id: SessionId,
+    pub name: String,
+    /// A client other than a control client is attached: someone's terminal.
+    pub attached_elsewhere: bool,
+    pub windows: Vec<ListedWindow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedWindow {
+    pub id: WindowId,
+    pub index: u32,
+    pub name: String,
+    /// The session's current window.
+    pub active: bool,
+    /// Last activity, in unix seconds.
+    pub activity: u64,
+}
+
+/// A window tether created, alone or as a new session's first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Created {
+    pub server: ServerInstance,
+    pub session: SessionId,
+    pub window: WindowId,
 }
 
 /// Where a window is. `found` is `None` when the window is gone.
@@ -305,7 +425,7 @@ pub enum TmuxError {
     /// or one changed the pane's state between its two reads.
     #[error("snapshot torn by a tmux hook")]
     Torn,
-    /// The group's replies exceeded the reply cap.
+    /// The group's replies, or a one-shot's output, exceeded the reply cap.
     #[error("reply too large")]
     TooLarge,
     /// The request can't be expressed as a safe command.
@@ -314,6 +434,15 @@ pub enum TmuxError {
     /// tmux answered in a shape tether doesn't understand.
     #[error("unexpected reply from tmux")]
     BadReply,
+    /// No tmux server is running on the endpoint (a one-shot's answer).
+    #[error("no tmux server running")]
+    NoServer,
+    /// A one-shot didn't finish within its timeout and was killed.
+    #[error("tmux timed out")]
+    Timeout,
+    /// tmux couldn't be run.
+    #[error("can't run tmux: {0}")]
+    Spawn(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
