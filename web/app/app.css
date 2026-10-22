@@ -28,7 +28,14 @@ html, body {
 #terminal {
   min-height: 0;
   overflow: hidden;
-  padding: 0 var(--safe-right) 0 var(--safe-left);
+  padding: 0 max(var(--safe-right), var(--term-edge)) 0 max(var(--safe-left), var(--term-edge));
+}
+/* Centred, so the width left over from whole cells splits evenly between the sides. The
+   renderer slides it up while the keyboard shows (term/xterm.ts). */
+#terminal .xterm {
+  width: fit-content;
+  margin-inline: auto;
+  transition: transform var(--dur-keyboard) var(--ease-keyboard);
 }
 .mono { font-family: var(--font-mono); }
 

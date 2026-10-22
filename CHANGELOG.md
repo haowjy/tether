@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- The app restores the last tab on screen and keeps the cursor row visible when
+  the keyboard opens, without resizing tmux.
 - Visual web UI: tab bar with connection states, session sheets, new window and
   session, jump to bottom, dark and light themes, bundled Nerd Font.
 - Added `tmux::Session`, the pure tmux control client: startup and client size,

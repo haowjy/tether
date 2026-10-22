@@ -50,6 +50,7 @@ async function start(): Promise<void> {
     renderer,
     kind: hasNativeBridge() ? "ios" : "web",
     chromeHeight: () => chrome.querySelector<HTMLElement>(".bar")?.offsetHeight ?? 0,
+    edge: () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--term-edge")) || 0,
   });
   shown.app = app;
   render(<Chrome app={app} />, chrome);

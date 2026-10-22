@@ -4,8 +4,9 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import type { RendererOptions, TerminalRenderer } from ".";
+import type { CellSize, RendererOptions, TerminalRenderer } from ".";
 import { WritePipeline, type Snapshot } from "./pipeline";
+import { cursorPan } from "./size";
 
 /** Context losses tolerated before settling on the DOM renderer. */
 const MAX_WEBGL_RECREATIONS = 3;
@@ -69,20 +70,42 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
   term.onScroll(checkScroll);
   term.onWriteParsed(checkScroll);
 
+  const cellSize = (): CellSize | null => {
+    // The screen element is exactly cols × rows cells, so this needs no private API.
+    const screen = term.element?.querySelector(".xterm-screen");
+    if (!screen || term.cols === 0 || term.rows === 0) return null;
+    const { width, height } = screen.getBoundingClientRect();
+    return width > 0 && height > 0 ? { width: width / term.cols, height: height / term.rows } : null;
+  };
+
+  // The keyboard shortens the container but never tmux: the terminal keeps its rows and
+  // slides so the cursor row stays in view. The slide follows the container's resize
+  // with the keyboard's motion; a cursor move jumps, as text does.
+  let panned = 0;
+  const pan = (animate: boolean): void => {
+    const element = term.element;
+    const cell = cellSize();
+    if (!element || !cell) return;
+    const next = cursorPan(term.buffer.active.cursorY, term.rows, cell.height, container.clientHeight);
+    if (next === panned) return;
+    panned = next;
+    element.style.transition = animate ? "" : "none";
+    element.style.transform = next ? `translateY(${String(-next)}px)` : "";
+  };
+  const resized = new ResizeObserver(() => { pan(true); });
+  resized.observe(container);
+  term.onCursorMove(() => { pan(false); });
+  term.onResize(() => { pan(false); });
+
   return {
     output: (bytes) => { pipeline.output(bytes); },
     snapshot: (snapshot: Snapshot) => pipeline.snapshot(snapshot),
-    cellSize: () => {
-      // The screen element is exactly cols × rows cells, so this needs no private API.
-      const screen = term.element?.querySelector(".xterm-screen");
-      if (!screen || term.cols === 0 || term.rows === 0) return null;
-      const { width, height } = screen.getBoundingClientRect();
-      return width > 0 && height > 0 ? { width: width / term.cols, height: height / term.rows } : null;
-    },
+    cellSize,
     setTheme: (theme) => { term.options.theme = theme; },
     onScrolledUp: (listener) => { scrollListeners.push(listener); },
     scrollToBottom: () => { term.scrollToBottom(); },
     dispose: () => {
+      resized.disconnect();
       webgl = undefined;
       term.dispose();
     },

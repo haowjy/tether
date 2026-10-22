@@ -24,7 +24,10 @@ export interface Viewport {
 
 export interface HostEntry {
   id: string;
+  /** A label for the host list, never turned into a URL. */
   name: string;
+  /** `https://<magicdns-name>`: the origin every socket and request for this host uses. */
+  baseURL: string;
   enrolled: boolean;
 }
 
@@ -41,6 +44,8 @@ export interface Boot {
   bridgeVersion: number;
   hosts: HostEntry[];
   tabs: SavedTab[];
+  /** The tab last on screen; null, or an id not in `tabs`, means the first tab. */
+  active: string | null;
   settings: Record<string, unknown>;
   viewport: Viewport;
   locked: boolean;
@@ -66,7 +71,7 @@ export type WebMsg =
   | { type: "token"; host: string }
   | { type: "hostRejected"; host: string }
   | { type: "recreateWebView" }
-  | { type: "saveTabs"; tabs: unknown }
+  | { type: "saveTabs"; tabs: SavedTab[]; active: string | null }
   | { type: "focus"; mode: "terminal" | "hidden" | "webText" | "select" }
   | { type: "haptic"; kind: string }
   | { type: "prompt"; title: string; message: string; initial: string }
@@ -120,9 +125,9 @@ export class Native {
     return (await this.post({ type: "token", host })) as TokenReply;
   }
 
-  /** Persists the open-tab list, so a restarted web view restores it. */
-  saveTabs(tabs: SavedTab[]): void {
-    this.fire({ type: "saveTabs", tabs });
+  /** Persists the open-tab list and the tab on screen, so a restarted web view restores both. */
+  saveTabs(tabs: SavedTab[], active: string | null): void {
+    this.fire({ type: "saveTabs", tabs, active });
   }
 
   /** `[⌨]`: show the keyboard (`terminal`) or put it away (`hidden`). */

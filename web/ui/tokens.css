@@ -88,6 +88,9 @@
   --tap: 44px;
   --bar-height: 52px;
   --pill-height: 36px;
+  /* The least gap between terminal text and a side of the screen; a safe-area inset
+     counts toward it. The terminal's size is computed with it (term/size.ts). */
+  --term-edge: 4px;
 
   /* Layers, lowest first. */
   --z-float: 10;
@@ -98,6 +101,9 @@
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --dur-fast: 120ms;
   --dur-sheet: 220ms;
+  /* The iOS keyboard's own motion, which the terminal's slide follows. */
+  --ease-keyboard: cubic-bezier(0.38, 0.7, 0.125, 1);
+  --dur-keyboard: 250ms;
 
   /* Safe-area insets. The app sets these from native's `viewport` (app/app.ts), the same
      numbers the terminal size is computed from; env() covers the moment before. */

@@ -4,12 +4,14 @@ import { HostLink, type LinkHandlers } from "../proto/link";
 import { CloseCode } from "../proto/generated/messages";
 
 /**
- * The one place a host's WebSocket URL is built (ios-shell.md "Where the web UI comes
- * from"). The desktop dev page reaches every host through the Vite proxy on its own origin.
+ * The one place a host's WebSocket URL is built: from native's `baseURL`, never the name
+ * (ios-shell.md "Boot and host payloads"). The dev shim's `baseURL` is the page's own
+ * origin, which the Vite proxy forwards.
  */
 export function socketUrl(host: HostEntry): string {
-  if (import.meta.env.DEV) return `${location.origin.replace(/^http/, "ws")}/ws`;
-  return `wss://${host.name}/ws`;
+  const url = new URL("/ws", host.baseURL);
+  url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
+  return url.href;
 }
 
 /**

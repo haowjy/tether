@@ -68,6 +68,8 @@ export interface AppOptions {
   kind: "ios" | "web";
   /** Height of the tab bar and suggestion strip over the web view's bottom. */
   chromeHeight(): number;
+  /** The least gap between the terminal's text and each side of the screen. */
+  edge(): number;
 }
 
 /**
@@ -92,6 +94,7 @@ export class App {
     this.sizer = new TerminalSizer({
       cell: () => opts.renderer.cellSize(),
       chromeHeight: () => opts.chromeHeight(),
+      edge: () => opts.edge(),
       onChange: (size) => { this.activeTab()?.driver.resize(size); },
     });
     this.view = {
@@ -101,9 +104,11 @@ export class App {
     this.setViewport(opts.boot.viewport);
     this.hosts.set(opts.boot.hosts);
     opts.renderer.onScrolledUp((scrolledUp) => { this.update({ scrolledUp }); });
-    for (const saved of opts.boot.tabs) {
-      this.open(saved, this.view.active === null);
-    }
+    // Tabs saved for a host native no longer lists can't open; the one last on screen
+    // shows again if it can, else the first.
+    const restorable = opts.boot.tabs.filter((t) => this.hosts.get(t.host));
+    const shown = restorable.find((t) => t.id === opts.boot.active) ?? restorable[0];
+    for (const saved of restorable) this.open(saved, saved === shown);
     this.view.host = this.sheetHost();
     // The cell can be measured only once xterm has painted.
     requestAnimationFrame(() => { this.sizer.remeasure(); });
@@ -289,7 +294,7 @@ export class App {
 
   private open(saved: SavedTab, active: boolean): void {
     const host = this.hosts.get(saved.host);
-    if (!host) return; // saved for a host native no longer lists
+    if (!host) return;
     if (!this.syncs.has(saved.host)) {
       this.syncs.set(saved.host, new HostSync({
         host,
@@ -395,7 +400,7 @@ export class App {
   }
 
   private save(): void {
-    this.native.saveTabs(this.view.tabs.map(({ id, host, window, name }) => ({ id, host, window, name })));
+    this.native.saveTabs(this.view.tabs.map(({ id, host, window, name }) => ({ id, host, window, name })), this.view.active);
   }
 
   private update(patch: Partial<AppView>): void {
