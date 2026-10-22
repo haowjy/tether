@@ -5,6 +5,14 @@ security implementation.** Desktop/mobile redesign remains a mockup. The phone
 browser must be installable as a PWA; this is a product requirement, not an optional
 future feature. Existing native app and backend invariants remain in force.
 
+## Roadmap and authentication status
+
+The later [connection roadmap](connection-roadmap.md) sets Tailscale first and public
+HTTPS as the intended follow-up. Tailscale-identity-only access was discussed as a
+simpler alternative to extra browser enrolment. The cookie design below remains a
+candidate, not a settled requirement; first-phase authentication must be chosen and
+reviewed before coding. No current device-token or tailnet-only protection is removed.
+
 ## What exists today
 
 Source inspection at `76f3d2c` found:
@@ -76,7 +84,7 @@ loopback backend is a trusted-local-process boundary, not protection from hostil
 processes already on the server.
 [Tailscale documentation](https://tailscale.com/docs/features/tailscale-serve).
 
-### Preferred browser credential transport
+### Browser credential candidate: server-issued cookie
 
 Use a server-issued, revocable opaque browser credential in a host-only
 `__Host-tether` cookie (`Secure; HttpOnly; SameSite=Strict; Path=/`; no Domain).

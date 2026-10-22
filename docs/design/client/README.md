@@ -37,6 +37,12 @@ Layout approval does not settle browser authentication/asset serving, touch gest
 implementation, or the snapshot/history changes needed for correct copy. Retaining a
 draft after Insert is proposed; closed-tab draft retention remains undecided.
 
+## Connection roadmap
+
+[Tailscale first, public HTTPS next](connection-roadmap.md) records the delivery order,
+saved-server settings, multi-machine behavior, and security/reachability gates.
+SSH is not the planned second phase. Current tailnet-only rules remain in force.
+
 ## Browser and PWA setup
 
 The phone browser must be installable as a PWA. See [browser setup research](browser-setup.md)

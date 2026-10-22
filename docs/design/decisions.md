@@ -2380,3 +2380,21 @@ the p61 review. The product calls behind it are Jimmy's
 - **Research, not final security spec:** [browser setup](client/browser-setup.md) recommends
   same-origin tailnet hosting, reviewed browser credentials, offline shell/drafts and
   controlled updates. No offline command replay; production auth and device gates stay open.
+
+## Tailscale first, public HTTPS follow-up
+
+- **Decided:** 2026-10-22, Jimmy: Tailscale first, probably public HTTPS afterward
+  to connect to multiple machines even outside the tailnet.
+- **What:** [connection roadmap](client/connection-roadmap.md) records the intended
+  sequence, saved-server name/URL/status, native server selection, and initial
+  per-server browser/PWA URLs. Unified cross-origin browser switching is separate.
+- **Why:** deliver the minimal private client first without tying the terminal UI
+  to one network or one machine permanently.
+- **Alternatives:** SSH-key access was discussed but is not the selected next phase.
+  Password login and passkeys are not implemented or approved auth contracts.
+- **Unresolved:** first-phase identity-only versus additional app authentication;
+  public authentication and unlocked-device protections; reachable TLS endpoints
+  versus a future tunnel/relay; unified browser cross-origin behavior.
+- **Safety boundary:** existing tailnet-only, no-Funnel and device-token rules remain
+  current until reviewed replacements are specified. No public exposure is authorized
+  by this roadmap, and no network/service configuration changes accompany it.

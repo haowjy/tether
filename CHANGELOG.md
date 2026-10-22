@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- Record Tailscale-first, public-HTTPS follow-up and multi-server settings roadmap.
+
 - Document browser deployment research and required phone PWA installation, offline drafts, and update behavior.
 
 - Save browser/iPhone design, interactive mockups, clipboard research, and Mac handoff in `docs/design/client/`.
