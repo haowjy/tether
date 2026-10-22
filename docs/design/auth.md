@@ -126,7 +126,9 @@ readable only from a shell on the server, and it dies after one use, its lifetim
 - **HTTP:** `Authorization: Bearer <token>`. In the app only native code sends HTTP to
   a host (the scheme handler's proxy, uploads, enrolment;
   [ios-shell.md](ios-shell.md#where-the-web-ui-comes-from)), on an ephemeral
-  `URLSession` with cookies off. A bad or revoked token gets `401 auth_required`.
+  `URLSession` with cookies off. A bad or revoked token gets `401 auth_required`; if the
+  daemon can't read `auth.toml` it can't judge the token, and answers `503
+  auth_unavailable` instead.
 - **WebSocket:** the web UI can't set headers on a WebSocket, so the token rides in the
   subprotocol list, `Sec-WebSocket-Protocol: tether.v1, tether.auth.<token>`, and never
   in a URL. At the upgrade of `GET /ws`:
@@ -135,14 +137,21 @@ readable only from a shell on the server, and it dies after one use, its lifetim
     (answering `tether.v1`), closes at once with `4401`, and reads nothing. A browser
     WebSocket can't see a refused upgrade's status (it reports 1006, like a network
     failure), so a 401 there would leave the app retrying a dead token;
+  - `auth.toml` unreadable (below) → the same: complete the upgrade, close at once with
+    `4503`;
   - token valid → upgrade, then `hello`.
 - **Revocation on a live socket:** the connection re-checks its token on its own
   timer, not on client pings, so a client that stops pinging can't dodge it, and
-  closes with `4401` when the device is gone.
+  closes with `4401` when the device is gone, or `4503` when the file can't be read at
+  that moment.
 - **On 4401 or a 401,** the host is marked "not enrolled" and Add host is offered,
   with no retry: no token is rejected for a reason a retry would fix. A 401 is seen by
   native code directly; a 4401 is seen by the web, which reports it to native with
   `hostRejected` ([ios-shell.md](ios-shell.md#the-bridge)).
+- **On 4503 or a 503,** the daemon could not decide, so the app keeps its token, does
+  not mark the host "not enrolled", and retries with the usual backoff
+  ([plan.md](plan.md#reconnect)); the pill says the host can't verify the device. Once
+  the file parses again, the next retry succeeds with no re-enrolment.
 
 **No `Origin` check.** Origin checks stop cross-site WebSocket hijacking, which needs
 ambient credentials, and tether has none: no cookies, and a bearer token a foreign
@@ -193,6 +202,7 @@ stateDiagram-v2
 | Face ID re-enrolled, or an appearance added | `.biometryCurrentSet` makes the item unreadable for good. The read fails with an error that isn't cancel or lockout, possibly "item not found" (spike 1 records which); "not found" while `HostStore` lists hosts counts as this case | The lock screen offers "Reset tokens": it deletes the item and marks every host "not enrolled"; Jimmy runs `tether enroll` on each host and adds them again. The app never deletes on its own: a misread error would cost re-enrolling every host |
 | Phone lost | Tokens stay on the lost phone, behind its Face ID | On each host, `tether device remove <name>`; live sockets close at the next re-check |
 | Device removed while the app still has its token | 401 or close 4401 | The host shows "not enrolled" with Add host |
+| `auth.toml` unreadable on the server (a bad hand edit) | 503 or close 4503, including on live sockets at their next re-check | Nothing on the phone: it keeps its token and retries. Fix the file on the server (the log names the line) |
 | New phone, or restored from a backup | The host list (`UserDefaults`) came back; the tokens item (`ThisDeviceOnly`) didn't | Hosts without a token show "not enrolled"; Jimmy re-enrols and removes the old device |
 
 Recovery needs a shell on the server that isn't tether (the laptop, or SSH).
@@ -222,8 +232,12 @@ Changing the MagicDNS name doesn't change it; the app updates the host's URL.
 **Every check reads the file.** `auth::check` reads and parses `auth.toml` and scans
 it, with no cache and no service: the file is a few rows, so a check costs tens of
 microseconds, and `tether device remove` takes effect on the next request with no
-watcher or IPC. A file that doesn't parse fails closed: every token check fails until
-it parses, and the error is logged.
+watcher or IPC. A file that can't be read or doesn't parse **fails closed but
+retryable**: every token check is refused until it parses, as `503 auth_unavailable`
+over HTTP and close `4503` on a WebSocket (live sockets at their next re-check), never as
+"not enrolled". A typo in a hand edit therefore costs retries, not a re-enrolment of
+every device. The daemon never overwrites a file it can't parse; the log and the CLI's
+error carry only the line number, never the file's contents.
 
 ### CLI
 
@@ -246,9 +260,22 @@ Tailscale check; only the two `/auth` routes skip the token check.
 | Route | Request | Response | Errors |
 |---|---|---|---|
 | `GET /auth/info` | | `{hostId, name, daemonVersion, protocol: {min, max}}` | |
-| `POST /auth/enroll` | `{code, deviceName}` | `{token, deviceName}` | 403 `bad_code` (wrong, expired or none pending) |
-| `GET /ws` | subprotocol token | upgrade | bad token: upgrade, then close 4401 |
-| every other route (`/fs/*`, `/complete`, debug) | `Authorization: Bearer` | | 401 `auth_required` |
+| `POST /auth/enroll` | `{code, deviceName}`, `Content-Type: application/json`, body at most 4 KiB | `{token, deviceName}` | 403 `bad_code` (wrong, expired or none pending); `bad_request` (below); 500 `internal` |
+| `GET /ws` | subprotocol token | upgrade | bad token: upgrade, then close 4401; unreadable `auth.toml`: upgrade, then close 4503 |
+| every other route (`/fs/*`, `/complete`, debug) | `Authorization: Bearer` | | 401 `auth_required`; 503 `auth_unavailable` |
+
+Errors on any route, besides those in the table:
+
+| Status | `error` | Cause |
+|---|---|---|
+| 403 | `forbidden` | The Tailscale check failed: not a loopback peer, or a login outside the allowlist. Sent for every route, unknown paths included, before anything else |
+| 400, 415, 422 | `bad_request` | A body that isn't the route's JSON, with the status axum's `Json` extractor gives: 415 when it isn't `application/json`, 400 or 422 for malformed or mistyped JSON |
+| 500 | `internal` | The enrolment transaction failed (the state file can't be read or written, or its task died); the cause is logged, never sent. A broken `auth.toml` shows up here for `POST /auth/enroll`, which no token check guards |
+| 503 | `auth_unavailable` | The token check can't read or parse `auth.toml`; retryable (see [Carrying the token](#carrying-the-token)) |
+
+`/auth/info.name` (and `welcome.host.name`) is the config key `name`, else the machine
+name from tailscaled's MagicDNS name ([plan.md](plan.md#config)). It is a label for the
+host list; the host's identity is `hostId`.
 
 ### Module shape
 
@@ -283,6 +310,9 @@ On the Swift side, Security and LocalAuthentication cover everything.
 
 - **The error after a Face ID change** is unconfirmed; spike 1 part B records it. The
   manual reset means the design doesn't depend on it.
+- **An unreadable `auth.toml` locks every device out until it is fixed**, though none
+  is forgotten: the app keeps its tokens and retries (503 and 4503). The fix needs a
+  server shell, like recovery.
 - **Face ID failure lockout:** with biometry-only access control, if Face ID won't
   recognise Jimmy (mask, injury), no host is reachable until it does. Accepted for a
   single-user tool.

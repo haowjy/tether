@@ -11,7 +11,8 @@ author while writing it; the spawn that wrote each spec is named for traceabilit
 (daemon core p7, iOS shell and auth p8 and p15, review round 2 revision p21; the
 `tmux::Session` build p25, the restore-byte composer p30, the pump and one-shot
 runner p33, and the hub and wire protocol p35, whose builds corrected the daemon-core
-spec). Reviews:
+spec; the HTTP layer, auth, CLI and config build p40, commit b1dcb8c; the web host
+layer p42, commit a43014f). Reviews:
 round 1 of the plan is [plan-review.md](plan-review.md); round 1 of the subsystem specs
 was p10–p14; round 2 was p16 (structure) and p17 (correctness).
 
@@ -967,6 +968,89 @@ All 2026-10-21, decided by Jimmy.
 - **Rejected:** none recorded; the sizes are set by the memory ceiling
   ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
 
+## Daemon service, as built
+
+Decided 2026-10-22 by the tech lead, accepted from the p40 build (commit b1dcb8c), which
+found each point while running the daemon.
+
+### The connection's own replies are bounded by a queue of 16, not charged to credit
+
+- **What:** `welcome`, `pong` and the paste refusals the connection makes itself
+  (`inputTooLarge`, `busy`) are written by the connection task and never pass through
+  the hub. They wait in a queue of 16 entries, ahead of the outbox's frames; while 16
+  wait, the connection stops reading its socket
+  ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)).
+- **Why:** credit is the hub's only copy of the bytes it sent to a connection. These
+  messages start in the connection, so charging them would mean telling the hub about
+  bytes it never sent. Not reading the socket while the queue is full is the same
+  backpressure that keeps a client that pings without reading from growing it.
+- **Rejected:** charging them to credit, as §4.6 first implied for "every byte"; an
+  unbounded queue.
+
+### The unit uses `KillMode=mixed` and a restart backoff
+
+- **What:** `contrib/tether.service` sets `KillMode=mixed`, `RestartSec=2`,
+  `RestartSteps=5`, `RestartMaxDelaySec=60` and `StartLimitIntervalSec=0`
+  ([plan.md](plan.md#resource-budget)). Changes plan.md's earlier unit sketch, which had
+  neither.
+- **Why:**
+  - Under the default kill mode, `systemctl stop` signals the `tmux -C` clients
+    directly, so the hub logged them as detached while the sockets were closing with
+    4004, and the phone could get `watchEnded { detached }` instead of reconnecting.
+    Verified with a transient unit.
+  - tailscaled is a system unit that a user unit can't order itself after, so at boot
+    tether may start first, find no LocalAPI socket and exit. A backoff with no start
+    limit keeps it retrying until tailscaled is up.
+- **Rejected:** the default `KillMode=control-group` (the false "detached" above);
+  ordering after `tailscaled.service` (a user unit can't); a fixed `RestartSec=2` with
+  the default start limit (a slow boot would exhaust it and leave tether down).
+
+### No sd-notify watchdog, no tracing-journald
+
+- **What:** the daemon sends `READY=1` and `STOPPING=1` only, and logs to stderr, which
+  the journal captures ([plan.md](plan.md#stack)). Changes the stack row that listed a
+  watchdog and optional tracing-journald.
+- **Why:** a watchdog needs a periodic timer, which breaks the zero-wakeup idle (0
+  context switches over 60 s, measured). stderr already reaches the journal, so
+  tracing-journald adds a dependency for nothing.
+- **Rejected:** `WatchdogSec` with a keep-alive timer; tracing-journald.
+
+### `dir` on `newWindow` and `newSession` passes through until `src/fs/` exists
+
+- **What:** [daemon-core.md §5.3](daemon-core.md#53-json-messages) says the connection
+  checks `dir` against the file roots. `src/fs/` doesn't exist yet, so the build
+  passes `dir` to tmux unchecked, with a TODO in `src/http/.context/TODO` and in the
+  spec. The check lands with `src/fs/`.
+- **Rejected:** none recorded.
+
+### `tether serve` is Linux-only for now
+
+- **What:** the daemon needs tailscaled's LocalAPI unix socket for the login allowlist
+  and the Funnel check. The macOS Tailscale apps (App Store and standalone) have no
+  such socket, so `tether serve` won't start there. The Mac is for recording the 3.7b
+  fixtures and building the iOS app ([plan.md](plan.md#product-rules)).
+- **Rejected:** a macOS daemon that skips the LocalAPI checks: it would run with no
+  login allowlist and no Funnel check.
+
+### Shutdown waits for the hub's pumps
+
+- **What:** the hub's task handle completes only after every pump task has, so
+  `main` exits after the `tmux -C` clients have been closed through stdin
+  ([daemon-core.md §4.7](daemon-core.md#47-public-interface)). Fixes the build, whose
+  hub handle completed before its pumps finished, so the process exit SIGKILLed the
+  clients.
+- **Why:** §7 says shutdown closes the control clients' stdin. tmux treated the SIGKILL
+  as an ordinary disconnect (checked), but the spec's rule is the clean one.
+- **Rejected:** leaving it: the daemon exiting before its pumps.
+
+### The paste directory is emptied after the port is bound
+
+- **What:** the daemon binds `127.0.0.1:<port>` first, then empties
+  `$XDG_RUNTIME_DIR/tether/` ([daemon-core.md §3.4](daemon-core.md#34-commands-commandrs)).
+- **Why:** a daemon started by mistake emptied the directory and then failed to bind,
+  deleting a running daemon's in-flight paste files. Found in the live run.
+- **Rejected:** emptying first, as the build did.
+
 ## iOS app
 
 ### Snapshots apply after earlier writes drain
@@ -1032,6 +1116,25 @@ All 2026-10-21, decided by Jimmy.
   Tuist (more machinery for one app); a bare Swift package (can't build an app with
   entitlements and extensions).
 
+### The web asks native to recreate the web view: `recreateWebView`
+
+- **Decided:** 2026-10-22, tech lead, accepted from the web host-layer build (p42,
+  commit a43014f). Adds a row to the bridge table
+  ([ios-shell.md](ios-shell.md#the-bridge)); the spec had only native reloading on a
+  content-process kill.
+- **What:** `recreateWebView` is a web → native message with no data and no reply. The
+  web sends it after two consecutive connect timeouts on a host's socket (the first
+  timeout opens a new socket at once; any `welcome` resets the count). Native discards
+  the `WKWebView` and loads a new one, and the tabs come back through `boot`.
+- **Why:** [plan.md](plan.md#reconnect) already says the client recreates the web view
+  when a socket stays stuck in CONNECTING (WebKit 308073). Only the web sees the stuck
+  socket, so only the web can ask; native's content-process hook never fires for it.
+- **Rejected:** native detecting the stuck socket (it can't see inside the web view's
+  sockets); moving the socket to native now (the recorded fallback, kept for if spike 3
+  shows recreation doesn't clear it).
+- **Names:** `lifecycle.phase` stays `active` and `background`, the spec's names; the
+  web host-layer brief called the first one "foreground".
+
 ### Native keeps the saved tab list
 
 - **Decided:** 2026-10-21, tech lead (review round 2, not adopted).
@@ -1087,6 +1190,52 @@ All 2026-10-21, decided by Jimmy.
 - **Decided:** 2026-10-21, design (auth).
 - **Why:** origin checks stop cross-site hijacking of ambient credentials, and tether
   has none: no cookies, and a bearer token a foreign page can't read.
+
+### An unreadable `auth.toml` fails closed but retryable: 503 and close 4503
+
+- **Decided:** 2026-10-22, tech lead, from the p40 build (commit b1dcb8c), which found
+  that a file that doesn't parse made every token check fail as "not enrolled". Changes
+  how "Auth is functions over one state file" reports a file that fails closed
+  ([auth.md](auth.md#state-on-disk)).
+- **What:** when the token check can't read or parse `auth.toml`, HTTP gets `503
+  auth_unavailable` and a WebSocket upgrade completes and closes with `4503` (live
+  sockets at their next re-check). The app keeps its token, doesn't mark the host "not
+  enrolled", and retries with the usual backoff. The check still reads the file every
+  time. The close code is 4503, in the app range beside 4401, to pair with the 503; the
+  number is the design's pick.
+- **Why:** a typo in a hand edit of `auth.toml` would otherwise force re-enrolling
+  every device: 401 and 4401 tell the app its token is dead and it stops retrying.
+  The app can't tell a broken file from a revoked device unless the daemon says so.
+- **Rejected:** keeping 401 and 4401 for this case (the re-enrolment above); serving
+  from the last good parse (a cache is the second owner of the device set that "Auth is
+  functions over one state file" rejected, and a removed device would stay valid while
+  the file is broken); failing open.
+
+### The auth error codes and `/auth/info.name`, as built
+
+- **Decided:** 2026-10-22, tech lead, documenting the p40 build.
+- **What:**
+  - Errors besides `bad_code` and `auth_required`: `forbidden` (403, the Tailscale
+    check), `bad_request` (400, 415, 422, a body that isn't the route's JSON),
+    `internal` (500, the enrolment transaction failed), and the new `auth_unavailable`
+    (503) ([auth.md](auth.md#endpoints)).
+  - `/auth/info.name`, and with it `welcome.host.name`, is the config key `name`, else
+    the machine name from tailscaled's MagicDNS name. No spec named a source.
+  - The config keys are `port` (default 7850), `name`, and `[tmux] program, socket_name,
+    socket_path` ([plan.md](plan.md#config)).
+- **Rejected:** none recorded; the spec was silent.
+
+### The Funnel check reads LocalAPI, not `tailscale serve status`
+
+- **Decided:** 2026-10-22, design (p40).
+- **What:** at startup the daemon reads `/localapi/v0/serve-config` through its own
+  LocalAPI client and refuses to run if Funnel is on for its port. It follows web
+  proxies, TCP forwards and foreground serve sessions; if tailscaled can't be read, it
+  refuses to start.
+- **Why:** the JSON is the same as `tailscale serve status --json`, there is no
+  subprocess to run on an overloaded box, and the client already exists for the login
+  allowlist.
+- **Rejected:** shelling out to `tailscale serve status --json`.
 
 ## Documentation
 

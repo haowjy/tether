@@ -351,7 +351,14 @@ Native sizes the web view, so the web never measures the keyboard.
 - The web computes the tmux size from `collapsedHeight` and width only, and resizes
   tmux only on `initial`, `rotation` and font-size changes. A `keyboard` change never
   resizes tmux: the terminal keeps its rows and pans so the cursor row sits above the
-  tab bar ([plan.md](plan.md#layout)).
+  tab bar ([plan.md](plan.md#layout)). The columns come from `width` minus the left and
+  right safe area; the rows from `collapsedHeight` minus the tab bar and the suggestion
+  strip, at the current cell size (`web/term/size.ts`; the daemon clamps what it
+  receives, [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
+  **Open question:** whether `collapsedHeight` already excludes
+  the top and bottom safe area. The web subtracts only the left and right insets today,
+  so native and web must agree before the first device run
+  ([Open risks](#open-risks)).
 - `webView.scrollView`: `contentInsetAdjustmentBehavior = .never`, `bounces = false`,
   `keyboardDismissMode = .none`; zoom off in the viewport meta.
 
@@ -387,7 +394,8 @@ a mismatch can only happen in dev mode and shows an error banner.
 |---|---|---|
 | `ready` | `boot { bridgeVersion, hosts, tabs, settings, viewport, locked }` | Start; restore the saved tabs |
 | `token { host }` | `{ token }`, `{ locked }` or `{ notEnrolled }` | WebSocket token ([auth.md](auth.md#carrying-the-token)) |
-| `hostRejected { host }` | | The host closed the socket with 4401: mark it "not enrolled" |
+| `hostRejected { host }` | | The host closed the socket with 4401: mark it "not enrolled". The web halts that host's tabs as unauthorized until a tap on a pill retries |
+| `recreateWebView` | | Two consecutive connect timeouts on a host's socket ([plan.md](plan.md#reconnect)): discard the web view and load a fresh one. No data, no reply. All state that matters is on the server and in native's saved tabs |
 | `saveTabs { tabs }` | | Persist the open-tab list |
 | `focus { mode }` | | `terminal`, `hidden`, `webText`, `select` |
 | `haptic { kind }` | | Semantic haptics |
@@ -407,7 +415,14 @@ a mismatch can only happen in dev mode and shows an error banner.
 | `hosts { hosts: [{ id, name, enrolled }] }` | Host list or a host's enrolment changed |
 | `upload { id, host, tab, progress, path?, error? }` | Upload chips; on `path`, insert it into `tab` |
 
-The bridge types are written twice, in `web/src/native/bridge.ts` and
+`lifecycle.phase` has two values, `active` and `background`; there is no `foreground`.
+The `token` reply is one of `{ token }`, `{ locked }` (the app is locked) or
+`{ notEnrolled }` (native holds no token for that host). **Open question:** what the web
+does on `{ locked }` and `{ notEnrolled }` (wait for `lock { locked: false }`, what the
+pill says, whether to ask again) is undecided, and the web code that fetches a token
+doesn't exist yet ([Open risks](#open-risks)).
+
+The bridge types are written twice, in `web/native/bridge.ts` and
 `ios/TetherKit/Sources/TetherKit/Bridge.swift`; both test suites decode the same
 fixtures in `ios/TetherKit/Tests/fixtures/bridge/*.json`. The daemon never sees the
 bridge.
@@ -422,6 +437,7 @@ bridge.
 | Foreground (`sceneDidBecomeActive`) | Lock check first; then `lifecycle active`; the web reconnects at once and sends `watch` for the tab on screen, which repaints from a snapshot; `FocusController` restores the keyboard |
 | Network change (`NWPathMonitor`: satisfied, or interface changed) | `network` → the web resets backoff and reconnects sockets that are closed or silent past a heartbeat |
 | Web content process killed (`webViewWebContentProcessDidTerminate`) | Native reloads the page; `boot` restores tabs from the native copy, which survives this; focus is restored |
+| Web asks for a fresh web view (`recreateWebView`, after two consecutive connect timeouts: iOS 26 can leave a new WebSocket stuck in CONNECTING after resume) | Native discards the `WKWebView` and loads a new one, then it follows the same path as a killed content process: `boot` restores tabs from the native copy, the web reconnects, focus is restored |
 | Host unreachable for a while | Tabs stay "reconnecting" ([plan.md](plan.md#reconnect)). Past 10 s, the pill's detail says "Can't reach devbox. Is Tailscale on?": the app can't read the VPN state, and Tailscale off is the usual cause |
 
 iOS suspends the app in the background and its sockets die, native or not; resume
@@ -520,6 +536,14 @@ WebSocket messages get the same treatment.
 - **WKWebView adjusting for a keyboard it doesn't own**, fighting the frame resize.
   Spike 1, both geometry variants.
 - **Bridge latency under load**: unmeasured on iOS 26. Spike 1.
+- **Vertical safe area in `viewport`** (open): whether `collapsedHeight` already
+  excludes the top and bottom insets. The web's sizer subtracts only the left and right
+  insets from the width and the tab bar and strip from the height, so a mismatch gives
+  wrong rows. Settle it when native's `KeyboardGeometry` is written.
+- **Token fetch replies** (open): the web code that asks native for a host's token must
+  handle `{ locked }` and `{ notEnrolled }`; neither the waiting nor the pill states are
+  specified. It also needs the app boot code that routes `lifecycle`, `network`,
+  `viewport` and `lock` from native to the hosts and the sizer.
 - **The empty-`inputView` trick for `hidden`** is common practice, not documented
   behaviour. Spike 1.
 - **WebSocket after resume in WKWebView** (WebKit 308073, seen in Safari): spike 3. A

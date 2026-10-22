@@ -5,6 +5,11 @@ it to your tailnet over HTTPS, and every request must carry your Tailscale login
 enrolled device's token ([auth.md](design/auth.md)). It attaches to your tmux server
 and never starts one, so start tmux the way you always do.
 
+`tether serve` runs on Linux only for now. It reads your login and the serve config
+from tailscaled's LocalAPI unix socket, which the macOS Tailscale apps (App Store and
+standalone) don't have. The Mac is for recording tmux 3.7b fixtures and building the iOS
+app, not for running the daemon.
+
 ## Install
 
 ```bash
@@ -52,8 +57,9 @@ loginctl enable-linger "$USER"  # start your user units at boot, without a login
 journalctl --user -u tether -f
 ```
 
-The unit carries the resource limits from [plan.md](design/plan.md#resource-budget).
-Logs go to the journal; `RUST_LOG=debug` (in the unit's `Environment=`) shows more.
+The unit carries the resource limits from [plan.md](design/plan.md#resource-budget),
+`KillMode=mixed` so a stop reaches tether alone, and a restart backoff, since tailscaled
+may not be up yet at boot. Logs go to the journal; `RUST_LOG=debug` (in the unit's `Environment=`) shows more.
 They hold ids, lengths and logins, never terminal contents, tokens or codes.
 
 ## Enrol the phone
@@ -83,4 +89,5 @@ app: don't copy it to another machine.
 | tether exits at start: "no logged-in user" | tailscaled isn't logged in; log in, or pass `--allow-login` |
 | `403 forbidden` | the request didn't come through `tailscale serve`, or not from an allowed login |
 | `401 auth_required`, or the socket closes with 4401 | the device was removed: enrol it again |
+| `503 auth_unavailable`, or the socket closes with 4503 | `auth.toml` can't be read, usually a typo from a hand edit; the log names the line. Fix the file: the app keeps its token and retries, so nothing needs re-enrolling |
 | the app shows no sessions | no tmux server on the configured socket |

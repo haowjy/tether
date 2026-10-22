@@ -304,7 +304,8 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
   counted. tmux has read the file when the group completes; the hub hands the
   `PasteFile` back in a `RemoveFile` effect on `Done` and on every path that drops the
   request (§4.4), and deleting it frees the slot. The daemon empties the directory at
-  startup.
+  startup, after it has bound its port: a second daemon started by mistake fails to bind
+  and must not delete a running daemon's in-flight pastes.
 - **Quoting, on a control-client line:** user arguments go in single quotes (`'` as
   `'\''`) after doubling every `#` (tmux format-expands `-n` and `-c`); control
   characters are rejected. One-shots take arguments, not lines (§3.8).
@@ -828,7 +829,10 @@ ends. A `Paste` the hub refuses or drops (busy, unknown watch, connection gone) 
     `%exit` ends a client after a detach, `kill-server` and a closed stdin alike, which
     is why `LocateSession` runs first. With `%exit` seen and the session alive it was
     **detached** by another client (`attach -d`, `detach-client`): its watches get
-    `watchEnded { detached }` and nothing reattaches.
+    `watchEnded { detached }` and nothing reattaches. (A `systemctl stop` must not look
+    like this: under the default kill mode systemd signals the `tmux -C` clients itself,
+    and they exit as if detached while the sockets close. The unit's `KillMode=mixed`
+    signals tether alone, [plan.md](plan.md#resource-budget).)
     Without it the client **crashed**, and so does one the hub killed for a `Fatal`
     error or the reply timeout: the hub respawns it after 1 s, kept only if the
     server instance is unchanged; a second crash within 60 s ends the watches with
@@ -840,8 +844,9 @@ ends. A `Paste` the hub refuses or drops (busy, unknown watch, connection gone) 
 
 ### 4.6 Credit and the outbox
 
-Every byte bound between the hub and a socket is one number per connection, its
-credit (§6), and the hub's bookkeeping is its only copy. The hub debits the credit
+Every byte bound from the hub to a socket is one number per connection, its credit
+(§6), and the hub's bookkeeping is its only copy. (The connection's own small replies
+never pass through the hub and are bounded separately, below.) The hub debits the credit
 for every `ToConn` it sends; the connection returns those bytes over `FromConn` once
 a frame is written to the socket or discarded unwritten. Payloads waiting in the
 channel, in the outbox, and in the frame being written all count until then.
@@ -887,6 +892,15 @@ channel, in the outbox, and in the frame being written all count until then.
 - **Snapshot spacing** (§6): a watch that started awaiting because its output didn't
   fit is snapshotted no sooner than the spacing after its previous snapshot, so a
   flood on a slow link costs a few captures a second, not one per credit return.
+- **The connection's own replies are not charged.** `welcome`, `pong` and the paste
+  refusals the connection makes itself (over the paste limit, no free paste slot, the
+  file can't be written: `inputTooLarge` or `busy`) never pass through the hub, so they
+  hold no credit.
+  They wait in a queue of 16 entries on the connection, written ahead of the outbox's
+  frames. While 16 wait, the connection stops reading its socket, so a client that
+  pings without reading can't grow the queue: the bound is the queue, not the credit
+  (§6). `incompatible` is written directly during the handshake, before the connection
+  has any state to charge.
 - **Control JSON is never refused.** Every other `ToConn::Msg` (`watching`,
   `watchEnded`, closure broadcasts, `error`, `created`, `pong`) is charged but sent
   regardless, and may overdraw the credit by up to the overdraft (§6). A connection
@@ -924,7 +938,8 @@ limits of its own; the credit bounds everything in it.
 ```rust
 pub struct Endpoints { pub main: Endpoint }
 pub fn spawn(endpoints: Endpoints) -> (HubHandle, JoinHandle<()>);  // runs until every
-                                                                    // HubHandle drops
+                                                                    // HubHandle drops, then
+                                                                    // until every pump ends
 impl HubHandle {
     pub async fn connect(&self) -> Result<(ConnId, mpsc::Receiver<ToConn>), HubGone>;
     pub async fn send(&self, conn: ConnId, msg: FromConn) -> Result<(), HubGone>;
@@ -950,6 +965,13 @@ means the hub ended, by panic or shutdown; a connection that gets it ends, and t
 4004 close on shutdown stays with `main`. If the hub closes a connection's `ToConn`
 channel, it dropped the connection as wedged (§4.6): the connection closes with 4002.
 
+**The hub's task handle completes only after its pumps have.** When the last
+`HubHandle` drops, the hub closes every control client (dropping its line sender) and
+then waits for each pump task to finish: stdin closed, tmux given 1 s to exit, then
+killed (§3.9). `main` awaits the handle, so the daemon exits only after the `tmux -C`
+clients are gone, closed through stdin as a normal detach rather than SIGKILLed by the
+process exit.
+
 `http/` enforces the connection cap at the upgrade, and handles `hello`, `ping` and
 the auth re-check itself, as well as writing a paste's text to its file (§3.4). It
 sends `Credit` whenever `take_credit()` is non-zero.
@@ -971,7 +993,7 @@ pane bytes; the protocol relies on WebSocket keeping them in order.
 stateDiagram-v2
   [*] --> Upgrade: GET /ws
   Upgrade --> Rejected: Tailscale check fails, HTTP 403
-  Upgrade --> Closed: bad token, or over the cap
+  Upgrade --> Closed: bad token, auth file unreadable, or over the cap
   Upgrade --> AwaitHello: subprotocol tether.v1
   AwaitHello --> Closed: no hello in time, or version out of range
   AwaitHello --> Ready: hello, welcome
@@ -981,7 +1003,10 @@ stateDiagram-v2
 Close codes: **4000** idle; **4001** incompatible version; **4002** wedged; **4003**
 protocol violation (including no `hello` in time); **4004** daemon shutdown; **4005**
 over the connection cap; **4009** message too large; **4401** bad, unknown or revoked
-token. The client reconnects after any of them except 4001 and 4401.
+token; **4503** auth unavailable (the daemon can't read `auth.toml`, so it can't judge
+the token). The client reconnects after any of them except 4001 and 4401; after 4503 it
+keeps its token and retries with the usual backoff
+([auth.md](auth.md#carrying-the-token)).
 
 - **The client speaks one version; the daemon holds a range,**
   `MIN_PROTOCOL..=PROTOCOL_VERSION` (both 1 now). `hello { protocol, client: { kind:
@@ -996,11 +1021,13 @@ token. The client reconnects after any of them except 4001 and 4401.
   for the connection to log and ignore; serde's catch-all variant can't do it alone,
   since it matches only a message without a `data` field. A known type with bad data,
   or text that isn't a message, is a protocol violation (4003).
-- **A bad token and a socket over the cap** get the upgrade and then an immediate
-  close, because a browser WebSocket can't see a refused upgrade's status. The cap
-  counts sockets from the upgrade, before `hello`. On its own timer the connection
-  re-checks its device ([auth.md](auth.md#carrying-the-token)) and closes with 4401 if
-  it was removed. Only `hello` is accepted before `welcome`.
+- **A bad token, an unreadable auth file and a socket over the cap** get the upgrade and
+  then an immediate close (4401, 4503, 4005), because a browser WebSocket can't see a
+  refused upgrade's status. The cap counts sockets from the upgrade, before `hello`. On
+  its own timer the connection re-checks its device
+  ([auth.md](auth.md#carrying-the-token)) and closes with 4401 if it was removed, or
+  4503 if the file can't be read at that moment. Only `hello` is accepted before
+  `welcome`.
 - `host.id` is the persistent host id ([auth.md](auth.md#state-on-disk)).
 
 ### 5.3 JSON messages
@@ -1026,8 +1053,8 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `paste` | `watch, text` | through `paste-buffer -p` |
 | `history` | `req, watch, start, end` | scrollback rows by tmux line number (negative is history) |
 | `listSessions` | `req: u32` | the session sheet |
-| `newWindow` | `req, session: SessionRef, name?, dir?` | `dir` checked against the file roots by the connection |
-| `newSession` | `req, name?, dir?, scratch?: bool` | `scratch` after the core MVP; until then `scratch: true` gets `error { badRequest }` |
+| `newWindow` | `req, session: SessionRef, name?, dir?` | `dir` is checked against the file roots by the connection. **TODO:** `src/fs/` doesn't exist yet, so until it does `dir` passes through unchecked (`src/http/.context/TODO`) |
+| `newSession` | `req, name?, dir?, scratch?: bool` | `dir` as for `newWindow`, with the same TODO. `scratch` after the core MVP; until then `scratch: true` gets `error { badRequest }` |
 
 **Daemon → client**
 
@@ -1113,6 +1140,7 @@ Every daemon constant lives here; other documents link to this table.
 | capture reservation (snapshot, history) | 1 MiB; a history chunk's base64 text must fit it | snapshot: `TooLarge`; history: fewer rows, and a `TooLarge` capture is retried with half the rows (§4.6) |
 | listing reservation | 256 KiB | `error { tmux }` |
 | control JSON overdraft | 64 KiB past the credit | wedged, 4002 |
+| connection's own replies (`welcome`, `pong`, paste refusals), uncharged | 16 queued | the socket isn't read until one is written (§4.6) |
 | hub → connection channel | (credit + overdraft) / 64 B charge floor = 33,792 messages, so it can't fill | wedged, 4002 |
 | tmux names and error texts in messages | 256 bytes | cut |
 | snapshot spacing for a starved watch | 250 ms | |
@@ -1125,7 +1153,7 @@ Every daemon constant lives here; other documents link to this table.
 | completion: carapace run | 300 ms timeout, 1 at a time | no flag suggestions |
 | history per request | 200 rows | clamped |
 | `hello` deadline | 10 s | close 4003 |
-| ping / idle timeout | every 10 s / 25 s silent | close 4000; the 10 s timer also re-checks auth |
+| ping / idle timeout | every 10 s / 25 s silent | close 4000; the 10 s timer also re-checks auth (removed: 4401; unreadable file: 4503) |
 | size clamp | 20..=500 cols × 5..=300 rows | clamped |
 | `pause-after` | 3 s | `Gap` → snapshot |
 | scratch sessions | 2 | `error { tooManySessions }` |
@@ -1172,7 +1200,8 @@ How each failure ends; §4.5 has the control-client details.
 | connection wedged | control JSON past the overdraft, or its channel full | close 4002; the client reconnects |
 | hub panics | `main` awaits it | exit 1; systemd restarts; clients reconnect and resync |
 | device removed | the 10 s re-check | close 4401 |
-| shutdown (SIGTERM) | `main` | close sockets with 4004, close control clients' stdin, exit; tmux is unaffected |
+| `auth.toml` unreadable | the 10 s re-check, or the token check at the upgrade | close 4503 (HTTP: 503); the client keeps its token and retries |
+| shutdown (SIGTERM) | `main` | close sockets with 4004, close control clients' stdin and wait for their pumps (§4.7), exit; tmux is unaffected |
 | tab from before a tmux restart | server instance differs | `serverExited` for the old instance |
 
 Every failure ends as a message the phone can show. Logs carry framing metadata only

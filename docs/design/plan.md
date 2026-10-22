@@ -64,6 +64,11 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
 - **Auth:** the Tailscale login check, a device token per phone enrolled with a code
   printed on the server, and a Face ID lock ([auth.md](auth.md)).
 - **Hosts:** the app connects to each host's daemon directly; one host in the MVP.
+- **Server platform:** `tether serve` runs on Linux only for now. It needs tailscaled's
+  LocalAPI unix socket for the login allowlist and the Funnel check, and the macOS
+  Tailscale apps (App Store and standalone) don't expose one. The Mac is for recording
+  the 3.7b tmux fixtures ([daemon-core.md §8](daemon-core.md#8-testing)) and building
+  the iOS app, not for running the daemon.
 - **Scratch shell:** kept, landing after the core MVP.
 
 ## Architecture
@@ -163,7 +168,7 @@ Versions verified 2026-10-21 ([libraries.md](research/libraries.md),
 | Web assets | none in the daemon | the web UI is bundled in the iOS app |
 | Device-token auth | sha2, subtle, getrandom | [auth.md](auth.md#crates) |
 | Tailscale LocalAPI | own ~100-line client over the tailscaled socket (hyper): `status` and the serve config only | |
-| systemd and logs | sd-notify (`READY=1`, watchdog), tracing + tracing-subscriber, optional tracing-journald | |
+| systemd and logs | sd-notify (`READY=1`, `STOPPING=1`; no watchdog), tracing + tracing-subscriber writing to stderr, which the journal captures | no watchdog because it needs a periodic timer, which breaks the zero-wakeup idle; no tracing-journald because stderr already reaches the journal |
 | Protocol types | ts-rs (TypeScript); Swift hand-written for the auth DTOs | [daemon-core.md §5.5](daemon-core.md#55-type-generation) |
 | tmux parser | hand-written, pure, fixture-tested | libtmux-rs studied for ideas only |
 | Server-side emulator | none | xterm.js on the phone is the only emulator |
@@ -171,6 +176,23 @@ Versions verified 2026-10-21 ([libraries.md](research/libraries.md),
 | App shell | Preact 11, Vite, TypeScript strict | |
 | File viewer | markdown-it + DOMPurify; Shiki on demand with a language allowlist; Mermaid on demand with `securityLevel: "strict"` (v2) | DOMPurify is mandatory: no Markdown parser sanitizes |
 | Completion | carapace-bin 1.8, pinned; export JSON parsed loosely | absence or failure means no flag suggestions |
+
+### Config
+
+`~/.config/tether/config.toml`. Every key is optional, the file may not exist, and
+unknown keys are ignored, so an older daemon reads a newer config. An annotated example,
+and the note on `TMUX_TMPDIR` under systemd, are in [running.md](../running.md).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `port` | 7850 | the daemon listens on `127.0.0.1:<port>` |
+| `name` | the MagicDNS machine name | the host's name in the app: `/auth/info.name`, `welcome.host.name` |
+| `[tmux] program` | `tmux` | the tmux executable; an absolute path if the unit's `PATH` doesn't find it |
+| `[tmux] socket_name` | none | `tmux -L <name>` |
+| `[tmux] socket_path` | none | `tmux -S <path>`; not together with `socket_name` |
+| `roots`, `uploads_dir` | none, `~/tether-uploads` | project roots and the uploads folder ([File manager](#file-manager)); read once `src/fs/` exists |
+
+With neither socket key, tether uses tmux's default socket.
 
 ## Resource budget
 
@@ -198,11 +220,20 @@ and buffer use.
 - **Crash safety:** tmux is the source of truth. If tether restarts, clients reconnect
   and repaint from snapshots.
 
-**systemd user unit:** `Type=notify`, `Restart=on-failure`, `RestartSec=2`,
-`MemoryHigh=48M`, `MemoryMax=64M`, `CPUWeight=20`, `Nice=10`, `IOWeight=10`,
-`IOSchedulingClass=idle`, `TasksMax=32`, `OOMScoreAdjust=500` (the kernel kills tether
-before tmux or the agents).
+**systemd user unit** (`contrib/tether.service`): `Type=notify`, `KillMode=mixed`,
+`Restart=on-failure` with a backoff (`RestartSec=2`, `RestartSteps=5`,
+`RestartMaxDelaySec=60`, `StartLimitIntervalSec=0`), `MemoryHigh=48M`, `MemoryMax=64M`,
+`CPUWeight=20`, `Nice=10`, `IOWeight=10`, `IOSchedulingClass=idle`, `TasksMax=32`,
+`OOMScoreAdjust=500` (the kernel kills tether before tmux or the agents).
 
+- `KillMode=mixed` sends SIGTERM to tether alone, so it closes its sockets with 4004
+  and its control clients itself. Under the default kill mode, systemd also signals the
+  `tmux -C` clients directly, and the hub would report them as detached while the
+  sockets close, so a phone could get `watchEnded { detached }` instead of reconnecting.
+  SIGKILL after the stop timeout still reaches every process in the cgroup.
+- The restart backoff is there because tailscaled is a system unit that this user unit
+  can't order itself after: at boot tether may start before tailscaled is up and exit,
+  and the backoff keeps it retrying instead of hitting the start limit.
 - `TasksMax` counts threads and processes in the cgroup. tokio's blocking pool
   defaults to 512 threads, so `max_blocking_threads` is 8. The total, with control
   clients, a one-shot and a carapace run (a Go binary starts several threads), stays
@@ -536,7 +567,10 @@ the dev box to Jimmy.
 
 **Device token and Face ID lock:** [auth.md](auth.md). The token is checked on every
 route (`/ws`, `/fs/*`, `/complete`, the debug endpoint) by one middleware; only the
-two `/auth` routes skip it. One unprotected route is remote code execution.
+two `/auth` routes skip it. One unprotected route is remote code execution. If the
+device file can't be read, the check fails closed with a retryable answer (HTTP 503,
+WebSocket close 4503) rather than "not enrolled", so a typo in a hand edit never costs
+a re-enrolment ([auth.md](auth.md#state-on-disk)).
 
 **Web hardening:** the bundled UI runs under a strict CSP with no inline script, at
 `tether-app://ui`; daemon responses come from per-host origins the UI's
