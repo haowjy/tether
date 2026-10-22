@@ -15,6 +15,16 @@ export function socketUrl(host: HostEntry): string {
 }
 
 /**
+ * The origin a host's HTTP requests (`/fs/*`) go to. In the app that is native's per-host
+ * scheme origin, which adds the token and keeps daemon responses off the UI's origin
+ * (ios-shell.md "Where the web UI comes from"); on the desktop it is `baseURL`, the dev
+ * server's proxy.
+ */
+export function httpOrigin(host: HostEntry): string {
+  return location.protocol === "tether-app:" ? `tether-app://h-${host.id}` : new URL(host.baseURL).origin;
+}
+
+/**
  * A {@link Link} whose token comes from native, so the socket opens a moment after the
  * host asks for it. Native may answer that the app is locked or the host not enrolled;
  * both end the attempt like a closed socket would.

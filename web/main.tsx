@@ -7,6 +7,7 @@ import { createXtermRenderer } from "./term";
 import { onSchemeChange, terminalTheme } from "./ui/theme";
 import "./ui/tokens.css";
 import "./app/app.css";
+import "./files/files.css";
 
 const TERMINAL_FONT_SIZE = 12;
 /** How long to hold the first paint for the bundled font; it is local, so this is a ceiling. */

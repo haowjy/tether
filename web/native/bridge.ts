@@ -146,6 +146,21 @@ export class Native {
     return typeof reply === "string" ? reply : null;
   }
 
+  /** The file manager's upload button: native's photo menu, then an upload to the tab on screen. */
+  pickMedia(): void {
+    this.fire({ type: "pickMedia" });
+  }
+
+  /** Video and audio play in native's player, which fetches `/fs/raw` itself. */
+  playVideo(host: string, path: string): void {
+    this.fire({ type: "playVideo", host, path });
+  }
+
+  /** An `http`, `https` or `mailto` link: it leaves the app. */
+  openURL(url: string): void {
+    this.fire({ type: "openURL", url });
+  }
+
   private fire(msg: WebMsg): void {
     // A missing bridge (desktop dev) or a native refusal has no caller to inform.
     this.post(msg).catch(() => undefined);

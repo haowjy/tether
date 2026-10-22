@@ -3,6 +3,7 @@
 // no build carries it.
 import type { Boot, HostEntry, InputEvent, NativeMsg, Post, SavedTab, TokenReply, Viewport } from "../native/bridge";
 import { BRIDGE_VERSION } from "../native/bridge";
+import { encodePath } from "../files/api";
 
 const TOKEN_KEY = "tether.dev.token";
 const TABS_KEY = "tether.dev.tabs";
@@ -63,6 +64,16 @@ function deliver(...messages: NativeMsg[]): void {
   (window as unknown as { __tether?: { receive(m: NativeMsg[]): void } }).__tether?.receive(messages);
 }
 
+/**
+ * The Vite proxy turns this cookie into the `Authorization: Bearer` native's scheme handler
+ * would add to `/fs/*` requests (vite.config.ts), so `<img src>` works as in the app.
+ */
+function shareToken(token: string | null): void {
+  document.cookie = token
+    ? `tether_dev_token=${encodeURIComponent(token)}; path=/fs; SameSite=Strict`
+    : "tether_dev_token=; path=/fs; max-age=0";
+}
+
 /** The device token from `tether device add`: pasted once, then kept. `#token=…` skips the prompt. */
 function loadToken(): string | null {
   const hash = /^#token=(.+)$/.exec(location.hash);
@@ -103,6 +114,10 @@ function mountInput(): void {
   keyboard.id = "dev-keyboard";
   keyboard.textContent = "keyboard + accessory (native)";
   keyboard.style.cssText = `display:none;width:${String(VIEWPORT.width)}px;height:${String(KEYBOARD_HEIGHT)}px;place-items:center;box-sizing:border-box;background:#2a2d33;color:#888;font:13px system-ui;outline:1px solid #444`;
+  // Native's key row ends in the hide-keyboard key; here the whole block is that key.
+  keyboard.title = "Hide the keyboard";
+  keyboard.style.cursor = "pointer";
+  keyboard.addEventListener("click", () => { showKeyboard(false); });
   app?.after(keyboard);
   const input = document.createElement("textarea");
   input.id = "dev-input";
@@ -128,9 +143,36 @@ function mountInput(): void {
   keyboard.after(input);
 }
 
+/**
+ * What native's photo menu and `Uploader` do (ios-shell.md "Files and sharing"): pick a
+ * file, post it to `/fs/upload` for the tab on screen, and report through `upload`.
+ */
+function pickAndUpload(): void {
+  const picker = document.createElement("input");
+  picker.type = "file";
+  picker.accept = "image/*";
+  picker.addEventListener("change", () => {
+    const file = picker.files?.[0];
+    const target = (window as unknown as { __tether?: { activeTab(): { host: string; tab: string } } }).__tether?.activeTab();
+    if (!file || !target) return;
+    const id = `dev-${String(Date.now())}`;
+    const report = (rest: { progress: number; path?: string; error?: string }): void => { deliver({ type: "upload", id, ...target, ...rest }); };
+    report({ progress: 0 });
+    fetch(`/fs/upload?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file }).then(
+      async (res) => {
+        const body = (await res.json()) as { path?: string; error?: string };
+        report(body.path ? { progress: 1, path: body.path } : { progress: 0, error: body.error ?? String(res.status) });
+      },
+      (error: unknown) => { report({ progress: 0, error: String(error) }); },
+    );
+  });
+  picker.click();
+}
+
 /** The bridge `Post` for a page with no native app around it. */
 export function createDevShim(): Post {
   let token = loadToken();
+  shareToken(token);
   mountInput();
   return (msg) => {
     switch (msg.type) {
@@ -155,12 +197,23 @@ export function createDevShim(): Post {
         // Forget the token so the next load asks again.
         localStorage.removeItem(TOKEN_KEY);
         token = null;
+        shareToken(null);
         return Promise.resolve();
       case "focus":
         setTimeout(() => { showKeyboard(msg.mode === "terminal"); }, 0);
         return Promise.resolve();
       case "prompt":
         return Promise.resolve(window.prompt(`${msg.title}\n${msg.message}`, msg.initial));
+      case "pickMedia":
+        pickAndUpload();
+        return Promise.resolve();
+      case "playVideo":
+        // No AVPlayer here: the browser's own player, through the proxy.
+        window.open(`/fs/raw${encodePath(msg.path)}`, "_blank", "noopener");
+        return Promise.resolve();
+      case "openURL":
+        window.open(msg.url, "_blank", "noopener");
+        return Promise.resolve();
       case "saveTabs":
         localStorage.setItem(TABS_KEY, JSON.stringify(msg.tabs));
         if (msg.active === null) localStorage.removeItem(ACTIVE_KEY);

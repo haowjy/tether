@@ -1,7 +1,8 @@
-import type { ComponentChildren } from "preact";
 import type { TmuxListing } from "../proto/generated/messages";
 import { Tappable } from "../ui/Tappable";
-import { ChevronLeft, ChevronRight, Close, Plus, Refresh } from "../ui/icons";
+import { ChevronRight, Close, Folder, Plus, Refresh } from "../ui/icons";
+import { CloseButton, Empty, Sheet, SheetHeader } from "../ui/Sheet";
+import { FilesSheet } from "../files/FilesSheet";
 import type { App, Draft, Listing } from "./app";
 import { describe } from "./status";
 import { Dot } from "./TabBar";
@@ -19,54 +20,6 @@ function ago(unixSeconds: number, now: number): string {
 function shortPath(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts.length <= 2 ? path : `…/${parts.slice(-2).join("/")}`;
-}
-
-/** An overlay in the page: a scrim and a panel, rising from the bottom or filling the screen. */
-function Sheet({ app, full = false, label, children }: { app: App; full?: boolean; label: string; children: ComponentChildren }) {
-  return (
-    <div class={`sheet-layer${full ? " sheet-layer-full" : ""}`}>
-      <Tappable class="scrim" label="Close" onTap={() => { app.closeSheet(); }} />
-      <div class="sheet" role="dialog" aria-label={label}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Header({ title, sub, onBack, actions }: { title: string; sub?: string | null | undefined; onBack?: () => void; actions: ComponentChildren }) {
-  return (
-    <div class="sheet-head">
-      {onBack && (
-        <Tappable class="icon-tap" label="Back" onTap={onBack}>
-          <ChevronLeft />
-        </Tappable>
-      )}
-      <div class="sheet-title">
-        <div class="sheet-title-main">{title}</div>
-        {sub && <div class="sheet-title-sub">{sub}</div>}
-      </div>
-      {actions}
-    </div>
-  );
-}
-
-function CloseAction({ app }: { app: App }) {
-  return (
-    <Tappable class="icon-tap" label="Close" onTap={() => { app.closeSheet(); }}>
-      <Close />
-    </Tappable>
-  );
-}
-
-/** A full-width message for a listing with nothing to show. */
-function Empty({ title, hint, children }: { title: string; hint?: string; children?: ComponentChildren }) {
-  return (
-    <div class="empty">
-      <div class="empty-title">{title}</div>
-      {hint && <div class="empty-hint">{hint}</div>}
-      {children}
-    </div>
-  );
 }
 
 function ListingProblem({ app, listing, host }: { app: App; listing: Exclude<Listing, { kind: "list" }>; host: string }) {
@@ -140,14 +93,14 @@ function AttachSheet({ app }: { app: App }) {
   const name = host?.name ?? "host";
   const canCreate = listing?.kind === "list";
   return (
-    <Sheet app={app} label="Open a window">
-      <Header
+    <Sheet onClose={() => { app.closeSheet(); }} label="Open a window">
+      <SheetHeader
         title="Open a window"
         sub={name}
         actions={
           <>
             <Tappable class="icon-tap" label="Refresh" onTap={() => { void app.refresh(); }}><Refresh /></Tappable>
-            <CloseAction app={app} />
+            <CloseButton onClose={() => { app.closeSheet(); }} />
           </>
         }
       />
@@ -183,8 +136,8 @@ function CreateSheet({ app, draft }: { app: App; draft: Draft }) {
   const title = draft.target.kind === "window" ? `New window in ${draft.sessionName ?? "session"}` : "New session";
   const custom = draft.dir !== null && draft.dir !== cwd;
   return (
-    <Sheet app={app} label={title}>
-      <Header title={title} sub={host?.name} onBack={() => { app.cancelCreate(); }} actions={<CloseAction app={app} />} />
+    <Sheet onClose={() => { app.closeSheet(); }} label={title}>
+      <SheetHeader title={title} sub={host?.name} onBack={() => { app.cancelCreate(); }} actions={<CloseButton onClose={() => { app.closeSheet(); }} />} />
       <div class="sheet-body">
         <div class="field-label">Name</div>
         <Tappable class="row" label={`Name: ${draft.name ?? "tmux chooses"}. Tap to change`} onTap={() => { void app.promptName(); }}>
@@ -214,10 +167,20 @@ function HomeSheet({ app }: { app: App }) {
   const name = host?.name ?? "host";
   const now = Date.now();
   const mine = tabs.filter((t) => t.host === host?.id);
+  const tab = app.activeTab();
+  const cwd = tab?.host === host?.id ? tab?.cwd : null;
   return (
-    <Sheet app={app} full label="Home">
-      <Header title={name} sub={hostLine(listing)} actions={<CloseAction app={app} />} />
+    <Sheet onClose={() => { app.closeSheet(); }} full label="Home">
+      <SheetHeader title={name} sub={hostLine(listing)} actions={<CloseButton onClose={() => { app.closeSheet(); }} />} />
       <div class="sheet-body">
+        <Tappable class="row" label="Files" onTap={() => { app.openFiles(); }}>
+          <Folder />
+          <span class="row-main">
+            <span class="row-title">Files</span>
+            <span class="row-sub mono">{cwd ? shortPath(cwd) : "Your folders on the server"}</span>
+          </span>
+          <ChevronRight size={18} />
+        </Tappable>
         {mine.length > 0 && (
           <section class="session">
             <h2 class="home-section">Open tabs</h2>
@@ -263,5 +226,7 @@ export function Sheets({ app }: { app: App }) {
       return <AttachSheet app={app} />;
     case "create":
       return <CreateSheet app={app} draft={sheet.draft} />;
+    case "files":
+      return <FilesSheet app={app} host={sheet.host} browser={sheet.browser} />;
   }
 }

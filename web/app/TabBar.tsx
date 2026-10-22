@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "preact/hooks";
 import { Tappable } from "../ui/Tappable";
-import { ChevronLeft, Close, Keyboard, KeyboardHide, Plus } from "../ui/icons";
+import { ChevronLeft, Close, Keyboard, Panel, Plus } from "../ui/icons";
 import type { App, TabView } from "./app";
 import { describe, type Tone } from "./status";
 
@@ -45,7 +45,7 @@ function Pill({ app, tab, active, now }: { app: App; tab: TabView; active: boole
   );
 }
 
-/** The bottom bar (plan.md "Layout"): `[<]`, the tab pills scrolling sideways, `[+]`, `[⌨]`. */
+/** The bottom bar (plan.md "Layout"): `[<]`, the tab pills scrolling sideways, `[+]`, then `[⌨]` or, with the keyboard up, `[⊞]`. */
 export function TabBar({ app, now }: { app: App; now: number }) {
   const { tabs, active, keyboard } = app.snapshot;
   return (
@@ -59,9 +59,10 @@ export function TabBar({ app, now }: { app: App; now: number }) {
       <Tappable class="bar-icon" label="Open a window" onTap={() => { app.openSheet("attach"); }}>
         <Plus />
       </Tappable>
-      <Tappable class="bar-icon" label={keyboard ? "Hide keyboard" : "Show keyboard"} onTap={() => { app.toggleKeyboard(); }}>
-        {keyboard ? <KeyboardHide /> : <Keyboard />}
-      </Tappable>
+      {/* With the keyboard up, native's key row has the hide key and this slot is `[⊞]`. */}
+      {keyboard
+        ? <Tappable class="bar-icon" label="Files" onTap={() => { app.openFiles(); }}><Panel /></Tappable>
+        : <Tappable class="bar-icon" label="Show keyboard" onTap={() => { app.showKeyboard(); }}><Keyboard /></Tappable>}
     </div>
   );
 }

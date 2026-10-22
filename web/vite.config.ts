@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import preact from "@preact/preset-vite";
+import type { ProxyOptions } from "vite";
 import { defineConfig } from "vitest/config";
 
 /** The dev box owner's Tailscale login, which `tailscale serve` would add in production. */
@@ -32,12 +33,21 @@ export default defineConfig(({ command }) => ({
     command === "serve"
       ? {
           proxy: Object.fromEntries(
-            ["/ws", "/auth"].map((path) => [
+            ["/ws", "/auth", "/fs"].map((path): [string, ProxyOptions] => [
               path,
               {
                 target: `http://127.0.0.1:${process.env["TETHER_PORT"] ?? "7850"}`,
-                ws: true,
+                ws: path === "/ws",
                 headers: { "Tailscale-User-Login": devLogin() },
+                // `/fs/*` carries the device token as native's scheme handler would: the dev
+                // shim keeps it in a cookie (dev/shim.ts), sent here as a Bearer token.
+                configure: (proxy) => {
+                  proxy.on("proxyReq", (req, incoming) => {
+                    const token = /(?:^|;\s*)tether_dev_token=([^;]+)/.exec(incoming.headers.cookie ?? "")?.[1];
+                    req.removeHeader("cookie");
+                    if (token) req.setHeader("Authorization", `Bearer ${decodeURIComponent(token)}`);
+                  });
+                },
               },
             ]),
           ),

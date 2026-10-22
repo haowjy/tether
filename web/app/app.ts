@@ -4,7 +4,9 @@ import { TabDriver } from "../tabs/driver";
 import { initialState, type ConnectionState, type Halt } from "../tabs/connection";
 import type { TerminalRenderer } from "../term";
 import { TerminalSizer } from "../term/size";
-import { HostRegistry } from "./hosts";
+import { FileBrowser } from "../files/browser";
+import { httpFsApi } from "../files/api";
+import { HostRegistry, httpOrigin } from "./hosts";
 import { AskError, create, listWindows, type CreateTarget } from "./listing";
 import { HostSync, listed } from "./sync";
 
@@ -45,7 +47,11 @@ export interface Draft {
   error: string | null;
 }
 
-export type Sheet = { kind: "home" } | { kind: "attach" } | { kind: "create"; draft: Draft };
+export type Sheet =
+  | { kind: "home" }
+  | { kind: "attach" }
+  | { kind: "create"; draft: Draft }
+  | { kind: "files"; host: HostEntry; browser: FileBrowser };
 
 export interface AppView {
   tabs: readonly TabView[];
@@ -86,6 +92,8 @@ export class App {
   private readonly syncs = new Map<string, HostSync>();
   private view: AppView;
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The file manager's hidden-files toggle, kept for the next time it opens. */
+  private hiddenFiles = false;
 
   constructor(opts: AppOptions) {
     this.native = opts.native;
@@ -151,7 +159,9 @@ export class App {
         this.update({ host: this.sheetHost() });
         break;
       case "upload":
-        if (msg.path) this.view.tabs.find((t) => t.id === msg.tab && t.host === msg.host)?.driver.insertPath(msg.path);
+        if (!msg.path) break;
+        this.view.tabs.find((t) => t.id === msg.tab && t.host === msg.host)?.driver.insertPath(msg.path);
+        if (this.view.sheet?.kind === "files" && this.view.sheet.host.id === msg.host) void this.view.sheet.browser.uploaded(msg.path);
         break;
     }
   }
@@ -179,9 +189,9 @@ export class App {
     this.view.tabs.find((t) => t.id === id)?.driver.close();
   }
 
-  /** `[⌨]`: native owns the keyboard; this only asks. */
-  toggleKeyboard(): void {
-    this.native.focus(this.view.keyboard ? "hidden" : "terminal");
+  /** `[⌨]`: native owns the keyboard; this only asks. Its key row hides it again. */
+  showKeyboard(): void {
+    this.native.focus("terminal");
   }
 
   scrollToBottom(): void {
@@ -211,6 +221,34 @@ export class App {
     const host = this.sheetHost();
     this.update({ sheet: { kind }, host });
     void this.refresh();
+  }
+
+  /**
+   * `[⊞]` or Home's Files row: the file manager for the sheet's host, at the tab's cwd when
+   * a root holds it. The keyboard stays as it is (plan.md "File manager").
+   */
+  openFiles(): void {
+    const host = this.sheetHost();
+    if (!host) return;
+    const browser = new FileBrowser({ api: httpFsApi(httpOrigin(host)), hidden: this.hiddenFiles, onHidden: (hidden) => { this.hiddenFiles = hidden; } });
+    const tab = this.activeTab();
+    this.update({ sheet: { kind: "files", host, browser }, host });
+    void browser.start(tab?.host === host.id ? tab.cwd : null);
+  }
+
+  /** The file manager's upload button: native picks a photo and uploads it for the tab on screen. */
+  uploadMedia(): void {
+    this.native.pickMedia();
+  }
+
+  /** Video and audio go to native's player (ios-shell.md "Web content security"). */
+  playMedia(host: string, path: string): void {
+    this.native.playVideo(host, path);
+  }
+
+  /** A link out of the app, from a rendered Markdown file. */
+  openExternal(url: string): void {
+    this.native.openURL(url);
   }
 
   closeSheet(): void {

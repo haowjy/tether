@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- File manager: browse project folders and uploads from the tab's folder; view
+  code, Markdown, images and file details; manage folders in Settings.
 - Completion for the suggestion strip (`POST /complete`): chips from shell history
   (bash, zsh or fish, ranked by recency and frequency), commands on `PATH`, carapace
   for subcommands, flags and values, and directory listings for paths. A chip only
