@@ -1464,6 +1464,9 @@ found each point while running the daemon.
   (56 to 55 at 393 pt wide) and none in landscape, where the insets already exceed it.
 - **Rejected:** live insets in a `keyboard` viewport (the bottom-inset case above); a
   wider edge (another column on a 393-pt phone).
+- **Changed 2026-10-22 (p66):** the rows no longer subtract the suggestion strip; see
+  "The suggestion strip pans the terminal like the keyboard and never resizes tmux"
+  below.
 
 ### The keyboard pan belongs to the renderer and follows the cursor
 
@@ -1488,6 +1491,29 @@ found each point while running the daemon.
 - **Rejected:** a keyboard flag in `App` driving the pan (the container's height already
   says it); snapping the pan to whole rows (leaves a gap under the cursor row, where the
   plan says "just above").
+
+### The suggestion strip pans the terminal like the keyboard and never resizes tmux
+
+- **Decided:** 2026-10-22, design, from the suggestion strip build (p66). Changes
+  [ios-shell.md](ios-shell.md#keyboard-geometry), whose sizing paragraph subtracted the
+  strip from the tmux rows, and "The tmux size sits inside every safe-area inset…"
+  above, which listed it in the rows.
+- **What:** the strip sits under the tab bar, right above the accessory, and shows only
+  while the keyboard is up and the tab is live. It shortens the terminal area as the
+  keyboard does, and `cursorPan` slides the terminal to keep the cursor row in view.
+  The tmux rows are `collapsedHeight` less the top and bottom insets and the tab bar;
+  the strip is not in them, and its appearing or going sends no resize.
+- **Why:** the strip exists only "while suggestions exist"
+  ([plan.md](plan.md#layout)), so counting it would resize tmux whenever chips came or
+  went. Resizing for the keyboard is already refused for this reason: a SIGWINCH reflows
+  the app and the laptop ([tmux setup](#tmux-setup)). The pan already handles an area
+  shorter than the terminal, so the strip needs no new mechanism.
+- **Cost:** with the keyboard up in landscape, about 50 px of terminal were left before
+  the strip and about 8 px are left with it, and the cursor row can be clipped. That is
+  open: one option is to put the chips in the bar row in landscape, which needs a
+  design decision.
+- **Rejected:** subtracting the strip from the tmux rows, as the spec said (the resizes
+  above).
 
 ## Auth
 
@@ -1648,6 +1674,22 @@ review. The product calls behind it are Jimmy's
   breaking "an older daemon reads a newer config"); a separate `config.lock` in
   `~/.config/tether` (clutter in a dotfiles directory); renaming over the symlink
   (silently replaces the dotfiles link with a copy).
+- **Added 2026-10-22 (tech lead, from the security review p65, fixed in p68): a link to
+  nothing is refused, not written through.** A `config.toml` that is a dangling
+  symlink, or whose directory (or a directory above it) is one, gets `409
+  config_read_only`; the link, its target and the directories on the way are left as
+  they were. Before, the file case answered `200` and replaced the link with a regular
+  file, and the directory case answered `500 internal`. The web's message for this
+  code, "config.toml can't be written on the server", already fits, and reads are
+  unchanged.
+  - **Why:** a write through the link would create a file, and possibly directories,
+    wherever it points (a dotfiles checkout that moved, say), from a tap on the phone.
+    Refusing is the answer an unwritable target already gets, and Jimmy can fix the
+    link in the terminal.
+  - **Rejected:** writing through the dangling link (it creates the target and its
+    directories wherever the link points: a file the user didn't make, in a tree the
+    app doesn't know); renaming over the link (the rule above: it replaces the
+    dotfiles link with a copy).
 
 ### Paths ride in the URL path
 
@@ -1948,6 +1990,10 @@ the p61 review. The product calls behind it are Jimmy's
   one shell); time-based recency (no timestamps in bash's default format); detecting
   the format from content (plain zsh and bash lines look the same, and only zsh's
   needs unmetafying).
+- **Amended 2026-10-22 (p68):** the dedup map holds at most 12,000 distinct lines, and
+  command ranking sums the kept lines only; see "History scores at most 12,000
+  distinct lines" below. A history chip is inserted as written, unescaped; see "Chips
+  are escaped literals…" below.
 
 ### The snippet appends history after each command
 
@@ -2125,6 +2171,96 @@ the p61 review. The product calls behind it are Jimmy's
 - **Rejected:** leaving the slab out because it is reclaimable (the budget run reads
   `memory.peak`, which includes it, and it counts toward `MemoryHigh`); the other
   items: none recorded.
+- **Changed 2026-10-22 (p68):** `~` and `=` are now escaped everywhere, and commands
+  are escaped too; see "Chips are escaped literals…" below.
+
+### Chips are escaped literals, with `~` and `=` escaped everywhere
+
+- **Decided:** 2026-10-22, tech lead, from the security review of the completion build
+  (p65), fixed in p68. Reverses the "`~` and `=` stay unescaped" item of "Completion,
+  as built" above, and extends the path chips' escape set to commands and carapace
+  values ([complete.md](complete.md#escaping)).
+- **What:**
+  - One encoder, `context::literal`, writes every command, path and carapace `insert`;
+    `chip()` applies it, so no source can skip it. It backslash-escapes every ASCII
+    character outside `[A-Za-z0-9._+,:@%/-]`; non-ASCII characters stay as they are.
+    `~` and `=` are escaped wherever they sit in the name.
+  - History chips are the line as written, unescaped: they are shell syntax Jimmy
+    typed.
+  - The lexer reads a leading `~` that was escaped or quoted as `./~`: `\~x` and
+    `'~'/s` mean the files `./~x` and `./~/s`, not a home directory.
+- **Why:** the first build escaped only paths, and left `~` and `=` out of the set. The
+  review ran what a chip typed:
+  - **Commands:** an executable named `p65x;printf P65_INJECTED` was completed
+    unescaped, and running the line printed `P65_INJECTED`: the `;` ended the command.
+    Command names need the same escaping as file names.
+  - **`~` and `=`:** bash expands `~` after `=` or `:` in an argument too (`echo
+    a=~root` printed `a=/root` on bash 5.2); zsh expands a leading `=cmd`, and with
+    `MAGIC_EQUAL_SUBST` a `~` or `=` after `=` or `:`; bash's own Tab escapes both. A
+    file named `~root`, `a=~root` or `=ls` completed bare ran as something else. The
+    `bash -c` read-back test checks 24 hostile names through command, path and carapace
+    chips and fails if `~` or `=` rejoin the safe set.
+  - **The lexer rule:** without it, a line holding `\~x` was read back as the home
+    directory `~x`, and the next request listed `$HOME` instead of the directory it
+    meant.
+  - **History:** a history line is shell syntax Jimmy typed, with its own quoting and
+    operators, so it goes in as written; escaping it would change the command he ran.
+- **Cost:** names like `foo~` show as `foo\~` on the line. zsh is covered by its
+  documented rules, not by a run: the dev box has no zsh
+  ([complete.md](complete.md#open-risks)).
+- **Rejected:** `~` and `=` in the unescaped set, as the first build had them (a name
+  starting with one was expanded by the shell, and so was one after `=` or `:`);
+  leaving commands unescaped (the `;` above); escaping history lines (shell syntax, as
+  above). Other encodings: none recorded.
+
+### History scores at most 12,000 distinct lines
+
+- **Decided:** 2026-10-22, tech lead, from the security review of the completion build
+  (p65), fixed in p68. Amends the memory side of "History: one file, parsed into a
+  cached index…" above ([complete.md](complete.md#history)).
+- **What:** entries are read newest first, and the first 12,000 distinct lines (the
+  10,000 kept plus a margin of 2,000) get a score; an older entry only adds to a line
+  already scored. The word index has one entry per distinct first word of the kept
+  lines, pointing into them, with no copied text, so command ranking sums the scores
+  of the kept lines only. Which 10,000 lines are kept does not change: a line left out
+  is, at its newest, at least 2,000 entries older than each of the first 10,000
+  scored, a line's weights sum to at most 289 times its newest one, and 289 × 2^(-2000/200)
+  is below 1. The proof is in the comment on `SCORED` in `src/complete/history.rs`.
+- **Why:** the map, and the per-line structures built from it, grew with the file's
+  distinct lines, and a 1 MiB read of short lines holds about 150,000 of them. On the
+  reviewer's file (149,796 `hNNNNN` lines, 1,048,572 bytes), release build, with the
+  unit's glibc tunable, measured by the transient scope's `memory.peak`:
+
+  | Build | Peak memory rise | `VmHWM` rise | Request time |
+  |---|---|---|---|
+  | before | 17.6–18.8 MB | 16.6–17.2 MiB | 67–70 ms |
+  | with the cap | 1.5–2.0 MB | 0.9–1.0 MiB | 23–24 ms |
+
+  The worst case with the cap is 10,400 lines of 101 bytes, the largest kept index:
+  2.9 MB on the first parse and 3.9 MB on a rebuild with the old index held, within
+  complete.md's ~4 MB history allowance. The dedup map is at most 12,000 entries, about
+  0.4 MB.
+- **Checked:** a throwaway comparison with the uncapped ranking on random histories
+  gave 40 of 40 identical rankings, then was deleted. With a margin of only 50, 3
+  rounds differed, so the comparison does catch a wrong cap.
+- **Rejected:** leaving the map unbounded (the table above); a margin of 50 (the
+  comparison above found rankings that differ).
+
+### Parser errors are logged by kind and position, never by message
+
+- **Decided:** 2026-10-22, tech lead, from the same review (p65), fixed in p68.
+  Extends "Logs carry framing metadata only" above to completion
+  ([complete.md](complete.md#logging)).
+- **What:** a carapace JSON failure logs one of four fixed phrases (bad syntax, an
+  unexpected shape, cut short, a read error) and the line and column, as "an
+  unexpected shape at line 1, column 57". serde's own message is never logged. Every
+  other log line in `src/complete/` and `src/fs/` was checked: none logs a parser's
+  message, and config parse errors already log a line number only.
+- **Why:** serde's `Display` quotes the input it choked on, and carapace's output can
+  echo the words Jimmy typed. With `RUST_LOG=debug`, a typed word inside malformed
+  JSON reached the debug line and the `--list` warning, against the rule that typed
+  text is never logged.
+- **Rejected:** logging serde's message (above). Other options: none recorded.
 
 ## Documentation
 

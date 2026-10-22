@@ -367,16 +367,20 @@ Native sizes the web view, so the web never measures the keyboard.
   rotation while the keyboard is up gives the rows the collapsed layout has.
 - The web computes the tmux size from `collapsedHeight` and width only, and resizes
   tmux only on `initial`, `rotation` and font-size changes. A `keyboard` change never
-  resizes tmux. The columns come from `width` minus the left and right insets, each
-  side at least a 4 px edge inset (`--term-edge`) so text never touches the glass; the
-  rows from `collapsedHeight` minus the top and bottom insets, the tab bar and the
-  suggestion strip, at the current cell size (`web/term/size.ts`; the daemon clamps what
-  it receives, [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)). The
-  edge inset costs a column in a 393-wide portrait view (56 to 55 columns, measured in
-  the dev shim) and none in landscape, where the side insets are larger.
-- **The pan.** With the keyboard up the terminal area (above the tab bar and strip) is
-  shorter than the terminal's rows, and the terminal keeps its rows
-  ([plan.md](plan.md#layout)). The renderer (`web/term/xterm.ts`, `cursorPan`) slides
+  resizes tmux, and neither does the suggestion strip appearing or going. The columns
+  come from `width` minus the left and right insets, each side at least a 4 px edge
+  inset (`--term-edge`) so text never touches the glass; the rows from
+  `collapsedHeight` minus the top and bottom insets and the tab bar, at the current
+  cell size (`web/term/size.ts`; the daemon clamps what it receives,
+  [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)). **The strip is
+  not subtracted:** it shows only while the keyboard is up and the tab is live, so
+  counting it would resize tmux each time chips came or went. It shortens the terminal
+  area as the keyboard does, and the pan below keeps the cursor row in view. The edge
+  inset costs a column in a 393-wide portrait view (56 to 55 columns, measured in the
+  dev shim) and none in landscape, where the side insets are larger.
+- **The pan.** With the keyboard up, and with the strip showing, the terminal area
+  (above the tab bar and strip) is shorter than the terminal's rows, and the terminal
+  keeps its rows ([plan.md](plan.md#layout)). The renderer (`web/term/xterm.ts`, `cursorPan`) slides
   the terminal up just far enough that the bottom of the cursor row meets the bottom of
   that area: never down, never past the last row, and not at all while every row fits.
   The area's height and the cursor row decide it, so the web keeps no keyboard flag for

@@ -98,7 +98,13 @@ would follow the same steps. In a blocking task:
    ([auth.md](auth.md#state-on-disk)), for the whole read-modify-write.
 2. Find the real file with `canonicalize`, so a symlinked `config.toml` (dotfiles)
    keeps its link and the target is written. A missing file starts empty; its
-   directory is created 0700.
+   directory is created 0700. **A link that leads to nothing is not written
+   through:** a `config.toml` that is a dangling symlink, or one whose directory (or a
+   directory above it) is a dangling symlink, is `409 config_read_only`, and nothing
+   changes: the link, its target (still absent) and the directories on the way. The
+   write would otherwise create a file, and perhaps directories, wherever the link
+   points (a moved dotfiles checkout, say), from a tap on the phone. Reads are
+   unchanged.
 3. Read it, note its `(dev, ino, size, mtime)`, and parse it with `toml_edit`. A file
    that doesn't parse, or that `Config` would refuse, is left alone: `503
    config_unavailable`.
@@ -109,8 +115,8 @@ would follow the same steps. In a blocking task:
    changed since step 3, start over from step 3 (at most 3 tries, then `503 busy`).
    Otherwise `rename` the temp file over it and `fsync` the directory.
 
-A target on a read-only filesystem, or one Jimmy can't write (a home-manager link into
-`/nix/store`), is `409 config_read_only`. Readers never see a partial file, since each
+A target on a read-only filesystem, one Jimmy can't write (a home-manager link into
+`/nix/store`), or a symlink to nothing (step 2), is `409 config_read_only`. Readers never see a partial file, since each
 write is one rename. An editor that saves between the re-stat and the rename loses
 one side's change; one that rewrites the file in place can be read mid-write and its
 truncated text written back. Both windows are microseconds wide; accepted.
@@ -358,7 +364,7 @@ rejections.
 | 403 | `denied` | `EACCES` or `EPERM` |
 | 404 | `not_found` | `ENOENT`, `ENOTDIR` while resolving, `ELOOP` at open |
 | 409 | `not_a_directory`, `not_a_file` | the wrong kind for the route; a FIFO, socket or device is `not_a_file`; an upload when `uploads_dir` isn't an absolute or `~/` path or isn't a directory |
-| 409 | `config_read_only` | `config.toml` (or its link target) can't be written: `EROFS`, `EACCES` |
+| 409 | `config_read_only` | `config.toml` (or its link target) can't be written: `EROFS`, `EACCES`; or `config.toml`, its directory or one above it is a symlink to nothing |
 | 413 | `too_large` | an upload over the cap |
 | 416 | `bad_range` | a range starting past the end |
 | 503 | `busy` | no slot within the wait, too many waiting, the upload slot taken, or config write retries spent; `Retry-After: 1` |

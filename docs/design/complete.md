@@ -25,6 +25,7 @@ Decisions and the alternatives rejected are in [decisions.md](decisions.md#compl
 | completion blocking slots | 2 of the runtime's 8 blocking threads: an index slot (history, PATH), a directory slot (`check_dir`, listings) | wait, up to the slot wait |
 | slot wait | 300 ms | that source is skipped for this request |
 | history file read | its last 1 MiB | older entries are ignored |
+| history lines scored | 12,000 distinct lines, newest first | an older entry only adds to a line already scored; it never starts a new one |
 | history entries kept | 10,000 distinct lines, highest score | the rest dropped |
 | history recency half-life | 200 entries | |
 | PATH index | 20,000 names or 256 KiB | the rest of `PATH` isn't indexed |
@@ -55,6 +56,12 @@ Chip       = { insert: string,          // typed at the cursor, verbatim
   `insert` is the rest of the word or line, plus a trailing space where the word is
   complete. No chip deletes. The client sends `insert` as literal input, like typed
   text.
+- **`insert` is an escaped literal, except for history.** A command, path or carapace
+  candidate is backslash-escaped by one encoder, `context::literal`
+  ([Escaping](#escaping)), so the shell reads the line back as exactly that name and a
+  file named `a;b c` completes as one word. A history chip is the line as written: it
+  is shell syntax Jimmy typed, so it is inserted as it is and not escaped. Every chip is
+  built by `chip()`, which applies this, so no source can skip it.
 - **`insert` never contains a control character** (C0, DEL, C1): a candidate that
   would is dropped, so a chip can never press Enter or send an escape sequence. That
   drops multi-line history entries.
@@ -92,7 +99,10 @@ run:
      separators (`2>&1` doesn't start a command).
    - The last word is the **current word** (empty when `before` ends in whitespace).
      Its **value** is computed with `\x`, `'…'` and `"…"` removed, so `My\ Dir/s` and
-     `'My Dir'/s` both mean `My Dir/s`.
+     `'My Dir'/s` both mean `My Dir/s`. A value that starts with `~` only because the
+     `~` was escaped or quoted (`\~x`, `'~'/s`) gets `./` before it: it names a file
+     called `~x`, and a bare `~x` would be read as a home directory. An unquoted `~` is
+     left alone (`~/s` is `$HOME/s`).
 3. **Skip word sources** when the cursor sits inside a word (`after` starts with a
    non-space), when a quote is unterminated, or when the current word holds `$`, a
    backtick or a glob character (`*`, `?`, `[`).
@@ -132,9 +142,24 @@ Entries that aren't UTF-8 or contain a control character are dropped. Each disti
 line gets a score, the sum over its occurrences of `0.5^(age / 200)`, where age counts
 entries after it: recent and frequent lines rank first, with no timestamps needed
 (bash writes none by default). Deduplication uses a map keyed by slices of the read
-buffer. The 10,000 best lines are copied into one contiguous string with an offset
-table. The same pass sums each line's score under its first word, which ranks command
-chips.
+buffer.
+
+**The map holds at most 12,000 distinct lines.** Entries are read newest first; once
+12,000 distinct lines are scored, an older entry still adds to a line already in the
+map but never starts a new one. Without the cap the map and the per-line structures built from it had one entry per
+distinct line of the 1 MiB read, up to about 150,000 of short lines: a file of 149,796
+distinct lines raised the scope's peak memory by 17.6–18.8 MB for one request, against
+1.5–2.0 MB with the cap. With it the map is about 0.4 MB whatever the file holds. The cap
+changes nothing kept, because a line left out can't outscore the first 10,000 scored:
+at its newest it is at least 2,000 entries older than each of them, a line's weights
+sum to at most 289 times its newest weight (the geometric series of the 200-entry
+half-life), and 289 × 2^(-2000/200) is below 1.
+
+The 10,000 best lines are copied into one contiguous string with an offset table. The
+word index has one entry per distinct first word of those lines: the index of a line
+that starts with it, and the summed score of the kept lines that do. It holds no copied
+text, and it ranks command chips: a line outside the kept 10,000 adds nothing to its
+command's score.
 
 **Freshness.** Each request `stat`s the file; when `(dev, ino, size, mtime)` differs
 from the index's, the file is re-parsed under the index slot and the new index swapped
@@ -158,8 +183,10 @@ under the index slot. Each later request that needs it `stat`s every `PATH` dire
 and rebuilds the whole index when any mtime differs from the build's; there is no
 watcher. The dev box's user-manager `PATH` holds 2,272 names.
 
-Matches rank by the history score of the command, then by length, then by name;
-`insert` is the rest of the name plus a space.
+Matches rank by the history score of the command (the summed score of the kept history
+lines that start with it), then by length, then by name; `insert` is the rest of the
+name, [escaped](#escaping), plus a space. A name with a `;`, a space or a `$` in it is
+escaped like a file name, so the shell reads it as one word.
 
 ## carapace
 
@@ -193,7 +220,7 @@ it succeeds, no command goes to carapace.
 and optional `description`, plus the top-level `nospace`; unknown fields ignored,
 missing optional fields tolerated. Output that doesn't parse is a failure. Values that
 don't start with `cur` are dropped; the rest keep carapace's order. `insert` is the
-rest of the value, escaped as [paths](#paths) are, plus a space unless `nospace` is
+rest of the value, [escaped](#escaping), plus a space unless `nospace` is
 `*` or holds the value's last character (carapace sends `/` for paths). Golden fixtures
 from the pinned binary (git, cargo, docker, chmod) test the parser.
 
@@ -276,18 +303,32 @@ The listing reads names and `d_type` through the descriptor up to the listing ca
 the last directory and reused while a fresh open's `fstat` shows the same mtime. `.`
 and `..` are never offered; other names starting with `.` only when the typed prefix
 starts with `.`; names that aren't UTF-8 are skipped. Matches sort by name with ASCII
-case folded. `insert` is the rest of the name with every ASCII character outside
-`[A-Za-z0-9._+,:@%=/~-]` backslash-escaped (bash and zsh read that the same way;
-non-ASCII characters stay as they are), then `/` for a directory or a space for
-anything else. The lexer reads the escapes back, so the next request after a chip
-continues from the same directory.
+case folded. `insert` is the rest of the name, [escaped](#escaping), then `/` for a
+directory or a space for anything else. The lexer reads the escapes back, so the next
+request after a chip continues from the same directory.
 
-`~` and `=` are in the unescaped set, so they are not escaped at the start of a word
-either. When the current word is empty and a file is named `~x` or `=x`, the chip's
-`insert` begins the word and the shell expands it: `~x` as user x's home directory
-when that user exists (any shell), `=x` as the path of command x, or an error when
-there is none (zsh). The line that runs is then not the file the chip named. Anywhere
-else in a word, as in `dir/~x`, the characters are plain.
+### Escaping
+
+One encoder, `context::literal`, writes every command, path and carapace `insert`. It
+backslash-escapes every ASCII character outside `[A-Za-z0-9._+,:@%/-]` and leaves
+non-ASCII characters as they are; bash and zsh read the result back as exactly the
+name, at any position in a word. That covers blanks, `;`, `&`, `|`, quotes, `$`,
+backticks, globs, `!`, braces, `#` and the rest. Control characters never reach it:
+`chip()` drops the candidate first, since a backslash before a newline would join lines.
+
+**`~` and `=` are escaped everywhere in the name, not only at its start.** Both shells
+give them meaning in places other than a word's first character: bash expands `~` after
+`=` or `:` in an argument too (`echo a=~root` prints `a=/root` on bash 5.2); zsh expands
+a leading `=cmd` and, with `MAGIC_EQUAL_SUBST`, a `~` or `=` after `=` or `:`; and
+bash's own Tab escapes both. A file named `~root` completed bare would run as `/root`,
+and `=ls` as the path of `ls` (an error in zsh when there is no such command), so the
+line that runs would not be the file the chip named. The cost is that names like `foo~`
+show as `foo\~` on the line.
+
+**The lexer reads it back**, so the next request after a chip continues from the same
+file: `\~x` and `'~'/s` come back as `./~x` and `./~/s` (the [`./` rule](#answering-a-request)).
+Without it a line holding `\~x` would be read as the home directory `~x`, and the next
+request would list `$HOME`.
 
 ## Memory, CPU and threads
 
@@ -297,13 +338,17 @@ no phone typing, completion holds nothing and wakes nothing.
 
 | Item | Bound | MB |
 |---|---|---|
-| history: the 1 MiB read, its dedup map, the new index and the old one during a rebuild | 1 + ~0.7 + 1.1 + 1.1 | 4 |
+| history: the 1 MiB read, its dedup map (12,000 lines at most), the new index and the old one during a rebuild | 1 + ~0.4 + 1.1 + 1.1 | 4 |
 | PATH index, old and new during a rebuild | 2 × 256 KiB | 0.5 |
 | carapace: cache, one run's output and its parse, the command list | 1 + 1 + ~1 + 0.3 MiB | 3.3 |
 | `systemd-run` before its exec | measured | 1.1 |
 | path listing and its cache | 2 × (1 MiB of names + 5,000 × 32 B) | 2.4 |
 | kernel dentry and inode slab from the `PATH` scan and directory listings, charged to the unit | measured | 2.4 |
 | **completion** | | **~14** |
+
+The history row's worst case, measured: 10,400 lines of 101 bytes, the largest index a
+1 MiB read keeps, takes 2.9 MB on the first parse and 3.9 MB on a rebuild with the old
+index still held, inside the 4 MB allowance.
 
 That row replaces the unmeasured carapace estimate (~15 MB) in
 [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling).
@@ -417,13 +462,20 @@ sourcing, turns that off.
 ## Logging
 
 - **Never:** history lines, the request's `before`, `after` or `cwd`, chip text,
-  carapace's arguments or output.
+  carapace's arguments or output, or a parser's own error message: serde's `Display`
+  quotes the input it choked on, which holds the words Jimmy typed.
 - **`info`, once per process:** carapace missing.
 - **`warn`:** the history file unreadable or failing to parse, by path and byte
   offset; once per process, `systemd-run` failing or the carapace list failing, with
   the kept stderr tail.
 - **`debug`:** per request, which sources ran, their counts and times; carapace
   failures by kind (timeout, killed for a newer key, exit status, bad JSON).
+- **Bad JSON is logged by kind and position only**, in the debug line and in the
+  `--list` warning alike: one of four fixed phrases (bad syntax, an unexpected shape,
+  cut short, a read error) and the line and column, as in "its JSON doesn't parse: an
+  unexpected shape at line 1, column 57". serde's own message is never logged. No other
+  log line in `src/complete/` or `src/fs/` carries a parser's message; config parse
+  errors log a line number only ([fs.md](fs.md#logging)).
 
 ## Module shape
 
@@ -434,11 +486,11 @@ parts are tested without a disk or a process.
 | File | Contents |
 |---|---|
 | `complete/mod.rs` | `Completer`: the indexes as `Arc` snapshots swapped whole, the two slots, the idle drop, merge and the caps |
-| `complete/context.rs` | the lexer and `context(before, after) -> Query` (pure) |
+| `complete/context.rs` | the lexer, `context(before, after) -> Query`, and `literal`, the escaping the lexer reads back (pure) |
 | `complete/history.rs` | the three parsers, scoring and the contiguous index (pure); the stat-and-reload |
 | `complete/commands.rs` | the PATH scan and its mtime check |
 | `complete/carapace.rs` | stems, argv and JSON → values (pure); the runner task, scope wrapper and LRU |
-| `complete/paths.rs` | splitting and escaping (pure); the listing through `fs::open` |
+| `complete/paths.rs` | splitting (pure); the listing through `fs::open` |
 | `complete/packed.rs` | strings stored end to end in one buffer, which every index uses, so an index is two allocations and goes back to the kernel when freed |
 
 No new crates: `serde_json` is already in, and the LRU is a small local type. Tests:
@@ -446,7 +498,9 @@ the lexer and context rules on a table of lines (redirections, `2>&1`, escaped a
 quoted words); each history format on fixture files, with metafied zsh bytes,
 continuation lines and a truncated first line; the carapace parser on golden output;
 the runner's timeout, newer-key kill, abandoned-request caching and process-group kill
-against a script that sleeps and forks.
+against a script that sleeps and forks; and `bash -c` reading hostile names (`;`, `$`,
+`~`, `=`, quotes, blanks) back from command, path and carapace chips as exactly the
+name, which fails if `~` or `=` rejoin the unescaped set.
 
 ## Open risks
 
@@ -464,6 +518,9 @@ against a script that sleeps and forks.
   sooner.
 - **Insert safety assumes emacs or insert mode.** In vi command mode, printable bytes
   are commands. Jimmy uses emacs mode.
+- **The escaping is run-tested against bash only.** The read-back test needs `bash`;
+  zsh's side rests on its documented rules ([Escaping](#escaping)), since the dev box
+  has no zsh to run them. Check a hostile file name in Jimmy's zsh.
 - **carapace's JSON** has no stability promise; the pin and the golden fixtures are
   the guard. A changed shape degrades to no carapace chips.
 - **The 128 MB scope limit** holds every measured completion (49 MB warm, 74 MB cold
