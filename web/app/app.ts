@@ -6,6 +6,7 @@ import type { TerminalRenderer } from "../term";
 import { TerminalSizer } from "../term/size";
 import { HostRegistry } from "./hosts";
 import { listWindows } from "./listing";
+import { HostSync, listed } from "./sync";
 
 let counter = 0;
 const newId = (): string => `${Date.now().toString(36)}-${String(counter++)}`;
@@ -45,6 +46,7 @@ export class App {
   private readonly hosts: HostRegistry;
   private readonly sizer: TerminalSizer;
   private readonly listeners = new Set<() => void>();
+  private readonly syncs = new Map<string, HostSync>();
   private view: AppView = { tabs: [], active: null, picker: null, notice: null };
 
   constructor(opts: AppOptions) {
@@ -160,6 +162,13 @@ export class App {
   private open(saved: SavedTab, active: boolean): void {
     const host = this.hosts.get(saved.host);
     if (!host) return; // saved for a host native no longer lists
+    if (!this.syncs.has(saved.host)) {
+      this.syncs.set(saved.host, new HostSync({
+        host,
+        onListing: (listing) => { this.prune(saved.host, listing); },
+        onRenamed: (window, name) => { this.rename(saved.host, window, name); },
+      }));
+    }
     const tab = { ...saved, state: initialState } as TabView;
     tab.driver = new TabDriver({
       window: saved.window,
@@ -183,10 +192,33 @@ export class App {
     const at = tabs.findIndex((t) => t.id === id);
     if (at < 0) return;
     const rest = tabs.filter((t) => t.id !== id);
+    const host = tabs[at]?.host;
+    if (host !== undefined && !rest.some((t) => t.host === host)) {
+      this.syncs.get(host)?.stop();
+      this.syncs.delete(host);
+    }
     const wasActive = this.view.active === id;
     const next = wasActive ? (rest[at] ?? rest[at - 1]) : undefined;
     this.update({ tabs: rest, ...(wasActive && { active: next?.id ?? null }) });
     next?.driver.uncover();
+    this.save();
+  }
+
+  /** A listing is the truth about which windows exist: close the tabs whose window is gone. */
+  private prune(host: string, listing: TmuxListing | null): void {
+    for (const tab of this.view.tabs) {
+      if (tab.host === host && !listed(listing, tab.window)) tab.driver.windowGone();
+    }
+  }
+
+  /** Titles are `session:window`; a rename changes the window part. */
+  private rename(host: string, window: WindowRef, name: string): void {
+    const tab = this.view.tabs.find((t) => t.host === host && t.window.server === window.server && t.window.window === window.window);
+    if (!tab) return;
+    const title = `${tab.name.slice(0, tab.name.indexOf(":") + 1)}${name}`;
+    if (title === tab.name) return;
+    tab.name = title;
+    this.update({ tabs: [...this.view.tabs] });
     this.save();
   }
 

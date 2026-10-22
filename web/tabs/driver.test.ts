@@ -55,6 +55,20 @@ describe("watching", () => {
     expect(t.painted).toEqual(["s:S", "o:A"]);
   });
 
+  it("treats a repeated watching for the same watch as an update", () => {
+    const t = setup();
+    const l = t.bind();
+    l.snapshot(1, "S");
+    const sent = l.sent.length;
+    const again = t.watching(1);
+    if (again.type === "watching") again.data.cwd = "/tmp";
+    l.say(again);
+    expect(t.state().kind).toBe("live");
+    expect(l.sent).toHaveLength(sent);
+    l.output(1, "A");
+    expect(t.painted).toEqual(["s:S", "o:A"]);
+  });
+
   it("unwatches when covered, drops frames meanwhile, and rewatches with a new id on return", () => {
     const t = setup();
     const l = t.bind();

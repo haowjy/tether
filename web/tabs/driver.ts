@@ -137,6 +137,11 @@ export class TabDriver {
     return rows;
   }
 
+  /** The host's listing no longer has this tab's window. */
+  windowGone(): void {
+    this.dispatch({ type: "windowClosed" });
+  }
+
   /** The user closed the tab. */
   close(): void {
     this.dispatch({ type: "userClosed" });
