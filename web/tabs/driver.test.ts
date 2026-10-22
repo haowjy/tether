@@ -1,0 +1,206 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ClientMsg, ServerMsg } from "../proto/generated/messages";
+import type { LinkHandlers } from "../proto/link";
+import type { Snapshot, TerminalRenderer } from "../term";
+import type { ConnectionState } from "./connection";
+import { TabDriver, type TabLink } from "./driver";
+
+const window1 = { server: "main:1-2", window: 3 };
+
+class FakeLink implements TabLink {
+  ready = false;
+  sent: ClientMsg[] = [];
+  closed = false;
+  constructor(readonly handlers: LinkHandlers) {}
+  send(msg: ClientMsg): void { this.sent.push(msg); }
+  close(): void { this.closed = true; }
+  types(): string[] { return this.sent.map((m) => m.type); }
+  welcome(): void { this.ready = true; this.handlers.welcome({ protocol: 1, daemon: { version: "0" }, host: { id: "h", name: "n" } }); }
+  say(msg: ServerMsg): void { this.handlers.message(msg); }
+  output(watch: number, text: string): void { this.handlers.frame({ kind: "output", watch, bytes: new TextEncoder().encode(text) }); }
+  snapshot(watch: number, text: string): void {
+    this.handlers.frame({ kind: "snapshot", watch, cols: 80, rows: 24, restore: new TextEncoder().encode(text) });
+  }
+  drop(code = 1006): void { this.ready = false; this.handlers.close({ code, retry: code !== 4401 && code !== 4001 }); }
+}
+
+function setup() {
+  const links: FakeLink[] = [];
+  const painted: string[] = [];
+  const states: ConnectionState[] = [];
+  const notices: string[] = [];
+  const dec = new TextDecoder();
+  const renderer: TerminalRenderer = {
+    output: (b) => painted.push(`o:${dec.decode(b)}`),
+    snapshot: (s: Snapshot) => { painted.push(`s:${dec.decode(s.restore)}`); return Promise.resolve(); },
+    dispose: () => undefined,
+  };
+  const tab = new TabDriver({
+    window: window1,
+    renderer,
+    connect: (h) => { const l = new FakeLink(h); links.push(l); return l; },
+    size: () => ({ cols: 80, rows: 24 }),
+    onState: (s) => states.push(s),
+    onNotice: (n) => notices.push(n),
+    random: () => 0.5,
+  });
+  const link = (): FakeLink => links[links.length - 1] as FakeLink;
+  const watching = (watch: number): ServerMsg => ({
+    type: "watching",
+    data: { watch, window: window1, session: { server: window1.server, session: 1 }, pane: 1, cwd: null },
+  });
+  /** Welcome and bind watch 1. */
+  const bind = (): FakeLink => { link().welcome(); link().say(watching(1)); return link(); };
+  const state = (): ConnectionState => states[states.length - 1] as ConnectionState;
+  return { tab, links, link, painted, notices, watching, bind, state };
+}
+
+beforeEach(() => { vi.useFakeTimers(); });
+afterEach(() => { vi.useRealTimers(); });
+
+describe("watching", () => {
+  it("watches with the terminal size once welcomed, then applies snapshot and output in order", () => {
+    const t = setup();
+    expect(t.link().sent).toEqual([]);
+    t.link().welcome();
+    expect(t.link().sent).toEqual([{ type: "watch", data: { watch: 1, window: window1, size: { cols: 80, rows: 24 } } }]);
+    t.link().say(t.watching(1));
+    expect(t.state().kind).toBe("live");
+    t.link().snapshot(1, "S");
+    t.link().output(1, "A");
+    t.link().output(9, "stale");
+    expect(t.painted).toEqual(["s:S", "o:A"]);
+  });
+
+  it("unwatches when covered, drops frames meanwhile, and rewatches with a new id on return", () => {
+    const t = setup();
+    const l = t.bind();
+    t.tab.cover();
+    expect(l.sent.at(-1)).toEqual({ type: "unwatch", data: { watch: 1 } });
+    l.output(1, "late");
+    expect(t.painted).toEqual([]);
+    t.tab.uncover();
+    expect(l.sent.at(-1)).toMatchObject({ type: "watch", data: { watch: 2 } });
+    l.say(t.watching(2));
+    l.snapshot(2, "fresh");
+    expect(t.painted).toEqual(["s:fresh"]);
+    expect(t.links).toHaveLength(1);
+  });
+});
+
+describe("losing the watch or the link", () => {
+  it("waits for a tap after watchEnded detached, then watches again on the same socket", () => {
+    const t = setup();
+    const l = t.bind();
+    l.say({ type: "watchEnded", data: { watch: 1, reason: "detached" } });
+    vi.advanceTimersByTime(60_000);
+    expect(l.types()).toEqual(["watch"]);
+    t.tab.nudge();
+    expect(l.sent.at(-1)).toMatchObject({ type: "watch", data: { watch: 2 } });
+  });
+
+  it("retries after a backoff when the watch ends in error", () => {
+    const t = setup();
+    const l = t.bind();
+    l.say({ type: "watchEnded", data: { watch: 1, reason: "error", message: "x" } });
+    expect(l.types()).toEqual(["watch"]);
+    vi.advanceTimersByTime(500);
+    expect(l.types()).toEqual(["watch", "watch"]);
+  });
+
+  it("opens a new link after the socket drops, and stops for a rejected token", () => {
+    const t = setup();
+    t.bind().drop();
+    expect(t.links).toHaveLength(1);
+    vi.advanceTimersByTime(500);
+    expect(t.links).toHaveLength(2);
+    t.link().drop(4401);
+    vi.advanceTimersByTime(60_000);
+    expect(t.links).toHaveLength(2);
+    expect(t.state()).toMatchObject({ kind: "reconnecting", halt: "unauthorized", retryInMs: null });
+    t.tab.nudge();
+    expect(t.links).toHaveLength(3);
+  });
+
+  it("closes on windowClosed for its own window only, and on serverExited", () => {
+    const t = setup();
+    const l = t.bind();
+    l.say({ type: "windowClosed", data: { window: { ...window1, window: 4 } } });
+    expect(t.state().kind).toBe("live");
+    l.say({ type: "windowClosed", data: { window: window1 } });
+    expect(t.state()).toEqual({ kind: "closed", reason: "windowClosed" });
+    expect(l.closed).toBe(true);
+
+    const u = setup();
+    u.bind().say({ type: "serverExited", data: { server: window1.server } });
+    expect(u.state()).toEqual({ kind: "closed", reason: "serverExited" });
+  });
+});
+
+describe("history", () => {
+  it("asks again from where a short chunk ended and stops at the end of the range", async () => {
+    const t = setup();
+    const l = t.bind();
+    const b64 = (s: string): string => btoa(s);
+    const rows = t.tab.history(-4, -1);
+    expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 1, watch: 1, start: -4, end: -1 } });
+    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [b64("a"), b64("b")] } });
+    await Promise.resolve();
+    expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 2, watch: 1, start: -2, end: -1 } });
+    l.say({ type: "historyChunk", data: { req: 2, watch: 1, start: -2, lines: [b64("c"), b64("d")] } });
+    expect((await rows).map((r) => new TextDecoder().decode(r))).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("rejects when the watch ends", async () => {
+    const t = setup();
+    const l = t.bind();
+    const rows = t.tab.history(-4, -1);
+    l.say({ type: "watchEnded", data: { watch: 1, reason: "error" } });
+    await expect(rows).rejects.toThrow();
+  });
+});
+
+describe("input", () => {
+  it("goes only to a bound watch, in order, with paste as its own message", () => {
+    const t = setup();
+    expect(t.tab.input([{ text: "x" }])).toBe(false);
+    const l = t.bind();
+    expect(t.tab.input([{ text: "ls" }, { key: "Enter" }, { paste: "big" }, { key: "Up" }])).toBe(true);
+    expect(l.sent.slice(1)).toEqual([
+      { type: "input", data: { watch: 1, items: [{ text: "ls" }, { key: "Enter" }] } },
+      { type: "paste", data: { watch: 1, text: "big" } },
+      { type: "input", data: { watch: 1, items: [{ key: "Up" }] } },
+    ]);
+  });
+
+  it("splits text over the 4 KiB limit", () => {
+    const t = setup();
+    const l = t.bind();
+    t.tab.input([{ text: "é".repeat(3000) }]); // 6000 bytes
+    const sizes = l.sent.slice(1).map((m) => (m.type === "input" ? JSON.stringify(m.data.items).length : 0));
+    expect(l.sent).toHaveLength(3);
+    expect(Math.max(...sizes)).toBeLessThan(4200);
+  });
+});
+
+describe("upload insertion", () => {
+  it("waits for the watch, then types the quoted path without Enter", () => {
+    const t = setup();
+    t.tab.insertPath("/up/my photo.jpg");
+    t.link().welcome();
+    expect(t.link().types()).toEqual(["watch"]);
+    t.link().say(t.watching(1));
+    expect(t.link().sent.at(-1)).toEqual({ type: "input", data: { watch: 1, items: [{ text: "'/up/my photo.jpg'" }] } });
+    t.tab.insertPath("/up/b.png");
+    expect(t.link().sent.at(-1)).toEqual({ type: "input", data: { watch: 1, items: [{ text: "/up/b.png" }] } });
+  });
+
+  it("is dropped with a notice naming the file when the tab closes first", () => {
+    const t = setup();
+    t.tab.insertPath("/up/a.jpg");
+    t.link().say({ type: "windowClosed", data: { window: window1 } });
+    expect(t.notices).toEqual(["Could not insert a.jpg: the tab closed."]);
+    t.tab.insertPath("/up/b.jpg");
+    expect(t.notices).toHaveLength(2);
+  });
+});

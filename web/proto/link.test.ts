@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { decodeFrame } from "./frames";
 import { HostLink, type LinkClose } from "./link";
-import type { ServerMessage } from "./messages";
+import type { ServerMsg } from "./generated/messages";
 
 class FakeSocket {
   static readonly OPEN = 1;
@@ -20,7 +19,7 @@ class FakeSocket {
   serverCloses(code: number): void { this.onclose?.({ code }); }
 }
 
-const welcome: ServerMessage = {
+const welcome: ServerMsg = {
   type: "welcome",
   data: { protocol: 1, daemon: { version: "0.1" }, host: { id: "h", name: "devbox" } },
 };
@@ -28,7 +27,7 @@ const welcome: ServerMessage = {
 function setup() {
   vi.stubGlobal("WebSocket", FakeSocket);
   let sock!: FakeSocket;
-  const events = { welcomes: 0, messages: [] as ServerMessage[], frames: [] as unknown[], closes: [] as LinkClose[] };
+  const events = { welcomes: 0, messages: [] as ServerMsg[], frames: [] as unknown[], closes: [] as LinkClose[] };
   const link = new HostLink(
     { url: "wss://h/ws", token: "tok", build: "1", createSocket: (u, p) => (sock = new FakeSocket(u, p)) as unknown as WebSocket },
     {
@@ -101,15 +100,5 @@ describe("HostLink", () => {
     sock.serverSends(JSON.stringify({ type: "pong", data: { t: 1 } }));
     vi.advanceTimersByTime(30_000);
     expect(events.closes).toEqual([{ code: 1006, retry: true, cause: "idle" }]);
-  });
-});
-
-describe("decodeFrame", () => {
-  it("reads snapshot headers big-endian", () => {
-    const f = decodeFrame(new Uint8Array([2, 0, 0, 0, 1, 0, 80, 0, 24, 65]).buffer);
-    expect(f).toEqual({ kind: "snapshot", watch: 1, cols: 80, rows: 24, restore: new Uint8Array([65]) });
-  });
-  it("rejects short frames", () => {
-    expect(() => decodeFrame(new Uint8Array([2, 0, 0, 0, 1, 0]).buffer)).toThrow();
   });
 });

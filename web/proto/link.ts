@@ -1,12 +1,12 @@
 import { decodeFrame, type Frame } from "./frames";
-import { CloseCode, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from "./messages";
+import { CloseCode, PROTOCOL_VERSION, type ClientMsg, type ServerMsg } from "./generated/messages";
 
 /** Timings, daemon-core.md §6 and plan.md "Reconnect". */
 const PING_INTERVAL_MS = 10_000;
 const IDLE_TIMEOUT_MS = 25_000; // same threshold the daemon applies to us
 const CONNECT_TIMEOUT_MS = 5_000; // iOS 26 can leave a new socket in CONNECTING
 
-export type WelcomeMsg = Extract<ServerMessage, { type: "welcome" }>["data"];
+export type WelcomeMsg = Extract<ServerMsg, { type: "welcome" }>["data"];
 
 export interface LinkClose {
   code: number;
@@ -18,7 +18,7 @@ export interface LinkClose {
 
 export interface LinkHandlers {
   welcome(welcome: WelcomeMsg): void;
-  message(msg: ServerMessage): void;
+  message(msg: ServerMsg): void;
   frame(frame: Frame): void;
   /** Once, whatever the cause; the link is then dead and a reconnect makes a new one. */
   close(close: LinkClose): void;
@@ -67,7 +67,7 @@ export class HostLink {
   }
 
   /** Dropped silently before `welcome`: only `hello` is accepted until then. */
-  send(msg: ClientMessage): void {
+  send(msg: ClientMsg): void {
     if (this.closed || this.ws.readyState !== WebSocket.OPEN) return;
     if (!this.welcomed && msg.type !== "hello") return;
     this.ws.send(JSON.stringify(msg));
@@ -87,7 +87,7 @@ export class HostLink {
     this.lastRecv = Date.now();
     try {
       if (typeof data === "string") {
-        const msg = JSON.parse(data) as ServerMessage;
+        const msg = JSON.parse(data) as ServerMsg;
         if (msg.type === "welcome") {
           this.welcomed = true;
           clearTimeout(this.connectTimer);
