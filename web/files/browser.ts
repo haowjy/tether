@@ -1,5 +1,6 @@
-import { FsError, type Entry, type FsApi, type Listing, type Roots } from "./api";
-import { hostProblem, type HostProblem } from "../app/status";
+import { HttpRefusal } from "../net/http";
+import type { Entry, FsApi, Listing, Roots } from "./api";
+import { hostProblem, type HostProblem } from "../ui/hostProblem";
 import { Store } from "../ui/store";
 
 /** A file to view: from a listing, or from a path (a Markdown link) and a probe. */
@@ -34,7 +35,7 @@ export interface FilesView {
   pages: Pages | null;
   loading: boolean;
   /** Why the place couldn't load; the screen offers to try again. */
-  error: FsError | null;
+  error: HttpRefusal | null;
   hidden: boolean;
   /** A Settings change in flight. */
   saving: boolean;
@@ -265,12 +266,12 @@ export class FileBrowser extends Store<FilesView> {
     const { place, pages } = this.snapshot;
     // Another folder's entries mustn't stand in for the one that failed.
     const stale = (place.kind === "dir" || place.kind === "pick") && pages?.path !== place.path;
-    this.update({ loading: false, error: error instanceof FsError ? error : new FsError(0, "internal"), ...(stale && { pages: null }) });
+    this.update({ loading: false, error: error instanceof HttpRefusal ? error : new HttpRefusal(0, "internal"), ...(stale && { pages: null }) });
   }
 }
 
 /** One line for a refusal, in the file manager's words (fs.md "Errors"). */
-export function describeError(error: FsError, host: string): string {
+export function describeError(error: HttpRefusal, host: string): string {
   const problem = (kind: HostProblem): string => {
     const { title, hint } = hostProblem(kind, host);
     return hint ? `${title}. ${hint}` : title;

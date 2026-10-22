@@ -3,7 +3,7 @@ import { RequestError } from "../net/host";
 import type { SessionRef, TmuxListing, WindowRef } from "../proto/generated/messages";
 import { Store } from "../ui/store";
 import type { HostClient } from "./hosts";
-import { hostProblem, type HostProblem } from "./status";
+import { hostProblem, type HostProblem } from "../ui/hostProblem";
 import { listWindows } from "./sync";
 
 /** A host's tmux windows as the sheets show them, or why there are none. */

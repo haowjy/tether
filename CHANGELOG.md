@@ -5,6 +5,10 @@ version section on release.
 
 ## [Unreleased]
 
+- A window or session created from another tmux client (a laptop terminal) shows up
+  in the window list right away.
+- Tapping a URL in the terminal opens it in Safari. Window lists fail fast with
+  "Can't reach …" and a Try again button when the connection drops.
 - A hung disk (a dead NFS server, a stuck automount) no longer stalls the device
   check behind it: the daemon's blocking threads are split into lanes (file API 4,
   completion indexes 1, directory checks 1, auth and pastes 2), so a hung mount stops

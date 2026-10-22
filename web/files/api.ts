@@ -1,7 +1,7 @@
 // The file API client (fs.md). Hand-written wire types until src/proto/fs.rs is generated
 // for TypeScript like the WebSocket messages; keep them in step with fs.md "Routes".
 
-import type { ErrorBody, HttpError } from "../proto/generated/messages";
+import { BUSY_RETRIES, HttpRefusal, send } from "../net/http";
 
 export interface RootEntry {
   /** As stored in config.toml. */
@@ -55,19 +55,6 @@ export interface TextPreview {
 /** What a one-byte read says about a path: its type and size, or that it is a directory. */
 export type Probe = { kind: "file"; mime: string | null; size: number | null } | { kind: "dir" };
 
-/**
- * The daemon's generated codes, plus the client's own: `network` when nothing answered,
- * `incompatible` from native's proxy, `http_<status>` for a refusal without a code.
- */
-export type ErrorCode = HttpError | "network" | "incompatible" | `http_${string}`;
-
-/** A refusal: the daemon's `{"error": code}` ({@link ErrorBody}), or one of the client's codes. */
-export class FsError extends Error {
-  constructor(readonly status: number, readonly code: ErrorCode) {
-    super(code);
-  }
-}
-
 export interface FsApi {
   roots(): Promise<Roots>;
   list(path: string, offset: number, hidden: boolean): Promise<Listing>;
@@ -80,31 +67,6 @@ export interface FsApi {
   text(path: string, limit: number, signal?: AbortSignal): Promise<TextPreview>;
   /** The URL an `<img>` loads a file from. */
   rawUrl(path: string): string;
-}
-
-/** `busy` is answered with `Retry-After: 1`; a couple of retries ride out a burst. */
-const BUSY_RETRIES = 2;
-
-/**
- * One request to a host's HTTP origin. A refusal becomes an {@link FsError} with the
- * daemon's code, a dead network `network`; `busy` is retried `retries` times.
- */
-export async function send(target: string, init: RequestInit = {}, retries = BUSY_RETRIES, fetchFn: typeof fetch = (input, opts) => fetch(input, opts)): Promise<Response> {
-  for (let attempt = 0; ; attempt++) {
-    let res: Response;
-    try {
-      res = await fetchFn(target, init);
-    } catch (error) {
-      if (init.signal?.aborted) throw error;
-      throw new FsError(0, "network");
-    }
-    if (res.ok) return res;
-    const code = await res.json().then((b: unknown) => (b as Partial<ErrorBody> | null)?.error, () => undefined);
-    const err = new FsError(res.status, typeof code === "string" ? code : `http_${String(res.status)}`);
-    if (err.code !== "busy" || attempt >= retries) throw err;
-    const wait = Number(res.headers.get("Retry-After")) || 1;
-    await new Promise((resolve) => setTimeout(resolve, wait * 1000));
-  }
 }
 
 /** `/a/b c` → `/a/b%20c`: each segment percent-encoded, joined with `/` (fs.md "Routes"). */
@@ -155,8 +117,8 @@ export function httpFsApi(origin: string, fetchFn?: typeof fetch): FsApi {
         const size = res.status === 206 ? totalOf(res.headers.get("Content-Range")) : Number(res.headers.get("Content-Length") ?? NaN);
         return { kind: "file", mime: res.headers.get("Content-Type"), size: Number.isFinite(size) ? size : null };
       } catch (error) {
-        if (error instanceof FsError && error.code === "not_a_file") return { kind: "dir" };
-        if (error instanceof FsError && error.code === "bad_range") return { kind: "file", mime: null, size: 0 }; // empty
+        if (error instanceof HttpRefusal && error.code === "not_a_file") return { kind: "dir" };
+        if (error instanceof HttpRefusal && error.code === "bad_range") return { kind: "file", mime: null, size: 0 }; // empty
         throw error;
       }
     },
@@ -166,7 +128,7 @@ export function httpFsApi(origin: string, fetchFn?: typeof fetch): FsApi {
       try {
         res = await send(url("raw", path), { headers: { Range: `bytes=0-${String(limit - 1)}` }, ...(signal && { signal }) }, BUSY_RETRIES, fetchFn);
       } catch (error) {
-        if (error instanceof FsError && error.code === "bad_range") return { text: "", size: 0, truncated: false };
+        if (error instanceof HttpRefusal && error.code === "bad_range") return { text: "", size: 0, truncated: false };
         throw error;
       }
       const bytes = new Uint8Array(await res.arrayBuffer());

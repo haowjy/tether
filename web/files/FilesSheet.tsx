@@ -6,7 +6,8 @@ import { useStore } from "../ui/store";
 import { Tappable } from "../ui/Tappable";
 import { ChevronRight, Close, Eye, EyeOff, FileIcon, Film, Folder, Gear, ImageIcon, Plus, Upload, Wrap } from "../ui/icons";
 import { CloseButton, Empty, Sheet, SheetHeader } from "../ui/Sheet";
-import type { Entry, FsError, RootEntry, Roots } from "./api";
+import type { HttpRefusal } from "../net/http";
+import type { Entry, RootEntry, Roots } from "./api";
 import { baseName, describeError, within, type FileBrowser, type FilesView } from "./browser";
 import { viewerFor } from "./kinds";
 import { FileViewer, formatSize } from "./Viewers";
@@ -55,7 +56,7 @@ function EntryRow({ entry, onOpen, now }: { entry: Entry; onOpen: () => void; no
 }
 
 /** A problem loading the place, with the ways out of it. */
-function Problem({ browser, error, host }: { browser: FileBrowser; error: FsError; host: string }) {
+function Problem({ browser, error, host }: { browser: FileBrowser; error: HttpRefusal; host: string }) {
   const lost = error.code === "outside_roots" || error.code === "not_found" || error.code === "denied";
   return (
     <Empty title={describeError(error, host)}>
@@ -217,7 +218,7 @@ export function FilesSheet({ app, host, browser }: { app: App; host: HostEntry; 
   const { place, roots, pages, hidden, saving } = view;
   const close = (): void => { app.closeSheet(); };
   const back = (): void => { void browser.back(); };
-  const describe = (error: FsError): string => describeError(error, host.name);
+  const describe = (error: HttpRefusal): string => describeError(error, host.name);
   const closeButton = <CloseButton onClose={close} />;
 
   let title: string;

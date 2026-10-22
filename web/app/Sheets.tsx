@@ -7,7 +7,8 @@ import { ChevronRight, Close, Folder, Plus, Refresh } from "../ui/icons";
 import { CloseButton, Empty, Sheet, SheetHeader } from "../ui/Sheet";
 import { FilesSheet } from "../files/FilesSheet";
 import type { App } from "./app";
-import { describe, hostProblem } from "./status";
+import { describe } from "./status";
+import { hostProblem } from "../ui/hostProblem";
 import { Dot } from "./TabBar";
 import type { Draft, WindowList, WindowsSheet } from "./windows";
 

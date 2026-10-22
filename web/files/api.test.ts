@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { encodePath, FsError, httpFsApi, rawPathOf } from "./api";
+import { HttpRefusal } from "../net/http";
+import { encodePath, httpFsApi, rawPathOf } from "./api";
 import { linkTarget } from "./markdown";
 
 describe("paths in URLs", () => {
@@ -23,9 +24,9 @@ describe("httpFsApi", () => {
     expect(api.rawUrl("/x/y.png")).toBe("tether-app://h-dev/fs/raw/x/y.png");
   });
 
-  it("turns the daemon's JSON error into an FsError, and a dead network into `network`", async () => {
+  it("turns the daemon's JSON error into an HttpRefusal, and a dead network into `network`", async () => {
     const api = httpFsApi("o", () => Promise.resolve(response(403, JSON.stringify({ error: "outside_roots" }))));
-    await expect(api.roots()).rejects.toEqual(new FsError(403, "outside_roots"));
+    await expect(api.roots()).rejects.toEqual(new HttpRefusal(403, "outside_roots"));
     const down = httpFsApi("o", () => Promise.reject(new TypeError("Load failed")));
     await expect(down.roots()).rejects.toMatchObject({ code: "network" });
   });

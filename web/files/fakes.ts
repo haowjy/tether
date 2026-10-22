@@ -1,7 +1,8 @@
 // A file API over an in-memory tree, following fs.md's rules closely enough for the
 // browser model's tests: roots scope the list, the picker is $HOME, dirs sort first, pages
 // of `page` entries. Paths are already canonical.
-import { FsError, type Entry, type FsApi, type Listing, type Roots } from "./api";
+import { HttpRefusal } from "../net/http";
+import type { Entry, FsApi, Listing, Roots } from "./api";
 import { within } from "./browser";
 
 export interface FakeTree {
@@ -41,7 +42,7 @@ export class FakeFs implements FsApi {
 
   addRoot(path: string): Promise<Roots> {
     return this.answer(`add ${path}`, () => {
-      if (path === this.tree.home || !within(path, this.tree.home)) throw new FsError(403, "outside_home");
+      if (path === this.tree.home || !within(path, this.tree.home)) throw new HttpRefusal(403, "outside_home");
       if (!this.tree.roots.includes(path)) this.tree.roots.push(path);
       return this.rootsNow();
     });
@@ -65,7 +66,7 @@ export class FakeFs implements FsApi {
     return this.answer(`probe ${path}`, () => {
       if (this.tree.dirs.includes(path)) return { kind: "dir" as const };
       const mime = this.tree.files[path];
-      if (mime === undefined) throw new FsError(404, "not_found");
+      if (mime === undefined) throw new HttpRefusal(404, "not_found");
       return { kind: "file" as const, mime, size: 10 };
     });
   }
@@ -89,8 +90,8 @@ export class FakeFs implements FsApi {
 
   private listing(scope: string[], path: string, offset: number, hidden: boolean, dirsOnly: boolean): Listing {
     const root = scope.filter((r) => within(path, r)).sort((a, b) => b.length - a.length)[0];
-    if (root === undefined) throw new FsError(403, dirsOnly ? "outside_home" : "outside_roots");
-    if (!this.tree.dirs.includes(path)) throw new FsError(404, this.tree.files[path] ? "not_a_directory" : "not_found");
+    if (root === undefined) throw new HttpRefusal(403, dirsOnly ? "outside_home" : "outside_roots");
+    if (!this.tree.dirs.includes(path)) throw new HttpRefusal(404, this.tree.files[path] ? "not_a_directory" : "not_found");
     const childOf = (p: string): string | null => {
       const rest = p.slice(path === "/" ? 1 : path.length + 1);
       return within(p, path) && p !== path && !rest.includes("/") ? rest : null;

@@ -1,6 +1,6 @@
 // The suggestion strip's client (complete.md "What the client does").
 import type { Chip, CompleteRequest, Completion } from "../proto/generated/messages";
-import { send } from "../files/api";
+import { send } from "../net/http";
 
 /** How long the line must stay unchanged before asking. */
 const DEBOUNCE_MS = 100;

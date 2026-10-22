@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Tappable } from "../ui/Tappable";
 import { Play } from "../ui/icons";
-import { FsError, type FsApi, type TextPreview } from "./api";
+import { HttpRefusal } from "../net/http";
+import type { FsApi, TextPreview } from "./api";
 import type { FileRef } from "./browser";
 import { HIGHLIGHT_MAX, highlightedLines, plainLines } from "./code";
 import { lazyImages, loadImage } from "./images";
@@ -27,7 +28,7 @@ export function formatTime(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-type Loaded<T> = { kind: "loading" } | { kind: "done"; value: T } | { kind: "error"; error: FsError };
+type Loaded<T> = { kind: "loading" } | { kind: "done"; value: T } | { kind: "error"; error: HttpRefusal };
 
 /** A file's first MiB as text, fetched once per path and abandoned when the viewer closes. */
 function useText(api: FsApi, path: string): Loaded<TextPreview> {
@@ -37,7 +38,7 @@ function useText(api: FsApi, path: string): Loaded<TextPreview> {
     setState({ kind: "loading" });
     api.text(path, TEXT_LIMIT, abort.signal).then(
       (value) => { setState({ kind: "done", value }); },
-      (error: unknown) => { if (!abort.signal.aborted) setState({ kind: "error", error: error instanceof FsError ? error : new FsError(0, "internal") }); },
+      (error: unknown) => { if (!abort.signal.aborted) setState({ kind: "error", error: error instanceof HttpRefusal ? error : new HttpRefusal(0, "internal") }); },
     );
     return () => { abort.abort(); };
   }, [api, path]);
@@ -50,12 +51,12 @@ function Truncated({ preview }: { preview: TextPreview }) {
   return <div class="viewer-note">Showing the first {formatSize(TEXT_LIMIT)}{of}. Open it in the terminal for the rest.</div>;
 }
 
-function Failed({ error, describe }: { error: FsError; describe: (e: FsError) => string }) {
+function Failed({ error, describe }: { error: HttpRefusal; describe: (e: HttpRefusal) => string }) {
   return <div class="viewer-note viewer-error" role="alert">{describe(error)}</div>;
 }
 
 /** Source and text, coloured by Shiki when the extension is on the allowlist and the file is small. */
-function CodeViewer({ api, file, wrap, plain, describe }: { api: FsApi; file: FileRef; wrap: boolean; plain: boolean; describe: (e: FsError) => string }) {
+function CodeViewer({ api, file, wrap, plain, describe }: { api: FsApi; file: FileRef; wrap: boolean; plain: boolean; describe: (e: HttpRefusal) => string }) {
   const text = useText(api, file.path);
   const ref = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -81,7 +82,7 @@ function CodeViewer({ api, file, wrap, plain, describe }: { api: FsApi; file: Fi
 }
 
 /** Rendered Markdown. Links to files open here; links to the web leave the app. */
-function MarkdownViewer({ api, file, onLink, describe }: { api: FsApi; file: FileRef; onLink: (target: LinkTarget) => void; describe: (e: FsError) => string }) {
+function MarkdownViewer({ api, file, onLink, describe }: { api: FsApi; file: FileRef; onLink: (target: LinkTarget) => void; describe: (e: HttpRefusal) => string }) {
   const text = useText(api, file.path);
   const [html, setHtml] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -270,7 +271,7 @@ export interface ViewerProps {
   wrap: boolean;
   onLink: (target: LinkTarget) => void;
   onPlay: (path: string) => void;
-  describe: (error: FsError) => string;
+  describe: (error: HttpRefusal) => string;
 }
 
 /** The viewer for a file's type (plan.md "Viewers"). Keyed by path: each file starts fresh. */
