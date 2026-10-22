@@ -1013,12 +1013,14 @@ limits of its own; the credit bounds everything in it.
 ```rust
 pub struct Endpoints { pub main: Endpoint }
 pub fn spawn(endpoints: Endpoints) -> (HubHandle, JoinHandle<()>);  // runs until every
-                                                                    // HubHandle drops, then
-                                                                    // until every pump ends
+                                                                    // HubHandle drops or one
+                                                                    // calls stop, then until
+                                                                    // every pump ends
 impl HubHandle {
     pub async fn connect(&self) -> Result<(ConnId, mpsc::Receiver<ToConn>), HubGone>;
     pub async fn send(&self, conn: ConnId, msg: FromConn) -> Result<(), HubGone>;
                                                             // awaits inbox room
+    pub async fn stop(&self) -> Result<(), HubGone>;        // shutdown, whatever handles remain
 }
 pub enum FromConn {
     Client(proto::ClientMsg),   // all but hello, ping, paste, which the hub ignores
@@ -1046,11 +1048,18 @@ that only drops its receiver stays registered until the hub next sends to it. Th
 an accepted gap, not covered by extra machinery.
 
 **The hub's task handle completes only after its pumps have.** When the last
-`HubHandle` drops, the hub closes every control client (dropping its line sender) and
-then waits for each pump task to finish: stdin closed, tmux given 1 s to exit, then
-killed (§3.9). `main` awaits the handle, so the daemon exits only after the `tmux -C`
-clients are gone, closed through stdin as a normal detach rather than SIGKILLed by the
-process exit.
+`HubHandle` drops, or one calls `stop`, the hub closes every control client (dropping
+its line sender) and then waits for each pump task to finish: stdin closed, tmux given
+1 s to exit, then killed (§3.9). `main` awaits the handle, so the daemon exits only
+after the `tmux -C` clients are gone, closed through stdin as a normal detach rather
+than SIGKILLed by the process exit.
+
+**`main` calls `stop` itself once `http::serve` returns.** Every connection task holds
+a `HubHandle` through its `Ctx`, and axum's graceful shutdown never force-closes a
+connection: a request still open when `serve`'s 2 s wait ends (a stalled raw response,
+[fs.md](fs.md#limits-and-the-memory-ceiling)) keeps its handle, so "every handle
+dropped" never comes. `stop` ends the hub regardless, and `main` then waits up to 2 s
+for it. A `HubGone` from a call after `stop` is the connection's cue to end.
 
 `http/` enforces the connection cap at the upgrade, and handles `hello`, `ping` and
 the auth re-check itself, as well as writing a paste's text to its file (§3.4). It
@@ -1133,8 +1142,8 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `paste` | `watch, text` | through `paste-buffer -p` |
 | `history` | `req, watch, start, end` | scrollback rows by tmux line number (negative is history) |
 | `listSessions` | `req: u32` | the session sheet |
-| `newWindow` | `req, session: SessionRef, name?, dir?` | tmux refuses a `session` from another server instance, a restarted server or an earlier run of the daemon, on a hub that has never seen the live instance too (§3.8): the hub broadcasts `serverExited` for that instance and answers `error { noServer }`; no window is created. The connection checks `dir` with `fs::check_dir` (absolute, an existing directory; not the file roots) and passes it as given; a refusal is `error { badRequest }` ([fs.md](fs.md#path-resolution-fsopen)). **TODO:** until `src/fs/` is built, `dir` passes through unchecked (`src/http/.context/TODO`) |
-| `newSession` | `req, name?, dir?, scratch?: bool` | `dir` as for `newWindow`, with the same TODO. `scratch` after the core MVP; until then `scratch: true` gets `error { badRequest }` |
+| `newWindow` | `req, session: SessionRef, name?, dir?` | tmux refuses a `session` from another server instance, a restarted server or an earlier run of the daemon, on a hub that has never seen the live instance too (§3.8): the hub broadcasts `serverExited` for that instance and answers `error { noServer }`; no window is created. The connection checks `dir` with `fs::check_dir` (absolute, an existing directory; not the file roots) and passes it as given; a refusal is `error { badRequest }` ([fs.md](fs.md#path-resolution-fsopen)) |
+| `newSession` | `req, name?, dir?, scratch?: bool` | `dir` as for `newWindow`. `scratch` after the core MVP; until then `scratch: true` gets `error { badRequest }` |
 
 **Daemon → client**
 
@@ -1254,11 +1263,13 @@ other documents link to this table.
 | WebSocket writer's copy of the frame being written | 3 × 1 MiB | 3 |
 | inbound messages | 3 × (512 KiB + decoded copy) | 3 |
 | paste files on tmpfs | 4 slots × 256 KiB | 1 |
-| file API: a scan, raw responses, an upload | [fs.md](fs.md#limits-and-the-memory-ceiling) | 3 |
+| file API: a scan, raw responses, an upload (2 MiB of dirty pages between flushes included) | [fs.md](fs.md#limits-and-the-memory-ceiling) | 5 |
 | kernel socket buffers, charged to the unit | 2 × 128 KiB (`SO_SNDBUF`, `SO_RCVBUF`, [fs.md](fs.md#constants)) per socket with data queued: the 3 WebSockets, 2 raw responses, 1 upload, and a couple of JSON replies (the fs waiter cap keeps the rest idle) | 2 |
-| **ceiling** | | **~60** |
+| **ceiling** | | **~62** |
 
-That is within 4 MB of the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)); the [budget measurement](plan.md#resource-budget) checks it, reading
+That is within 2 MB of the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)) and
+above its `MemoryHigh` of 48 MB, where systemd starts throttling the unit's tasks; the
+[budget measurement](plan.md#resource-budget) checks it, reading
 the unit's `memory.peak` (which counts kernel buffers and page cache), not RSS. If it
 doesn't fit, lower the control-client cap first. The normal case, one control client
 and one watch, is about 11 MB, plus up to 11 MB of completion state while Jimmy types
@@ -1287,7 +1298,7 @@ How each failure ends; §4.5 has the control-client details.
 | hub panics | `main` awaits it | exit 1; systemd restarts; clients reconnect and resync |
 | device removed | the 10 s re-check | close 4401 |
 | `auth.toml` unreadable | the 10 s re-check, or the token check at the upgrade | close 4503 (HTTP: 503); the client keeps its token and retries |
-| shutdown (SIGTERM) | `main` | close sockets with 4004, close control clients' stdin and wait for their pumps (§4.7), exit; tmux is unaffected |
+| shutdown (SIGTERM) | `main` | close sockets with 4004; `http::serve` waits up to 2 s for open requests, then `main` calls `HubHandle::stop` itself, because a stalled response's connection task outlives axum's graceful shutdown and keeps a handle (§4.7); the hub closes control clients' stdin and `main` waits up to 2 s for their pumps, exits 0; tmux is unaffected |
 | tab from before a tmux restart | server instance differs | `serverExited` for the old instance |
 
 Every failure ends as a message the phone can show. Logs carry framing metadata only

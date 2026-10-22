@@ -242,7 +242,7 @@ binary was evicted from the page cache first:
 | `systemctl status ''` | 473 | 26 MB | 12 MB | 22 MB | 560 ms |
 
 Run inside tether's unit, one `docker` completion would add 43 MB of RSS, and up to
-74 MB on a cold cache, to a unit whose ceiling is already within 4 MB of its 64 MB
+74 MB on a cold cache, to a unit whose ceiling is already within 2 MB of its 64 MB
 `MemoryMax` ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
 Scoped, the cost to tether's unit is `systemd-run` before its exec: the unit's peak
 rose 1.1 MB for a `docker run --` completion. The scope adds about 27 ms (34 ms scoped
@@ -255,9 +255,9 @@ accepted.
 The current word's value splits at its last `/` into a directory and a name prefix. A
 leading `~` or `~/` expands to `$HOME` (`~user` is not completed; a bare `~` gets the
 chip `/`); a relative directory joins `cwd`, and needs a non-null `cwd`. The directory
-is opened with `fs::open(&["/"], dir, Dir)` ([fs.md](fs.md#path-resolution-fsopen)):
-the same canonicalization, `O_NOFOLLOW` open and descriptor re-check as the file API,
-with `/` as the scope. Path completion returns names, never contents, from any
+is opened with `fs::open` and a `Scope` of `/`, wanting a directory
+([fs.md](fs.md#path-resolution-fsopen)): the same canonicalization, `O_NOFOLLOW` open
+and descriptor re-check as the file API, with `/` as the scope. Path completion returns names, never contents, from any
 directory Jimmy can read, as the shell's own Tab does; the roots stay the scope of
 everything that reads files.
 

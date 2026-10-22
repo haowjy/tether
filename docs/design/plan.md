@@ -18,6 +18,7 @@ that gate it ([Spikes](#spikes)), and log decisions in decisions.md.
 | [ios-shell.md](ios-shell.md) | The native iOS app: keyboard, focus, bridge, scheme handler, lifecycle, media |
 | [auth.md](auth.md) | Device tokens, enrolment, the Face ID lock, the auth routes |
 | [fs.md](fs.md) | `src/fs/`: roots, path resolution, the `/fs/*` routes, uploads, their limits |
+| [complete.md](complete.md) | `src/complete/`: `POST /complete`, the history, PATH, carapace and path sources, the shell snippet, how they stay inside the budget |
 | [spike-1-keyboard.md](spike-1-keyboard.md) | The keyboard spike Jimmy runs on the phone |
 | [decisions.md](decisions.md) | The decision log: what, why, alternatives rejected, who, when |
 | [plan-review.md](plan-review.md) | The first review of this plan, kept as a record |
@@ -85,8 +86,8 @@ flowchart TB
   subgraph unit["tether.service: systemd user unit, runs as Jimmy"]
     daemon["tether daemon<br/>one static Rust binary"]
     cc["tmux -C control clients<br/>one per session with a watched tab"]
-    carapace["carapace runs, on demand"]
   end
+  carapace["carapace, one run at a time, on demand<br/>own transient scope, outside the unit's limits"]
   tmux["Jimmy's tmux server<br/>started outside tether, never by it"]
   scratch["scratch tmux server<br/>own transient scope"]
   phone -- "HTTPS + one WebSocket per host" --> serve
@@ -94,15 +95,15 @@ flowchart TB
   daemon --> cc
   cc -- "control protocol on stdio" --> tmux
   cc --> scratch
-  daemon --> carapace
+  daemon -- "systemd-run --user --scope" --> carapace
 ```
 
 Inside the daemon ([layout](#code-structure-and-standards)):
 
 - **tmux bridge and hub** ([daemon-core.md](daemon-core.md)): control mode, snapshots,
   pane streams, scrollback (`history`), the WebSocket protocol.
-- **completion** (`/complete`): history, PATH, carapace, paths; lazy
-  ([Suggestion strip](#suggestion-strip)).
+- **completion** (`/complete`): history, PATH, carapace (outside the unit, in its own
+  scope), paths; lazy ([Suggestion strip](#suggestion-strip), [complete.md](complete.md)).
 - **file API** (`/fs/*`): rooted, range-capable, uploads ([fs.md](fs.md)).
 - **auth**: the Tailscale check and device tokens on every route ([auth.md](auth.md)).
 
@@ -206,6 +207,9 @@ and the note on `TMUX_TMPDIR` under systemd, are in [running.md](../running.md).
 | `[tmux] socket_name` | none | `tmux -L <name>` |
 | `[tmux] socket_path` | none | `tmux -S <path>`; not together with `socket_name` |
 | `roots`, `uploads_dir` | none, `~/tether-uploads` | project roots and the uploads folder; read on every file request, written by the Settings sheet ([fs.md](fs.md#roots)) |
+| `[complete] history` | the most recently modified of `~/.zsh_history`, `~/.bash_history`, fish's history | the one history file the suggestion strip reads; set it when the shell's `$HISTFILE` is elsewhere ([complete.md](complete.md#history)) |
+| `[complete] path` | the daemon's own `PATH` | the `PATH` the command index scans and carapace runs with; set it to the interactive shell's `PATH`, since the systemd user manager's lacks what rc files add ([complete.md](complete.md#commands-on-path)) |
+| `[complete] carapace` | `carapace` on that `PATH` | the carapace binary; absent or failing means no flag chips ([complete.md](complete.md#carapace)) |
 
 With neither socket key, tether uses tmux's default socket.
 
@@ -227,9 +231,10 @@ and buffer use.
   Uploads stream to disk; listings are paged; previews truncated; scrollback comes in
   fixed chunks.
 - **Completion is lazy:** the PATH index is built on first use and refreshed when a
-  PATH directory's mtime changes (checked on request); carapace runs per request, with
-  the timeout and concurrency in
-  [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling).
+  PATH directory's mtime changes (checked on request); carapace runs per request, one
+  at a time, in its own transient systemd scope, so its 17–44 MB per run never counts
+  against this unit. Everything completion holds is freed after 5 idle minutes. Limits:
+  [complete.md](complete.md#constants).
 - **No heavy server work:** HEIC conversion happens on the phone; videos stream as-is
   over HTTP Range; no thumbnails, no transcoding, no file watcher.
 - **Crash safety:** tmux is the source of truth. If tether restarts, clients reconnect
@@ -239,7 +244,8 @@ and buffer use.
 `Restart=on-failure` with a backoff (`RestartSec=2`, `RestartSteps=5`,
 `RestartMaxDelaySec=60`, `StartLimitIntervalSec=0`), `MemoryHigh=48M`, `MemoryMax=64M`,
 `CPUWeight=20`, `Nice=10`, `IOWeight=10`, `IOSchedulingClass=idle`, `TasksMax=32`,
-`OOMScoreAdjust=500` (the kernel kills tether before tmux or the agents).
+`OOMScoreAdjust=500` (the kernel kills tether before tmux or the agents), and
+`Environment=GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072`.
 
 - `KillMode=mixed` sends SIGTERM to tether alone, so it closes its sockets with 4004
   and its control clients itself. Under the default kill mode, systemd also signals the
@@ -249,12 +255,17 @@ and buffer use.
 - The restart backoff is there because tailscaled is a system unit that this user unit
   can't order itself after: at boot tether may start before tailscaled is up and exit,
   and the backoff keeps it retrying instead of hitting the start limit.
+- `GLIBC_TUNABLES` pins glibc's mmap threshold at 128 KiB. glibc raises that threshold
+  after the first large free, so completion's indexes would land in the heap and stay
+  resident after its idle drop; pinned, each is its own mapping and goes back to the
+  kernel on free, with no `unsafe` call ([complete.md](complete.md#memory-cpu-and-threads)).
 - `TasksMax` counts threads and processes in the cgroup. tokio's blocking pool
   defaults to 512 threads, so `max_blocking_threads` is 8. The total, with control
-  clients, a one-shot and a carapace run (a Go binary starts several threads), stays
-  under 32.
-- `MemoryMax` covers the daemon, its control clients, one-shots and carapace. tmux and
-  the scratch server run outside the unit.
+  clients and a one-shot, stays under 32. A carapace run (a Go binary starts several
+  threads) counts only as `systemd-run` until it moves into its own scope.
+- `MemoryMax` covers the daemon, its control clients and one-shots. tmux, the scratch
+  server and carapace run outside the unit: carapace in a transient scope with its own
+  limits ([complete.md](complete.md#where-carapace-runs-its-own-scope)).
 
 ## Layout
 
@@ -354,9 +365,9 @@ and the shell snippet, is [complete.md](complete.md). Sources, ranked:
    directory changes.
 3. **Subcommands and flags: carapace** ([carapace-bin](https://github.com/carapace-sh/carapace-bin)),
    one Go binary covering 1000+ commands, independent of the shell, run only when a
-   chip is needed after a command word: `carapace <cmd> export "" <args…>`, with the
-   limits in [Resource budget](#resource-budget), results cached per (command, args
-   prefix) in an LRU. If carapace is missing or fails, flags aren't offered.
+   chip is needed after a command word, in its own scope with the limits in
+   [complete.md](complete.md#constants); results are cached per (command, args, stem)
+   for 30 s. If carapace is missing or fails, flags aren't offered.
 4. **Paths** relative to the pane's cwd: a directory listing, cached briefly.
 
 **Reading the command line on the phone.** A dotfile snippet for zsh (`precmd` /
@@ -625,7 +636,7 @@ src/proto/     wire messages (source of the TypeScript types), handshake
 src/http/      axum routes (/ws, /fs/*, /auth/*, /complete), the auth middleware
 src/auth/      LocalAPI identity, device tokens, enrolment (auth.md)
 src/fs/        the only place paths are resolved and checked against roots
-src/complete/  /complete: history, PATH index, carapace runner (bounded, cached)
+src/complete/  /complete: history, PATH index, carapace runner (bounded, cached; complete.md)
 web/           Vite app, bundled into the iOS app:
   native/      the bridge to the Swift shell, focus and keyboard requests
   term/        xterm.js wrapper, the serialized write pipeline, touch → keys/mouse
@@ -727,7 +738,8 @@ with the phone spikes.
 2. **Daemon core against real tmux** (server only), as tether's own integration tests
    ([daemon-core.md §8](daemon-core.md#8-testing)): the snapshot boundary on 3.4 here
    and 3.7b on the Mac, recording the fixtures; `send-keys` bypassing `escape-time`
-   and the prefix; and the memory ceiling measured, carapace included.
+   and the prefix; and the memory ceiling measured, with completion active (carapace itself runs in its
+   own scope, so the unit's `memory.peak` includes only its launch).
 3. **Reconnect**, in the app against a real daemon: WKWebView WebSocket recovery after
    10+ minutes locked (including stuck CONNECTING); the snapshot repaint on tab switch
    (does it flash?); WebGL context loss after backgrounding; echo latency on cellular;

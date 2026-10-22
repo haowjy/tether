@@ -15,7 +15,8 @@ runner p33, and the hub and wire protocol p35, whose builds corrected the daemon
 spec; the HTTP layer, auth, CLI and config build p40, commit b1dcb8c; the web host
 layer p42, commit a43014f; the hub fixes after review p43, commit cb7548e; the web boot
 p45, commit b115c2b; the hub refactor after the structural review p49 was applied in
-p51, commit 97f8c39; the web fixes p52, commit 0342137; the file API spec p53; the completion spec p60). Reviews:
+p51, commit 97f8c39; the web fixes p52, commit 0342137; the file API spec p53 and its
+build p58, commit ed9c637; the completion spec p60). Reviews:
 round 1 of the plan is [plan-review.md](plan-review.md); round 1 of the subsystem specs
 was p10–p14; round 2 was p16 (structure) and p17 (correctness).
 
@@ -1714,6 +1715,8 @@ review. The product calls behind it are Jimmy's
   whole file); `If-None-Match` and `304` (WebKit doesn't cache custom-scheme
   responses, so nothing would send it); tower-http's `ServeFile` (plan.md keeps
   `/fs/raw` custom so the root check and the limits are tether's).
+- **Amended** by [Raw drops the page cache from the response start](#raw-drops-the-page-cache-from-the-response-start):
+  the drop covers everything read so far, not each chunk.
 
 ### Uploads: raw body, server-chosen UTC name, part file then no-replace rename
 
@@ -1735,6 +1738,8 @@ review. The product calls behind it are Jimmy's
   read the local offset in a multithreaded process on Linux); a final `fsync` (the
   phone still has the photo); 2+ uploads at once (native sends one at a time, and each
   costs a hyper read buffer).
+- **Amended** by [Uploads flush every 2 MiB, and the ceiling counts them](#uploads-flush-every-2-mib-and-the-ceiling-counts-them):
+  the flush interval is 2 MiB, not 8.
 
 ### The file API's limits, socket buffers, and the memory ceiling
 
@@ -1759,6 +1764,8 @@ review. The product calls behind it are Jimmy's
   (p57, on the reading that the socket runs to the phone; it ends at tailscaled);
   dropping the pages of every file read (evicts pages a build is using: only files
   over 8 MiB).
+- **Amended** by [Uploads flush every 2 MiB, and the ceiling counts them](#uploads-flush-every-2-mib-and-the-ceiling-counts-them):
+  the file API's share is ~5 MB, not ~3, and the ceiling ~62 MB.
 
 ### `dir` on `newWindow` and `newSession` is checked for shape, not roots
 
@@ -1788,6 +1795,116 @@ review. The product calls behind it are Jimmy's
   ([auth.md](auth.md#carrying-the-token)).
 - **Rejected:** answering `OPTIONS` in the daemon (it would open a CORS path that
   auth.md keeps shut for browsers on the tailnet).
+
+### Raw drops the page cache from the response start
+
+- **Decided:** 2026-10-22, tech lead, from the file API build (p58, commit ed9c637).
+  Amends the `DONTNEED` rule in
+  [Raw: single Range, strong ETag…](#raw-single-range-strong-etag-from-stat-exact-length-no-304).
+- **What:** after each chunk of a file over 8 MiB, the producer calls
+  `posix_fadvise(DONTNEED)` on the range from the response's first byte to the current
+  position, not on the chunk.
+- **Why:** measured on the dev box (Linux 7.1, ext4, a scope with `MemoryHigh=48M`): a
+  per-chunk drop of 64 KiB dropped nothing, because the kernel reads ahead in large
+  folios and keeps any folio that extends past the dropped range. A 1 GiB download left
+  44.6 MB of page cache and the scope's `memory.peak` at 49.6 MB, past `MemoryHigh`.
+  Dropping from the start: `memory.peak` 5.6–6.0 MB, ≤ 260 KB cached while streaming, at
+  1.6 GB/s with no extra CPU (1.01 s for 1 GiB).
+- **Rejected:** the per-chunk drop (above); dropping to the end of the file (evicts the
+  readahead, so the next chunk reads from disk twice).
+
+### Uploads flush every 2 MiB, and the ceiling counts them
+
+- **Decided:** 2026-10-22, tech lead, from the p58 build (commit ed9c637), whose
+  measurement the spec had missed. Amends the 8 MiB flush in
+  [Uploads: raw body…](#uploads-raw-body-server-chosen-utc-name-part-file-then-no-replace-rename)
+  and the ~3 MB file API row in
+  [The file API's limits…](#the-file-apis-limits-socket-buffers-and-the-memory-ceiling).
+- **What:** an upload runs `fdatasync` and `DONTNEED` every 2 MiB. The upload's row in
+  fs.md's memory table includes those 2 MiB of dirty pages, taking the file API from ~3
+  to ~5 MB and the daemon's ceiling from ~60 to ~62 MB
+  ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
+- **Why:** dirty pages are charged to the unit and can't be reclaimed until written, so
+  they are real memory that the table counted as 0.5 MB. With the 8 MiB flush, a
+  120 MiB upload at 60 MB/s held up to 8.2 MB dirty and the scope peaked at 12.9 MB.
+  Shortening the interval cuts that to a quarter and makes the row honest; the cost is
+  four times as many `fdatasync` waits. The 2 MiB figure is a pick, not yet measured:
+  the budget run reads the scope's `memory.peak` during an upload.
+- **Rejected:** keeping 8 MiB and counting 8 MiB (the ceiling would pass 64 MB); keeping
+  8 MiB uncounted (the measured peak was 12.9 MB against 0.5 MB in the table).
+
+### `main` stops the hub explicitly at shutdown
+
+- **Decided:** 2026-10-22, tech lead, from the p58 build (commit ed9c637). Extends
+  [Shutdown waits for the hub's pumps](#shutdown-waits-for-the-hubs-pumps).
+- **What:** once `http::serve` returns, `main` calls `HubHandle::stop`, then waits up to
+  2 s for the hub task. `stop` makes the hub close its control clients as the last
+  handle's drop does ([daemon-core.md §4.7](daemon-core.md#47-public-interface), §7).
+- **Why:** axum's graceful shutdown never force-closes a connection. A raw response whose
+  reader has paused keeps its connection task, which holds a `Ctx` and so a `HubHandle`,
+  past `serve`'s 2 s wait, and the hub ends only when every handle is gone. Measured: a
+  SIGTERM with a paused raw stream took 4 s and exited 1 ("the hub didn't end within
+  2 s"). With `stop` it takes 2.0 s, exits 0 and closes a live `tmux -C` client cleanly.
+- **Rejected:** leaving it (the 4 s, exit 1 above). Nothing else is recorded.
+
+### Codes the file API's spec left open
+
+- **Decided:** 2026-10-22, tech lead, accepting the p58 build's picks (commit ed9c637).
+- **What:**
+  - An upload body that stalls past the idle timeout, or breaks because the client
+    disconnected, answers `400 bad_request`.
+  - An `uploads_dir` that isn't absolute or `~/` is reported `ok: false` in `Roots`, and
+    an upload answers `409 not_a_directory`.
+  - The directory scan cap counts every entry read, including the hidden ones the
+    filter then drops (and files, in the picker).
+  - A filesystem without the no-replace rename (`RENAME_NOREPLACE`, `RENAME_EXCL`) fails
+    the upload with `500 internal` and no fallback.
+- **Why:** the first two reuse the nearest existing code rather than add one (a client
+  that disconnected can't read the answer anyway). The scan cap exists to bound one
+  page's cost, and reading a dotfile costs the same as reading any other entry. A
+  fallback for a filesystem without the flag (check then rename) could replace a file,
+  which an upload never does.
+- **Rejected:** a distinct code for a stalled or broken upload body; a scan cap that
+  counts only kept entries (a directory of dotfiles would be read in full for one
+  page); a check-then-rename fallback.
+
+### `fs::open` takes a `Scope`; `Want::Parent` waits for v2; `slots.rs` is a module
+
+- **Decided:** 2026-10-22, tech lead, accepting the p58 build's differences from the
+  spec (commit ed9c637).
+- **What:** `fs::open(&Scope, path, Want)` replaces `fs::open(&[PathBuf], …)`. A `Scope`
+  is the canonical directories plus the refusal to answer outside them, with
+  constructors for the effective roots, `$HOME` (the picker) and, for completion, `/`.
+  `Opened` holds a `File`, not an `OwnedFd`. `Want` has `Dir` and `File`; `Parent`
+  arrives with the first v2 write route. `src/fs/slots.rs` holds the fs permits and
+  `Slots::blocking`, and is in fs.md's module table.
+- **Why:** the picker has to answer `outside_home` where the roots answer
+  `outside_roots`, and a slice can't carry that. `Parent` would be dead code until a
+  write route exists. The raw producer and the upload writer take an fs slot per chunk,
+  so `src/fs/` needs the slots and stays free of axum.
+- **Rejected:** building `Parent` now (dead code).
+
+### A symlink out of the roots is listed with its target's size and mtime
+
+- **Decided:** 2026-10-22, tech lead, on the p58 build's question (commit ed9c637).
+- **What:** the listing reports a link's target kind, size and mtime without checking the
+  target against the roots, so a link to `/etc/passwd` shows that file's size. Opening
+  it is `outside_roots`.
+- **Why:** roots are a scope, not an authorization boundary
+  ([Roots are a scope…](#roots-are-a-scope-the-home-picker-shows-directory-names-only)),
+  and a listing returns no contents. The spec already said the listing doesn't check
+  each target.
+- **Rejected:** hiding out-of-root links from the listing (the p58 build offered it; the
+  tech lead kept them listed).
+
+### macOS file paths are written but untested
+
+- **Decided:** 2026-10-22, tech lead, recording the p58 build's gap (commit ed9c637).
+- **What:** the `F_GETPATH` descriptor-path lookup and the `RENAME_EXCL` rename carry no
+  macOS test. No Apple target is installed on the dev box, and CI builds macOS only at
+  release. Another platform fails closed. fs.md lists it as an open risk; the fs tests
+  run on the Mac before it is relied on.
+- **Rejected:** none recorded.
 
 ## Completion
 
@@ -1871,6 +1988,21 @@ the p61 review. The product calls behind it are Jimmy's
   doubled); a sub-cgroup with `Delegate=yes` (tether would manage cgroups itself);
   a long-lived carapace process (carapace has no server mode, and one would hold its
   20–40 MB while idle).
+
+### carapace is installed by hand: pinned, checked against checksums, in `~/.local/bin`
+
+- **Decided:** 2026-10-22, design (p60); carried into plan.md and
+  [running.md](../running.md#set-up-completion) with the follow-ups to the spec.
+- **What:** as Jimmy, never system-wide: carapace-bin v1.8.0's `linux_amd64` tarball,
+  checked against the release's `checksums.txt`, with `carapace` in `~/.local/bin`.
+  `[complete] carapace` names another binary; otherwise it is `carapace` on the
+  `[complete] path` (config keys `history`, `path` and `carapace`,
+  [plan.md](plan.md#config)). An upgrade is a deliberate re-pin: the parser's golden
+  fixtures run against the new binary first.
+- **Why:** carapace's JSON has no stability promise, so the pin and the fixtures are the
+  guard against a changed shape. The unit's `PATH` holds `~/.local/bin`, and the checksum
+  step costs nothing next to running a downloaded binary as Jimmy.
+- **Rejected:** none recorded.
 
 ### carapace: run per stem, latest wins, 30-second cache
 

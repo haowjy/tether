@@ -18,7 +18,7 @@ auth is [auth.md](auth.md). Decisions and the alternatives rejected are in
 | Constant | Value | When hit |
 |---|---|---|
 | listing page (files and the picker) | 200 entries | the client asks for the next `offset` |
-| directory scan | 5,000 entries or 1 MiB of names, whichever first | `truncated: true`; the rest isn't listed |
+| directory scan | 5,000 entries read or 1 MiB of names, whichever first; every entry read counts, hidden ones and (in the picker) files included | `truncated: true`; the rest isn't listed |
 | scans at once | 1 | wait |
 | raw responses at once | 2 | wait |
 | uploads at once | 1 | `503 busy` at once |
@@ -28,9 +28,9 @@ auth is [auth.md](auth.md). Decisions and the alternatives rejected are in
 | raw read and upload write chunk | 64 KiB | |
 | raw stall deadline | 30 s for the socket to take the next chunk | the response is aborted, its slot freed |
 | upload size | 128 MiB | `413 too_large`; the partial file is deleted |
-| upload idle timeout | 30 s waiting for a body byte | aborted; the partial file is deleted |
-| upload flush | every 8 MiB: `fdatasync`, then drop the written pages | |
-| page drop after a raw read | files over 8 MiB | |
+| upload idle timeout | 30 s waiting for a body byte | aborted with `400 bad_request`; the partial file is deleted |
+| upload flush | every 2 MiB: `fdatasync`, then drop the written pages | the dirty pages in between are charged to the unit, and the [ceiling](#limits-and-the-memory-ceiling) counts them |
+| page drop during a raw read | files over 8 MiB: after each chunk, everything from the response's first byte to the current position | |
 | socket buffers, every accepted socket | `SO_SNDBUF` and `SO_RCVBUF` 64 KiB (Linux doubles them); each socket is the loopback hop from `tailscale serve`, so this costs no phone throughput | the writer waits |
 | path in a request | 4,096 bytes, UTF-8, absolute, no NUL | `400 bad_request` |
 | JSON request body (`/fs/roots/*`, `/fs/uploads-dir`) | 4 KiB | `413` |
@@ -42,7 +42,9 @@ A **root** is a directory the file API may read. The **effective roots** are the
 `roots` entries in `config.toml` plus `uploads_dir` (default `~/tether-uploads`), each
 canonicalized. Entries are absolute or start with `~/`; anything else is ignored with
 a warning. An entry that doesn't exist or isn't a directory is reported `ok: false`
-and otherwise ignored.
+and otherwise ignored. `uploads_dir` follows the same rule, with one difference: a
+missing absolute path is created by the next upload, but one that is neither absolute
+nor `~/` shows `ok: false` and every upload answers `409 not_a_directory`.
 
 **fs re-reads `roots` and `uploads_dir` on every request**, as auth re-reads
 `auth.toml` ([auth.md](auth.md#state-on-disk)): the file is small, so a hand edit or a
@@ -116,15 +118,19 @@ truncated text written back. Both windows are microseconds wide; accepted.
 ## Path resolution: `fs::open`
 
 ```text
-fs::open(scope: &[PathBuf], path: &str, want: Want) -> Result<Opened, FsError>
-Want   = Dir | File | Parent     // Parent: v2 writes (below)
-Opened = { fd: OwnedFd, path: String /* canonical */, root: usize, meta: Metadata }
+fs::open(scope: &Scope, path: &str, want: Want) -> Result<Opened, FsError>
+Want   = Dir | File
+Opened = { file: File, path: String /* canonical */, root: usize /* index into the scope */, meta: Metadata }
 ```
 
-`scope` is the canonical effective roots, `[$HOME]` for the picker, or `[/]` for
-path completion ([complete.md](complete.md#paths)). It runs inside a blocking task
-holding an fs slot (completion's directory slot when completion calls it), and does,
-in order:
+`Scope` is a list of canonical directories plus the refusal to answer outside them. It
+is a value, not a bare list of paths, because the picker's refusal differs: the
+effective roots answer `outside_roots`, `[$HOME]` (the picker) answers `outside_home`,
+and `[/]` (path completion, [complete.md](complete.md#paths)) refuses nothing that
+exists. A third `Want`, `Parent`, belongs to v2's writes
+([below](#v2-what-this-must-not-preclude)) and doesn't exist yet. `open` runs inside a
+blocking task holding an fs slot (completion's directory slot when completion calls
+it), and does, in order:
 
 1. **Shape.** `path` must be absolute, at most 4,096 bytes and free of NUL; otherwise
    `bad_request`. Paths on the wire are UTF-8 strings, so a non-UTF-8 name can't be
@@ -181,7 +187,9 @@ Query: `offset` (default 0), `hidden=0|1` (default 0). `fs::open(…, Dir)`, the
 scan of the directory through its descriptor, holding the scan slot:
 
 - Read names and `d_type` up to the scan cap, dropping `.` and `..` and, unless
-  `hidden=1`, every name starting with `.`. `fstatat` (following links) only the
+  `hidden=1`, every name starting with `.`. The cap counts every entry read, the
+  dropped ones too, so a directory full of dotfiles is cut off as a full one is and one
+  page's cost stays bounded. `fstatat` (following links) only the
   entries whose `d_type` is `DT_LNK` or `DT_UNKNOWN`, so a symlinked directory sorts as
   a directory. Past the cap the scan stops and the response says `truncated`: the
   directory is too big for the phone, and the terminal is the tool for it.
@@ -206,8 +214,12 @@ Entry   = { name: string,
 - **Paging** is by offset over a fresh scan: the daemon keeps no cursor or listing
   between requests. If the directory changes between pages an entry can repeat or be
   skipped; pull-to-refresh starts over (no file watcher).
-- **Symlinks** show their target's kind and are marked `link`. Opening one that leads
-  out of the roots gets `outside_roots`; the listing doesn't check each target.
+- **Symlinks** show their target's kind, size and mtime and are marked `link`. The
+  listing doesn't check each target against the roots, so a link that leads out of
+  them is listed with its target's size and mtime (a link to `/etc/passwd` shows that
+  file's). That is intended: roots are a scope, not an authorization boundary
+  ([above](#roots)), and the token reaches the target through tmux anyway. Opening the
+  link gets `outside_roots`.
 - **Non-UTF-8 names** are listed with U+FFFD in place of bad bytes and `utf8: false`;
   the web shows them greyed and not openable, since their path can't be sent back.
 - **Hidden files:** dotfiles are left out unless `hidden=1`, which the file manager's
@@ -221,10 +233,15 @@ Entry   = { name: string,
 into a channel of capacity 1 that feeds the response body. If a send waits past the
 stall deadline (a paused player, a sleeping phone), the producer drops the channel
 with an error, which aborts the response and frees the slot. For a file over 8 MiB,
-`posix_fadvise(DONTNEED)` drops each chunk's pages after it is sent, so streaming a
-video doesn't fill the unit's page cache; smaller files keep theirs, which other
-processes (a build reading the same source) may be using. The drop is Linux-only and
-a no-op elsewhere. Use std file calls inside `spawn_blocking`, never
+after each chunk the producer calls `posix_fadvise(DONTNEED)` on **everything from the
+response's first byte to the current position**, not on the chunk alone, so streaming
+a video doesn't fill the unit's page cache; smaller files keep theirs, which other
+processes (a build reading the same source) may be using. The range must reach back
+to the start because the kernel reads ahead in large folios, and a folio that extends
+past a 64 KiB range survives a drop of that range (a per-chunk drop left a whole
+1 GiB download cached on Linux 7.1, ext4). It stops at the current position, not the
+end of the file: dropping ahead would evict the readahead and read it twice. The drop
+is Linux-only and a no-op elsewhere. Use std file calls inside `spawn_blocking`, never
 `tokio::fs::File`, whose buffer grows to 2 MiB.
 
 | Header | Value |
@@ -288,28 +305,36 @@ the cap against `Content-Length` up front, when sent, and against the running co
 1. Take the upload slot (none free: `503 busy` at once).
 2. Create `uploads_dir` (0700) if missing, then load the roots, then `fs::open(…,
    Dir)` on it, so a directory that didn't exist when the roots were read still
-   counts.
+   counts. An `uploads_dir` that can't be resolved to a directory (neither absolute
+   nor `~/`, or not a directory) answers `409 not_a_directory`.
 3. Name the file `YYYYMMDD-HHMMSSZ-xxxx.<ext>`: UTC (no time-zone crate), 4 random
    base32 characters, and the extension of `name`, lowercased, if it is 1 to 8 ASCII
    alphanumerics, else `bin`. Nothing else of `name` is used, so it can't carry a
    path, a shell metacharacter or a hidden name into the folder.
 4. Create `.tether-upload-<random>.part` relative to the directory's descriptor with
    `O_CREAT | O_EXCL | O_NOFOLLOW`, mode 0600 (never executable). Write each body chunk
-   in a blocking task under an fs slot. Every 8 MiB, `fdatasync` and
+   in a blocking task under an fs slot. Every 2 MiB, `fdatasync` and
    `posix_fadvise(DONTNEED)` what was written, so the upload's dirty pages stay small
-   on a disk the unit reaches at idle I/O priority. The flush is the one wait without
+   on a disk the unit reaches at idle I/O priority. Dirty pages can't be reclaimed
+   until they are written, so the 2 MiB between flushes is memory the unit holds: the
+   [ceiling](#limits-and-the-memory-ceiling) counts it. The flush is the one wait without
    a deadline: on a slow disk it slows the upload to the disk's pace, holding the
    upload slot and one fs slot, which is the backpressure wanted. The idle timeout
    counts only time spent waiting for the body, not time spent writing.
 5. At the end of the body, rename the part file to the final name relative to the same
    descriptor without replacing (`renameat2 RENAME_NOREPLACE` on Linux,
    `renamex_np RENAME_EXCL` on macOS, both `rustix::fs::renameat_with`); on a clash,
-   a new suffix and retry. No final `fsync`: a photo lost to a power cut is re-sent.
+   a new suffix and retry. A filesystem that lacks the no-replace flag has no
+   fallback: the rename fails, the part file is deleted and the answer is `500
+   internal`, since a check-then-rename could replace a file. No final `fsync`: a photo
+   lost to a power cut is re-sent.
 6. Answer `201 { path, size }`, `path` the absolute canonical path, which native
    inserts, quoted, into the tab ([ios-shell.md](ios-shell.md#files-and-sharing)).
 
 On the cap, the idle timeout, a client disconnect or a write error, the part file is
-deleted. At startup, after the port is bound (as for the paste directory), the daemon
+deleted. A body that stalls for the idle timeout, or that breaks because the client
+disconnected, answers `400 bad_request`: the body failed, and the client is usually
+gone to read it. At startup, after the port is bound (as for the paste directory), the daemon
 deletes leftover `.tether-upload-*.part` files in `uploads_dir`; nothing else in
 tether uses that prefix.
 
@@ -321,19 +346,19 @@ rejections.
 
 | Status | `error` | Cause |
 |---|---|---|
-| 400 | `bad_request` | a path that is relative, too long, has a NUL, doesn't decode, or canonicalizes to non-UTF-8; a bad query value |
+| 400 | `bad_request` | a path that is relative, too long, has a NUL, doesn't decode, or canonicalizes to non-UTF-8; a bad query value; an upload body that stalled past the idle timeout or broke (the client went away) |
 | 403 | `outside_roots` | the canonical path, or the opened descriptor's, is under no root |
 | 403 | `outside_home` | the picker outside `$HOME`; `roots/add` or `uploads-dir` at or outside it |
 | 403 | `denied` | `EACCES` or `EPERM` |
 | 404 | `not_found` | `ENOENT`, `ENOTDIR` while resolving, `ELOOP` at open |
-| 409 | `not_a_directory`, `not_a_file` | the wrong kind for the route; a FIFO, socket or device is `not_a_file` |
+| 409 | `not_a_directory`, `not_a_file` | the wrong kind for the route; a FIFO, socket or device is `not_a_file`; an upload when `uploads_dir` isn't an absolute or `~/` path or isn't a directory |
 | 409 | `config_read_only` | `config.toml` (or its link target) can't be written: `EROFS`, `EACCES` |
 | 413 | `too_large` | an upload over the cap |
 | 416 | `bad_range` | a range starting past the end |
 | 503 | `busy` | no slot within the wait, too many waiting, the upload slot taken, or config write retries spent; `Retry-After: 1` |
 | 503 | `config_unavailable` | `config.toml` exists but can't be read or parsed |
 | 507 | `no_space` | `ENOSPC` or `EDQUOT` during an upload |
-| 500 | `internal` | any other I/O error; the cause is logged, never sent |
+| 500 | `internal` | any other I/O error, including an upload's rename on a filesystem with no no-replace support; the cause is logged, never sent |
 
 ## Limits and the memory ceiling
 
@@ -341,24 +366,32 @@ fs runs its file I/O in tokio's blocking pool, capped at 8 threads for `TasksMax
 ([plan.md](plan.md#resource-budget)), and takes at most 4 of them, so a slow disk can
 stall the file manager but never starve auth's `auth.toml` reads or the paste files.
 Every wait but the upload flush has a deadline, at most 8 requests wait at once, and nothing is held
-between requests: no listing cache, no cursor, no open descriptor. Shutdown must not
-wait on a stream: `http::serve` bounds its graceful wait (a few seconds), as it does
-for sockets.
+between requests: no listing cache, no cursor, no open descriptor.
+
+**Shutdown must not wait on a stream.** `http::serve` bounds its graceful wait to 2 s,
+as it does for sockets. axum never force-closes a connection, so the connection task of
+a stalled raw response outlives that wait, and it holds a `Ctx` and so a `HubHandle`;
+with a handle alive the hub never sees "every handle dropped" and never closes its
+control clients. `main` therefore calls `HubHandle::stop` itself once `serve` returns
+([daemon-core.md §4.7](daemon-core.md#47-public-interface)). A SIGTERM with a paused
+raw stream then ends in 2.0 s with exit 0.
 
 | Item | Bound | MB |
 |---|---|---|
 | directory scan | 1 × (1 MiB of names + 5,000 × 32 B) | 1.2 |
 | raw responses | 2 × (64 KiB chunk + channel + hyper's write buffer, ≤ ~400 KiB) | 1.0 |
-| upload | 1 × (hyper's read buffer, ≤ ~400 KiB, + 64 KiB chunk) | 0.5 |
+| upload | 1 × (hyper's read buffer, ≤ ~400 KiB, + 64 KiB chunk + 2 MiB of dirty pages between flushes) | 2.5 |
 | listing JSON | one page, 200 entries | 0.1 |
-| **file API** | | **~3** |
+| **file API** | | **~5** |
 
 That row, and a row for kernel socket buffers that the socket-buffer constant bounds,
 join the daemon's ceiling in
 [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling). Page cache is
-charged to the unit too; it is reclaimable, so it doesn't count toward the ceiling,
-but it pushes the unit toward `MemoryHigh`, where every task in it is throttled. The
-`DONTNEED` calls above keep the file API's share small.
+charged to the unit too. Clean pages are reclaimable, so they don't count toward the
+ceiling, but they push the unit toward `MemoryHigh`, where every task in it is
+throttled; the `DONTNEED` calls above keep the file API's share small. An upload's
+dirty pages are the exception: they can't be reclaimed until written, which is why
+they have a row and why the flush interval is 2 MiB, not larger.
 
 ## Logging
 
@@ -381,7 +414,8 @@ without a disk.
 | File | Contents |
 |---|---|
 | `fs/mod.rs` | `Roots::load()` (config read, canonicalization), `FsError` with its status and code |
-| `fs/open.rs` | `fs::open`, `fs::check_dir`, the platform descriptor-path lookup |
+| `fs/open.rs` | `fs::open`, `Scope`, `fs::check_dir`, the platform descriptor-path lookup |
+| `fs/slots.rs` | the fs slots, the scan, raw-response and upload permits, and `Slots::blocking`, which moves a permit into the blocking closure so a dropped request frees its slot only when its thread is done |
 | `fs/list.rs` | the scan; pure sort and page; the picker's directories-only filter |
 | `fs/raw.rs` | pure `parse_range`, `etag` and `If-Range`; the chunk producer |
 | `fs/mime.rs` | the extension table |
@@ -399,9 +433,10 @@ component for a symlink between canonicalize and open to exercise step 5.
 
 Edit, new file and rename ([plan.md](plan.md#file-manager)) come as `PUT
 /fs/file/{*path}` (`If-Match` the ETag above; `412 changed` if it moved) and `POST
-/fs/create` and `/fs/rename` (`409 exists`). All go through `fs::open(…, Parent)`,
-which checks the **parent directory** as in steps 1 to 5, returns its descriptor, and
-requires the last component to be a plain name (no `/`, not `.` or `..`). Every write
+/fs/create` and `/fs/rename` (`409 exists`). All go through `fs::open(…, Parent)`.
+`Want::Parent` is built with the first of these routes, not before. It checks the
+**parent directory** as in steps 1 to 5, returns its descriptor, and requires the last
+component to be a plain name (no `/`, not `.` or `..`). Every write
 is then relative to that descriptor (`openat` with `O_CREAT | O_EXCL | O_NOFOLLOW`; a
 temp file, `fsync` and `renameat` for saves; `RENAME_NOREPLACE` for renames), so no
 write can follow a symlink out of a root. The ETag, the URL-path form, the error codes
@@ -418,9 +453,14 @@ part file at an offset.
   [ios-shell.md](ios-shell.md#web-content-security).
 - **`sandbox` and CORS on custom-scheme responses** are unverified on iOS 26
   ([ios-shell.md](ios-shell.md#open-risks)). The type allowlist holds without them.
-- **The memory ceiling sits at the unit's limit** once the file API and kernel socket
+- **The memory ceiling sits near the unit's limit** once the file API and kernel socket
   buffers are counted ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
   The budget run must read the unit's `memory.peak`, which counts kernel buffers and
   page cache, not the daemon's RSS.
+- **Untested on macOS.** The `F_GETPATH` descriptor-path lookup and the `RENAME_EXCL`
+  no-replace rename are written but have been neither built nor run: no Apple target is
+  installed on the dev box, and CI builds macOS only at release. Run the fs tests on the
+  Mac before relying on them there. On a platform that is neither Linux nor Apple the
+  descriptor-path lookup fails closed.
 - **How many concurrent ranges AVFoundation opens** per video decides whether 2 raw
   slots are enough; the spike records it.
