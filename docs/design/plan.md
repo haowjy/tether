@@ -118,7 +118,8 @@ tether's cgroup.
 ### Tabs and the session sheet
 
 **Model.** 1 tab = 1 tmux window, showing that window's active pane full screen. If a
-window gets split, the tab follows whichever pane is active.
+window gets split, the tab follows whichever pane is active. A tab's title is its
+window's name and follows the daemon's `windowRenamed`.
 
 **The "+" sheet:**
 
@@ -153,7 +154,18 @@ watched.
   pill indefinitely. Retries back off with jitter: 0.5 s, 1, 2, 4… capped at 30 s. The
   backoff resets and a retry fires at once on becoming visible, coming online, or a
   tap on the pill. A tab closes only when the daemon reports its window or server gone
-  (`windowClosed`, `serverExited`), or when Jimmy closes it.
+  (`windowClosed`, `serverExited`), when a `sessions` listing no longer has its window
+  (below), or when Jimmy closes it.
+- **Pruning.** The daemon sends `windowClosed` only for a window with a watch, and only
+  the tab on screen has one ([daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate)),
+  so a window killed under another tab would leave that tab open. The web therefore
+  asks each host for a `sessions` listing on every connect and prunes against it, and
+  prunes against every later listing too (the sheet opening, a pull to refresh, the
+  `sessionsChanged` refetch). A tab goes when no window in the listing has its
+  `WindowRef` (instance and id): another `server` instance counts as gone, and a listing
+  of `tmux: null` has no windows, so it closes the host's tabs as `serverExited`
+  would. The listing covers the `main` tmux server only, so it never prunes scratch
+  tabs (after the core MVP). A refused or failed listing prunes nothing.
 
 ### Stack
 

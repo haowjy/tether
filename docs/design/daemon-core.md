@@ -309,8 +309,10 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 - **Quoting, on a control-client line:** user arguments go in single quotes (`'` as
   `'\''`) after doubling every `#` (tmux format-expands `-n` and `-c`); control
   characters are rejected. One-shots take arguments, not lines (§3.8).
-- Never send commands that wait (`run-shell`, `if-shell`, `wait-for`,
-  `confirm-before`, `command-prompt`): one would stall every later reply.
+- Never send a control client commands that wait (`run-shell`, `if-shell`, `wait-for`,
+  `confirm-before`, `command-prompt`): one would stall every later reply. The one
+  exception is `NewWindow`'s `if-shell -F` guard, on a one-shot (§3.8), which only
+  evaluates a format.
 
 ### 3.5 Snapshot
 
@@ -468,12 +470,22 @@ child dropped at the timeout is killed.
 - `Locate`, `LocateSession`: the ops' commands (§3.4) with `-t` set to the id, when the
   endpoint has no `Ready` control client. They answer `Reply::Location` and
   `Reply::SessionLocation`.
-- `NewWindow`: `new-window -d -t '$S' [-n <name>] [-c <dir>] -P -F <created>`;
+- `NewWindow`: `if-shell -F '#{!=:#{pid}-#{start_time},<server>}' tether-server-changed ;
+  new-window -d -t '$S' [-n <name>] [-c <dir>] -P -F <created>`;
   `NewSession`: `new-session -d [-s <name>] [-c <dir>] -P -F <created>`. Both answer
   `Reply::Created { server, session, window }`. `<created>` is
   `'#{pid}\t#{start_time}\t#{session_id}\t#{window_id}'`: `created` carries a
   `WindowRef`, which names the server instance, and the hub may not know one for the
   endpoint yet.
+- **`NewWindow` carries the server instance** its session id belongs to
+  (`OneShotCmd::NewWindow { server, … }`, from the `SessionRef`), and tmux checks it:
+  session ids restart at `$0` with every server, so on another instance `-t '$S'` would
+  name some other session. The leading `if-shell -F` (a format test; it runs no shell
+  and waits for nothing) takes `tether-server-changed` as its command on a different
+  instance. That isn't a tmux command, so `if-shell` fails and tmux skips the rest of
+  the list: nothing is created. The one-shot reads `tether-server-changed` in stderr as
+  `NoServer`. The hub keeps no check of its own, because the instance it last saw can be
+  stale or unknown, and tmux's check can't be.
 
 **Arguments, not command lines.** A one-shot is an argv vector with no shell and no
 quoting layer: tmux takes each argument literally, except that an argument ending in
@@ -487,14 +499,16 @@ as `BadRequest` before any process starts.
 
 | Cause | `TmuxError` |
 |---|---|
-| tmux says `no server running on …` (stale socket) or `error connecting to … (No such file or directory)` (socket file missing) | `NoServer` |
+| tmux says `no server running on …` (stale socket) or `error connecting to … (No such file or directory)` (socket file missing); or stderr names `tether-server-changed`, the `NewWindow` guard | `NoServer` |
 | any other non-zero exit | `Command(stderr)`, or the exit status when stderr is empty |
 | still running after 2 s; the process is killed | `Timeout` |
 | tmux couldn't be run | `Spawn(message)` |
 | stdout past the 1 MiB reply cap | `TooLarge` |
 | stdout not in the expected shape | `BadReply` |
 
-`NoServer` starts no server. tmux rewrites `$NAME` in a window or session name to
+`NoServer` starts no server. It means no server is running, or the one running isn't the
+instance this one-shot was for (`NewWindow`'s guard), and the hub treats the two alike
+(§5.3). tmux rewrites `$NAME` in a window or session name to
 `\$NAME`, in control mode too; that is tmux's behaviour, not tether's escaping, and
 names pass through as tmux returns them.
 
@@ -561,7 +575,8 @@ pub struct Endpoint { pub program: PathBuf, pub socket: Socket }
 pub enum Socket { Default, Name(String), Path(PathBuf) }          // none, -L, -S
 pub enum OneShotCmd {
     List, Locate { window: WindowId }, LocateSession { session: SessionId },
-    NewWindow { session: SessionId, name: Option<String>, dir: Option<PathBuf> },
+    NewWindow { server: ServerInstance, session: SessionId,
+                name: Option<String>, dir: Option<PathBuf> },
     NewSession { name: Option<String>, dir: Option<PathBuf> },
 }
 
@@ -638,6 +653,20 @@ the hot path, skip it. `run.rs` only executes the effects and sleeps until
 `next_deadline()`: a linger end, a group's reply deadline, a crash respawn, a starved
 watch's snapshot spacing. With nothing pending there is no timer.
 
+- **Any input at or past `next_deadline()` counts as a Tick too.** The runtime may pick
+  a ready pump or connection input over its timer, and a steady flow of output would
+  then keep a deadline from ever firing (a starved watch's snapshot spacing, say). So
+  `handle` fires every timer that is due and runs `reconcile` once, whatever the input
+  was, pump output included. The deadline then drops out of `next_deadline()`: one
+  that can't be acted on yet (the spacing is over but credit or a capture slot is
+  missing) isn't reported again until something changes, so it can't spin the timer.
+- **`State` owns every lifecycle; `run.rs` only mirrors it.** `DropConn { conn }` means
+  the connection is gone from the hub, however it went: its own `Closed`, or dropped as
+  wedged (§4.6). `CloseClient { client }` goes out whenever a started control client
+  leaves the state, whether the hub closes it (linger, cap, kill) or it exited on its own.
+  The executor removes its channel or pump entry for each, and a removal that finds
+  nothing is harmless. Nothing the hub forgets stays in `run.rs`.
+
 State:
 
 - `clients`: endpoint, session, the phase (a crash respawn waiting out its delay,
@@ -657,7 +686,9 @@ State:
 A window's phase is `Locating` (no owner yet), `Starting` (found in a session whose
 control client is starting or waiting out a crash delay), `Bound` (owner, session and
 pane known) or `Orphaned` (the control client it belonged to, or was to bind to, exited;
-waiting for the session check, §4.5).
+waiting for the session check, §4.5). The hub holds a window only while a watch is on it
+(it is created by the first `watch` and dropped with the last), so only such a window can
+be located and reported closed.
 
 ```mermaid
 stateDiagram-v2
@@ -964,6 +995,11 @@ There is no `HubConfig`: every limit is a constant in `hub/mod.rs` (§6). `HubGo
 means the hub ended, by panic or shutdown; a connection that gets it ends, and the
 4004 close on shutdown stays with `main`. If the hub closes a connection's `ToConn`
 channel, it dropped the connection as wedged (§4.6): the connection closes with 4002.
+A `connect` whose reply can't be delivered, because the caller went away while it
+waited, registers nothing. A connection registered for good always sends `Closed` when
+it ends (`http/ws.rs` does on every path but a panic or the runtime's shutdown); one
+that only drops its receiver stays registered until the hub next sends to it. That is
+an accepted gap, not covered by extra machinery.
 
 **The hub's task handle completes only after its pumps have.** When the last
 `HubHandle` drops, the hub closes every control client (dropping its line sender) and
@@ -1053,7 +1089,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `paste` | `watch, text` | through `paste-buffer -p` |
 | `history` | `req, watch, start, end` | scrollback rows by tmux line number (negative is history) |
 | `listSessions` | `req: u32` | the session sheet |
-| `newWindow` | `req, session: SessionRef, name?, dir?` | `dir` is checked against the file roots by the connection. **TODO:** `src/fs/` doesn't exist yet, so until it does `dir` passes through unchecked (`src/http/.context/TODO`) |
+| `newWindow` | `req, session: SessionRef, name?, dir?` | tmux refuses a `session` from another server instance, a restarted server or an earlier run of the daemon, on a hub that has never seen the live instance too (§3.8): the hub broadcasts `serverExited` for that instance and answers `error { noServer }`; no window is created. `dir` is checked against the file roots by the connection. **TODO:** `src/fs/` doesn't exist yet, so until it does `dir` passes through unchecked (`src/http/.context/TODO`) |
 | `newSession` | `req, name?, dir?, scratch?: bool` | `dir` as for `newWindow`, with the same TODO. `scratch` after the core MVP; until then `scratch: true` gets `error { badRequest }` |
 
 **Daemon → client**
@@ -1064,7 +1100,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `pong` | `t` | |
 | `watching` | `watch, window, session: SessionRef, pane, cwd: string \| null` | bound; re-sent when session, pane or cwd changes. `cwd` is null until tmux reports it |
 | `watchEnded` | `watch, reason: detached \| error, message?` | the only way a watch ends from the daemon's side, apart from closure broadcasts; retryable: a tap sends a new `watch` |
-| `windowClosed` | `window` | closes every tab on the window, watched or not |
+| `windowClosed` | `window` | the window is gone: close its tabs. Sent only for a window that has a watch: the hub tracks a window only while one is on it (§4.2), so a tab that isn't on screen gets none, and the web prunes such tabs against `sessions` listings ([plan.md](plan.md#reconnect)) |
 | `sessionClosed` | `session` | the session is gone; tabs close only on `windowClosed`, since windows move |
 | `serverExited` | `server` | closes every tab on that server |
 | `windowRenamed` | `window, name` | |
@@ -1188,7 +1224,9 @@ How each failure ends; §4.5 has the control-client details.
 |---|---|---|
 | tmux server exits | pumps hit EOF; `LocateSession` finds no server | `serverExited`; `sessions` has `tmux: null` |
 | session killed | its client exits; `LocateSession` finds it gone | `sessionClosed`; windows re-locate |
-| window closed | close notification, then an empty Locate | `windowClosed` |
+| watched window closed | close notification, then an empty Locate | `windowClosed` |
+| unwatched window closed | nothing: the hub doesn't track it | none; the web finds it in the next `sessions` listing |
+| `newWindow` for another server instance | the one-shot's `if-shell` guard (§3.8) | `serverExited` for that instance, `error { noServer }` |
 | window moved, even a session's last one | close notification or client exit, then Locate finds another session | new owner, snapshot, `watching` |
 | active pane exits | `ActivePane` | watches move to the new pane |
 | snapshot torn 3 times, or too large | `Done { Err }` | `watchEnded { error }` naming the cause |
@@ -1196,7 +1234,7 @@ How each failure ends; §4.5 has the control-client details.
 | client crashed, killed, wedged (10 s) or `Fatal` | EOF without `%exit`, timer, parser | one respawn; a second within 60 s: `watchEnded { error }` |
 | a Locate or session check fails (not `NoServer`) | its answer, or the one-shot's timeout | `watchEnded { error }` for the window's watches |
 | user requests at the threshold | in-flight count | `error { busy }` |
-| connection socket dies | `FromConn::Closed` | its watches end; votes and subscriptions clear if no watch remains |
+| connection socket dies | `FromConn::Closed` | `DropConn`; its watches end; votes and subscriptions clear if no watch remains |
 | connection wedged | control JSON past the overdraft, or its channel full | close 4002; the client reconnects |
 | hub panics | `main` awaits it | exit 1; systemd restarts; clients reconnect and resync |
 | device removed | the 10 s re-check | close 4401 |
@@ -1259,8 +1297,12 @@ box, 3.7b on the Mac, both committed.
   session; a linked window watched from two sessions; binding only from the owner's
   own Locate answer; the owner exiting after its window moved; crash
   respawn and its limit, detach, kill-session, kill-server, a reply timeout and a wedged
-  connection; user requests filling capacity while maintenance waits; a stale session
-  ref on `newWindow`; every paste path deleting its file.
+  connection; user requests filling capacity while maintenance waits; a session ref
+  from another server instance on `newWindow`, on a fresh hub too (the fake checks the
+  instance as `if-shell` does); output arriving past the snapshot-spacing deadline
+  standing in for the Tick, and a spent deadline not reported again; a closed
+  connection and an exited client each emitting `DropConn` and `CloseClient`; every
+  paste path deleting its file.
 - **`proto`:** the golden frames in `tests/fixtures/proto/frames.json` (shared with
   `web/proto/frames.test.ts`), unknown message types against bad known ones, and the
   generated-TypeScript staleness test (§5.5).
@@ -1298,7 +1340,8 @@ with the replay tests and the recorder in `tests/support/`):
 - **One-shots:** the listing detects a terminal client and keeps tab and UTF-8 window
   names. New windows and sessions keep names and directories containing `#{pane_id}`,
   `'`, spaces and a trailing `;`. An unknown session gives tmux's error, control
-  characters give `BadRequest`, and a Locate of a gone window gives `found: None`. With
+  characters give `BadRequest`, a Locate of a gone window gives `found: None`, and a
+  `NewWindow` naming the wrong instance gives `NoServer` and creates no window. With
   the server stopped (`SIGSTOP`), the listing times out at 2 s and leaves no process.
 - **Locale:** the whole suite also runs with no locale set, where a missing `-u` turns a
   non-ASCII window name into `_`.

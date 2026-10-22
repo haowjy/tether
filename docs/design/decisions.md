@@ -12,7 +12,8 @@ author while writing it; the spawn that wrote each spec is named for traceabilit
 `tmux::Session` build p25, the restore-byte composer p30, the pump and one-shot
 runner p33, and the hub and wire protocol p35, whose builds corrected the daemon-core
 spec; the HTTP layer, auth, CLI and config build p40, commit b1dcb8c; the web host
-layer p42, commit a43014f). Reviews:
+layer p42, commit a43014f; the hub fixes after review p43, commit cb7548e; the web boot
+p45, commit b115c2b). Reviews:
 round 1 of the plan is [plan-review.md](plan-review.md); round 1 of the subsystem specs
 was p10–p14; round 2 was p16 (structure) and p17 (correctness).
 
@@ -579,6 +580,9 @@ All 2026-10-21, decided by Jimmy.
 - **Design note (p21):** tabs close on `windowClosed` and `serverExited` only. A
   session's windows may have moved before it died, so `sessionClosed` closes no tab;
   it is sent when a control client's session is found gone.
+- **Changed 2026-10-22 (p45):** the daemon sends `windowClosed` only for windows with a
+  watch, so the web also prunes tabs against `sessions` listings; see "The web prunes
+  its tabs against `sessions` listings" below.
 
 ### No automatic reattach after a detach
 
@@ -968,6 +972,71 @@ All 2026-10-21, decided by Jimmy.
 - **Rejected:** none recorded; the sizes are set by the memory ceiling
   ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
 
+### `NewWindow` carries the server instance, and tmux checks it
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub fixes after review (p43,
+  commit cb7548e). Changes how the hub treated a stale session ref on `newWindow`
+  ([daemon-core.md §3.8](daemon-core.md#38-one-shots-and-endpoints-oneshotrs)).
+- **What:** `OneShotCmd::NewWindow` carries the instance named by the request's
+  `SessionRef`, and the one-shot starts with `if-shell -F
+  '#{!=:#{pid}-#{start_time},<server>}' tether-server-changed ;` before `new-window`. On
+  another instance tmux can't parse the branch, `if-shell` fails, and tmux skips the rest
+  of the list. The one-shot reads `tether-server-changed` in stderr as `NoServer`, so
+  `NoServer` also means "not the instance this one-shot was for", and the hub answers
+  as for a dead server: `serverExited` for that instance and `error { noServer }`. The
+  hub's cached comparison with the live instance is removed.
+- **Why:** session ids restart at `$0` on every tmux server, so a ref from an earlier
+  run names some other session on the live one. The hub's cached instance is unknown on
+  a fresh hub (after a daemon restart) and stale after a server restart, so its check let
+  `newWindow` create a window in the wrong server's session: the reviewer's probe got
+  `created` and `@1` in the wrong instance. tmux evaluates the instance in the same
+  command list that creates the window, so there is no gap between check and use. Checked
+  on 3.4 (a mismatch exits 1 and creates nothing; a match creates the window); tmux
+  master has the same `if-shell` and list-abort behaviour, 3.7b not run.
+- **Rejected:** the hub comparing the ref with its cached live instance (unknown or
+  stale, above); reading the instance in one process and then running `new-window` in
+  another (leaves a window for the server to restart between the two).
+
+### Time reaches `State` with the next input
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub fixes after review (p43,
+  commit cb7548e). Changes "Reconcile runs only after inputs that may change desired
+  state" above for inputs past a deadline
+  ([daemon-core.md §4.1](daemon-core.md#41-statehandle)).
+- **What:** `handle` treats any input at or past `next_deadline()` as a Tick too: it
+  fires the timers that are due and runs `reconcile` once, whatever the input was. The
+  deadline is reported only until then, so one that can't be acted on (credit or a
+  capture slot missing) can't spin the timer.
+- **Why:** the runtime's select may take a ready pump input over its timer, so output at
+  a steady rate kept the snapshot-spacing wakeup of a starved watch from ever running:
+  the reviewer's probe saw nothing delivered after output, with the snapshot still
+  owed. Putting the rule in the pure `State` keeps it testable with scripted inputs and a
+  fake clock. Cost: about 30 ns more per output chunk (313 to 347 ns median, release
+  build), under 1% of the pump's ~5 µs wake per chunk.
+- **Rejected:** a timer-first (biased) select in `run.rs` (the rule would live in the
+  executor's polling order, outside the pure core and its tests).
+
+### `DropConn` and `CloseClient` on every exit
+
+- **Decided:** 2026-10-22, tech lead, accepted from the hub fixes after review (p43,
+  commit cb7548e). Changes what the two effects mean
+  ([daemon-core.md §4.1](daemon-core.md#41-statehandle)).
+- **What:** `State` owns every lifecycle and `run.rs` only mirrors it. `DropConn` means
+  the connection is gone from the hub, whether it closed or was dropped as wedged;
+  `CloseClient` goes out whenever a started control client leaves the state, whether the
+  hub closed it or it exited. The executor removes its entries idempotently. A `connect`
+  whose reply can't be delivered registers nothing.
+- **Why:** a normal `Closed` and a natural client exit emitted no effect, so the
+  executor's channel for each leaked. Over 10,000 connect and close cycles the daemon's
+  RSS went from 2.8 to 24.8 MB; 10,000 connects cancelled before the answer went from
+  2.9 to 25.8 MB. With the fix: 2.8 to 3.1 MB and 2.9 to 3.0 MB.
+- **Rejected:** the executor deciding for itself when a connection or client is dead
+  (a second owner of the lifecycle, so two places to keep in step); a
+  periodic sweep (polling, and an idle daemon must have no timer).
+- **Open:** a connection that drops its receiver without sending `Closed` stays
+  registered until the hub next sends to it. `http/ws.rs` sends `Closed` on every path
+  but a panic or the runtime's shutdown, so no machinery was added.
+
 ## Daemon service, as built
 
 Decided 2026-10-22 by the tech lead, accepted from the p40 build (commit b1dcb8c), which
@@ -1141,6 +1210,78 @@ found each point while running the daemon.
 - **What:** `saveTabs` stays native. The hypothesis that WKWebView `localStorage` on
   the custom scheme survives a content-process kill is unverified and needs the
   device.
+
+### The web prunes its tabs against `sessions` listings
+
+- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b).
+  Changes the design note of "Closure is a broadcast fact" above, which had tabs close on
+  `windowClosed` and `serverExited` only, and corrects the daemon-core spec, which said
+  `windowClosed` "closes every tab on the window, watched or not"
+  ([plan.md](plan.md#reconnect)).
+- **What:** `windowClosed` reaches only windows that have a watch, because the hub holds
+  a window only while a watch is on it. The web asks each host for a listing on every
+  connect and prunes its tabs against it, and against every later listing; a tab whose
+  `WindowRef` isn't in the listing closes.
+- **Why:** only the tab on screen is watched (the resource budget: nothing held for
+  panes nobody views). Running the build against a real daemon, a window killed under a
+  tab that wasn't on screen sent nothing, and its tab closed only once it was selected
+  and watched. The listing is the one answer that covers every window, and the web
+  already fetches it for the sheet.
+- **Rejected:** the daemon tracking every window of every open tab (a Locate and
+  state per unwatched tab, which is what "a watch exists only while its tab is on
+  screen" avoids); watching every tab (votes and resizes for windows nobody sees);
+  leaving it, so a dead tab is found on selection (the pill claims a window that is
+  gone); the daemon diffing listings to send `windowClosed` (it would keep a copy of
+  the listing).
+
+### A host entry carries its base URL
+
+- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b). Adds
+  `baseURL` to the `hosts` message and to `boot.hosts`
+  ([ios-shell.md](ios-shell.md#boot-and-host-payloads)).
+- **What:** a native host entry is `{ id, name, baseURL, enrolled }`, `baseURL` being
+  `https://<magicdns-name>`. The web derives the WebSocket URL from it and never builds a
+  URL from `name`.
+- **Why:** `name` is a label (`/auth/info.name` is the config key `name`, else the
+  machine name), not the host's DNS name, and the build had to guess
+  `wss://<name>/ws`. `HostStore` already keeps `baseURL`.
+- **Rejected:** the web turning `name` into a URL (breaks when the label differs from
+  the MagicDNS name).
+
+### `boot.tabs` is `SavedTab`, and `settings` is a free record
+
+- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b), whose
+  shapes these are. Both go into `Bridge.swift` and its fixtures
+  ([ios-shell.md](ios-shell.md#boot-and-host-payloads)).
+- **What:** `SavedTab` is `{ id, host, window: WindowRef, name }`. `settings` is an
+  object of JSON values, with no keys defined yet.
+- **Why:** a saved tab carries what the web needs to restore it without asking the
+  daemon, and its title. No setting exists yet, so a typed struct would be invented
+  fields; the first setting defines its key.
+- **Rejected:** a typed `Settings` struct now.
+
+### Native persists which tab was active
+
+- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b). Extends
+  "Native keeps the saved tab list" above; the field names are the design's pick
+  ([ios-shell.md](ios-shell.md#boot-and-host-payloads)).
+- **What:** `saveTabs { tabs, active }` and `boot.active` carry the id of the tab on
+  screen; at boot it is the active tab, and an absent or unknown id means the first.
+- **Why:** the build opened on the first tab, so the app reopened somewhere other than
+  where Jimmy left it. Native already stores the list, so the id costs one field.
+- **Rejected:** always the first tab (the build's default); the web keeping the id in
+  its own storage (the same unverified `localStorage` survival that put the list in
+  native).
+
+### Tab titles follow `windowRenamed`
+
+- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b).
+- **What:** a tab's title is its window's name and is updated by `windowRenamed`; the
+  new name is saved with the tab.
+- **Why:** the build took the title from the listing when the tab opened and never
+  changed it, so a rename in tmux left the pill stale, and the daemon already sends the
+  rename.
+- **Rejected:** a title fixed at open.
 
 ## Auth
 

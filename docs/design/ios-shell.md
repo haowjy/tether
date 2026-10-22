@@ -101,8 +101,9 @@ origin:
   - **A `401`** means the device was removed from that host: the handler marks it "not
     enrolled" and passes the `401` on, without retrying.
 
-The web UI builds every host URL through one function, so it holds no token for HTTP,
-and `<img src>` works with auth. The daemon serves no UI.
+The web UI builds every host URL through one function, from the host entry's `baseURL`
+([payloads](#boot-and-host-payloads)), so it holds no token for HTTP, and `<img src>`
+works with auth. The daemon serves no UI.
 
 ### Web content security
 
@@ -392,11 +393,11 @@ a mismatch can only happen in dev mode and shows an error banner.
 
 | Web → native | Reply | Purpose |
 |---|---|---|
-| `ready` | `boot { bridgeVersion, hosts, tabs, settings, viewport, locked }` | Start; restore the saved tabs |
+| `ready` | `boot { bridgeVersion, hosts, tabs, active, settings, viewport, locked }` | Start; restore the saved tabs and the active one ([payloads](#boot-and-host-payloads)) |
 | `token { host }` | `{ token }`, `{ locked }` or `{ notEnrolled }` | WebSocket token ([auth.md](auth.md#carrying-the-token)) |
 | `hostRejected { host }` | | The host closed the socket with 4401: mark it "not enrolled". The web halts that host's tabs as unauthorized until a tap on a pill retries |
 | `recreateWebView` | | Two consecutive connect timeouts on a host's socket ([plan.md](plan.md#reconnect)): discard the web view and load a fresh one. No data, no reply. All state that matters is on the server and in native's saved tabs |
-| `saveTabs { tabs }` | | Persist the open-tab list |
+| `saveTabs { tabs, active }` | | Persist the open-tab list and which tab is on screen |
 | `focus { mode }` | | `terminal`, `hidden`, `webText`, `select` |
 | `haptic { kind }` | | Semantic haptics |
 | `prompt { title, message, initial }` | `string` or `null` | Short text entry |
@@ -412,7 +413,7 @@ a mismatch can only happen in dev mode and shows an error banner.
 | `lifecycle { phase }` | `active`, `background` |
 | `network { reachable, interface }` | Reconnect trigger |
 | `lock { locked }` | The app-wide lock: drop or fetch tokens |
-| `hosts { hosts: [{ id, name, enrolled }] }` | Host list or a host's enrolment changed |
+| `hosts { hosts: HostEntry[] }` | Host list or a host's enrolment changed |
 | `upload { id, host, tab, progress, path?, error? }` | Upload chips; on `path`, insert it into `tab` |
 
 `lifecycle.phase` has two values, `active` and `background`; there is no `foreground`.
@@ -422,7 +423,36 @@ does on `{ locked }` and `{ notEnrolled }` (wait for `lock { locked: false }`, w
 pill says, whether to ask again) is undecided, and the web code that fetches a token
 doesn't exist yet ([Open risks](#open-risks)).
 
-The bridge types are written twice, in `web/native/bridge.ts` and
+### Boot and host payloads
+
+```text
+HostEntry = { id: string,        // host_id
+              name: string,      // a label for the host list, never turned into a URL
+              baseURL: string,   // "https://<magicdns-name>"
+              enrolled: bool }
+SavedTab  = { id: string,        // the web's tab id, kept across launches
+              host: string,      // a HostEntry id
+              window: WindowRef, // { server, window }, daemon-core.md §5.3
+              name: string }     // the title; follows windowRenamed (plan.md)
+boot      = { bridgeVersion, hosts: HostEntry[], tabs: SavedTab[],
+              active: string | null,   // the SavedTab id native last saw on screen
+              settings: { [key]: json }, viewport, locked }
+```
+
+- **`baseURL` is explicit.** Native builds it when Add host takes the MagicDNS name
+  ([Hosts](#hosts)), and the web derives the host's WebSocket URL from it (`wss`, `/ws`).
+  `name` is a label (`/auth/info.name` may be the config key `name`), not the host's DNS
+  name, so the web never builds a URL from it.
+- **`tabs` is the open-tab list `saveTabs` last stored**, in order. Native stores it as
+  given and keeps no model of tabs.
+- **`active`** is the tab id the last `saveTabs` named; native persists it with the list
+  so the app reopens on the tab Jimmy left. `null`, or an id not in `tabs`, means the
+  first tab.
+- **`settings` is a free record**: no setting is defined yet, so it is an object of
+  JSON values that native fills and the web reads by key. A shape is added with the
+  first setting that needs one.
+
+Every bridge type, `HostEntry`, `SavedTab` and `Boot` included, is written twice, in `web/native/bridge.ts` and
 `ios/TetherKit/Sources/TetherKit/Bridge.swift`; both test suites decode the same
 fixtures in `ios/TetherKit/Tests/fixtures/bridge/*.json`. The daemon never sees the
 bridge.
@@ -431,7 +461,7 @@ bridge.
 
 | Event (native signal) | What happens |
 |---|---|
-| Launch | Load the UI from the bundle; `boot` restores tabs as "reconnecting"; the lock screen shows if needed ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)); once unlocked, the web connects every host with an open tab |
+| Launch | Load the UI from the bundle; `boot` restores tabs as "reconnecting", with the one last on screen active; the lock screen shows if needed ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)); once unlocked, the web connects every host with an open tab |
 | Background (`sceneDidEnterBackground`) | Native sends `lifecycle background` inside a short `beginBackgroundTask`; the web closes its sockets cleanly. The daemon ends the watches at once, so the laptop gets its window size back without waiting for the idle timeout ([daemon-core.md §3.6](daemon-core.md#36-sizing)) |
 | A native screen covers the terminal (host list, Add host, settings) | The web sends `unwatch` for the tab on screen and keeps the socket and its pings; it sends `watch` again when the terminal shows, and gets a fresh snapshot |
 | Foreground (`sceneDidBecomeActive`) | Lock check first; then `lifecycle active`; the web reconnects at once and sends `watch` for the tab on screen, which repaints from a snapshot; `FocusController` restores the keyboard |
@@ -478,7 +508,9 @@ this waits.
 live in the Keychain ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)). The
 MVP has one host, but the store, the bridge and the scheme's `h-{host}` origins
 already carry the host id. Add host (SwiftUI) takes the MagicDNS name and the
-enrolment code. A host whose name changes keeps its `host_id`; Jimmy edits its URL.
+enrolment code, and stores `baseURL` as `https://<that name>`; the bridge sends it in
+each `HostEntry` ([payloads](#boot-and-host-payloads)). A host whose name changes keeps
+its `host_id`; Jimmy edits its URL.
 
 ## Project layout
 
