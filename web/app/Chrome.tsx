@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { Tappable } from "../ui/Tappable";
 import { Lock, Plus, ToBottom } from "../ui/icons";
+import { Strip } from "../complete/Strip";
 import type { App, AppView } from "./app";
 import { Sheets } from "./Sheets";
 import { describe } from "./status";
@@ -48,7 +49,7 @@ function StatusStrip({ app, now }: { app: App; now: number }) {
 /** The web UI over and around the terminal: bar, strip, sheets, and the whole-screen states. */
 export function Chrome({ app }: { app: App }) {
   const view = useApp(app);
-  const { tabs, notice, keyboard, locked, scrolledUp } = view;
+  const { tabs, notice, keyboard, locked, scrolledUp, chips } = view;
   const active = app.activeTab();
   // Off-screen tabs rest in `connecting`; only a countdown or a slow connect needs the clock.
   const now = useNow(tabs.some((t) => t.state.kind === "reconnecting") || active?.state.kind === "connecting");
@@ -75,6 +76,7 @@ export function Chrome({ app }: { app: App }) {
             : <StatusStrip app={app} now={now} />}
         </div>
         <TabBar app={app} now={now} />
+        {chips && <Strip app={app} chips={chips} />}
       </div>
       <Sheets app={app} />
       {locked && (

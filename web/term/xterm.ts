@@ -6,6 +6,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import type { CellSize, RendererOptions, TerminalRenderer } from ".";
 import { WritePipeline, type Snapshot } from "./pipeline";
+import { PromptTracker } from "./prompt";
 import { cursorPan } from "./size";
 
 /** Context losses tolerated before settling on the DOM renderer. */
@@ -55,7 +56,15 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
   };
   attachWebgl();
 
-  const pipeline = new WritePipeline(term);
+  const prompt = new PromptTracker(term);
+  const pipeline = new WritePipeline({
+    write: (data, callback) => { term.write(data, callback); },
+    reset: () => {
+      prompt.reset();
+      term.reset();
+    },
+    resize: (cols, rows) => { term.resize(cols, rows); },
+  });
   const scrollListeners: ((scrolledUp: boolean) => void)[] = [];
   let scrolledUp = false;
   // New output while scrolled up moves the newest line away without scrolling the view,
@@ -104,6 +113,7 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     setTheme: (theme) => { term.options.theme = theme; },
     onScrolledUp: (listener) => { scrollListeners.push(listener); },
     scrollToBottom: () => { term.scrollToBottom(); },
+    onPromptLine: (listener) => { prompt.onLine(listener); },
     dispose: () => {
       resized.disconnect();
       webgl = undefined;

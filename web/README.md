@@ -6,11 +6,12 @@ typecheck, lint, tests and the build.
 ## Desktop dev mode
 
 Drives the real UI in a desktop browser against a daemon on this box. The dev server
-proxies `/ws`, `/auth/*` and `/fs/*` to the daemon and adds the owner's
+proxies `/ws`, `/auth/*`, `/fs/*` and `/complete` to the daemon and adds the owner's
 `Tailscale-User-Login` (dev server only, never in a build; the daemon still wants a
-loopback peer). On `/fs/*` it also adds `Authorization: Bearer` with the dev token, as
-native's scheme handler does in the app: the shim keeps the token in a `tether_dev_token`
-cookie scoped to `/fs`, which the proxy turns into the header and strips.
+loopback peer). On `/fs/*` and `/complete` it also adds `Authorization: Bearer` with the
+dev token, as native's scheme handler does in the app: the shim keeps the token in a
+`tether_dev_token` cookie scoped to those paths, which the proxy turns into the header and
+strips.
 
 A dev shim (`dev/`, loaded only under `import.meta.env.DEV`) stands in for native: it
 keeps a device token, gives its one host the page's own origin as `baseURL`, reports a
@@ -52,6 +53,11 @@ bottom, left; `kb` is the keyboard plus accessory height).
    and type. Tabs, and which one is on screen, persist in localStorage. `prefers-color-scheme` picks dark or light.
 5. Files: Home's Files row, or `[⊞]` while the keyboard shows. Add a root under Folders
    (the gear); `roots` in the config above works too.
+6. Suggestions: in the pane, source `contrib/shell/tether.bash` (its OSC 133 marks are how
+   the web reads the command line) and press Enter for a fresh prompt; a snapshot (opening
+   or switching tabs) carries no marks. The strip shows under the tab bar while the keyboard
+   is up. Set `[complete] path` (and `carapace`, if it isn't on that `PATH`) in the config
+   for command and flag chips.
 
 Drive the page from a script with `window.__tether.receive([...])` to send the messages
 native would (`lifecycle`, `network`, `viewport`, `lock`).

@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- Suggestion strip: history, command, flag and path suggestions above the
+  keyboard at a shell prompt (needs the shell snippet).
 - File manager: browse project folders and uploads from the tab's folder; view
   code, Markdown, images and file details; manage folders in Settings.
 - Completion for the suggestion strip (`POST /complete`): chips from shell history

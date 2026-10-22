@@ -33,14 +33,17 @@ export default defineConfig(({ command }) => ({
     command === "serve"
       ? {
           proxy: Object.fromEntries(
-            ["/ws", "/auth", "/fs"].map((path): [string, ProxyOptions] => [
+            // Keys are path prefixes, or a regex when they start with `^`: `/complete` alone
+            // would also catch the modules under web/complete/.
+            ["/ws", "/auth", "/fs", "^/complete$"].map((path): [string, ProxyOptions] => [
               path,
               {
                 target: `http://127.0.0.1:${process.env["TETHER_PORT"] ?? "7850"}`,
                 ws: path === "/ws",
                 headers: { "Tailscale-User-Login": devLogin() },
-                // `/fs/*` carries the device token as native's scheme handler would: the dev
-                // shim keeps it in a cookie (dev/shim.ts), sent here as a Bearer token.
+                // `/fs/*` and `/complete` carry the device token as native's scheme handler
+                // would: the dev shim keeps it in a cookie (dev/shim.ts), sent here as a
+                // Bearer token.
                 configure: (proxy) => {
                   proxy.on("proxyReq", (req, incoming) => {
                     const token = /(?:^|;\s*)tether_dev_token=([^;]+)/.exec(incoming.headers.cookie ?? "")?.[1];

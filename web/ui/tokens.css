@@ -88,6 +88,8 @@
   --tap: 44px;
   --bar-height: 52px;
   --pill-height: 36px;
+  --chips-height: 44px;
+  --chip-height: 34px;
   /* The least gap between terminal text and a side of the screen; a safe-area inset
      counts toward it. The terminal's size is computed with it (term/size.ts). */
   --term-edge: 4px;

@@ -1,11 +1,12 @@
 import { Native, type Boot, type HostEntry, type NativeMsg, type SavedTab, type Viewport } from "../native/bridge";
-import type { TmuxListing, WindowRef } from "../proto/generated/messages";
+import type { Chip, TmuxListing, WindowRef } from "../proto/generated/messages";
 import { TabDriver } from "../tabs/driver";
 import { initialState, type ConnectionState, type Halt } from "../tabs/connection";
-import type { TerminalRenderer } from "../term";
+import type { PromptLine, TerminalRenderer } from "../term";
 import { TerminalSizer } from "../term/size";
 import { FileBrowser } from "../files/browser";
 import { httpFsApi } from "../files/api";
+import { httpComplete, Suggester } from "../complete/suggest";
 import { HostRegistry, httpOrigin } from "./hosts";
 import { AskError, create, listWindows, type CreateTarget } from "./listing";
 import { HostSync, listed } from "./sync";
@@ -65,6 +66,8 @@ export interface AppView {
   locked: boolean;
   /** The terminal shows older lines than the newest: offer the jump to the bottom. */
   scrolledUp: boolean;
+  /** The suggestion strip's chips; null hides it. */
+  chips: readonly Chip[] | null;
 }
 
 export interface AppOptions {
@@ -94,6 +97,9 @@ export class App {
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   /** The file manager's hidden-files toggle, kept for the next time it opens. */
   private hiddenFiles = false;
+  private readonly suggester = new Suggester((chips) => { this.update({ chips }); });
+  /** The command line on screen, from the renderer. */
+  private promptLine: PromptLine | null = null;
 
   constructor(opts: AppOptions) {
     this.native = opts.native;
@@ -107,11 +113,15 @@ export class App {
     });
     this.view = {
       tabs: [], active: null, host: null, sheet: null, listing: null, notice: null,
-      keyboard: opts.boot.viewport.keyboard, locked: opts.boot.locked, scrolledUp: false,
+      keyboard: opts.boot.viewport.keyboard, locked: opts.boot.locked, scrolledUp: false, chips: null,
     };
     this.setViewport(opts.boot.viewport);
     this.hosts.set(opts.boot.hosts);
     opts.renderer.onScrolledUp((scrolledUp) => { this.update({ scrolledUp }); });
+    opts.renderer.onPromptLine((line) => {
+      this.promptLine = line;
+      this.suggest();
+    });
     // Tabs saved for a host native no longer lists can't open; the one last on screen
     // shows again if it can, else the first.
     const restorable = opts.boot.tabs.filter((t) => this.hosts.get(t.host));
@@ -180,6 +190,7 @@ export class App {
       next.driver.uncover();
       this.native.haptic("selection");
       this.update({ active: id, sheet: null, host: this.sheetHost(next.host) });
+      this.lineGone();
       this.save();
     }
     if (next.state.kind === "reconnecting") next.driver.nudge();
@@ -192,6 +203,13 @@ export class App {
   /** `[⌨]`: native owns the keyboard; this only asks. Its key row hides it again. */
   showKeyboard(): void {
     this.native.focus("terminal");
+  }
+
+  /** A chip tap types its text, as a key would (ios-shell.md "How input reaches the terminal"). */
+  typeChip(chip: Chip): void {
+    if (!this.activeTab()?.driver.input([{ text: chip.insert }])) return;
+    this.native.haptic("selection");
+    this.suggester.tapped(chip);
   }
 
   scrollToBottom(): void {
@@ -213,6 +231,7 @@ export class App {
     }
     this.activeTab()?.driver.cover();
     this.open({ id: newId(), host, window, name }, true);
+    this.lineGone();
     this.save();
   }
 
@@ -362,11 +381,13 @@ export class App {
           else setTimeout(() => { this.remove(tab.id); }, GONE_LINGER_MS);
         }
         this.update({ tabs: [...this.view.tabs] });
+        if (tab.id === this.view.active) this.suggest();
       },
       onWatching: (watching) => {
         if (tab.cwd === watching.cwd) return;
         tab.cwd = watching.cwd;
         this.update({ tabs: [...this.view.tabs] });
+        if (tab.id === this.view.active) this.suggest();
       },
       onNotice: (text) => { this.notice(text); },
     });
@@ -388,6 +409,7 @@ export class App {
     const next = wasActive ? (rest[at] ?? rest[at - 1]) : undefined;
     this.update({ tabs: rest, ...(wasActive && { active: next?.id ?? null }) });
     next?.driver.uncover();
+    if (wasActive) this.lineGone();
     this.save();
   }
 
@@ -414,7 +436,32 @@ export class App {
     // The insets the terminal is sized from are the ones the layout pads by.
     const root = document.documentElement.style;
     for (const side of ["top", "right", "bottom", "left"] as const) root.setProperty(`--safe-${side}`, `${String(viewport.safeArea[side])}px`);
-    if (this.view.keyboard !== viewport.keyboard) this.update({ keyboard: viewport.keyboard });
+    if (this.view.keyboard !== viewport.keyboard) {
+      this.update({ keyboard: viewport.keyboard });
+      this.suggest();
+    }
+  }
+
+  /**
+   * Asks for chips for the line on screen: only with the keyboard up, where the strip sits
+   * above the key row, and with the active tab live. `cwd` is the prompt's own OSC 7 path,
+   * else the tab's from `watching`, which lags a `cd`.
+   */
+  private suggest(): void {
+    const tab = this.activeTab();
+    const entry = tab && this.hosts.entries().find((h) => h.id === tab.host);
+    const line = this.promptLine;
+    if (!line || !tab || !entry || !this.view.keyboard || tab.state.kind !== "live") {
+      this.suggester.set(null, null);
+      return;
+    }
+    this.suggester.set({ before: line.before, after: line.after, cwd: line.cwd ?? tab.cwd }, httpComplete(httpOrigin(entry)));
+  }
+
+  /** Another tab is going on screen: the line shown is the last tab's until its snapshot lands. */
+  private lineGone(): void {
+    this.promptLine = null;
+    this.suggest();
   }
 
   private sheetHost(id = this.activeTab()?.host): HostEntry | null {

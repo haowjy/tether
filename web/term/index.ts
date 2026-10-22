@@ -13,6 +13,21 @@ type ThemeKey = "background" | "foreground" | "cursor" | "cursorAccent" | "selec
 /** Terminal colours as CSS colour strings the renderer can parse (`rgba(…)`, `#rrggbb`). */
 export type TerminalTheme = Partial<Record<ThemeKey, string>>;
 
+/**
+ * The shell's command line as the terminal shows it, read from the OSC 133 marks
+ * (complete.md "What the client does"). Null when there is no line to read: no input-start
+ * mark since the last prompt or snapshot, a command running, the alternate screen, or a
+ * cursor outside the input.
+ */
+export interface PromptLine {
+  /** From the input start to the cursor, wrapped rows joined. */
+  before: string;
+  /** From the cursor to the end of the input's last row, trailing spaces dropped. */
+  after: string;
+  /** The path of the OSC 7 that followed this prompt's start; null if none did. */
+  cwd: string | null;
+}
+
 export interface RendererOptions {
   fontFamily: string;
   fontSize: number;
@@ -30,5 +45,7 @@ export interface TerminalRenderer {
   /** Calls `listener` whenever the view moves onto or off the newest line. */
   onScrolledUp(listener: (scrolledUp: boolean) => void): void;
   scrollToBottom(): void;
+  /** Calls `listener` whenever the {@link PromptLine} changes. */
+  onPromptLine(listener: (line: PromptLine | null) => void): void;
   dispose(): void;
 }

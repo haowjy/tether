@@ -39,3 +39,4 @@ export const Wrap = () => <Icon><path d="M3 6h18M3 12h15a3 3 0 0 1 0 6h-4M14 15l
 export const Play = () => <Icon><path d="M7 4.5v15l12-7.5z" /></Icon>;
 /** `[⊞]`: the extended panel (plan.md "Layout"); the file manager is its first part. */
 export const Panel = () => <Icon><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></Icon>;
+export const History = () => <Icon size={14}><path d="M3 12a9 9 0 1 0 2.6-6.4M3 4v4h4" /><path d="M12 7v5l3 2" /></Icon>;

@@ -66,12 +66,15 @@ function deliver(...messages: NativeMsg[]): void {
 
 /**
  * The Vite proxy turns this cookie into the `Authorization: Bearer` native's scheme handler
- * would add to `/fs/*` requests (vite.config.ts), so `<img src>` works as in the app.
+ * would add to `/fs/*` and `/complete` requests (vite.config.ts), so `<img src>` works as in
+ * the app. One cookie per path: the socket and `/auth` never carry it.
  */
 function shareToken(token: string | null): void {
-  document.cookie = token
-    ? `tether_dev_token=${encodeURIComponent(token)}; path=/fs; SameSite=Strict`
-    : "tether_dev_token=; path=/fs; max-age=0";
+  for (const path of ["/fs", "/complete"]) {
+    document.cookie = token
+      ? `tether_dev_token=${encodeURIComponent(token)}; path=${path}; SameSite=Strict`
+      : `tether_dev_token=; path=${path}; max-age=0`;
+  }
 }
 
 /** The device token from `tether device add`: pasted once, then kept. `#token=…` skips the prompt. */
