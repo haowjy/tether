@@ -15,6 +15,8 @@ export interface TabOptions {
   host: Host;
   /** The terminal's size right now, in cells. */
   size(): Size;
+  /** Start without a watch, for a tab that is not on screen. */
+  covered?: boolean;
   onState(state: ConnectionState): void;
   /** Bound, and again whenever the daemon reports a new session, pane or cwd. */
   onWatching?(watching: Watching): void;
@@ -67,6 +69,7 @@ export class TabDriver {
 
   constructor(opts: TabOptions) {
     this.opts = opts;
+    this.covered = opts.covered ?? false;
     opts.onState(this.state);
     opts.host.join(this.port);
     this.watchIfReady();

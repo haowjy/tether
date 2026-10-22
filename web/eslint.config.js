@@ -25,5 +25,7 @@ export default tseslint.config(
     languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname } },
     rules: { "no-restricted-syntax": ["error", ...focusRules] },
   },
+  // The dev shim's keyboard stand-in is a textarea; it never ships (web/README.md).
+  { files: ["dev/**"], rules: { "no-restricted-syntax": "off" } },
   { files: ["**/*.js"], ...tseslint.configs.disableTypeChecked },
 );

@@ -1,5 +1,6 @@
 // The only place the web UI talks to native (ios-shell.md "The bridge"). Types here are
 // written twice, with ios/TetherKit/.../Bridge.swift.
+import type { WindowRef } from "../proto/generated/messages";
 
 /** Native → web input, ios-shell.md "How input reaches the terminal". */
 export type InputEvent = { text: string } | { key: string } | { bytes: string } | { paste: string };
@@ -27,6 +28,30 @@ export interface HostEntry {
   enrolled: boolean;
 }
 
+/** A tab as native persists it (`saveTabs`) and returns it in `boot`. */
+export interface SavedTab {
+  id: string;
+  host: string;
+  window: WindowRef;
+  name: string;
+}
+
+/** The reply to `ready`: everything the web needs to start. */
+export interface Boot {
+  bridgeVersion: number;
+  hosts: HostEntry[];
+  tabs: SavedTab[];
+  settings: Record<string, unknown>;
+  viewport: Viewport;
+  locked: boolean;
+}
+
+/** The reply to `token { host }`. */
+export type TokenReply = { token: string } | { locked: true } | { notEnrolled: true };
+
+/** Bumped with every incompatible change to the messages here and in Bridge.swift. */
+export const BRIDGE_VERSION = 1;
+
 export type NativeMsg =
   | { type: "input"; events: InputEvent[] }
   | { type: "viewport" } & Viewport
@@ -53,10 +78,21 @@ export type WebMsg =
 /** Sends one message and resolves with native's reply (`undefined` when it has none). */
 export type Post = (msg: WebMsg) => Promise<unknown>;
 
+interface WebkitHandler {
+  postMessage(m: unknown): Promise<unknown>;
+}
+
+function webkitHandler(): WebkitHandler | undefined {
+  const w = window as unknown as { webkit?: { messageHandlers?: { tether?: WebkitHandler } } };
+  return w.webkit?.messageHandlers?.tether;
+}
+
+/** False in a desktop browser, where the dev shim stands in for native. */
+export const hasNativeBridge = (): boolean => webkitHandler() !== undefined;
+
 /** The `tether` WKScriptMessageHandlerWithReply. */
 export const webkitPost: Post = (msg) => {
-  const w = window as unknown as { webkit?: { messageHandlers?: { tether?: { postMessage(m: unknown): Promise<unknown> } } } };
-  const handler = w.webkit?.messageHandlers?.tether;
+  const handler = webkitHandler();
   return handler ? handler.postMessage(msg) : Promise.reject(new Error("no native bridge"));
 };
 
@@ -74,8 +110,19 @@ export class Native {
     this.fire({ type: "recreateWebView" });
   }
 
-  request(msg: WebMsg): Promise<unknown> {
-    return this.post(msg);
+  /** Start-up: the saved tabs, the host list and the geometry. */
+  async boot(): Promise<Boot> {
+    return (await this.post({ type: "ready" })) as Boot;
+  }
+
+  /** A fresh token for `host`, or why there is none. */
+  async token(host: string): Promise<TokenReply> {
+    return (await this.post({ type: "token", host })) as TokenReply;
+  }
+
+  /** Persists the open-tab list, so a restarted web view restores it. */
+  saveTabs(tabs: SavedTab[]): void {
+    this.fire({ type: "saveTabs", tabs });
   }
 
   private fire(msg: WebMsg): void {
