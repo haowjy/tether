@@ -11,10 +11,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
-use tokio::sync::Semaphore;
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
+use crate::blocking::{Lane, Lanes};
 use crate::config;
 use crate::proto::complete::{Chip, ChipSource, CompleteRequest, Completion};
 
@@ -24,12 +24,14 @@ mod context;
 mod history;
 mod packed;
 mod paths;
+mod runner;
 
-use carapace::{Binary, Key, Launch, Outcome, Runner, Shared};
+use carapace::{Binary, Key, Outcome, Shared};
 use commands::Commands;
 use context::Word;
 use history::History;
 use paths::{Listing, Target};
+use runner::{Launch, Runner};
 
 /// Chips per response...
 const CHIPS: usize = 20;
@@ -37,35 +39,54 @@ const CHIPS: usize = 20;
 const HISTORY_CHIPS: usize = 3;
 /// A description is cut to this many bytes.
 const DESCRIPTION: usize = 100;
-/// A source whose slot doesn't come within this is skipped for the request.
-const SLOT_WAIT: Duration = Duration::from_millis(300);
 /// Everything is freed this long after the last request.
 const IDLE: Duration = Duration::from_secs(5 * 60);
 
-/// What completion needs of the config and the daemon's environment, read once.
+/// What completion reads of the daemon's environment: the daemon's own, or a test's.
+#[derive(Debug, Clone, Default)]
+pub struct Environment {
+    pub home: PathBuf,
+    /// `PATH`.
+    pub path: Option<OsString>,
+    /// `XDG_DATA_HOME`, where fish keeps its history; a relative one is ignored.
+    pub data_home: Option<PathBuf>,
+    /// `INVOCATION_ID` is set: the daemon runs under systemd.
+    pub systemd: bool,
+}
+
+impl Environment {
+    /// The daemon's, with `home` as `$HOME`.
+    pub fn current(home: &Path) -> Self {
+        Self {
+            home: home.to_owned(),
+            path: std::env::var_os("PATH"),
+            data_home: std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+            systemd: std::env::var_os("INVOCATION_ID").is_some(),
+        }
+    }
+}
+
+/// `[complete]` and the environment, resolved once.
 #[derive(Debug, Clone)]
 pub struct Settings {
-    /// `$HOME`, for `~/` and the default history files.
-    pub home: PathBuf,
+    /// `$HOME`, for `~/` in what is typed.
+    home: PathBuf,
     /// `[complete] history`; else the newest of zsh's, bash's and fish's.
-    pub history: Option<PathBuf>,
-    /// `${XDG_DATA_HOME:-~/.local/share}`, where fish keeps its history.
-    pub data_home: PathBuf,
+    history: history::Source,
     /// The commands index's `PATH`, and carapace's.
-    pub path: OsString,
+    path: OsString,
     /// `[complete] carapace`; else `carapace` on `path`.
-    pub carapace: Option<PathBuf>,
-    /// Under systemd (`INVOCATION_ID` set): carapace runs in its own scope.
-    pub scoped: bool,
+    carapace: Option<PathBuf>,
+    /// Under systemd: carapace runs in its own scope.
+    scoped: bool,
 }
 
 impl Settings {
-    /// `[complete]`, and `PATH`, `XDG_DATA_HOME` and `INVOCATION_ID` from the
-    /// environment.
-    pub fn new(config: &config::Complete, home: &Path) -> Self {
+    pub fn new(config: &config::Complete, env: Environment) -> Self {
+        let home = env.home;
         let file = |key: &str, entry: &Option<String>| {
             let entry = entry.as_deref()?;
-            let path = crate::fs::expand(entry, home);
+            let path = crate::fs::expand(entry, &home);
             if path.is_none() {
                 warn!(key, %entry, "a [complete] path in config.toml isn't absolute or ~/: ignored");
             }
@@ -75,21 +96,29 @@ impl Settings {
         if let Some(path) = history.as_ref().filter(|path| !path.is_file()) {
             warn!(path = %path.display(), "the [complete] history file isn't there: no history chips until it is");
         }
+        let data_home = env
+            .data_home
+            .filter(|dir| dir.is_absolute())
+            .unwrap_or_else(|| home.join(".local/share"));
+        let history = history::Source {
+            configured: history,
+            defaults: [
+                home.join(".zsh_history"),
+                home.join(".bash_history"),
+                data_home.join("fish/fish_history"),
+            ],
+        };
         Self {
-            home: home.to_owned(),
             history,
-            data_home: std::env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
-                .filter(|dir| dir.is_absolute())
-                .unwrap_or_else(|| home.join(".local/share")),
             path: config
                 .path
                 .clone()
                 .map(OsString::from)
-                .or_else(|| std::env::var_os("PATH"))
+                .or(env.path)
                 .unwrap_or_default(),
             carapace: file("carapace", &config.carapace),
-            scoped: std::env::var_os("INVOCATION_ID").is_some(),
+            scoped: env.systemd,
+            home,
         }
     }
 }
@@ -103,11 +132,10 @@ pub struct Completer {
 #[derive(Debug)]
 struct Inner {
     settings: Settings,
-    history: history::Source,
-    /// History and the `PATH` index: one blocking thread.
-    index_slot: Arc<Semaphore>,
-    /// `check_dir` and listings: one more, so a hung mount stops only these.
-    dir_slot: Arc<Semaphore>,
+    /// History, the `PATH` index and finding carapace.
+    index: Lane,
+    /// `check_dir` and listings: a lane of their own, so a hung mount stops only these.
+    dir: Lane,
     /// The indexes, each an `Arc` snapshot swapped whole.
     state: Mutex<State>,
     carapace: Arc<Mutex<Shared>>,
@@ -132,27 +160,18 @@ struct Idle {
 
 impl Completer {
     /// Spawns the carapace runner: call it inside the runtime.
-    pub fn new(settings: Settings) -> Self {
+    pub fn new(settings: Settings, lanes: &Lanes) -> Self {
         let carapace = Arc::new(Mutex::new(Shared::default()));
         let launch = Launch {
             path: settings.path.clone(),
             scoped: settings.scoped,
         };
         let runner = Runner::spawn(carapace.clone(), launch);
-        let history = history::Source {
-            configured: settings.history.clone(),
-            defaults: [
-                settings.home.join(".zsh_history"),
-                settings.home.join(".bash_history"),
-                settings.data_home.join("fish/fish_history"),
-            ],
-        };
         Self {
             inner: Arc::new(Inner {
                 settings,
-                history,
-                index_slot: Arc::new(Semaphore::new(1)),
-                dir_slot: Arc::new(Semaphore::new(1)),
+                index: lanes.index.clone(),
+                dir: lanes.dir.clone(),
                 state: Mutex::new(State::default()),
                 carapace,
                 runner,
@@ -224,15 +243,15 @@ impl Completer {
         Completion { chips }
     }
 
-    /// History, and the `PATH` index if `commands`, current, under the index slot.
+    /// History, and the `PATH` index if `commands`, current, on the index lane.
     async fn indexes(&self, commands: bool) -> (Option<Arc<History>>, Option<Arc<Commands>>) {
         let inner = self.inner.clone();
-        let loaded = blocking(&self.inner.index_slot, move || {
+        let loaded = self.inner.index.run(move || {
             let (history, index) = {
                 let state = lock(&inner.state);
                 (state.history.clone(), state.commands.clone())
             };
-            let history = history::load(&inner.history, history);
+            let history = history::load(&inner.settings.history, history);
             let index = commands.then(|| Commands::load(&inner.settings.path, index));
             let mut state = lock(&inner.state);
             state.history = history.clone();
@@ -252,13 +271,13 @@ impl Completer {
             Some(Target::Dir { dir, prefix }) => (dir, prefix),
         };
         let inner = self.inner.clone();
-        let listing = blocking(&self.inner.dir_slot, move || {
+        let listing = self.inner.dir.run(move || {
             let cached = lock(&inner.state).listing.clone();
             let listing = Listing::load(&dir, cached).ok()?;
             lock(&inner.state).listing = Some(listing.clone());
             Some(listing)
         });
-        match listing.await.flatten() {
+        match listing.await.ok().flatten() {
             Some(listing) => listing.chips(&prefix),
             None => Vec::new(),
         }
@@ -303,8 +322,8 @@ impl Completer {
             None => {
                 // Only before a run: a cache hit needs no directory.
                 let dir = cwd.to_owned();
-                let checked = blocking(&self.inner.dir_slot, move || crate::fs::check_dir(&dir));
-                if !matches!(checked.await, Some(Ok(()))) {
+                let checked = self.inner.dir.run(move || crate::fs::check_dir(&dir));
+                if !matches!(checked.await, Ok(Ok(()))) {
                     return Vec::new();
                 }
                 self.inner.runner.ask(key, binary).await
@@ -316,7 +335,7 @@ impl Completer {
         }
     }
 
-    /// The carapace binary, resolved on first use under the index slot.
+    /// The carapace binary, resolved on first use on the index lane.
     async fn carapace_binary(&self) -> Option<PathBuf> {
         let known = lock(&self.inner.carapace).binary.clone();
         match known {
@@ -326,11 +345,12 @@ impl Completer {
         }
         let settings = &self.inner.settings;
         let (configured, path) = (settings.carapace.clone(), settings.path.clone());
-        let found = blocking(&self.inner.index_slot, move || {
-            carapace::resolve(configured.as_deref(), &path)
-        });
-        // No slot in time: try again on the next request.
-        let found = found.await?;
+        let found = self
+            .inner
+            .index
+            .run(move || carapace::resolve(configured.as_deref(), &path));
+        // No thread in time: try again on the next request.
+        let found = found.await.ok()?;
         lock(&self.inner.carapace).binary = match &found {
             Some(binary) => Binary::Found(binary.clone()),
             None => Binary::Missing,
@@ -369,26 +389,6 @@ async fn drop_when_idle(inner: Weak<Inner>) {
             return;
         }
     }
-}
-
-/// `work` on a blocking thread under `slot`, or `None` if the slot doesn't come within
-/// the wait. The permit moves into the thread, so a call stuck on a hung mount holds
-/// its slot instead of leaking threads.
-async fn blocking<T, F>(slot: &Arc<Semaphore>, work: F) -> Option<T>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    let permit = tokio::time::timeout(SLOT_WAIT, slot.clone().acquire_owned())
-        .await
-        .ok()?
-        .ok()?;
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        work()
-    })
-    .await
-    .ok()
 }
 
 /// A chip that types `rest`, then `end`. History's `rest` is typed as it is: a line
@@ -491,14 +491,16 @@ esac
     }
 
     fn completer(tree: &Tree, carapace: &str) -> Completer {
-        Completer::new(Settings {
-            home: tree.path("home"),
+        let config = config::Complete {
             history: None,
-            data_home: tree.path("home/.local/share"),
-            path: tree.path("bin").into_os_string(),
-            carapace: Some(tree.path(carapace)),
-            scoped: false,
-        })
+            path: Some(tree.str("bin")),
+            carapace: Some(tree.str(carapace)),
+        };
+        let env = Environment {
+            home: tree.path("home"),
+            ..Environment::default()
+        };
+        Completer::new(Settings::new(&config, env), &Lanes::default())
     }
 
     async fn ask(completer: &Completer, tree: &Tree, before: &str) -> Vec<Chip> {
@@ -646,14 +648,16 @@ esac
             std::fs::write(cwd.join("values.json"), values.to_string()).expect("written");
             let own_name = "#!/bin/sh\nprintf '%s\\0' \"${0##*/}\"\n";
             executable(&bin.join(name), own_name);
-            let completer = Completer::new(Settings {
-                home: cwd.clone(),
+            let config = config::Complete {
                 history: None,
-                data_home: cwd.clone(),
-                path: bin.clone().into_os_string(),
-                carapace: Some(tree.path("carapace")),
-                scoped: false,
-            });
+                path: Some(bin.to_str().expect("UTF-8").to_owned()),
+                carapace: Some(tree.str("carapace")),
+            };
+            let env = Environment {
+                home: cwd.clone(),
+                ..Environment::default()
+            };
+            let completer = Completer::new(Settings::new(&config, env), &Lanes::default());
             let read = format!("{name}\0");
 
             let chip = labelled(&completer, "", &cwd, name).await;

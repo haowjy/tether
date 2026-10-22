@@ -5,6 +5,15 @@ version section on release.
 
 ## [Unreleased]
 
+- A hung disk (a dead NFS server, a stuck automount) no longer stalls the device
+  check behind it: the daemon's blocking threads are split into lanes (file API 4,
+  completion indexes 1, directory checks 1, auth and pastes 2), so a hung mount stops
+  only the file manager and path completion. A new window or session whose start
+  directory can't be checked within 300 ms is refused rather than left waiting, and an
+  enrolment that gets no thread within 10 s answers `503 busy`.
+- Every HTTP error code is one `HttpError` type, generated into
+  `web/proto/generated/messages.ts` with `ErrorBody`. An oversized `POST /auth/enroll`
+  body now answers `413 too_large`, as the other routes do (it said `bad_request`).
 - Suggestion strip: history, command, flag and path suggestions above the
   keyboard at a shell prompt (needs the shell snippet).
 - File manager: browse project folders and uploads from the tab's folder; view

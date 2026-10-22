@@ -135,6 +135,17 @@ activity: number, };
 export type ErrorCode = "badRequest" | "noServer" | "tooManySessions" | "inputTooLarge" | "busy" | "tmux";
 
 /**
+ * Every HTTP error body.
+ */
+export type ErrorBody = { error: HttpError, };
+
+/**
+ * Every code an HTTP route answers with. Each has one status (`src/http/error.rs`),
+ * except `bad_request` for a body that isn't the route's JSON, which takes axum's.
+ */
+export type HttpError = "bad_request" | "auth_required" | "forbidden" | "bad_code" | "outside_roots" | "outside_home" | "denied" | "not_found" | "not_a_directory" | "not_a_file" | "config_read_only" | "too_large" | "bad_range" | "busy" | "auth_unavailable" | "config_unavailable" | "no_space" | "internal";
+
+/**
  * `GET /fs/roots` and the answer to every Settings change.
  */
 export type Roots = {

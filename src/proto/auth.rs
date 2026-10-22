@@ -1,5 +1,5 @@
 //! The `/auth/*` bodies (auth.md "Endpoints"). The web never sends them, so they have
-//! no TypeScript; Swift mirrors them by hand.
+//! no TypeScript; Swift mirrors them by hand. Errors are `ErrorBody`.
 
 use serde::{Deserialize, Serialize};
 
@@ -35,10 +35,4 @@ pub struct EnrollRequest {
 pub struct EnrollResponse {
     pub token: String,
     pub device_name: String,
-}
-
-/// Every HTTP error body: `{"error": "<code>"}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ErrorBody {
-    pub error: String,
 }

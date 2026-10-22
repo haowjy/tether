@@ -13,29 +13,30 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts as _, Request, State};
-use axum::http::StatusCode;
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::{get, post};
 use axum::serve::ListenerExt as _;
-use axum::{Json, Router};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, watch};
 use tokio::time::{Instant, timeout_at};
 use tracing::{debug, error, warn};
 
 use crate::auth::{Auth, AuthError};
+use crate::blocking::Lanes;
 use crate::complete::Completer;
 use crate::config::ConfigFile;
 use crate::fs::Slots;
 use crate::hub::HubHandle;
-use crate::proto::auth::ErrorBody;
-use crate::proto::{CloseCode, HostInfo};
+use crate::proto::{CloseCode, HostInfo, HttpError};
+use error::Refusal;
 
 mod complete;
 mod enroll;
+mod error;
 mod fs;
 mod ws;
 
@@ -61,6 +62,8 @@ pub struct App {
     pub home: PathBuf,
     /// `[complete]` and what completion reads of the environment.
     pub complete: crate::complete::Settings,
+    /// The runtime's blocking threads: every blocking call runs on one of these.
+    pub lanes: Lanes,
 }
 
 /// `App` plus the daemon-wide limits the connections share.
@@ -70,8 +73,8 @@ struct Ctx {
     conns: Arc<Semaphore>,
     /// Paste files waiting for tmux, daemon-wide.
     pastes: Arc<Semaphore>,
-    /// The file API's blocking threads, scans, raw responses and uploads.
-    fs: Arc<Slots>,
+    /// The file API's lane, scans, raw responses and uploads.
+    fs: Slots,
     complete: Completer,
     /// `/complete` requests in flight.
     completing: Arc<Semaphore>,
@@ -92,12 +95,13 @@ pub async fn serve(
 ) -> io::Result<()> {
     let (stop, shutdown) = watch::channel(false);
     let mut stopping = shutdown.clone();
-    let completer = Completer::new(app.complete.clone());
+    let completer = Completer::new(app.complete.clone(), &app.lanes);
+    let fs = Slots::new(app.lanes.fs.clone());
     let ctx = Arc::new(Ctx {
         app,
         conns: Arc::new(Semaphore::new(ws::MAX_CONNS)),
         pastes: Arc::new(Semaphore::new(ws::PASTE_SLOTS)),
-        fs: Arc::new(Slots::default()),
+        fs,
         complete: completer,
         completing: Arc::new(Semaphore::new(complete::IN_FLIGHT)),
         shutdown,
@@ -175,7 +179,7 @@ async fn tailscale_check(
         }
         Err(refused) => {
             warn!(%refused, path = request.uri().path(), "refused by the Tailscale check");
-            refusal(StatusCode::FORBIDDEN, "forbidden")
+            Refusal::from(HttpError::Forbidden).into_response()
         }
     }
 }
@@ -193,31 +197,17 @@ async fn device_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: N
         }
         Err(refused) => refused,
     };
-    let (close, status, code) = match &refused {
-        AuthError::Store(cause) => {
-            error!(%cause, "can't read auth.toml: every token fails");
-            let unavailable = StatusCode::SERVICE_UNAVAILABLE;
-            (CloseCode::AuthUnavailable, unavailable, "auth_unavailable")
+    match &refused {
+        AuthError::Store(_) | AuthError::Busy => {
+            error!(cause = %refused, "can't read auth.toml: every token fails");
         }
         AuthError::NoToken | AuthError::Unknown => {
             warn!(%refused, path = request.uri().path(), "refused by the device check");
-            (
-                CloseCode::BadToken,
-                StatusCode::UNAUTHORIZED,
-                "auth_required",
-            )
         }
-    };
+    }
     let (mut parts, _) = request.into_parts();
     match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
-        Ok(upgrade) => ws::refuse(upgrade, close),
-        Err(_) => refusal(status, code),
+        Ok(upgrade) => ws::refuse(upgrade, CloseCode::from(&refused)),
+        Err(_) => Refusal::from(&refused).into_response(),
     }
-}
-
-fn refusal(status: StatusCode, code: &str) -> Response {
-    let body = ErrorBody {
-        error: code.to_owned(),
-    };
-    (status, Json(body)).into_response()
 }

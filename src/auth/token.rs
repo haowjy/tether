@@ -60,7 +60,7 @@ pub fn hex(hash: &Hash) -> String {
     hash.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn unhex(text: &str) -> Option<Hash> {
+pub fn unhex(text: &str) -> Option<Hash> {
     let mut hash = [0; 32];
     if text.len() != 64 {
         return None;

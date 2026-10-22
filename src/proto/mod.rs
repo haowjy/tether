@@ -4,12 +4,14 @@
 
 pub mod auth;
 pub mod complete;
+mod error;
 pub mod frames;
 pub mod fs;
 mod messages;
 #[cfg(test)]
 mod typescript;
 
+pub use error::{ErrorBody, HttpError};
 pub use messages::*;
 
 /// The protocol this daemon speaks; the newest a client may speak.

@@ -1,13 +1,14 @@
 //! `auth.toml` and `host_id` in the state directory (auth.md "State on disk").
 //!
-//! Every write of `auth.toml` holds the `lock` file's `flock` for its whole
-//! read-modify-write and lands by temp file, `fsync`, rename and directory `fsync`, so
-//! a reader sees the old file or the new one, and a crash leaves one of them. Reads
-//! take no lock. The daemon and the CLI both write; nothing caches the file.
+//! Every write of `auth.toml` holds the state directory's `flock` for its whole
+//! read-modify-write and lands through `files::Temp` (temp file, `fsync`, rename,
+//! directory `fsync`), so a reader sees the old file or the new one, and a crash leaves
+//! one of them. Reads take no lock. The daemon and the CLI both write; nothing caches
+//! the file.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write as _};
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
+use std::fs::{self, File};
+use std::io;
+use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::token::{self, Hash};
+use crate::files::{self, Dir, Temp};
 
 /// Wrong codes before the pending code is deleted.
 pub const MAX_WRONG_TRIES: u32 = 5;
@@ -23,7 +25,6 @@ const NAME_LIMIT: usize = 64;
 
 const AUTH: &str = "auth.toml";
 const HOST_ID: &str = "host_id";
-const LOCK: &str = "lock";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct AuthFile {
@@ -136,13 +137,12 @@ impl Store {
     /// The file as it is now, with no lock: writes replace it whole.
     pub fn read(&self) -> Result<AuthFile, StoreError> {
         let path = self.dir.join(AUTH);
-        loaded(&path, fs::read_to_string(&path))
-    }
-
-    /// `read` without blocking the runtime, for each request's check.
-    pub async fn read_async(&self) -> Result<AuthFile, StoreError> {
-        let path = self.dir.join(AUTH);
-        loaded(&path, tokio::fs::read_to_string(&path).await)
+        match fs::read_to_string(&path) {
+            Ok(text) => parse(&path, &text),
+            // A missing file is an empty one.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AuthFile::default()),
+            Err(error) => Err(io_at(&path)(error)),
+        }
     }
 
     /// `tether enroll`: a new pending code, replacing any earlier one.
@@ -159,7 +159,7 @@ impl Store {
 
     /// `POST /auth/enroll`. A right code adds the device and consumes the code in one
     /// write. A wrong one counts against the code in the file, so the count survives
-    /// a restart, and the fifth deletes it. Blocks on the lock: run it off the runtime.
+    /// a restart, and the fifth deletes it. Blocks on the lock: run it on the auth lane.
     pub fn enroll(
         &self,
         code: &str,
@@ -222,44 +222,18 @@ impl Store {
         Ok(result)
     }
 
-    /// The state directory's `flock`, held until dropped: every tether writer holds it
-    /// for its read-modify-write, of `auth.toml` and of `config.toml` (fs.md).
-    pub fn lock(&self) -> Result<File, StoreError> {
-        let path = self.dir.join(LOCK);
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(io_at(&path))?;
-        rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
-            .map_err(|errno| io_at(&path)(errno.into()))?;
-        Ok(file)
+    /// The state directory's lock (`files::lock`), which `config.toml`'s writes hold too.
+    fn lock(&self) -> Result<File, StoreError> {
+        files::lock(&self.dir).map_err(io_at(&self.dir))
     }
 
-    /// Temp file in the same directory, `fsync`, rename over `name`, `fsync` the
-    /// directory. The caller holds the lock.
+    /// `name`, 0600, replaced whole with `text`. The caller holds the lock.
     fn replace(&self, name: &str, text: &str) -> Result<(), StoreError> {
-        let temp = self.dir.join(format!("{name}.tmp"));
-        let target = self.dir.join(name);
-        match fs::remove_file(&temp) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io_at(&temp)(error)),
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)
-            .map_err(io_at(&temp))?;
-        file.write_all(text.as_bytes()).map_err(io_at(&temp))?;
-        file.sync_all().map_err(io_at(&temp))?;
-        fs::rename(&temp, &target).map_err(io_at(&target))?;
-        File::open(&self.dir)
-            .and_then(|dir| dir.sync_all())
-            .map_err(io_at(&self.dir))
+        let temp = Dir::open(&self.dir)
+            .and_then(|dir| Temp::create(&dir, format!("{name}.tmp").as_ref(), 0o600))
+            .map_err(io_at(&self.dir))?;
+        temp.replace(name.as_ref(), text.as_bytes())
+            .map_err(io_at(&self.dir.join(name)))
     }
 }
 
@@ -302,22 +276,10 @@ fn clean_name(name: &str) -> String {
     }
 }
 
-/// `auth.toml` as read: a missing file is an empty one.
-fn loaded(path: &Path, text: io::Result<String>) -> Result<AuthFile, StoreError> {
-    match text {
-        Ok(text) => parse(path, &text),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AuthFile::default()),
-        Err(error) => Err(io_at(path)(error)),
-    }
-}
-
 fn parse(path: &Path, text: &str) -> Result<AuthFile, StoreError> {
     toml::from_str(text).map_err(|error| StoreError::Parse {
         path: path.to_owned(),
-        line: error.span().map_or(0, |span| {
-            text.get(..span.start)
-                .map_or(0, |head| head.matches('\n').count() + 1)
-        }),
+        line: files::toml_line(text, &error),
     })
 }
 

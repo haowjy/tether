@@ -1,19 +1,21 @@
 //! Who may use the daemon (auth.md): the Tailscale login check, and a device token on
 //! every route but the two enrolment routes. Plain functions over the state file: no
 //! task, no cache. `http/` calls `identity` and `check` from its middleware, and each
-//! connection calls `still_enrolled` on its own timer.
+//! connection calls `recheck` on its own timer.
 
 use std::net::SocketAddr;
 
 use axum::http::{HeaderMap, header};
 use thiserror::Error;
 
+use crate::blocking::{Busy, Lane};
+
 pub mod identity;
 pub mod store;
 pub mod token;
 
 pub use identity::IdentityError;
-pub use store::{Device, Store, StoreError};
+pub use store::{AuthFile, Device, Store, StoreError};
 
 /// The subprotocol that carries the token on a WebSocket: `tether.auth.<token>`.
 pub const SUBPROTOCOL_PREFIX: &str = "tether.auth.";
@@ -27,17 +29,28 @@ pub enum AuthError {
     /// The file is unreadable or doesn't parse: every token check fails until it does.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// The auth lane gave no thread in time: fails like `Store`.
+    #[error("auth.toml wasn't read in time")]
+    Busy,
+}
+
+impl From<Busy> for AuthError {
+    fn from(Busy: Busy) -> Self {
+        Self::Busy
+    }
 }
 
 pub struct Auth {
     store: Store,
     allow: Vec<String>,
+    /// The auth lane, for the reads.
+    lane: Lane,
 }
 
 impl Auth {
-    /// `allow`: the Tailscale logins let through.
-    pub fn new(store: Store, allow: Vec<String>) -> Self {
-        Self { store, allow }
+    /// `allow`: the Tailscale logins let through. `lane`: the auth lane.
+    pub fn new(store: Store, allow: Vec<String>, lane: Lane) -> Self {
+        Self { store, allow, lane }
     }
 
     pub fn store(&self) -> &Store {
@@ -55,19 +68,26 @@ impl Auth {
     pub async fn check(&self, headers: &HeaderMap) -> Result<Device, AuthError> {
         let token = presented(headers).ok_or(AuthError::NoToken)?;
         let hash = token::hash(token);
-        let file = self.store.read_async().await?;
+        let file = self.read().await?;
         token::find(&file.devices, &hash)
             .cloned()
             .ok_or(AuthError::Unknown)
     }
 
-    /// Whether `device`'s token is still enrolled: a live socket's re-check.
-    pub async fn still_enrolled(&self, device: &Device) -> Result<bool, StoreError> {
-        let file = self.store.read_async().await?;
-        Ok(file
-            .devices
-            .iter()
-            .any(|enrolled| enrolled.token_sha256 == device.token_sha256))
+    /// `check` again for the device it let in: a live socket's re-check. `Unknown` once
+    /// the device is removed.
+    pub async fn recheck(&self, device: &Device) -> Result<(), AuthError> {
+        let hash = token::unhex(&device.token_sha256).ok_or(AuthError::Unknown)?;
+        let file = self.read().await?;
+        token::find(&file.devices, &hash)
+            .map(drop)
+            .ok_or(AuthError::Unknown)
+    }
+
+    /// `auth.toml` as it is now, read on the auth lane.
+    async fn read(&self) -> Result<AuthFile, AuthError> {
+        let store = self.store.clone();
+        Ok(self.lane.run(move || store.read()).await??)
     }
 }
 

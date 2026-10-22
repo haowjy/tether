@@ -137,10 +137,7 @@ impl Config {
     pub fn parse(path: &Path, text: &str) -> Result<Self, ConfigError> {
         let config: Self = toml::from_str(text).map_err(|error| ConfigError::Parse {
             path: path.to_owned(),
-            line: error.span().map_or(0, |span| {
-                text.get(..span.start)
-                    .map_or(0, |head| head.matches('\n').count() + 1)
-            }),
+            line: crate::files::toml_line(text, &error),
         })?;
         if config.tmux.socket_name.is_some() && config.tmux.socket_path.is_some() {
             return Err(ConfigError::TwoSockets {

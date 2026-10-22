@@ -86,7 +86,7 @@ impl Scope {
 }
 
 /// Resolves `path` and opens it, checked against `scope` before and after opening.
-/// Blocks: run it in a blocking task under an fs slot.
+/// Blocks: run it on a lane (`crate::blocking`).
 pub fn open(scope: &Scope, path: &str, want: Want) -> Result<Opened, FsError> {
     let canonical = resolve(scope, path)?;
     open_resolved(scope, &canonical, want)

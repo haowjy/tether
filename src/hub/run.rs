@@ -12,6 +12,7 @@ use tracing::{error, warn};
 
 use super::state::{Effect, Input, State};
 use super::{CONN_CHANNEL, ConnId, ConnectReply, FromConn, HubMsg, INBOX, ToConn};
+use crate::blocking::Busy;
 use crate::tmux::{ClientId, PumpMsg, oneshot, pump};
 
 /// What the executor holds for `State`. Its maps mirror the state's: an entry goes when
@@ -181,8 +182,15 @@ impl Io {
             }
             Effect::RemoveFile { file } => {
                 tokio::spawn(async move {
-                    if let Err(error) = tokio::fs::remove_file(&file.path).await {
-                        warn!(path = %file.path.display(), %error, "can't remove a paste file");
+                    let path = file.path.clone();
+                    match file.lane.run(move || std::fs::remove_file(path)).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            warn!(path = %file.path.display(), %error, "can't remove a paste file");
+                        }
+                        Err(Busy) => {
+                            warn!(path = %file.path.display(), "no thread to remove a paste file")
+                        }
                     }
                     // Dropping it frees its paste slot.
                     drop(file);

@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use serde_json::{Value, json};
+use tether::blocking::Lanes;
 use tether::hub::{
     CAPTURE_RESERVATION, CREDIT, ConnId, Effect, Endpoints, FromConn, Input, OVERDRAFT, PasteFile,
     SNAPSHOT_SPACING, State, ToConn,
@@ -459,7 +460,7 @@ impl Hub {
         let slot = Arc::clone(&self.slots)
             .try_acquire_owned()
             .expect("a paste slot");
-        PasteFile::new(PathBuf::from(name), slot)
+        PasteFile::new(PathBuf::from(name), slot, Lanes::default().auth)
     }
 }
 

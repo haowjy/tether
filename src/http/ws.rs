@@ -10,7 +10,8 @@
 
 use std::collections::VecDeque;
 use std::future::poll_fn;
-use std::io;
+use std::io::{self, Write as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::sync::Arc;
 use std::task::ready;
@@ -21,13 +22,12 @@ use axum::extract::{Extension, State};
 use axum::response::Response;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt as _, StreamExt as _};
-use tokio::io::AsyncWriteExt as _;
 use tokio::sync::{OwnedSemaphorePermit, mpsc, watch};
 use tokio::time::sleep_until;
 use tracing::{debug, error, info, warn};
 
 use super::Ctx;
-use crate::auth::Device;
+use crate::auth::{AuthError, Device};
 use crate::hub::{ConnId, Frame, FromConn, Next, Outbox, PasteFile, ToConn};
 use crate::proto::{
     self, ClientMsg, CloseCode, DaemonInfo, Decoded, ErrorCode, MIN_PROTOCOL, PROTOCOL_VERSION,
@@ -300,7 +300,7 @@ impl Conn<'_> {
             ClientMsg::Paste { watch, text } => self.paste(watch, text).await,
             msg => {
                 if let Some((req, dir)) = start_dir(&msg) {
-                    if let Err(cause) = check_dir(dir.to_owned()).await {
+                    if let Err(cause) = self.check_dir(dir.to_owned()).await {
                         self.refuse(Some(req), None, ErrorCode::BadRequest, cause);
                         return Ok(());
                     }
@@ -313,9 +313,9 @@ impl Conn<'_> {
         }
     }
 
-    /// Writes the text to a 0600 file under a paste slot, so the hub holds a path,
-    /// not the text (daemon-core.md §3.4). The hub deletes the file, which frees the
-    /// slot.
+    /// Writes the text to a 0600 file under a paste slot, on the auth lane, so the hub
+    /// holds a path, not the text (daemon-core.md §3.4). The hub deletes the file, which
+    /// frees the slot.
     async fn paste(&mut self, watch: u32, text: String) -> Result<(), End> {
         if text.len() > MAX_PASTE {
             self.refuse(
@@ -338,9 +338,11 @@ impl Conn<'_> {
         self.pastes += 1;
         let name = format!("paste-{}-{}", self.id.0, self.pastes);
         let path = self.ctx.app.paste_dir.join(name);
-        if let Err(cause) = write_private(&path, text.as_bytes()).await {
+        let file = path.clone();
+        let lanes = &self.ctx.app.lanes;
+        let written = lanes.auth.run(move || write_private(&file, &text)).await;
+        if let Err(cause) = written.unwrap_or_else(|busy| Err(io::Error::other(busy))) {
             warn!(%cause, path = %path.display(), "can't write a paste file");
-            let _ = tokio::fs::remove_file(&path).await;
             self.refuse(
                 None,
                 Some(watch),
@@ -349,7 +351,7 @@ impl Conn<'_> {
             );
             return Ok(());
         }
-        let file = PasteFile::new(path, slot);
+        let file = PasteFile::new(path, slot, lanes.auth.clone());
         self.hub(FromConn::Paste { watch, file }).await
     }
 
@@ -362,17 +364,17 @@ impl Conn<'_> {
         }
         if now >= self.checked + RECHECK {
             self.checked = now;
-            let device = &self.device.name;
-            match self.ctx.app.auth.still_enrolled(self.device).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    info!(conn = self.id.0, %device, "the device was removed");
-                    return Err(End::Close(CloseCode::BadToken));
+            if let Err(refused) = self.ctx.app.auth.recheck(self.device).await {
+                let (conn, device) = (self.id.0, &self.device.name);
+                match &refused {
+                    AuthError::NoToken | AuthError::Unknown => {
+                        info!(conn, %device, "the device was removed");
+                    }
+                    AuthError::Store(_) | AuthError::Busy => {
+                        error!(conn, %device, cause = %refused, "can't re-check the device");
+                    }
                 }
-                Err(cause) => {
-                    error!(conn = self.id.0, %device, %cause, "can't re-check the device");
-                    return Err(End::Close(CloseCode::AuthUnavailable));
-                }
+                return Err(End::Close(CloseCode::from(&refused)));
             }
         }
         Ok(self.next_tick())
@@ -380,6 +382,15 @@ impl Conn<'_> {
 
     fn next_tick(&self) -> Instant {
         (self.heard + IDLE).min(self.checked + RECHECK)
+    }
+
+    /// `fs::check_dir` on the dir lane: a `stat`, and no config, so a broken
+    /// `config.toml` never blocks a new window, and a hung mount stops only the lane.
+    /// tmux gets `dir` as given.
+    async fn check_dir(&self, dir: String) -> Result<(), &'static str> {
+        let lane = &self.ctx.app.lanes.dir;
+        let checked = lane.run(move || crate::fs::check_dir(&dir)).await;
+        checked.unwrap_or(Err("can't check the directory"))
     }
 
     /// The connection's own `error`, uncharged.
@@ -423,14 +434,6 @@ fn start_dir(msg: &ClientMsg) -> Option<(u32, &str)> {
         } => Some((*req, dir)),
         _ => None,
     }
-}
-
-/// `fs::check_dir` off the runtime, with no fs slot: a `stat`, and no config, so a
-/// broken `config.toml` never blocks a new window. tmux gets `dir` as given.
-async fn check_dir(dir: String) -> Result<(), &'static str> {
-    tokio::task::spawn_blocking(move || crate::fs::check_dir(&dir))
-        .await
-        .unwrap_or(Err("can't check the directory"))
 }
 
 /// One read from the socket: a decoded text message, nothing (a control frame), or how
@@ -502,15 +505,18 @@ async fn close(sink: &mut Sink, stream: &mut Stream, code: Option<CloseCode>) {
     .await;
 }
 
-async fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = tokio::fs::OpenOptions::new()
+/// A new 0600 file holding `text`, or none: a partial one is removed.
+fn write_private(path: &Path, text: &str) -> io::Result<()> {
+    let written = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(path)
-        .await?;
-    file.write_all(bytes).await?;
-    file.flush().await
+        .and_then(|mut file| file.write_all(text.as_bytes()));
+    if written.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    written
 }
 
 fn encode(msg: &ServerMsg) -> Utf8Bytes {

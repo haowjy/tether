@@ -1,24 +1,24 @@
 //! Commands on `PATH` (complete.md "Commands on PATH"): every executable name in the
 //! `PATH` directories, in one sorted buffer. Built on first use; each request that
-//! needs it `stat`s the directories and rebuilds it whole when any mtime changed.
+//! needs it `stat`s the directories and rebuilds it whole when any changed.
 
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt as _;
-use std::os::unix::fs::MetadataExt as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
 
 use super::packed::Packed;
+use crate::files::Stamp;
 
 /// The index stops at this many names...
 const MAX_NAMES: usize = 20_000;
 /// ...or this many bytes of them.
 const MAX_BYTES: usize = 256 * 1024;
 
-/// One `PATH` directory's mtime when the index was built; `None`: it couldn't be read.
-type Seen = (PathBuf, Option<(i64, i64)>);
+/// One `PATH` directory's stamp when the index was built; `None`: it couldn't be read.
+type Seen = (PathBuf, Option<Stamp>);
 
 #[derive(Debug, Default)]
 pub struct Commands {
@@ -108,7 +108,7 @@ fn usable(name: &[u8]) -> bool {
     std::str::from_utf8(name).is_ok_and(|name| !name.chars().any(char::is_control))
 }
 
-/// The absolute, distinct directories of `path`, with their mtimes now. Blocks.
+/// The absolute, distinct directories of `path`, with their stamps now. Blocks.
 fn seen(path: &OsStr) -> Vec<Seen> {
     let mut dirs: Vec<Seen> = Vec::new();
     for dir in path.as_bytes().split(|&b| b == b':') {
@@ -116,10 +116,8 @@ fn seen(path: &OsStr) -> Vec<Seen> {
         if !dir.is_absolute() || dirs.iter().any(|(seen, _)| *seen == dir) {
             continue;
         }
-        let mtime = std::fs::metadata(&dir)
-            .ok()
-            .map(|meta| (meta.mtime(), meta.mtime_nsec()));
-        dirs.push((dir, mtime));
+        let stamp = std::fs::metadata(&dir).ok().map(|meta| Stamp::of(&meta));
+        dirs.push((dir, stamp));
     }
     dirs
 }

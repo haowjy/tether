@@ -1,10 +1,10 @@
-//! `GET /fs/raw` (fs.md): one range at most, a strong ETag from the `fstat` at open,
-//! and a producer that `pread`s 64 KiB chunks into a channel of one, so a response
-//! holds at most a chunk or two however slow its reader.
+//! `GET /fs/raw` (fs.md): one range at most, a strong ETag (`files::Stamp::etag`) from
+//! the `fstat` at open, and a producer that `pread`s 64 KiB chunks into a channel of
+//! one, so a response holds at most a chunk or two however slow its reader.
 
 use std::fs::File;
 use std::io;
-use std::os::unix::fs::{FileExt as _, MetadataExt as _};
+use std::os::unix::fs::FileExt as _;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +13,8 @@ use tokio::sync::mpsc::error::SendTimeoutError;
 use tokio::sync::{OwnedSemaphorePermit, mpsc};
 use tracing::debug;
 
-use super::{FsError, Opened, Slots};
+use super::Opened;
+use crate::blocking::Lane;
 
 /// One `pread`, and one body chunk.
 pub const CHUNK: u64 = 64 * 1024;
@@ -90,19 +91,12 @@ pub fn parse_range(header: &str, size: u64) -> Span {
     }
 }
 
-/// Strong: `"<ino>-<size>-<mtime_ns>"` in hex. It changes when the file does and stays
-/// put while it doesn't, which AVFoundation relies on across its range requests.
-pub fn etag(meta: &std::fs::Metadata) -> String {
-    let mtime_ns = i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec());
-    format!("\"{:x}-{:x}-{mtime_ns:x}\"", meta.ino(), meta.size())
-}
-
 /// Sends `len` bytes from `start` through the returned channel, then ends. A read that
 /// fails or comes up short (the file shrank) sends an error, which aborts the response
-/// rather than cutting it short; a send that waits past `STALL` drops the channel. The
-/// raw-response `slot` is held until the producer ends.
+/// rather than cutting it short, as does no fs thread in time; a send that waits past
+/// `STALL` drops the channel. The raw-response `slot` is held until the producer ends.
 pub fn stream(
-    slots: Arc<Slots>,
+    lane: Lane,
     opened: Opened,
     start: u64,
     len: u64,
@@ -118,10 +112,10 @@ pub fn stream(
         while at < end {
             let n = CHUNK.min(end - at);
             let file = file.clone();
-            let chunk = slots
-                .blocking(move || read_chunk(&file, at, n, drop_from).map_err(FsError::Internal))
+            let chunk = lane
+                .run(move || read_chunk(&file, at, n, drop_from))
                 .await
-                .map_err(|error| io::Error::other(error.to_string()));
+                .unwrap_or_else(|busy| Err(io::Error::other(busy)));
             let failed = chunk.is_err();
             match chunks.send_timeout(chunk, STALL).await {
                 Ok(()) if !failed => at += n,
@@ -208,18 +202,5 @@ mod tests {
         let date = Some("Wed, 21 Oct 2026 07:28:00 GMT");
         assert_eq!(span(range, date, tag, 10), Span::Whole);
         assert_eq!(span(None, Some(tag), tag, 10), Span::Whole);
-    }
-
-    #[test]
-    fn the_etag_changes_with_the_file_and_only_then() {
-        let tree = crate::fs::test_tree::Tree::new("etag");
-        let path = tree.path("f");
-        std::fs::write(&path, b"one").expect("written");
-        let tag = || etag(&std::fs::metadata(&path).expect("stat"));
-        let first = tag();
-        assert!(first.starts_with('"') && first.ends_with('"'), "{first}");
-        assert_eq!(tag(), first);
-        std::fs::write(&path, b"two!").expect("rewritten");
-        assert_ne!(tag(), first);
     }
 }

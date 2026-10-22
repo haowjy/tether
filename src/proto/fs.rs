@@ -1,4 +1,4 @@
-//! The `/fs/*` bodies (fs.md "Routes"). Errors use `auth::ErrorBody`. Paths are
+//! The `/fs/*` bodies (fs.md "Routes"). Errors are `ErrorBody`. Paths are
 //! absolute UTF-8 strings; a name that isn't UTF-8 is listed but can't be sent back.
 
 use serde::{Deserialize, Serialize};

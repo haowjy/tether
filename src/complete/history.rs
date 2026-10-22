@@ -14,6 +14,7 @@ use rustix::fs::{Mode, OFlags};
 use tracing::warn;
 
 use super::packed::Packed;
+use crate::files::Stamp;
 
 /// Only the file's last this many bytes are read.
 const READ: u64 = 1 << 20;
@@ -51,32 +52,13 @@ impl Format {
     }
 }
 
-/// Which file an index was parsed from, and its state then.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Stamp {
-    path: PathBuf,
-    dev: u64,
-    ino: u64,
-    size: u64,
-    mtime: (i64, i64),
-}
-
-impl Stamp {
-    fn of(path: PathBuf, meta: &Metadata) -> Self {
-        Self {
-            path,
-            dev: meta.dev(),
-            ino: meta.ino(),
-            size: meta.size(),
-            mtime: (meta.mtime(), meta.mtime_nsec()),
-        }
-    }
-}
+/// Which file an index was parsed from, and its stamp then.
+type Parsed = (PathBuf, Stamp);
 
 /// The best lines in one buffer, and each first word's summed score.
 #[derive(Debug, Default)]
 pub struct History {
-    stamp: Option<Stamp>,
+    parsed: Option<Parsed>,
     /// Best first.
     lines: Packed,
     /// One per distinct first word of `lines`, sorted by it: a line that starts with
@@ -146,7 +128,7 @@ impl History {
             lines.push(line);
         }
         let mut index = Self {
-            stamp: None,
+            parsed: None,
             lines,
             words: Vec::new(),
         };
@@ -318,19 +300,19 @@ impl Source {
 /// tried again (and warned of again) only once it changes. Blocks.
 pub fn load(source: &Source, current: Option<Arc<History>>) -> Option<Arc<History>> {
     let (path, meta) = source.choose()?;
-    let stamp = Stamp::of(path, &meta);
-    if let Some(current) = current.filter(|index| index.stamp.as_ref() == Some(&stamp)) {
+    let parsed = (path, Stamp::of(&meta));
+    if let Some(current) = current.filter(|index| index.parsed.as_ref() == Some(&parsed)) {
         return Some(current);
     }
-    let format = Format::of(&stamp.path);
-    let mut index = match read(&stamp.path) {
-        Ok((bytes, from)) => History::parse(bytes, from, format),
+    let path = &parsed.0;
+    let mut index = match read(path) {
+        Ok((bytes, from)) => History::parse(bytes, from, Format::of(path)),
         Err((offset, cause)) => {
-            warn!(path = %stamp.path.display(), offset, %cause, "can't read the history file");
+            warn!(path = %path.display(), offset, %cause, "can't read the history file");
             History::default()
         }
     };
-    index.stamp = Some(stamp);
+    index.parsed = Some(parsed);
     Some(Arc::new(index))
 }
 

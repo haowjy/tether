@@ -1,0 +1,6 @@
+# The blocking pool is split into lanes (src/blocking.rs); nothing else may enter it.
+# tokio's `fs` feature is off for the same reason (and for tokio::fs::File's 2 MiB buffer).
+disallowed-methods = [
+  { path = "tokio::task::spawn_blocking", reason = "run blocking work on a lane: crate::blocking" },
+  { path = "tokio::runtime::Handle::spawn_blocking", reason = "run blocking work on a lane: crate::blocking" },
+]

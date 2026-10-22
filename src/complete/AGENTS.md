@@ -9,11 +9,13 @@ takes one of 4 in-flight permits and calls `Completer::complete`, which never fa
   escaping the lexer reads back (pure).
 - `history.rs`: the bash, zsh and fish parsers, scoring, and the stat-and-reload.
 - `commands.rs`: the `PATH` index and its mtime check.
-- `carapace.rs`: stems, the JSON, the LRU, and the runner task that owns the child.
+- `carapace.rs`: stems, the JSON and the LRU (pure).
+- `runner.rs`: the runner task that owns the child, filling `carapace.rs`'s cache.
 - `paths.rs`: splitting and the cached listing through `fs::open`.
 - `packed.rs`: strings end to end in one buffer, which every index uses (not in the
   spec's module table).
-- `mod.rs`: `Completer`, its two slots, the idle drop, merge and the caps.
+- `mod.rs`: `Settings` (built from `[complete]` and an `Environment`, the daemon's
+  own or a test's), `Completer`, its two lanes, the idle drop, merge and the caps.
 
 Rules the code relies on, which are easy to break:
 
@@ -34,11 +36,11 @@ Rules the code relies on, which are easy to break:
   index holds the kept lines' first words as indexes into `lines`. A per-entry or
   per-distinct-line structure over the whole 1 MiB read breaks the allowance: 1 MiB of
   short distinct lines is 150,000 of them.
-- **Blocking work runs through `blocking()`** under one of the two slots, with the
-  permit moved into the closure: the index slot for history, the `PATH` scan and
-  resolving the carapace binary; the directory slot for `check_dir` and listings. Never
-  `spawn_blocking` directly, and never hold `state`'s lock across I/O: clone the `Arc`,
-  release, work, then swap the new one in.
+- **Blocking work runs on one of two lanes** (`src/blocking.rs`), the permit moved into
+  the closure: the index lane for history, the `PATH` scan and resolving the carapace
+  binary; the dir lane for `check_dir` and listings (`newWindow`'s `dir` check shares
+  it). Never hold `state`'s lock across I/O: clone the `Arc`, release, work, then swap
+  the new one in.
 - **One carapace run at a time, owned by the runner task.** Requests only `ask`; a
   dropped request kills nothing, a newer key kills the run in flight (`Group`'s drop
   sends `SIGKILL` to the process group), and every finished run is cached. Under
@@ -54,7 +56,9 @@ Rules the code relies on, which are easy to break:
 Tests: the lexer table (`context.rs`); each history format, ranking and the tail read
 (`history.rs`); the `PATH` index's refresh (`commands.rs`); splitting, escaping and
 listing outside the roots (`paths.rs`); the parser on golden carapace 1.8.0 output in
-`tests/fixtures/carapace/` and the runner's timeout, newer-key kill, abandoned request
-and group kill against a fake script (`carapace.rs`); insert-only-extends across every
-source, the missing binary, and bash reading hostile names back from command, path and
-carapace chips (`mod.rs`, needs `bash`); `tests/http_auth.rs` for the auth layers.
+`tests/fixtures/carapace/` (`carapace.rs`); the runner's timeout, newer-key kill,
+abandoned request and group kill against a fake script (`runner.rs`);
+insert-only-extends across every source, the missing binary, and bash reading hostile
+names back from command, path and carapace chips (`mod.rs`, needs `bash`; built with
+`Settings::new` and a test `Environment`, never the developer's); `tests/http_auth.rs`
+for the auth layers.

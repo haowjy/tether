@@ -9,7 +9,8 @@ use std::time::{Duration, SystemTime};
 use clap::{Parser, Subcommand};
 use tether::auth::identity::{Node, ServeConfig};
 use tether::auth::{Auth, Store};
-use tether::complete;
+use tether::blocking::{BLOCKING_THREADS, Lanes};
+use tether::complete::{self, Environment};
 use tether::config::{self, Config, ConfigFile};
 use tether::fs;
 use tether::http::{self, App};
@@ -24,9 +25,6 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 
-/// tokio's blocking pool, for file I/O and the state file's lock. systemd's `TasksMax`
-/// counts these threads with tmux's.
-const BLOCKING_THREADS: usize = 8;
 /// How long shutdown waits for the hub to close its control clients.
 const HUB_WAIT: Duration = Duration::from_secs(2);
 
@@ -146,8 +144,14 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         .map_err(|cause| format!("listening on 127.0.0.1:{port}: {cause}"))?;
     // Only once the port is ours: a second daemon started by mistake must not delete
     // the running one's pastes.
-    let paste_dir = empty_dir(&config::runtime_dir()).await?;
-    start_file_api(&config, &home).await;
+    let lanes = Lanes::default();
+    let runtime_dir = config::runtime_dir();
+    let paste_dir = lanes
+        .auth
+        .run(move || empty_dir(&runtime_dir))
+        .await
+        .map_err(|busy| busy.to_string())??;
+    start_file_api(&config, &home, &lanes).await;
 
     let endpoint = config.endpoint();
     let (hub, mut hub_task) = hub::spawn(Endpoints {
@@ -155,13 +159,14 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
     });
     let hub_stop = hub.clone();
     let app = App {
-        auth: Auth::new(store, allow.clone()),
+        auth: Auth::new(store, allow.clone(), lanes.auth.clone()),
         hub,
         host: HostInfo { id: host_id, name },
         paste_dir,
         config: file,
-        complete: complete::Settings::new(&config.complete, &home),
+        complete: complete::Settings::new(&config.complete, Environment::current(&home)),
         home,
+        lanes,
     };
     let signalled = async move {
         tokio::select! {
@@ -192,22 +197,23 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
 }
 
 /// The paste directory, 0700 and emptied: files left by a daemon that died are no
-/// longer anyone's.
-async fn empty_dir(dir: &Path) -> Result<PathBuf> {
+/// longer anyone's. Blocks.
+fn empty_dir(dir: &Path) -> std::result::Result<PathBuf, String> {
     use std::os::unix::fs::PermissionsExt as _;
-    match tokio::fs::remove_dir_all(dir).await {
+    let failed = |cause: std::io::Error| format!("{}: {cause}", dir.display());
+    match std::fs::remove_dir_all(dir) {
         Ok(()) => {}
         Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => {}
-        Err(cause) => return Err(format!("{}: {cause}", dir.display()).into()),
+        Err(cause) => return Err(failed(cause)),
     }
-    tokio::fs::create_dir_all(dir).await?;
-    tokio::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).await?;
+    std::fs::create_dir_all(dir).map_err(failed)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(failed)?;
     Ok(dir.to_owned())
 }
 
 /// Deletes the part files of uploads a daemon that died left, and warns of roots that
 /// fs ignores. Only once the port is ours, as for the paste directory.
-async fn start_file_api(config: &Config, home: &Path) {
+async fn start_file_api(config: &Config, home: &Path, lanes: &Lanes) {
     for entry in config.roots.iter().chain([&config.uploads_dir]) {
         if fs::expand(entry, home).is_none() {
             warn!(%entry, "a root in config.toml isn't absolute or ~/: ignored");
@@ -217,11 +223,11 @@ async fn start_file_api(config: &Config, home: &Path) {
         return;
     };
     let dir = uploads.clone();
-    match tokio::task::spawn_blocking(move || fs::upload::sweep(&dir)).await {
+    match lanes.fs.run(move || fs::upload::sweep(&dir)).await {
         Ok(Ok(0)) => {}
         Ok(Ok(removed)) => info!(removed, dir = %uploads.display(), "deleted unfinished uploads"),
         Ok(Err(cause)) => warn!(%cause, dir = %uploads.display(), "can't sweep the uploads folder"),
-        Err(cause) => warn!(%cause, "the uploads sweep failed"),
+        Err(cause) => warn!(%cause, dir = %uploads.display(), "the uploads sweep got no thread"),
     }
 }
 

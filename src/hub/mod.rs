@@ -11,6 +11,7 @@ use bytes::Bytes;
 use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::blocking::Lane;
 use crate::proto::{self, ClientMsg, Encoded};
 use crate::tmux::{Endpoint, Reply, Tag, TmuxError};
 
@@ -142,17 +143,22 @@ pub(crate) fn charge(length: usize) -> u32 {
 }
 
 /// A paste's text in a 0600 file, and the daemon-wide paste slot it holds. The hub
-/// hands it back in `Effect::RemoveFile`; deleting the file and dropping this frees
-/// the slot.
+/// hands it back in `Effect::RemoveFile`; deleting the file (on `lane`) and dropping
+/// this frees the slot.
 #[derive(Debug)]
 pub struct PasteFile {
     pub path: PathBuf,
     _slot: OwnedSemaphorePermit,
+    lane: Lane,
 }
 
 impl PasteFile {
-    pub fn new(path: PathBuf, slot: OwnedSemaphorePermit) -> Self {
-        Self { path, _slot: slot }
+    pub fn new(path: PathBuf, slot: OwnedSemaphorePermit, lane: Lane) -> Self {
+        Self {
+            path,
+            _slot: slot,
+            lane,
+        }
     }
 }
 

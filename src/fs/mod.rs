@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::blocking::Busy;
 use crate::config::{Config, ConfigError, ConfigFile};
 use crate::proto::fs as wire;
 
@@ -60,39 +61,6 @@ pub enum FsError {
 }
 
 impl FsError {
-    pub fn status(&self) -> u16 {
-        match self {
-            Self::BadRequest => 400,
-            Self::OutsideRoots | Self::OutsideHome | Self::Denied => 403,
-            Self::NotFound => 404,
-            Self::NotADirectory | Self::NotAFile | Self::ConfigReadOnly(_) => 409,
-            Self::TooLarge => 413,
-            Self::BadRange { .. } => 416,
-            Self::Busy | Self::ConfigUnavailable(_) => 503,
-            Self::NoSpace => 507,
-            Self::Internal(_) => 500,
-        }
-    }
-
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::BadRequest => "bad_request",
-            Self::OutsideRoots => "outside_roots",
-            Self::OutsideHome => "outside_home",
-            Self::Denied => "denied",
-            Self::NotFound => "not_found",
-            Self::NotADirectory => "not_a_directory",
-            Self::NotAFile => "not_a_file",
-            Self::ConfigReadOnly(_) => "config_read_only",
-            Self::TooLarge => "too_large",
-            Self::BadRange { .. } => "bad_range",
-            Self::Busy => "busy",
-            Self::ConfigUnavailable(_) => "config_unavailable",
-            Self::NoSpace => "no_space",
-            Self::Internal(_) => "internal",
-        }
-    }
-
     /// An I/O error while resolving or opening a path.
     pub fn io(error: io::Error) -> Self {
         match error.kind() {
@@ -103,6 +71,12 @@ impl FsError {
             }
             _ => Self::Internal(error),
         }
+    }
+}
+
+impl From<Busy> for FsError {
+    fn from(Busy: Busy) -> Self {
+        Self::Busy
     }
 }
 

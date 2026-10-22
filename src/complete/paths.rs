@@ -4,11 +4,11 @@
 //! Splitting is pure; inserts are escaped by `chip`. The last directory's listing is
 //! kept while a fresh open shows the same mtime.
 
-use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 use std::sync::Arc;
 
 use super::{CHIPS, chip};
+use crate::files::Stamp;
 use crate::fs::list::{Filter, Scan, fold_cmp};
 use crate::fs::{FsError, Scope, Want};
 use crate::proto::complete::{Chip, ChipSource};
@@ -52,8 +52,7 @@ pub fn split(value: &str, cwd: Option<&str>, home: &Path) -> Option<Target> {
 pub struct Listing {
     /// Canonical.
     path: String,
-    /// `(dev, ino, mtime)`.
-    stamp: (u64, u64, i64, i64),
+    stamp: Stamp,
     scan: Scan,
 }
 
@@ -62,8 +61,7 @@ impl Listing {
     /// Blocks.
     pub fn load(dir: &str, cached: Option<Arc<Self>>) -> Result<Arc<Self>, FsError> {
         let opened = crate::fs::open(&Scope::everything(), dir, Want::Dir)?;
-        let meta = &opened.meta;
-        let stamp = (meta.dev(), meta.ino(), meta.mtime(), meta.mtime_nsec());
+        let stamp = Stamp::of(&opened.meta);
         if let Some(cached) = cached.filter(|c| c.path == opened.path && c.stamp == stamp) {
             return Ok(cached);
         }

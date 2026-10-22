@@ -1,7 +1,7 @@
-//! `POST /fs/upload` (fs.md): the body streams into a 0600 part file in `uploads_dir`,
-//! flushed every 2 MiB, then renamed without replacing to a name the daemon chooses.
-//! Only the client name's extension is used. A part file is deleted on any failure, and
-//! leftovers from a daemon that died are swept at startup.
+//! `POST /fs/upload` (fs.md): the body streams into a 0600 part file (`files::Temp`) in
+//! `uploads_dir`, flushed every 2 MiB, then renamed without replacing to a name the
+//! daemon chooses. Only the client name's extension is used. A part file is deleted on
+//! any failure, and leftovers from a daemon that died are swept at startup.
 
 use std::fs::File;
 use std::io;
@@ -12,12 +12,13 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt as _};
-use rustix::fs::{AtFlags, Mode, OFlags, RenameFlags};
 use rustix::io::Errno;
 use tracing::debug;
 
-use super::{FsError, Opened, Roots, Slots, Want, expand, open};
+use super::{FsError, Opened, Roots, Want, expand, open};
+use crate::blocking::Lane;
 use crate::config::ConfigFile;
+use crate::files::{Dir, Temp};
 use crate::proto::fs::Uploaded;
 
 /// Larger uploads get `413 too_large`.
@@ -55,9 +56,9 @@ pub fn open_dir(file: &ConfigFile, home: &Path) -> Result<Opened, FsError> {
 }
 
 /// Writes `body` into a part file in `dir` and renames it to its final name. `limit` is
-/// the size cap. Holds one fs slot per chunk written; the caller holds the upload slot.
+/// the size cap. Takes one fs thread per chunk written; the caller holds the upload slot.
 pub async fn receive<S, E>(
-    slots: &Slots,
+    lane: &Lane,
     dir: Opened,
     client_name: &str,
     limit: u64,
@@ -68,35 +69,28 @@ where
     E: std::fmt::Display,
 {
     let dir_path = dir.path.clone();
-    let dir = Arc::new(dir.file);
-    let made = dir.clone();
-    let part = slots
-        .blocking(move || Part::create(made).map_err(write_error))
-        .await?;
+    let (dir, part_lane) = (Dir::from(dir.file), lane.clone());
+    let part = lane
+        .run(move || Part::create(&dir, part_lane).map_err(write_error))
+        .await??;
     let file = part.file.clone();
-    match copy(slots, file, limit, body).await {
+    match copy(lane, file, limit, body).await {
         Ok(size) => {
-            let extension = extension(client_name);
-            let name = slots
-                .blocking(move || {
-                    part.finish(|| final_name(SystemTime::now(), &extension))
-                        .map_err(FsError::Internal)
-                })
-                .await?;
+            let name = part.land(extension(client_name)).await?;
             Ok(Uploaded {
                 path: format!("{dir_path}/{name}"),
                 size,
             })
         }
         Err(error) => {
-            let _ = tokio::task::spawn_blocking(move || part.remove()).await;
+            part.remove().await;
             Err(error)
         }
     }
 }
 
 /// The body into `file`, 64 KiB at a time. Returns its size.
-async fn copy<S, E>(slots: &Slots, file: Arc<File>, limit: u64, mut body: S) -> Result<u64, FsError>
+async fn copy<S, E>(lane: &Lane, file: Arc<File>, limit: u64, mut body: S) -> Result<u64, FsError>
 where
     S: Stream<Item = Result<Bytes, E>> + Unpin,
     E: std::fmt::Display,
@@ -128,7 +122,7 @@ where
             chunk.extend_from_slice(&bytes.split_to(take));
             if chunk.len() == CHUNK {
                 let flush = written + CHUNK as u64 - flushed >= FLUSH_EVERY;
-                chunk = write(slots, &file, chunk, written, flush).await?;
+                chunk = write(lane, &file, chunk, written, flush).await?;
                 written += CHUNK as u64;
                 if flush {
                     flushed = written;
@@ -138,33 +132,32 @@ where
     }
     let size = written + chunk.len() as u64;
     if !chunk.is_empty() {
-        write(slots, &file, chunk, written, false).await?;
+        write(lane, &file, chunk, written, false).await?;
     }
     Ok(size)
 }
 
-/// Writes `chunk` at `at` under an fs slot and hands the emptied buffer back.
+/// Writes `chunk` at `at` on an fs thread and hands the emptied buffer back.
 async fn write(
-    slots: &Slots,
+    lane: &Lane,
     file: &Arc<File>,
     mut chunk: Vec<u8>,
     at: u64,
     flush: bool,
 ) -> Result<Vec<u8>, FsError> {
     let file = file.clone();
-    slots
-        .blocking(move || {
-            file.write_all_at(&chunk, at).map_err(write_error)?;
-            if flush {
-                // The one wait with no deadline: a slow disk slows the upload to its pace.
-                file.sync_data().map_err(write_error)?;
-                #[cfg(target_os = "linux")]
-                let _ = rustix::fs::fadvise(&*file, 0, None, rustix::fs::Advice::DontNeed);
-            }
-            chunk.clear();
-            Ok(chunk)
-        })
-        .await
+    lane.run(move || {
+        file.write_all_at(&chunk, at).map_err(write_error)?;
+        if flush {
+            // The one wait with no deadline: a slow disk slows the upload to its pace.
+            file.sync_data().map_err(write_error)?;
+            #[cfg(target_os = "linux")]
+            let _ = rustix::fs::fadvise(&*file, 0, None, rustix::fs::Advice::DontNeed);
+        }
+        chunk.clear();
+        Ok(chunk)
+    })
+    .await?
 }
 
 fn write_error(error: io::Error) -> FsError {
@@ -175,72 +168,51 @@ fn write_error(error: io::Error) -> FsError {
     }
 }
 
-/// `.tether-upload-<random>.part` in the uploads folder, deleted unless renamed.
+/// `.tether-upload-<random>.part` in the uploads folder, deleted unless it landed. The
+/// delete runs on the fs lane, since the folder may sit on the slow disk; one that gets
+/// no thread in time leaves the file to the startup sweep.
 struct Part {
-    dir: Arc<File>,
-    name: String,
+    /// `None` once it landed or was deleted.
+    temp: Option<Temp>,
     file: Arc<File>,
-    /// Renamed or removed: nothing left to delete.
-    done: bool,
+    lane: Lane,
 }
 
 impl Part {
-    fn create(dir: Arc<File>) -> io::Result<Self> {
+    fn create(dir: &Dir, lane: Lane) -> io::Result<Self> {
         let name = format!("{PART_PREFIX}{}{PART_SUFFIX}", random(16)?);
-        let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW;
-        let fd = rustix::fs::openat(&*dir, &name, flags | OFlags::CLOEXEC, Mode::from(0o600))?;
+        let temp = Temp::create(dir, name.as_ref(), 0o600)?;
         Ok(Self {
-            dir,
-            name,
-            file: Arc::new(File::from(fd)),
-            done: false,
+            file: temp.file().clone(),
+            temp: Some(temp),
+            lane,
         })
     }
 
-    /// Renames the part file to the first name from `names` that doesn't exist yet,
-    /// relative to the folder's descriptor. No `fsync`: a photo lost to a power cut is
-    /// sent again.
-    fn finish(mut self, mut names: impl FnMut() -> io::Result<String>) -> io::Result<String> {
-        for _ in 0..RENAME_TRIES {
-            let name = names()?;
-            let dir = &*self.dir;
-            match rustix::fs::renameat_with(dir, &self.name, dir, &name, RenameFlags::NOREPLACE) {
-                Ok(()) => {
-                    self.done = true;
-                    return Ok(name);
-                }
-                Err(Errno::EXIST) => continue,
-                Err(errno) => return Err(errno.into()),
-            }
-        }
-        Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "every upload name tried exists",
-        ))
+    /// Renames the part file to a free final name. A failure deletes it.
+    async fn land(mut self, extension: String) -> Result<String, FsError> {
+        let temp = self.temp.take();
+        let landed = self.lane.run(move || {
+            let names = (0..RENAME_TRIES).map(|_| final_name(SystemTime::now(), &extension));
+            let gone = || io::Error::from(io::ErrorKind::NotFound);
+            temp.ok_or_else(gone)?.land(names)
+        });
+        landed.await?.map_err(FsError::Internal)
     }
 
-    /// Blocks.
-    fn remove(mut self) {
-        let _ = rustix::fs::unlinkat(&*self.dir, &self.name, AtFlags::empty());
-        self.done = true;
+    /// Deletes the part file before the response goes out.
+    async fn remove(mut self) {
+        if let Some(temp) = self.temp.take() {
+            let _ = self.lane.run(move || temp.discard()).await;
+        }
     }
 }
 
 impl Drop for Part {
-    /// A request dropped mid-upload (the client went away) still deletes its part
-    /// file, off the runtime thread.
+    /// A request dropped mid-upload (the client went away) still deletes its part file.
     fn drop(&mut self) {
-        if self.done {
-            return;
-        }
-        let dir = self.dir.clone();
-        let name = std::mem::take(&mut self.name);
-        let unlink = move || {
-            let _ = rustix::fs::unlinkat(&*dir, &name, AtFlags::empty());
-        };
-        match tokio::runtime::Handle::try_current() {
-            Ok(runtime) => drop(runtime.spawn_blocking(unlink)),
-            Err(_) => unlink(),
+        if let Some(temp) = self.temp.take() {
+            self.lane.spawn(move || temp.discard());
         }
     }
 }
@@ -311,6 +283,7 @@ mod tests {
     use futures_util::stream;
 
     use super::*;
+    use crate::blocking::Lanes;
     use crate::fs::test_tree::Tree;
 
     fn dir(tree: &Tree) -> Opened {
@@ -366,32 +339,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_rename_never_replaces_a_file() {
-        let tree = Tree::new("upload-clash");
-        tree.write("taken.jpg", b"the original");
-        let part = Part::create(Arc::new(dir(&tree).file)).expect("a part file");
-        part.file.write_all_at(b"new", 0).expect("written");
-        let mut tries = ["taken.jpg", "free.jpg"].into_iter();
-        let name = part
-            .finish(|| Ok(tries.next().expect("a name").to_owned()))
-            .expect("renamed");
-        assert_eq!(name, "free.jpg");
-        assert_eq!(
-            std::fs::read(tree.path("taken.jpg")).expect("read"),
-            b"the original"
-        );
-        assert_eq!(std::fs::read(tree.path("free.jpg")).expect("read"), b"new");
-        assert_eq!(names(&tree), ["free.jpg", "taken.jpg"]);
-    }
-
     #[tokio::test]
     async fn an_upload_lands_0600_under_its_final_name() {
         use std::os::unix::fs::PermissionsExt as _;
         let tree = Tree::new("upload");
-        let slots = Slots::default();
+        let lane = Lanes::default().fs;
         let chunks = vec![vec![1; 100_000], vec![2; 50_000], vec![3; 7]];
-        let uploaded = receive(&slots, dir(&tree), "IMG.JPG", MAX_UPLOAD, body(chunks))
+        let uploaded = receive(&lane, dir(&tree), "IMG.JPG", MAX_UPLOAD, body(chunks))
             .await
             .expect("uploaded");
         assert_eq!(uploaded.size, 150_007);
@@ -411,9 +365,9 @@ mod tests {
     #[tokio::test]
     async fn over_the_cap_the_part_file_is_deleted() {
         let tree = Tree::new("upload-cap");
-        let slots = Slots::default();
+        let lane = Lanes::default().fs;
         let chunks = vec![vec![0; 70_000], vec![0; 70_000]];
-        let refused = receive(&slots, dir(&tree), "a.png", 100_000, body(chunks)).await;
+        let refused = receive(&lane, dir(&tree), "a.png", 100_000, body(chunks)).await;
         assert!(matches!(refused, Err(FsError::TooLarge)), "{refused:?}");
         assert!(names(&tree).is_empty());
     }
@@ -421,10 +375,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_idle_body_is_aborted_and_its_part_file_deleted() {
         let tree = Tree::new("upload-idle");
-        let slots = Slots::default();
+        let lane = Lanes::default().fs;
         let stalled = body(vec![vec![0; 10]]).chain(stream::pending());
         let started = tokio::time::Instant::now();
-        let refused = receive(&slots, dir(&tree), "a.png", MAX_UPLOAD, stalled).await;
+        let refused = receive(&lane, dir(&tree), "a.png", MAX_UPLOAD, stalled).await;
         assert!(matches!(refused, Err(FsError::BadRequest)), "{refused:?}");
         assert!(started.elapsed() >= IDLE);
         assert!(names(&tree).is_empty());

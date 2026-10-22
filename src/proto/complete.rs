@@ -1,6 +1,6 @@
-//! The `POST /complete` bodies (complete.md "Request and response"). Errors use
-//! `auth::ErrorBody`. Named `CompleteRequest`, not `Request`: the TypeScript lands
-//! beside the DOM's global `Request`.
+//! The `POST /complete` bodies (complete.md "Request and response"). Errors are
+//! `ErrorBody`. Named `CompleteRequest`, not `Request`: the TypeScript lands beside the
+//! DOM's global `Request`.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

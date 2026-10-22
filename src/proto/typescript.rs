@@ -1,6 +1,6 @@
 //! Renders the protocol's TypeScript types into `web/proto/generated/messages.ts`
-//! (daemon-core.md §5.5): the WebSocket messages, and the `/fs/*` and `/complete`
-//! bodies. The test fails while the committed file is stale;
+//! (daemon-core.md §5.5): the WebSocket messages, the `/fs/*` and `/complete` bodies,
+//! and the error body every route shares. The test fails while the committed file is stale;
 //! `UPDATE_PROTO_TYPES=1 cargo test --lib proto::typescript` rewrites it.
 
 use std::any::TypeId;
@@ -41,6 +41,8 @@ fn declarations(config: &Config) -> Vec<(TypeId, String)> {
         declare::<SessionListing>(config),
         declare::<WindowListing>(config),
         declare::<ErrorCode>(config),
+        declare::<ErrorBody>(config),
+        declare::<HttpError>(config),
         declare::<Roots>(config),
         declare::<RootStatus>(config),
         declare::<PathBody>(config),
@@ -113,6 +115,7 @@ fn generated_typescript_is_current() {
     dependencies::<Listing>(&mut needed);
     dependencies::<CompleteRequest>(&mut needed);
     dependencies::<Completion>(&mut needed);
+    dependencies::<ErrorBody>(&mut needed);
     let missing = needed.difference(&declared).count();
     assert_eq!(missing, 0, "a protocol type is missing from declarations()");
 

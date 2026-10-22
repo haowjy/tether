@@ -1,23 +1,22 @@
 //! The Settings sheet's writes to `config.toml` (fs.md "Writing config.toml"): under
 //! the state directory's lock, which auth's writers hold too; through a symlinked file
 //! to its target; only `roots` or `uploads_dir` changed, with `toml_edit` keeping
-//! comments, order and unknown keys; and by temp file and rename, retried if the file
-//! changed while the new text was written.
+//! comments, order and unknown keys; and through `files::Temp` with the file's mode,
+//! retried if the file changed while the new text was written.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write as _};
-use std::os::unix::fs::{
-    DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
-};
+use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::io;
+use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
 use rustix::io::Errno;
 use toml_edit::{DocumentMut, Item, Value};
 use tracing::{info, warn};
 
-use super::{FsError, MAX_PATH, Roots};
-use crate::auth::Store;
+use super::{FsError, MAX_PATH, Roots, check_shape};
 use crate::config::{Config, ConfigError, ConfigFile};
+use crate::files::{self, Dir, Stamp, Temp};
 
 /// Writes retried when the file changed under one, before `503 busy`.
 const TRIES: usize = 3;
@@ -32,22 +31,35 @@ pub enum Change {
     UploadsDir(String),
 }
 
-/// Checks `change` and writes it. Blocks, on the disk and on the lock.
-pub fn apply(file: &ConfigFile, store: &Store, home: &Path, change: Change) -> Result<(), FsError> {
+/// Checks `change` and writes it, holding `state_dir`'s lock. Blocks, on the disk and on
+/// the lock.
+pub fn apply(
+    file: &ConfigFile,
+    state_dir: &Path,
+    home: &Path,
+    change: Change,
+) -> Result<(), FsError> {
     let change = match change {
         Change::AddRoot(path) => Change::AddRoot(below_home(&path, home)?),
         Change::UploadsDir(path) => Change::UploadsDir(below_home(&path, home)?),
+        // Stored text, which needn't be absolute (`~/code`): only the rest of the shape.
         Change::RemoveRoot(path) if path.len() > MAX_PATH || path.contains('\0') => {
             return Err(FsError::BadRequest);
         }
         remove @ Change::RemoveRoot(_) => remove,
     };
-    let _lock = store
-        .lock()
-        .map_err(|cause| FsError::Internal(io::Error::other(cause)))?;
+    let _lock = files::lock(state_dir).map_err(FsError::Internal)?;
     let target = target(&file.path)?;
+    let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
+        return Err(FsError::Internal(io::Error::other(
+            "config.toml has no name",
+        )));
+    };
+    let dir = Dir::open(parent).map_err(FsError::Internal)?;
+    let mut temp_name = OsString::from(name);
+    temp_name.push(".tmp");
     for _ in 0..TRIES {
-        let before = read(&target)?;
+        let before = read(&dir, name, &target)?;
         let config = Config::parse(&target, &before.text)?;
         let mut doc: DocumentMut = before.text.parse().map_err(|_| ConfigError::Parse {
             path: target.clone(),
@@ -56,26 +68,17 @@ pub fn apply(file: &ConfigFile, store: &Store, home: &Path, change: Change) -> R
         if !edit(&mut doc, &config, home, &change)? {
             return Ok(());
         }
-        let temp = temp_path(&target);
-        let written = write_temp(&temp, &doc.to_string(), before.mode);
-        if let Err(error) = written {
-            let _ = fs::remove_file(&temp);
-            return Err(error);
+        let temp = Temp::create(&dir, &temp_name, before.mode).map_err(write_error)?;
+        let text = doc.to_string();
+        if temp
+            .replace_if(name, text.as_bytes(), before.stamp)
+            .map_err(write_error)?
+        {
+            info!(path = %target.display(), ?change, "config.toml written");
+            return Ok(());
         }
-        if stamp(&target).map_err(FsError::Internal)? != before.stamp {
-            info!(path = %target.display(), "config.toml changed while being written: retrying");
-            continue;
-        }
-        fs::rename(&temp, &target).map_err(write_error)?;
-        if let Some(dir) = target.parent() {
-            File::open(dir)
-                .and_then(|dir| dir.sync_all())
-                .map_err(FsError::Internal)?;
-        }
-        info!(path = %target.display(), ?change, "config.toml written");
-        return Ok(());
+        info!(path = %target.display(), "config.toml changed while being written: retrying");
     }
-    let _ = fs::remove_file(temp_path(&target));
     warn!(path = %target.display(), "config.toml kept changing: write refused");
     Err(FsError::Busy)
 }
@@ -220,9 +223,7 @@ fn set_uploads_dir(doc: &mut DocumentMut, path: &str) {
 /// The canonical path of an existing directory strictly below the canonical `$HOME`:
 /// the app can't widen the scope to `$HOME` or past it.
 fn below_home(path: &str, home: &Path) -> Result<String, FsError> {
-    if path.len() > MAX_PATH || path.contains('\0') || !path.starts_with('/') {
-        return Err(FsError::BadRequest);
-    }
+    check_shape(path).map_err(|_| FsError::BadRequest)?;
     let home = fs::canonicalize(home).map_err(FsError::Internal)?;
     let canonical = fs::canonicalize(path).map_err(FsError::io)?;
     if !canonical.starts_with(&home) || canonical == home {
@@ -274,88 +275,34 @@ fn target(path: &Path) -> Result<PathBuf, FsError> {
     }
 }
 
-/// The file as read, to change and to compare against before the rename.
+/// The file as read, to change and to compare against before the rename: its text,
+/// its stamp (`None`: missing) and its mode, which the new file gets exactly.
 struct Before {
     text: String,
     stamp: Option<Stamp>,
     mode: u32,
 }
 
-/// `(dev, ino, size, mtime)`: what changes when an editor saves.
-type Stamp = (u64, u64, u64, i64, i64);
-
-fn read(target: &Path) -> Result<Before, FsError> {
-    let opened = match File::open(target) {
-        Ok(opened) => opened,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(Before {
-                text: String::new(),
-                stamp: None,
-                mode: 0o600,
-            });
-        }
-        Err(error) => {
-            return Err(ConfigError::Io {
-                path: target.to_owned(),
-                source: error,
-            }
-            .into());
-        }
-    };
-    let meta = opened.metadata().map_err(FsError::Internal)?;
-    let text = io::read_to_string(&opened).map_err(|source| ConfigError::Io {
+/// `name` in `dir`, which is `target`; a missing file is an empty one, mode 0600.
+fn read(dir: &Dir, name: &OsStr, target: &Path) -> Result<Before, FsError> {
+    let unreadable = |source| ConfigError::Io {
         path: target.to_owned(),
         source,
-    })?;
+    };
+    let Some(opened) = dir.read(name).map_err(unreadable)? else {
+        return Ok(Before {
+            text: String::new(),
+            stamp: None,
+            mode: 0o600,
+        });
+    };
+    let meta = opened.metadata().map_err(FsError::Internal)?;
+    let text = io::read_to_string(&opened).map_err(unreadable)?;
     Ok(Before {
         text,
-        stamp: Some(stamp_of(&meta)),
+        stamp: Some(Stamp::of(&meta)),
         mode: meta.permissions().mode() & 0o7777,
     })
-}
-
-fn stamp(target: &Path) -> io::Result<Option<Stamp>> {
-    match fs::metadata(target) {
-        Ok(meta) => Ok(Some(stamp_of(&meta))),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-fn stamp_of(meta: &fs::Metadata) -> Stamp {
-    (
-        meta.dev(),
-        meta.ino(),
-        meta.size(),
-        meta.mtime(),
-        meta.mtime_nsec(),
-    )
-}
-
-fn temp_path(target: &Path) -> PathBuf {
-    let mut name = target.file_name().unwrap_or_default().to_owned();
-    name.push(".tmp");
-    target.with_file_name(name)
-}
-
-/// The new text beside the target, with the original's mode, `fsync`ed.
-fn write_temp(temp: &Path, text: &str, mode: u32) -> Result<(), FsError> {
-    match fs::remove_file(temp) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(write_error(error)),
-    }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(temp)
-        .map_err(write_error)?;
-    // The umask applied to `mode` on create; the original's mode exactly, now.
-    file.set_permissions(fs::Permissions::from_mode(mode))
-        .map_err(write_error)?;
-    file.write_all(text.as_bytes()).map_err(write_error)?;
-    file.sync_all().map_err(write_error)
 }
 
 /// A file Jimmy can't write (read-only filesystem, a link into `/nix/store`) is a

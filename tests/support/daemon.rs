@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use tether::auth::{Auth, Store};
+use tether::blocking::Lanes;
 use tether::complete;
 use tether::config::ConfigFile;
 use tether::http::{self, App};
@@ -72,8 +73,9 @@ pub async fn start(name: &str) -> Daemon {
         socket: Socket::Name(format!("tether-http-test-{}", std::process::id())),
     };
     let (hub, _task) = hub::spawn(Endpoints { main: endpoint });
+    let lanes = Lanes::default();
     let app = App {
-        auth: Auth::new(store.clone(), vec![LOGIN.to_owned()]),
+        auth: Auth::new(store.clone(), vec![LOGIN.to_owned()], lanes.auth.clone()),
         hub,
         host: HostInfo {
             id: store.host_id().expect("a host id"),
@@ -82,15 +84,15 @@ pub async fn start(name: &str) -> Daemon {
         paste_dir,
         config: ConfigFile::resolve(Some(&config)).expect("a config path"),
         // No history, no PATH, no carapace: only paths complete.
-        complete: complete::Settings {
-            home: home.clone(),
-            history: None,
-            data_home: home.join(".local/share"),
-            path: Default::default(),
-            carapace: None,
-            scoped: false,
-        },
+        complete: complete::Settings::new(
+            &Default::default(),
+            complete::Environment {
+                home: home.clone(),
+                ..Default::default()
+            },
+        ),
         home: home.clone(),
+        lanes,
     };
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
     let port = listener.local_addr().expect("an address").port();
