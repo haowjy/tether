@@ -5,6 +5,10 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
+use super::reply::{
+    CREATED_FORMAT, LISTING_CLIENT_FORMAT, LISTING_SERVER_FORMAT, LISTING_WINDOW_FORMAT,
+    LOCATE_FORMAT, LOCATE_SESSION_FORMAT, STARTUP_FORMAT,
+};
 use super::snapshot::STATE_FORMAT;
 use super::{
     InputItem, OneShotCmd, Op, PaneId, ServerInstance, SessionId, Size, Tag, TmuxError, WindowId,
@@ -37,32 +41,13 @@ impl Group {
 /// Bytes per `send-keys -H` command.
 const HEX_CHUNK: usize = 512;
 
-/// Where a window is: server instance, then its session, active pane and that pane's
-/// size. tmux leaves the target fields empty for a window that is gone.
-const LOCATE_FORMAT: &str =
-    "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_width}\t#{pane_height}";
-/// Server instance and session id, the id empty for a session that is gone.
-const LOCATE_SESSION_FORMAT: &str = "#{pid}\t#{start_time}\t#{session_id}";
-/// The listing's first line.
-const LISTING_SERVER_FORMAT: &str = "#{version}\t#{pid}\t#{start_time}";
-/// One line per client: its session and whether it is a control client.
-const LISTING_CLIENT_FORMAT: &str = "#{session_id}\t#{client_control_mode}";
-/// One line per window. A window name can hold a tab, so it goes last; a session name
-/// can't (tmux escapes it).
-const LISTING_WINDOW_FORMAT: &str = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{window_name}";
-/// A created window, with the server instance that names it.
-const CREATED_FORMAT: &str = "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}";
 /// Not a tmux command: `only_on`'s branch, which fails to parse. tmux names it in its
 /// error, which is how `oneshot` tells this failure from others.
 pub(super) const SERVER_CHANGED: &str = "tether-server-changed";
 
-/// The control client's first line: version, server instance, and the size of the
-/// session's current window.
+/// The control client's first line (`reply::STARTUP_FORMAT`).
 pub fn startup() -> Group {
-    Group::one(
-        "display-message -p '#{version}\t#{pid}\t#{start_time}\t#{window_width}\t#{window_height}'"
-            .to_owned(),
-    )
+    Group::one(format!("display-message -p '{STARTUP_FORMAT}'"))
 }
 
 /// Sets the client size. It takes no format, so it can't share the startup line.
@@ -247,17 +232,13 @@ fn path(path: &Path) -> Result<&str, TmuxError> {
         .ok_or(TmuxError::BadRequest("directory is not UTF-8"))
 }
 
-/// Adds `flag value` for a user's value: `#` doubled (tmux format-expands names and
-/// directories) and a final `;` sent as `\;`, which tmux reads back as `;` rather
-/// than the end of the command. Control characters are refused, as in `quote`.
+/// Adds `flag value` for a user's value (`literal`), with a final `;` sent as `\;`,
+/// which tmux reads back as `;` rather than the end of the command.
 fn named(args: &mut Vec<String>, flag: &str, value: Option<&str>) -> Result<(), TmuxError> {
     let Some(value) = value else {
         return Ok(());
     };
-    if value.chars().any(char::is_control) {
-        return Err(TmuxError::BadRequest("control character in argument"));
-    }
-    let mut value = value.replace('#', "##");
+    let mut value = literal(value)?;
     if value.ends_with(';') {
         value.insert(value.len() - 1, '\\');
     }
@@ -301,17 +282,20 @@ fn hex_commands(window: WindowId, bytes: &[u8], commands: &mut Vec<String>) {
     }
 }
 
-/// A user argument for tmux's parser: `#` doubled (tmux format-expands `-n`, `-c` and
-/// `load-buffer`'s path), wrapped in single quotes with `'` as `'\''`. Control
-/// characters can't be expressed on one line and are refused.
+/// A user argument for tmux's parser (`literal`), wrapped in single quotes with `'` as
+/// `'\''`.
 pub fn quote(argument: &str) -> Result<String, TmuxError> {
-    if argument.chars().any(char::is_control) {
+    Ok(format!("'{}'", literal(argument)?.replace('\'', "'\\''")))
+}
+
+/// A user's text that tmux must take as it is: `#` doubled, since tmux
+/// format-expands names, directories and `load-buffer`'s path. Control characters
+/// can't be expressed on one line and are refused.
+fn literal(text: &str) -> Result<String, TmuxError> {
+    if text.chars().any(char::is_control) {
         return Err(TmuxError::BadRequest("control character in argument"));
     }
-    Ok(format!(
-        "'{}'",
-        argument.replace('#', "##").replace('\'', "'\\''")
-    ))
+    Ok(text.replace('#', "##"))
 }
 
 /// The key-name allowlist:

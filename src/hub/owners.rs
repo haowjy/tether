@@ -8,21 +8,16 @@ use std::time::Instant;
 
 use tracing::{info, warn};
 
+use super::names::cut;
 use super::state::{
-    Client, ClientPhase, Effect, Exit, ExitCheck, Locate, Phase, State, WinKey, Window, cut,
+    Client, ClientPhase, Effect, Exit, ExitCheck, Locate, Phase, State, WinKey, Window,
 };
-use super::{CRASH_WINDOW, MAX_CLIENTS, REPLY_TIMEOUT, RESPAWN_DELAY};
+use super::{CRASH_WINDOW, MAX_CLIENTS, RESPAWN_DELAY};
 use crate::proto::{ServerMsg, WatchEndReason};
 use crate::tmux::{
     ClientId, Found, PaneId, Reply, ServerInstance, Session, SessionId, Tag, TmuxError,
     TmuxVersion, WindowId,
 };
-
-enum Due {
-    Respawn,
-    Linger,
-    Timeout,
-}
 
 impl State {
     /// Every control client gets each rename and session change, so only the
@@ -57,25 +52,9 @@ impl State {
         };
         let endpoint = record.endpoint;
         info!(client = client.0, session = %record.session, %server, "tmux control client ready");
+        // Reconcile now locates the windows waiting for it; `learned` ends any other
+        // run of the server, with its windows.
         self.learned(endpoint, server);
-        let waiting: Vec<WinKey> = self
-            .windows
-            .iter()
-            .filter(|(_, window)| matches!(window.phase, Phase::Starting { client: of } if of == client))
-            .map(|(key, _)| *key)
-            .collect();
-        for key in waiting {
-            if key.server != server {
-                self.server_gone(key.endpoint, key.server);
-            } else if let Some(window) = self.windows.get_mut(&key) {
-                window.phase = Phase::Locating { after: None };
-                window.locate = Locate {
-                    needed: true,
-                    on: Some(client),
-                    in_flight: None,
-                };
-            }
-        }
     }
 
     /// The window a client owns by id.
@@ -148,7 +127,7 @@ impl State {
         let Some(window) = self.windows.get_mut(&key) else {
             return;
         };
-        if let Phase::Locating { after } = &mut window.phase {
+        if let Phase::Locating { after, .. } = &mut window.phase {
             if let Some(exit) = after.take() {
                 if exit.session == found.session {
                     return self.after_exit(key, exit);
@@ -205,17 +184,13 @@ impl State {
 
     /// The window will be owned by `client`: located on it once it is ready.
     pub(super) fn join(&mut self, key: WinKey, client: ClientId) {
-        let ready = self
-            .clients
-            .get(&client)
-            .is_some_and(|record| record.server().is_some());
-        if !ready {
-            return self.set_phase(key, Phase::Starting { client });
-        }
-        self.set_phase(key, Phase::Locating { after: None });
+        let phase = Phase::Locating {
+            after: None,
+            on: Some(client),
+        };
+        self.set_phase(key, phase);
         if let Some(window) = self.windows.get_mut(&key) {
             window.locate.needed = true;
-            window.locate.on = Some(client);
         }
     }
 
@@ -223,7 +198,6 @@ impl State {
         let Some(window) = self.windows.get_mut(&key) else {
             return;
         };
-        window.locate.on = None;
         let phase = Phase::Bound {
             owner,
             session: found.session,
@@ -338,7 +312,10 @@ impl State {
             self.effects.push(Effect::CloseClient { client });
         }
         self.release_windows(client, |window| {
-            window.phase = Phase::Locating { after: None };
+            window.phase = Phase::Locating {
+                after: None,
+                on: None,
+            };
             window.locate.needed = true;
         });
         for (tag, work) in record.pending {
@@ -346,22 +323,17 @@ impl State {
         }
     }
 
-    /// Applies `to` to every window that is, or was about to be, the client's.
+    /// Moves every window that is, or was about to be, the client's to another phase
+    /// with `to`.
     pub(super) fn release_windows(&mut self, client: ClientId, to: impl Fn(&mut Window)) {
         let keys: Vec<WinKey> = self
             .windows
             .iter()
-            .filter(|(_, window)| match window.phase {
-                Phase::Bound { owner, .. } => owner == client,
-                Phase::Starting { client: of } => of == client,
-                Phase::Locating { .. } => window.locate.on == Some(client),
-                Phase::Orphaned { .. } => false,
-            })
+            .filter(|(_, window)| window.client() == Some(client))
             .map(|(key, _)| *key)
             .collect();
         for key in keys {
             if let Some(window) = self.windows.get_mut(&key) {
-                window.locate.on = None;
                 to(window);
             }
             self.break_stream(key);
@@ -462,6 +434,7 @@ impl State {
             if let Some(window) = self.windows.get_mut(&key) {
                 window.phase = Phase::Locating {
                     after: exit.clone(),
+                    on: None,
                 };
                 window.locate.needed = true;
             }
@@ -504,48 +477,6 @@ impl State {
             .retain(|_, check| !(check.exit.endpoint == endpoint && check.server == Some(server)));
         if self.endpoints[endpoint].live == Some(server) {
             self.endpoints[endpoint].live = None;
-        }
-    }
-
-    pub(super) fn timers(&mut self) {
-        let now = self.now;
-        let due: Vec<(ClientId, Due)> = self
-            .clients
-            .iter()
-            .filter_map(|(id, client)| {
-                let due = match client.phase {
-                    ClientPhase::Delayed { until } if until <= now => Due::Respawn,
-                    _ if client.linger.is_some_and(|until| until <= now) => Due::Linger,
-                    _ if client.tmux().is_some_and(|tmux| tmux.in_flight() > 0)
-                        && client.progress + REPLY_TIMEOUT <= now =>
-                    {
-                        Due::Timeout
-                    }
-                    _ => return None,
-                };
-                Some((*id, due))
-            })
-            .collect();
-        self.dirty |= !due.is_empty();
-        for (client, due) in due {
-            match due {
-                Due::Respawn => {
-                    let awaited = self.windows.values().any(|window| {
-                        matches!(window.phase, Phase::Starting { client: of } if of == client)
-                    });
-                    if awaited {
-                        self.start(client);
-                    } else {
-                        self.clients.remove(&client);
-                    }
-                }
-                Due::Linger => self.close_client(client),
-                Due::Timeout => {
-                    let reason = format!("tmux didn't answer for {} s", REPLY_TIMEOUT.as_secs());
-                    warn!(client = client.0, "{reason}");
-                    self.client_exited(client, reason, true);
-                }
-            }
         }
     }
 }

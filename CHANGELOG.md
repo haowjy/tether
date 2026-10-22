@@ -56,6 +56,10 @@ version section on release.
   edit gone wrong), every token check fails until it is fixed, but as "auth
   unavailable" (close 4503, HTTP 503), which the app retries with the token it has,
   not as a revoked token.
+- Tabs for windows closed or moved outside tether now update promptly even when they
+  aren't on screen: the daemon sends `sessionsChanged` when tmux closes a window no
+  tab is watching (once per burst, so killing a session sends one), and the web
+  re-lists.
 
 ## [0.0.1] - 2026-10-22
 

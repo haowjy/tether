@@ -1,6 +1,8 @@
 //! `hub::State` driven by scripted inputs (daemon-core.md §8): a fake tmux server
 //! answers the lines the hub writes, the way tmux 3.4 would, and each test checks what
-//! reaches the connections and the control clients.
+//! reaches the connections and which ops the control clients ran. `tmux::fake` reads
+//! the lines and frames the answers; this server only decides what each command finds,
+//! and tests name ops by the lines `command::op` builds for them.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -14,10 +16,11 @@ use tether::hub::{
     SNAPSHOT_SPACING, State, ToConn,
 };
 use tether::proto::{self, ClientMsg, SessionRef, WindowRef};
+use tether::tmux::fake::{self, Capture, Command};
 use tether::tmux::{
-    ClientId, Created, Endpoint, Found, ListedSession, Listing, Location, OneShotCmd, PumpMsg,
-    Reply, ServerInstance, SessionId, SessionLocation, Size, Socket, Tag, TmuxError, TmuxVersion,
-    WindowId,
+    ClientId, Created, Endpoint, Found, InputItem, ListedSession, Listing, Location, OneShotCmd,
+    Op, PaneId, PumpMsg, Reply, ServerInstance, SessionId, SessionLocation, Size, Socket, Tag,
+    TmuxError, TmuxVersion, WindowId, command,
 };
 use tokio::sync::Semaphore;
 
@@ -265,23 +268,9 @@ impl Hub {
         let fake = self.clients.get_mut(&client)?;
         let line = fake.unanswered.pop_front()?;
         let session = fake.session;
-        let mut stdout = String::new();
-        for command in line.split(" ; ") {
-            let number = self.block;
-            self.block += 1;
-            stdout.push_str(&format!("%begin 1 {number} 1\n"));
-            match self.reply(session, command) {
-                Ok(rows) => {
-                    rows.iter()
-                        .for_each(|row| stdout.push_str(&format!("{row}\n")));
-                    stdout.push_str(&format!("%end 1 {number} 1\n"));
-                }
-                Err(message) => {
-                    stdout.push_str(&format!("{message}\n%error 1 {number} 1\n"));
-                    break;
-                }
-            }
-        }
+        let mut block = self.block;
+        let stdout = fake::answer(&line, &mut block, |command| self.reply(session, command));
+        self.block = block;
         Some(stdout)
     }
 
@@ -330,7 +319,7 @@ impl Hub {
                 .unwrap_or(fake.sessions[0]);
             Found {
                 session: SessionId(session),
-                pane: tether::tmux::PaneId(fake.pane),
+                pane: PaneId(fake.pane),
                 size: fake.size,
             }
         });
@@ -340,93 +329,88 @@ impl Hub {
         }
     }
 
-    /// tmux's reply rows to one command, or its error.
-    fn reply(&self, session: u32, command: &str) -> Result<Vec<String>, String> {
-        let server = format!("{}\t{}", SERVER.pid, SERVER.start_time);
-        if command.starts_with("display-message -p '#{version}") {
-            return Ok(vec![format!("3.4\t{server}\t80\t24")]);
+    /// tmux's reply rows to one command from a client attached to `session`, or its
+    /// error.
+    fn reply(&self, session: u32, command: &Command) -> Result<Vec<String>, String> {
+        match command {
+            Command::Display { target, format } => {
+                let value = |name: &str| self.variable(session, target.as_deref(), name);
+                Ok(vec![fake::expand(format, value)])
+            }
+            Command::Capture { pane, rows } => {
+                if self.pane_size(pane.0).is_none() {
+                    return Err(format!("can't find pane: {pane}"));
+                }
+                Ok(match *rows {
+                    Capture::Screen => vec![format!("screen of {pane}")],
+                    Capture::Pending | Capture::Saved => Vec::new(),
+                    // Not `format!` padding: its width can't reach a row too large to send.
+                    Capture::Range { start, end } => (start..=end)
+                        .map(|row| {
+                            let row = format!("row {row}");
+                            let pad = self.row_width.saturating_sub(row.len());
+                            row + &"w".repeat(pad)
+                        })
+                        .collect(),
+                })
+            }
+            Command::Other => Ok(Vec::new()),
         }
-        if let Some(rest) = command.strip_prefix("display-message -p -t @") {
-            let window: u32 = rest
-                .split(' ')
-                .next()
-                .and_then(|id| id.parse().ok())
-                .ok_or("bad")?;
-            let location = self.locate(window, Some(session));
-            return Ok(vec![match location.found {
-                Some(found) => format!(
-                    "{server}\t{}\t@{window}\t{}\t{}\t{}",
-                    found.session, found.pane, found.size.cols, found.size.rows
-                ),
-                None => format!("{server}\t\t\t\t\t"),
-            }]);
+    }
+
+    /// What `#{name}` expands to for a `display-message -t target` from a client
+    /// attached to `session`. Every field of a target that is gone is empty.
+    fn variable(&self, session: u32, target: Option<&str>, name: &str) -> String {
+        match name {
+            "version" => return "3.4".to_owned(),
+            "pid" => return SERVER.pid.to_string(),
+            "start_time" => return SERVER.start_time.to_string(),
+            _ => {}
         }
-        if let Some(rest) = command.strip_prefix("display-message -p -t '$") {
-            let id: u32 = rest
-                .split('\'')
-                .next()
-                .and_then(|id| id.parse().ok())
-                .ok_or("bad")?;
-            let exists = self.sessions.contains(&id);
-            return Ok(vec![if exists {
-                format!("{server}\t${id}")
+        let Some(target) = target else {
+            // The attached session's current window.
+            return match name {
+                "window_width" => "80".to_owned(),
+                "window_height" => "24".to_owned(),
+                _ => panic!("no #{{{name}}} without a target"),
+            };
+        };
+        if let Some(window) = WindowId::parse(target.as_bytes()) {
+            let Some(found) = self.locate(window.0, Some(session)).found else {
+                return String::new();
+            };
+            return match name {
+                "session_id" => found.session.to_string(),
+                "window_id" => window.to_string(),
+                "pane_id" => found.pane.to_string(),
+                "pane_width" => found.size.cols.to_string(),
+                "pane_height" => found.size.rows.to_string(),
+                _ => panic!("#{{{name}}} of a window"),
+            };
+        }
+        if let Some(id) = SessionId::parse(target.as_bytes()) {
+            let exists = self.sessions.contains(&id.0);
+            return if exists {
+                id.to_string()
             } else {
-                format!("{server}\t")
-            }]);
+                String::new()
+            };
         }
-        if let Some(rest) = command.strip_prefix("display-message -p -t %") {
-            let pane: u32 = rest
-                .split(' ')
-                .next()
-                .and_then(|id| id.parse().ok())
-                .ok_or("bad")?;
-            return Ok(vec![match self.pane_size(pane) {
-                Some(size) => format!(
-                    "%{pane}\t{}\t{}\t0\t4294967295\t4294967295\t0\t0\t1\t0\t0\t0\t1\t0\t0\t{}\t0\t0\t0\t0\t0\t",
-                    size.cols,
-                    size.rows,
-                    size.rows - 1
-                ),
-                None => "\t".repeat(21),
-            }]);
+        let pane = PaneId::parse(target.as_bytes()).expect("a pane target");
+        let Some(size) = self.pane_size(pane.0) else {
+            return String::new();
+        };
+        // A shell at the top left of a fresh screen.
+        match name {
+            "pane_id" => pane.to_string(),
+            "pane_width" => size.cols.to_string(),
+            "pane_height" => size.rows.to_string(),
+            "alternate_saved_x" | "alternate_saved_y" => u32::MAX.to_string(),
+            "cursor_flag" | "wrap_flag" => "1".to_owned(),
+            "scroll_region_lower" => (size.rows - 1).to_string(),
+            "pane_tabs" => String::new(),
+            _ => "0".to_owned(),
         }
-        if let Some(rest) = command.strip_prefix("capture-pane ") {
-            let pane: u32 = rest
-                .split(' ')
-                .find_map(|word| word.strip_prefix('%'))
-                .and_then(|id| id.parse().ok())
-                .ok_or("bad")?;
-            if self.pane_size(pane).is_none() {
-                return Err(format!("can't find pane: %{pane}"));
-            }
-            if rest.starts_with("-p -e -N -t") {
-                return Ok(vec![format!("screen of %{pane}")]);
-            }
-            if let Some(range) = rest.split_once(" -S ") {
-                let (start, end) = range.1.split_once(" -E ").ok_or("bad")?;
-                let (start, end): (i32, i32) = (
-                    start.parse().map_err(|_| "bad")?,
-                    end.parse().map_err(|_| "bad")?,
-                );
-                // Not `format!` padding: its width can't reach a row too large to send.
-                let row = |row| {
-                    let row = format!("row {row}");
-                    let pad = self.row_width.saturating_sub(row.len());
-                    row + &"w".repeat(pad)
-                };
-                return Ok((start..=end).map(row).collect());
-            }
-            return Ok(Vec::new());
-        }
-        if command.starts_with("refresh-client")
-            || command.starts_with("send-keys")
-            || command.starts_with("load-buffer")
-            || command.starts_with("paste-buffer")
-            || command.starts_with("delete-buffer")
-        {
-            return Ok(Vec::new());
-        }
-        panic!("unexpected command {command}");
     }
 
     fn pane_size(&self, pane: u32) -> Option<Size> {
@@ -491,6 +475,42 @@ fn size(cols: u16, rows: u16) -> proto::Size {
     proto::Size { cols, rows }
 }
 
+/// The line the hub writes for `op`.
+fn line_for(op: Op) -> String {
+    command::op(&op, Tag(0)).expect("a valid op").line
+}
+
+fn vote(window: u32, cols: u16, rows: u16) -> String {
+    let size = Size { cols, rows };
+    line_for(Op::Vote {
+        window: WindowId(window),
+        size,
+    })
+}
+
+fn release(pane: u32) -> String {
+    line_for(Op::Release { pane: PaneId(pane) })
+}
+
+fn snapshot(pane: u32) -> String {
+    line_for(Op::Snapshot { pane: PaneId(pane) })
+}
+
+fn capture_history(start: i32, end: i32) -> String {
+    let pane = PaneId(0);
+    line_for(Op::History { pane, start, end })
+}
+
+/// What the hub writes once it lets go of window `@0`, whose pane is `%0`.
+fn let_go_of_window_0() -> [String; 3] {
+    let window = WindowId(0);
+    [
+        release(0),
+        line_for(Op::ClearVote { window }),
+        line_for(Op::Unsubscribe { window }),
+    ]
+}
+
 #[test]
 fn a_watch_binds_after_locating_and_catches_up_by_snapshot() {
     let mut hub = Hub::new();
@@ -512,9 +532,11 @@ fn a_watch_binds_after_locating_and_catches_up_by_snapshot() {
             Got::Snapshot(1, size(80, 24)),
         ]
     );
-    let lines = hub.lines(client).join("\n");
-    assert!(lines.contains("refresh-client -B 'w0:@0:#{pane_current_path}'"));
-    assert!(lines.contains("refresh-client -C '@0:80x24'"));
+    let lines = hub.lines(client);
+    assert!(lines.contains(&line_for(Op::Subscribe {
+        window: WindowId(0)
+    })));
+    assert!(lines.contains(&vote(0, 80, 24)));
 
     hub.output(client, 0, "hi");
     assert_eq!(hub.take(conn), [Got::Output(1, Bytes::from_static(b"hi"))]);
@@ -527,8 +549,11 @@ fn a_watch_binds_after_locating_and_catches_up_by_snapshot() {
         json!({"type": "input", "data": {"watch": 1, "items": [{"text": "ls"}, {"key": "Enter"}]}}),
     );
     hub.settle();
-    let last = hub.lines(client).last().cloned().unwrap_or_default();
-    assert_eq!(last, "send-keys -t @0 -H 6c 73 ; send-keys -t @0 Enter");
+    let input = Op::Input {
+        window: WindowId(0),
+        items: vec![InputItem::Text("ls".into()), InputItem::Key("Enter".into())],
+    };
+    assert_eq!(hub.lines(client).last(), Some(&line_for(input)));
     assert!(
         hub.take(conn).is_empty(),
         "input that succeeds answers nothing"
@@ -552,11 +577,7 @@ fn a_second_watch_joins_a_live_stream_without_disturbing_the_first() {
     assert_eq!(hub.take(second), [Got::Snapshot(5, size(80, 24))]);
     assert!(hub.take(first).is_empty());
     // The last watch's size is the window's vote.
-    assert!(
-        hub.lines(client)
-            .iter()
-            .any(|line| line == "refresh-client -C '@0:100x30'")
-    );
+    assert!(hub.lines(client).contains(&vote(0, 100, 30)));
     hub.output(client, 0, "b");
     assert_eq!(hub.take(first), [Got::Output(1, Bytes::from_static(b"b"))]);
     assert_eq!(hub.take(second), [Got::Output(5, Bytes::from_static(b"b"))]);
@@ -564,22 +585,10 @@ fn a_second_watch_joins_a_live_stream_without_disturbing_the_first() {
     // The pane stays wanted until its last watch leaves.
     hub.send(first, json!({"type": "unwatch", "data": {"watch": 1}}));
     hub.settle();
-    assert!(
-        !hub.lines(client)
-            .iter()
-            .any(|line| line.contains(":pause'"))
-    );
+    assert!(!hub.lines(client).contains(&release(0)));
     hub.send(second, json!({"type": "unwatch", "data": {"watch": 5}}));
     hub.settle();
-    let tail = &hub.lines(client)[hub.lines(client).len() - 3..];
-    assert_eq!(
-        tail,
-        [
-            "refresh-client -A '%0:pause'",
-            "refresh-client -C '@0:'",
-            "refresh-client -B 'w0'"
-        ]
-    );
+    assert!(hub.lines(client).ends_with(&let_go_of_window_0()));
     // The client lingers, then closes.
     hub.advance(Duration::from_secs(16));
     assert!(hub.clients[&client].closed);
@@ -597,10 +606,7 @@ fn a_resize_votes_and_a_new_pane_size_breaks_the_stream() {
         json!({"type": "resize", "data": {"watch": 1, "size": {"cols": 1000, "rows": 2}}}),
     );
     // Clamped to 500×5.
-    assert_eq!(
-        hub.lines(client).last().map(String::as_str),
-        Some("refresh-client -C '@0:500x5'")
-    );
+    assert_eq!(hub.lines(client).last(), Some(&vote(0, 500, 5)));
     hub.settle();
     // A layout repeating the pane's size is no break.
     hub.feed(
@@ -626,7 +632,7 @@ fn an_active_pane_change_during_a_snapshot_forgets_it_and_snapshots_the_new_pane
     let conn = hub.connect();
     hub.watch(conn, 1, 0);
     // Bind, but leave the first snapshot unanswered.
-    hub.settle_until(|line| line.starts_with("refresh-client -A '%0:continue'"));
+    hub.settle_until(|line| line == snapshot(0));
     let client = hub.client(0);
     hub.take(conn);
     hub.add_window(0, 0, 1);
@@ -635,12 +641,7 @@ fn an_active_pane_change_during_a_snapshot_forgets_it_and_snapshots_the_new_pane
     hub.settle();
     // Only the new pane's snapshot reaches the watch.
     assert_eq!(hub.take(conn), [Got::Snapshot(1, size(80, 24))]);
-    let lines = hub.lines(client);
-    assert!(
-        lines
-            .iter()
-            .any(|line| line == "refresh-client -A '%0:pause'")
-    );
+    assert!(hub.lines(client).contains(&release(0)));
     hub.output(client, 1, "new");
     assert_eq!(hub.take(conn), [Got::Output(1, Bytes::from_static(b"new"))]);
 }
@@ -672,11 +673,8 @@ fn a_moved_window_rehomes_its_watch_with_a_fresh_snapshot() {
         hub.take(conn),
         [Got::Output(1, Bytes::from_static(b"live"))]
     );
-    let old_lines = hub.lines(old).join("\n");
-    assert!(
-        old_lines.contains("refresh-client -C '@0:'")
-            && old_lines.contains("refresh-client -B 'w0'")
-    );
+    let [_, clear_vote, unsubscribe] = let_go_of_window_0();
+    assert!(hub.lines(old).contains(&clear_vote) && hub.lines(old).contains(&unsubscribe));
     hub.advance(Duration::from_secs(16));
     assert!(hub.clients[&old].closed);
     assert!(!hub.clients[&new].closed);
@@ -824,8 +822,8 @@ fn a_linked_window_counts_only_its_owners_output() {
     hub.output(other, 0, "copy");
     assert!(hub.take(conn).is_empty());
     assert_eq!(
-        hub.clients[&other].unanswered.back().map(String::as_str),
-        Some("refresh-client -A '%0:pause'")
+        hub.clients[&other].unanswered.back(),
+        Some(&command::pause(PaneId(0)).line)
     );
     hub.output(owner, 0, "real");
     assert_eq!(
@@ -920,10 +918,7 @@ fn history_and_listings_need_a_capture_slot_and_credit() {
         json!({"type": "history", "data": {"req": 3, "watch": 1, "start": -500, "end": 0}}),
     );
     let client = hub.client(0);
-    assert_eq!(
-        hub.lines(client).last().map(String::as_str),
-        Some("capture-pane -p -e -t %0 -S -500 -E -301")
-    );
+    assert_eq!(hub.lines(client).last(), Some(&capture_history(-500, -301)));
     hub.settle();
     let chunk = hub.take_json(conn);
     assert_eq!(kind(&chunk[0]), "historyChunk");
@@ -946,10 +941,10 @@ fn history_and_listings_need_a_capture_slot_and_credit() {
     hub.row_width = 6000;
     hub.send(conn, history.clone());
     hub.settle();
-    assert!(hub.lines(client).ends_with(&[
-        "capture-pane -p -e -t %0 -S -199 -E 0".to_owned(),
-        "capture-pane -p -e -t %0 -S -199 -E -100".to_owned(),
-    ]));
+    assert!(
+        hub.lines(client)
+            .ends_with(&[capture_history(-199, 0), capture_history(-199, -100)])
+    );
     let chunk = hub.take_json(conn);
     assert_eq!(
         chunk[0]["data"]["lines"].as_array().map(Vec::len),
@@ -961,10 +956,10 @@ fn history_and_listings_need_a_capture_slot_and_credit() {
     let one = json!({"type": "history", "data": {"req": 9, "watch": 1, "start": -1, "end": 0}});
     hub.send(conn, one);
     hub.settle();
-    assert!(hub.lines(client).ends_with(&[
-        "capture-pane -p -e -t %0 -S -1 -E 0".to_owned(),
-        "capture-pane -p -e -t %0 -S -1 -E -1".to_owned(),
-    ]));
+    assert!(
+        hub.lines(client)
+            .ends_with(&[capture_history(-1, 0), capture_history(-1, -1)])
+    );
     let refused = hub.take_json(conn);
     assert_eq!(refused[0]["data"]["code"], "tmux");
     assert_eq!(refused[0]["data"]["req"], 9);
@@ -999,7 +994,7 @@ fn history_and_listings_need_a_capture_slot_and_credit() {
 }
 
 #[test]
-fn a_release_drops_its_in_flight_snapshot_and_frees_the_slot_when_answered() {
+fn a_released_snapshot_holds_its_capture_slot_until_tmux_answers_it() {
     let mut hub = Hub::new();
     hub.add_window(1, 0, 1);
     hub.add_window(2, 0, 2);
@@ -1010,12 +1005,10 @@ fn a_release_drops_its_in_flight_snapshot_and_frees_the_slot_when_answered() {
     hub.open(two, 1, 2);
     hub.take(conn);
     let client = hub.client(0);
+    let snapshots = [snapshot(0), snapshot(1), snapshot(2)];
     let continues = |hub: &Hub| {
         let lines = hub.lines(client);
-        lines
-            .iter()
-            .filter(|line| line.contains(":continue'"))
-            .count()
+        lines.iter().filter(|line| snapshots.contains(line)).count()
     };
     let resync_both = |hub: &mut Hub| {
         hub.send(one, json!({"type": "resync", "data": {"watch": 1}}));
@@ -1025,12 +1018,8 @@ fn a_release_drops_its_in_flight_snapshot_and_frees_the_slot_when_answered() {
     // A snapshot of %0 goes out; the tab closes before it lands.
     hub.send(conn, json!({"type": "resync", "data": {"watch": 1}}));
     hub.send(conn, json!({"type": "unwatch", "data": {"watch": 1}}));
-    assert!(hub.lines(client).ends_with(&[
-        "refresh-client -A '%0:pause'".to_owned(),
-        "refresh-client -C '@0:'".to_owned(),
-        "refresh-client -B 'w0'".to_owned(),
-    ]));
-    // Until the Release is answered, the dropped snapshot holds one of the two slots.
+    assert!(hub.lines(client).ends_with(&let_go_of_window_0()));
+    // Until tmux answers it, the released snapshot holds one of the two slots.
     resync_both(&mut hub);
     assert_eq!(continues(&hub), before + 2);
     hub.settle();
@@ -1038,7 +1027,7 @@ fn a_release_drops_its_in_flight_snapshot_and_frees_the_slot_when_answered() {
     assert_eq!(hub.take(one).last(), Some(&Got::Snapshot(1, size(80, 24))));
     assert_eq!(hub.take(two).last(), Some(&Got::Snapshot(1, size(80, 24))));
     assert!(hub.take(conn).is_empty(), "nothing for the released pane");
-    // Answered, the Release gave the slot back: two captures fit again.
+    // Answered `Released`, it gave the slot back: two captures fit again.
     resync_both(&mut hub);
     assert_eq!(continues(&hub), before + 5);
 }
@@ -1068,10 +1057,7 @@ fn user_requests_stop_at_the_threshold_and_maintenance_continues() {
         json!({"type": "resize", "data": {"watch": 1, "size": {"cols": 90, "rows": 30}}}),
     );
     assert_eq!(hub.clients[&client].unanswered.len(), 25);
-    assert_eq!(
-        hub.lines(client).last().map(String::as_str),
-        Some("refresh-client -C '@0:90x30'")
-    );
+    assert_eq!(hub.lines(client).last(), Some(&vote(0, 90, 30)));
 }
 
 #[test]

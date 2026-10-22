@@ -6,8 +6,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::state::{ClientPhase, Inflight, OneShotWork, Phase, State, WatchKey, WinKey, Work};
-use super::{CAPTURE_RESERVATION, CAPTURE_SLOTS, LINGER, SNAPSHOT_SPACING};
+use super::state::{
+    ClientPhase, Inflight, OneShotWork, Phase, State, WatchKey, WinKey, Window, Work,
+};
+use super::{CAPTURE_RESERVATION, CAPTURE_SLOTS, LINGER};
 use crate::tmux::{
     ClientId, MAX_IN_FLIGHT, OneShotCmd, Op, PaneId, SessionId, Size, Tag, WindowId,
 };
@@ -34,16 +36,7 @@ impl State {
 
     /// A client that owns no watched window, and none is waiting for, lingers.
     fn update_lingers(&mut self) {
-        let used: BTreeSet<ClientId> = self
-            .windows
-            .values()
-            .filter_map(|window| match window.phase {
-                Phase::Bound { owner, .. } => Some(owner),
-                Phase::Starting { client } => Some(client),
-                Phase::Locating { .. } => window.locate.on,
-                Phase::Orphaned { .. } => None,
-            })
-            .collect();
+        let used: BTreeSet<ClientId> = self.windows.values().filter_map(Window::client).collect();
         let until = self.now + LINGER;
         for (id, client) in &mut self.clients {
             if used.contains(id) {
@@ -74,23 +67,11 @@ impl State {
             return;
         };
         let shown: BTreeSet<PaneId> = owned.values().map(|(pane, _)| *pane).collect();
-        let releases: Vec<(PaneId, Vec<Tag>)> = record
+        let releases: Vec<PaneId> = record
             .ready()
             .into_iter()
             .flat_map(|tmux| tmux.wanted())
             .filter(|pane| !shown.contains(pane))
-            .map(|pane| {
-                // The Release invalidates these; they answer nothing.
-                let invalidated = record
-                    .pending
-                    .iter()
-                    .filter(
-                        |(_, work)| matches!(work, Work::Snapshot { pane: of, .. } if *of == pane),
-                    )
-                    .map(|(tag, _)| *tag)
-                    .collect();
-                (pane, invalidated)
-            })
             .collect();
         let clears: Vec<WindowId> = record
             .votes
@@ -104,20 +85,12 @@ impl State {
             .filter(|window| !owned.contains_key(window))
             .copied()
             .collect();
-        for (pane, invalidates) in releases {
+        for pane in releases {
             if !self.room(client, MAX_IN_FLIGHT) {
                 return;
             }
-            for tag in &invalidates {
-                self.forget_snapshot(client, *tag);
-            }
             let tag = self.next_tag();
-            self.request(
-                client,
-                tag,
-                Op::Release { pane },
-                Work::Release { invalidates },
-            );
+            self.request(client, tag, Op::Release { pane }, Work::Maintenance);
         }
         for window in clears {
             if !self.room(client, MAX_IN_FLIGHT) {
@@ -141,30 +114,6 @@ impl State {
         }
     }
 
-    /// A snapshot tag a Release is about to invalidate: if a stream still waits for it,
-    /// it stops waiting.
-    fn forget_snapshot(&mut self, client: ClientId, tag: Tag) {
-        let Some(Work::Snapshot {
-            window: Some(key), ..
-        }) = self
-            .clients
-            .get(&client)
-            .and_then(|record| record.pending.get(&tag))
-        else {
-            return;
-        };
-        let key = *key;
-        let inflight = self.windows.get_mut(&key).and_then(|window| {
-            window
-                .stream
-                .inflight
-                .take_if(|inflight| inflight.tag == tag)
-        });
-        if let Some(inflight) = inflight {
-            self.abandon(inflight);
-        }
-    }
-
     /// Locates on the window's owner (or the client it is to bind to), else on any
     /// ready client of its endpoint, else as the one-shot.
     fn locates(&mut self) {
@@ -172,13 +121,7 @@ impl State {
             .windows
             .iter()
             .filter(|(_, window)| window.locate.needed && window.locate.in_flight.is_none())
-            .map(|(key, window)| {
-                let owner = match window.phase {
-                    Phase::Bound { owner, .. } => Some(owner),
-                    _ => None,
-                };
-                (*key, window.locate.on.or(owner))
-            })
+            .map(|(key, window)| (*key, window.client()))
             .collect();
         for (key, target) in needed {
             let runner = match target {
@@ -324,11 +267,7 @@ impl State {
                     .get(&watch.conn)
                     .and_then(|conn| conn.watches.get(&watch.watch))
                     .is_some_and(|state| {
-                        state.awaiting
-                            && (!state.starved
-                                || state
-                                    .last_snapshot
-                                    .is_none_or(|at| self.now >= at + SNAPSHOT_SPACING))
+                        state.awaiting && state.spaced_until().is_none_or(|at| self.now >= at)
                     });
                 if eligible && self.can_reserve(watch.conn, CAPTURE_RESERVATION) {
                     self.reserve(watch.conn, CAPTURE_RESERVATION);
@@ -340,16 +279,9 @@ impl State {
             }
             let tag = self.next_tag();
             if let Some(window) = self.windows.get_mut(&key) {
-                window.stream.inflight = Some(Inflight {
-                    tag,
-                    client: owner,
-                    reserved,
-                });
+                window.stream.inflight = Some(Inflight { tag, reserved });
             }
-            let work = Work::Snapshot {
-                window: Some(key),
-                pane,
-            };
+            let work = Work::Snapshot { window: key };
             self.request(owner, tag, Op::Snapshot { pane }, work);
             slots -= 1;
         }

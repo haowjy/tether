@@ -5,8 +5,12 @@ Pure: no process, filesystem, clock or shared state, except the two I/O files,
 `mod.rs` builds, never runs, the one `tmux -u -N` invocation both use. `Session` is the
 control client as a state machine and owns reply matching, wanted panes, pauses in
 flight and the in-flight cap; `command.rs` is the only place tmux command text is built,
-control-client lines and one-shot arguments alike. Unknown protocol lines are
+control-client lines and one-shot arguments alike; the formats it asks tmux to print
+live in `reply.rs` beside their parsers. Unknown protocol lines are
 non-fatal. Never log raw pane output or reply bodies.
+
+`fake.rs` is test support for faking a tmux server (the hub's tests use it): it reads
+the command text `command.rs` writes, so change the two together.
 
 Tests replay recorded tmux streams and require `Session` to write exactly the recorded
 lines (`.in`), so any change to command text needs the fixtures re-recorded:

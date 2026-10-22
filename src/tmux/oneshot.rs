@@ -2,18 +2,14 @@
 //! Locates when no control client is ready, and new windows and sessions. Each is one
 //! short process that never attaches, killed at the timeout.
 
-use std::collections::BTreeSet;
 use std::process::ExitStatus;
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 use tokio::process::{ChildStderr, ChildStdout};
 
-use super::session::{MAX_REPLY, parse_location, parse_server, parse_session_location};
-use super::{
-    Created, Endpoint, ListedSession, ListedWindow, Listing, OneShotCmd, Reply, SessionId,
-    TmuxError, TmuxVersion, WindowId, command,
-};
+use super::session::MAX_REPLY;
+use super::{Endpoint, OneShotCmd, Reply, TmuxError, command, reply};
 
 /// How long a one-shot may run before it is killed.
 pub const TIMEOUT: Duration = Duration::from_secs(2);
@@ -46,13 +42,13 @@ pub async fn run(endpoint: &Endpoint, cmd: &OneShotCmd) -> Result<Reply, TmuxErr
         .next()
         .unwrap_or_default();
     match cmd {
-        OneShotCmd::List => listing(&stdout).map(Reply::Listing),
-        OneShotCmd::Locate { .. } => parse_location(first_line).map(Reply::Location),
+        OneShotCmd::List => reply::listing(&stdout).map(Reply::Listing),
+        OneShotCmd::Locate { .. } => reply::location(first_line).map(Reply::Location),
         OneShotCmd::LocateSession { .. } => {
-            parse_session_location(first_line).map(Reply::SessionLocation)
+            reply::session_location(first_line).map(Reply::SessionLocation)
         }
         OneShotCmd::NewWindow { .. } | OneShotCmd::NewSession { .. } => {
-            created(first_line).map(Reply::Created)
+            reply::created(first_line).map(Reply::Created)
         }
     }
     .ok_or(TmuxError::BadReply)
@@ -105,74 +101,4 @@ fn failure(stderr: &[u8], status: ExitStatus) -> TmuxError {
     } else {
         TmuxError::Command(message)
     }
-}
-
-/// `pid start_time session_id window_id`.
-fn created(row: &[u8]) -> Option<Created> {
-    let row = std::str::from_utf8(row).ok()?;
-    let [pid, start_time, session, window] = row.split('\t').collect::<Vec<_>>()[..] else {
-        return None;
-    };
-    Some(Created {
-        server: parse_server(pid, start_time)?,
-        session: SessionId::parse(session.as_bytes())?,
-        window: WindowId::parse(window.as_bytes())?,
-    })
-}
-
-/// The server line, then a line per client, then a line per window, sessions in order
-/// (`command::oneshot`). A line that fits neither shape comes from a window name with a
-/// line break in it, and is skipped.
-fn listing(stdout: &[u8]) -> Option<Listing> {
-    let text = String::from_utf8_lossy(stdout);
-    let mut lines = text.split('\n');
-    let [version, pid, start_time] = lines.next()?.split('\t').collect::<Vec<_>>()[..] else {
-        return None;
-    };
-    let mut listing = Listing {
-        server: parse_server(pid, start_time)?,
-        version: TmuxVersion::parse(version),
-        sessions: Vec::new(),
-    };
-    let mut attached = BTreeSet::new();
-    for line in lines {
-        match line.splitn(7, '\t').collect::<Vec<_>>()[..] {
-            [session, "0"] if listing.sessions.is_empty() => {
-                attached.extend(SessionId::parse(session.as_bytes()));
-            }
-            [session, window, index, active, activity, session_name, name] => {
-                let (Some(session), Some(id), Ok(index), Ok(activity)) = (
-                    SessionId::parse(session.as_bytes()),
-                    WindowId::parse(window.as_bytes()),
-                    index.parse(),
-                    activity.parse(),
-                ) else {
-                    continue;
-                };
-                if listing
-                    .sessions
-                    .last()
-                    .is_none_or(|last| last.id != session)
-                {
-                    listing.sessions.push(ListedSession {
-                        id: session,
-                        name: session_name.to_owned(),
-                        attached_elsewhere: attached.contains(&session),
-                        windows: Vec::new(),
-                    });
-                }
-                if let Some(last) = listing.sessions.last_mut() {
-                    last.windows.push(ListedWindow {
-                        id,
-                        index,
-                        name: name.to_owned(),
-                        active: active == "1",
-                        activity,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-    Some(listing)
 }

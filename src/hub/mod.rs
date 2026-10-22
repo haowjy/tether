@@ -14,12 +14,15 @@ use tokio::task::JoinHandle;
 use crate::proto::{self, ClientMsg, Encoded};
 use crate::tmux::{Endpoint, Reply, Tag, TmuxError};
 
+mod credit;
+mod names;
 mod outbox;
 mod owners;
 mod reconcile;
 mod requests;
 mod run;
 mod state;
+mod time;
 
 pub use outbox::{Frame, Next, Outbox};
 pub use state::{Effect, Input, State};

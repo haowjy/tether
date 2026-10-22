@@ -9,8 +9,8 @@ use super::command::{self, Group};
 use super::parse::{Line, Notification, NotificationKind, Parser};
 use super::snapshot::{self, Rows};
 use super::{
-    Event, Found, Location, Op, PaneId, Reply, ServerInstance, SessionError, SessionId,
-    SessionLocation, Size, Tag, TmuxError, TmuxVersion, WindowId, layout,
+    Event, Op, PaneId, Reply, ServerInstance, SessionError, Tag, TmuxError, TmuxVersion, WindowId,
+    layout, reply,
 };
 
 /// Groups written and not yet answered, at most. The pump's line channel is this deep.
@@ -100,7 +100,8 @@ enum Request {
         pane: PaneId,
         group: Group,
         attempt: u8,
-        /// A `Release` of the pane was requested after this attempt went out.
+        /// A `Release` of the pane was requested after this attempt went out: it is
+        /// answered `Released`.
         released: bool,
     },
     Release {
@@ -422,10 +423,11 @@ impl Session {
     }
 
     fn answered(&mut self, tag: Tag, request: Request, done: Outcome, step: &mut Step) {
-        // The hub dropped the tag when it released the pane (§4.4), and a retry's
-        // `continue` would resume the pane it just paused.
+        // Never retried, torn or not: a retry's `continue` would resume the pane the
+        // Release paused.
         if matches!(request, Request::Snapshot { released: true, .. }) {
-            return;
+            let result = Err(TmuxError::Released);
+            return step.events.push(Event::Done { tag, result });
         }
         let first_row = |replies: &[Rows]| replies.first()?.first().cloned();
         let paste = matches!(request, Request::Paste);
@@ -474,11 +476,11 @@ impl Session {
                     }
                 }
                 Request::Locate => first_row(&done.replies)
-                    .and_then(|row| parse_location(&row))
+                    .and_then(|row| reply::location(&row))
                     .map(Reply::Location)
                     .ok_or(TmuxError::BadReply),
                 Request::LocateSession => first_row(&done.replies)
-                    .and_then(|row| parse_session_location(&row))
+                    .and_then(|row| reply::session_location(&row))
                     .map(Reply::SessionLocation)
                     .ok_or(TmuxError::BadReply),
                 Request::History => Ok(Reply::History(
@@ -500,7 +502,7 @@ impl Session {
     fn started(&mut self, done: Outcome, step: &mut Step) {
         let row = done.replies.first().and_then(|rows| rows.first());
         let parsed = match (done.failure, done.too_large, row) {
-            (None, false, Some(row)) => parse_startup(row),
+            (None, false, Some(row)) => reply::startup(row),
             _ => None,
         };
         let Some((version, server, size)) = parsed else {
@@ -573,70 +575,6 @@ impl Pending {
         self.too_large = true;
         self.replies.iter_mut().for_each(Vec::clear);
     }
-}
-
-fn tab_fields(row: &[u8]) -> Option<Vec<&str>> {
-    Some(std::str::from_utf8(row).ok()?.split('\t').collect())
-}
-
-pub(super) fn parse_server(pid: &str, start_time: &str) -> Option<ServerInstance> {
-    Some(ServerInstance {
-        pid: pid.parse().ok()?,
-        start_time: start_time.parse().ok()?,
-    })
-}
-
-fn parse_size(cols: &str, rows: &str) -> Option<Size> {
-    Some(Size {
-        cols: cols.parse().ok()?,
-        rows: rows.parse().ok()?,
-    })
-}
-
-/// `version pid start_time window_width window_height`.
-fn parse_startup(row: &[u8]) -> Option<(TmuxVersion, ServerInstance, Size)> {
-    let [version, pid, start_time, cols, rows] = tab_fields(row)?[..] else {
-        return None;
-    };
-    Some((
-        TmuxVersion::parse(version),
-        parse_server(pid, start_time)?,
-        parse_size(cols, rows)?,
-    ))
-}
-
-/// `pid start_time session_id window_id pane_id pane_width pane_height`; the target
-/// fields are empty for a window that is gone.
-pub(super) fn parse_location(row: &[u8]) -> Option<Location> {
-    let [pid, start_time, session, _window, pane, cols, rows] = tab_fields(row)?[..] else {
-        return None;
-    };
-    let server = parse_server(pid, start_time)?;
-    if session.is_empty() {
-        return Some(Location {
-            server,
-            found: None,
-        });
-    }
-    Some(Location {
-        server,
-        found: Some(Found {
-            session: SessionId::parse(session.as_bytes())?,
-            pane: PaneId::parse(pane.as_bytes())?,
-            size: parse_size(cols, rows)?,
-        }),
-    })
-}
-
-/// `pid start_time session_id`, the id empty for a session that is gone.
-pub(super) fn parse_session_location(row: &[u8]) -> Option<SessionLocation> {
-    let [pid, start_time, session] = tab_fields(row)?[..] else {
-        return None;
-    };
-    Some(SessionLocation {
-        server: parse_server(pid, start_time)?,
-        exists: !session.is_empty(),
-    })
 }
 
 #[cfg(test)]

@@ -5,15 +5,18 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::str::FromStr;
 
 use bytes::Bytes;
 use thiserror::Error;
 
 pub mod command;
+pub mod fake;
 pub mod layout;
 pub mod oneshot;
 pub mod parse;
 pub mod pump;
+mod reply;
 pub mod session;
 pub mod snapshot;
 
@@ -134,11 +137,36 @@ pub struct ServerInstance {
     pub start_time: u64,
 }
 
+impl ServerInstance {
+    /// From tmux's `#{pid}` and `#{start_time}`.
+    fn from_fields(pid: &str, start_time: &str) -> Option<Self> {
+        Some(Self {
+            pid: pid.parse().ok()?,
+            start_time: start_time.parse().ok()?,
+        })
+    }
+}
+
 impl fmt::Display for ServerInstance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}-{}", self.pid, self.start_time)
     }
 }
+
+impl FromStr for ServerInstance {
+    type Err = ParseServerInstanceError;
+
+    /// The `Display` form, `"<pid>-<start_time>"`.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.split_once('-')
+            .and_then(|(pid, start_time)| Self::from_fields(pid, start_time))
+            .ok_or(ParseServerInstanceError)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("not a tmux server instance")]
+pub struct ParseServerInstanceError;
 
 /// `#{version}`: an optional `name-` prefix, `MAJOR.MINOR`, an optional letter.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,7 +255,7 @@ pub enum Op {
     Snapshot {
         pane: PaneId,
     },
-    /// Unwants and pauses the pane. Its snapshots still in flight answer nothing.
+    /// Unwants and pauses the pane. Its snapshots still in flight answer `Released`.
     Release {
         pane: PaneId,
     },
@@ -431,6 +459,10 @@ pub enum TmuxError {
     /// The group's replies, or a one-shot's output, exceeded the reply cap.
     #[error("reply too large")]
     TooLarge,
+    /// A `Release` of the snapshot's pane went out after the snapshot: its answer is
+    /// dropped, and it isn't sent again.
+    #[error("pane released")]
+    Released,
     /// The request can't be expressed as a safe command.
     #[error("bad request: {0}")]
     BadRequest(&'static str),

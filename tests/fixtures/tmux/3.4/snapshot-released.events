@@ -1,5 +1,6 @@
-ready server=87673-1792644901 version=3.4
+ready server=1479933-1792658865 version=3.4
 layout @0 %0:80x24
 window-renamed @0 "sleep"
+done tag=1 error Released
 done tag=2 ok
 window-renamed @0 "sh"

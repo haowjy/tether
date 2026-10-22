@@ -7,8 +7,6 @@
 #[path = "support/tmux_server.rs"]
 mod tmux_server;
 
-use std::env;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -16,25 +14,11 @@ use serde_json::{Value, json};
 use tether::hub::{self, ConnId, Endpoints, FromConn, HubHandle, Next, Outbox, ToConn};
 use tether::proto::frames::{self, Frame as Binary};
 use tether::proto::{ClientMsg, Size};
-use tokio::sync::{Mutex, MutexGuard, mpsc};
+use tokio::sync::mpsc;
 
-use tmux_server::Server;
+use tmux_server::{Server, setup};
 
 const WAIT: Duration = Duration::from_secs(10);
-
-static SERIAL: Mutex<()> = Mutex::const_new(());
-
-async fn setup(name: &str) -> Option<(MutexGuard<'static, ()>, Server)> {
-    if env::var_os("TETHER_TMUX_TESTS").is_none_or(|value| value != "1") {
-        eprintln!("skipped: set TETHER_TMUX_TESTS=1 to run against a real tmux");
-        return None;
-    }
-    let serial = SERIAL.lock().await;
-    let tmux = env::var_os("TETHER_TMUX").map_or_else(|| PathBuf::from("tmux"), PathBuf::from);
-    let socket = format!("tether-hub-{}-{name}", std::process::id());
-    let server = Server::start(&tmux, socket).expect("start a private tmux server");
-    Some((serial, server))
-}
 
 /// `"main:<pid>-<start_time>"` for the server.
 fn server_name(server: &Server) -> String {

@@ -16,20 +16,18 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use tether::hub::INBOX;
 use tether::tmux::{
     ClientId, Created, Endpoint, Event, Found, Location, OneShotCmd, Op, PaneId, PumpMsg, Reply,
     ServerInstance, Session, SessionId, SessionLocation, Size, Socket, Step, Tag, TmuxError,
     WindowId, oneshot, pump,
 };
 use tokio::sync::mpsc::{self, error::TrySendError};
-use tokio::sync::{Mutex, MutexGuard};
 use tokio::task::JoinHandle;
 
 use terminal::{look, terminal};
-use tmux_server::{SESSION, Server};
+use tmux_server::{SESSION, Server, setup, socket, tmux};
 
-/// The hub's pump channel (daemon-core.md §6).
-const INBOX: usize = 128;
 const WAIT: Duration = Duration::from_secs(10);
 const QUIET: Duration = Duration::from_millis(150);
 /// Snapshots taken under each flood.
@@ -37,28 +35,6 @@ const SNAPSHOTS: usize = 200;
 /// Every this many snapshots, one is fed all the output after it, not only the output
 /// up to the next snapshot.
 const SAMPLE: usize = 25;
-
-static SERIAL: Mutex<()> = Mutex::const_new(());
-
-fn tmux() -> PathBuf {
-    env::var_os("TETHER_TMUX").map_or_else(|| PathBuf::from("tmux"), PathBuf::from)
-}
-
-fn socket(name: &str) -> String {
-    format!("tether-test-{}-{name}", std::process::id())
-}
-
-/// A private server, or `None` when real-tmux tests are off; the guard runs the tests
-/// one at a time.
-async fn setup(name: &str) -> Option<(MutexGuard<'static, ()>, Server)> {
-    if env::var_os("TETHER_TMUX_TESTS").is_none_or(|value| value != "1") {
-        eprintln!("skipped: set TETHER_TMUX_TESTS=1 to run against a real tmux");
-        return None;
-    }
-    let serial = SERIAL.lock().await;
-    let server = Server::start(&tmux(), socket(name)).expect("start a private tmux server");
-    Some((serial, server))
-}
 
 /// The hub's side of one control client: a `Session` fed by the real pump.
 struct Client {

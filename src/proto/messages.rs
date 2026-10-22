@@ -253,7 +253,8 @@ pub enum ServerMsg {
         window: WindowRef,
         name: String,
     },
-    /// Refetch the listing if the session sheet is open.
+    /// The listing changed (sessions, or a window no watch is on closed or moved):
+    /// refetch it if the sheet is open, and prune tabs against it.
     SessionsChanged,
     /// The session sheet; `tmux` is null when no tmux server is running.
     Sessions {

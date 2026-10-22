@@ -4,9 +4,10 @@
 
 use std::collections::BTreeSet;
 
+use super::names::cut;
 use super::state::{
     Effect, Locate, MAIN, OneShotWork, Phase, State, Stream, Watch, WatchKey, WinKey, Window, Work,
-    clamp, cut,
+    clamp,
 };
 use super::{
     CAPTURE_RESERVATION, CAPTURE_SLOTS, ConnId, FromConn, HISTORY_ROWS, LISTING_RESERVATION,
@@ -156,7 +157,10 @@ impl State {
         let entry = self.windows.entry(key).or_insert_with(|| Window {
             watches: BTreeSet::new(),
             vote: size,
-            phase: Phase::Locating { after: None },
+            phase: Phase::Locating {
+                after: None,
+                on: None,
+            },
             locate: Locate {
                 needed: true,
                 ..Locate::default()

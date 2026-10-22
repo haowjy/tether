@@ -136,21 +136,13 @@ impl Store {
     /// The file as it is now, with no lock: writes replace it whole.
     pub fn read(&self) -> Result<AuthFile, StoreError> {
         let path = self.dir.join(AUTH);
-        match fs::read_to_string(&path) {
-            Ok(text) => parse(&path, &text),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AuthFile::default()),
-            Err(error) => Err(io_at(&path)(error)),
-        }
+        loaded(&path, fs::read_to_string(&path))
     }
 
     /// `read` without blocking the runtime, for each request's check.
     pub async fn read_async(&self) -> Result<AuthFile, StoreError> {
         let path = self.dir.join(AUTH);
-        match tokio::fs::read_to_string(&path).await {
-            Ok(text) => parse(&path, &text),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AuthFile::default()),
-            Err(error) => Err(io_at(&path)(error)),
-        }
+        loaded(&path, tokio::fs::read_to_string(&path).await)
     }
 
     /// `tether enroll`: a new pending code, replacing any earlier one.
@@ -306,6 +298,15 @@ fn clean_name(name: &str) -> String {
     match name.trim() {
         "" => "device".to_owned(),
         name => name.to_owned(),
+    }
+}
+
+/// `auth.toml` as read: a missing file is an empty one.
+fn loaded(path: &Path, text: io::Result<String>) -> Result<AuthFile, StoreError> {
+    match text {
+        Ok(text) => parse(path, &text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AuthFile::default()),
+        Err(error) => Err(io_at(path)(error)),
     }
 }
 

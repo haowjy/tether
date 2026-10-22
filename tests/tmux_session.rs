@@ -367,16 +367,37 @@ fn a_snapshot_whose_state_changed_mid_list_is_sent_again() {
 }
 
 /// A Release made while a snapshot of its pane is in flight invalidates it: the
-/// snapshot answers nothing, and no `continue` follows the Release's pause, so the
-/// pane stays paused.
+/// snapshot answers `Released`, before the Release, and no `continue` follows the
+/// Release's pause, so the pane stays paused.
 #[test]
 fn a_torn_snapshot_released_before_its_reply_is_not_sent_again() {
     let replay = whole("snapshot-released");
-    assert!(!replay.events.iter().any(|event| matches!(
-        event,
-        Event::Done { tag: Tag(1), .. } | Event::Snapshot { tag: Tag(1), .. }
-    )));
-    assert_eq!(done(&replay, 2), &Ok(Reply::Ok));
+    let answers: Vec<&Event> = replay
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                Event::Done {
+                    tag: Tag(1 | 2),
+                    ..
+                } | Event::Snapshot { tag: Tag(1), .. }
+            )
+        })
+        .collect();
+    assert_eq!(
+        answers,
+        [
+            &Event::Done {
+                tag: Tag(1),
+                result: Err(TmuxError::Released)
+            },
+            &Event::Done {
+                tag: Tag(2),
+                result: Ok(Reply::Ok)
+            },
+        ]
+    );
     let release = replay
         .lines
         .iter()

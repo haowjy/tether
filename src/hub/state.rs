@@ -6,7 +6,8 @@
 //!
 //! This file holds the model, tmux's events and the pane streams; owners.rs decides
 //! who owns each window and runs the control clients' lives; requests.rs answers the
-//! connections.
+//! connections; credit.rs keeps their credit and sends to them; time.rs handles what
+//! waits on time; names.rs spells servers, windows and sessions for control JSON.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
@@ -14,11 +15,11 @@ use std::time::Instant;
 use bytes::Bytes;
 use tracing::warn;
 
+use super::names::cut;
 use super::{
-    CAPTURE_RESERVATION, COLS, CREDIT, ConnId, Endpoints, FromConn, NAME_LIMIT, OVERDRAFT,
-    PasteFile, REPLY_TIMEOUT, ROWS, SNAPSHOT_SPACING, ToConn, charge,
+    CAPTURE_RESERVATION, COLS, ConnId, Endpoints, FromConn, PasteFile, ROWS, ToConn, charge,
 };
-use crate::proto::{self, Encoded, ErrorCode, ServerMsg, SessionRef, WatchEndReason, WindowRef};
+use crate::proto::{self, ErrorCode, ServerMsg, WatchEndReason};
 use crate::tmux::{
     ClientId, Endpoint, Event, OneShotCmd, Op, PaneId, PumpMsg, Reply, ServerInstance, Session,
     SessionId, Size, Step, Tag, TmuxError, WindowId,
@@ -90,6 +91,9 @@ pub struct State {
     /// only carry output delivered as it came, the hot path, don't, so `reconcile`
     /// skips them.
     pub(super) dirty: bool,
+    /// tmux reported a change the session listing shows: `sessionsChanged` goes out
+    /// once this input is handled, however many changes it brought.
+    pub(super) relist: bool,
     pub(super) next_tag: u64,
     pub(super) next_client: u64,
 }
@@ -129,10 +133,14 @@ pub(super) struct Window {
 
 pub(super) enum Phase {
     /// Being found. `after` is how its owner ended, applied by the first answer that
-    /// finds the window still in that owner's session.
-    Locating { after: Option<Exit> },
-    /// Found in a session whose control client is starting (or waits to respawn).
-    Starting { client: ClientId },
+    /// finds the window still in that owner's session. `on` is the control client
+    /// whose session it was found in, which may still be starting or waiting to
+    /// respawn: the Locate runs on it, since the window binds only from an answer its
+    /// owner gave, which is ordered with the owner's notifications.
+    Locating {
+        after: Option<Exit>,
+        on: Option<ClientId>,
+    },
     /// The owner's output, layout, active pane and cwd are the window's.
     Bound {
         owner: ClientId,
@@ -147,9 +155,6 @@ pub(super) enum Phase {
 #[derive(Default)]
 pub(super) struct Locate {
     pub(super) needed: bool,
-    /// The control client it must run on: the window binds only from an answer its
-    /// owner gave, which is ordered with the owner's notifications.
-    pub(super) on: Option<ClientId>,
     pub(super) in_flight: Option<Tag>,
 }
 
@@ -163,7 +168,6 @@ pub(super) struct Stream {
 
 pub(super) struct Inflight {
     pub(super) tag: Tag,
-    pub(super) client: ClientId,
     pub(super) reserved: BTreeSet<WatchKey>,
 }
 
@@ -171,7 +175,9 @@ pub(super) struct Inflight {
 pub(super) struct Conn {
     /// Charged bytes not yet returned.
     pub(super) outstanding: u64,
-    /// Credit held for captures and listings in flight.
+    /// Credit held for captures and listings in flight: a counter, since deriving it
+    /// on the output path costs too much. Debug builds check it against the work in
+    /// flight after every input.
     pub(super) reserved: u64,
     pub(super) watches: BTreeMap<u32, Watch>,
 }
@@ -228,15 +234,10 @@ pub(super) enum Work {
     SessionCheck {
         exited: ClientId,
     },
-    /// `window` is `None` once the hub stopped caring; the tag still holds a capture
-    /// slot until tmux answers.
+    /// Holds a capture slot until tmux answers, even once the window's stream no
+    /// longer waits for this tag.
     Snapshot {
-        window: Option<WinKey>,
-        pane: PaneId,
-    },
-    /// Its answer also ends the snapshots it invalidated, which answer nothing.
-    Release {
-        invalidates: Vec<Tag>,
+        window: WinKey,
     },
     History {
         conn: ConnId,
@@ -312,6 +313,7 @@ impl State {
             now,
             effects: Vec::new(),
             dirty: false,
+            relist: false,
             next_tag: 1,
             next_client: 1,
         }
@@ -344,36 +346,12 @@ impl State {
         if self.dirty {
             self.reconcile();
         }
+        if std::mem::take(&mut self.relist) {
+            self.broadcast(&ServerMsg::SessionsChanged);
+        }
+        #[cfg(debug_assertions)]
+        self.check_reservations();
         std::mem::take(&mut self.effects)
-    }
-
-    /// When `handle(Input::Tick, …)` is next due: a respawn, a linger's end, a reply
-    /// deadline, a starved watch's snapshot spacing. `None`: nothing is waiting on time.
-    /// A deadline is reported until an input comes at or after it, which handles it,
-    /// so one that can't be acted on then (no credit, no capture slot) can't spin.
-    pub fn next_deadline(&self) -> Option<Instant> {
-        let clients = self.clients.values().flat_map(|client| {
-            let respawn = match client.phase {
-                ClientPhase::Delayed { until } => Some(until),
-                _ => None,
-            };
-            let reply = client
-                .tmux()
-                .filter(|tmux| tmux.in_flight() > 0)
-                .map(|_| client.progress + REPLY_TIMEOUT);
-            [respawn, client.linger, reply]
-        });
-        let spacing = self.conns.values().flat_map(|conn| {
-            conn.watches
-                .values()
-                .filter(|watch| watch.awaiting && watch.starved)
-                .map(|watch| watch.last_snapshot.map(|at| at + SNAPSHOT_SPACING))
-        });
-        clients
-            .chain(spacing)
-            .flatten()
-            .filter(|deadline| *deadline > self.now)
-            .min()
     }
 
     // --- tmux ---
@@ -515,14 +493,21 @@ impl State {
                     return;
                 };
                 let (endpoint, server) = (record.endpoint, record.server());
+                let mut held = false;
                 for (key, watched) in &mut self.windows {
                     if key.endpoint == endpoint
                         && Some(key.server) == server
                         && key.window == window
-                        && matches!(watched.phase, Phase::Bound { .. } | Phase::Locating { .. })
                     {
-                        watched.locate.needed = true;
+                        held = true;
+                        if matches!(watched.phase, Phase::Bound { .. } | Phase::Locating { .. }) {
+                            watched.locate.needed = true;
+                        }
                     }
+                }
+                // No watch will find out: tabs off screen learn it from the listing.
+                if !held && self.reporter(client).is_some() {
+                    self.relist = true;
                 }
             }
             Event::WindowRenamed { window, name } => {
@@ -536,7 +521,7 @@ impl State {
             }
             Event::SessionsChanged => {
                 if self.reporter(client).is_some() {
-                    self.broadcast(&ServerMsg::SessionsChanged);
+                    self.relist = true;
                 }
             }
             Event::Fatal(error) => {
@@ -587,30 +572,8 @@ impl State {
         }
     }
 
-    /// Credit output may use: while one of the connection's watches waits for a
-    /// snapshot it hasn't reserved yet, output fits only above that reservation.
-    pub(super) fn output_room(&self, conn: ConnId) -> u64 {
-        let Some(state) = self.conns.get(&conn) else {
-            return 0;
-        };
-        let waiting = state.watches.iter().any(|(id, watch)| {
-            watch.awaiting && !self.reserved_for(WatchKey { conn, watch: *id }, watch.window)
-        });
-        let hold = if waiting { CAPTURE_RESERVATION } else { 0 };
-        CREDIT.saturating_sub(state.outstanding + state.reserved + hold)
-    }
-
-    pub(super) fn reserved_for(&self, watch: WatchKey, key: WinKey) -> bool {
-        self.windows
-            .get(&key)
-            .and_then(|window| window.stream.inflight.as_ref())
-            .is_some_and(|inflight| inflight.reserved.contains(&watch))
-    }
-
     pub(super) fn snapshot(&mut self, client: ClientId, tag: Tag, size: Size, restore: Bytes) {
-        let Some(Work::Snapshot {
-            window: Some(key), ..
-        }) = self
+        let Some(Work::Snapshot { window: key }) = self
             .clients
             .get_mut(&client)
             .and_then(|record| record.pending.remove(&tag))
@@ -672,10 +635,7 @@ impl State {
         match work {
             Work::Locate { window } => self.located(window, tag, Some(client), result),
             Work::SessionCheck { exited } => self.checked(exited, tag, result),
-            Work::Snapshot { window, .. } => {
-                let Some(key) = window else {
-                    return;
-                };
+            Work::Snapshot { window: key } => {
                 let Some(stream) = self.windows.get_mut(&key).map(|window| &mut window.stream)
                 else {
                     return;
@@ -701,20 +661,14 @@ impl State {
                         WatchEndReason::Error,
                         Some("the pane's screen is too large to show".to_owned()),
                     ),
+                    // A stream waits only for a snapshot of a pane its owner shows,
+                    // which it doesn't release; reconcile sends another.
+                    Err(TmuxError::Released) | Ok(_) => {}
                     Err(error) => self.end_window(
                         key,
                         WatchEndReason::Error,
                         Some(cut(format!("snapshot failed: {error}"))),
                     ),
-                    Ok(_) => {}
-                }
-            }
-            Work::Release { invalidates } => {
-                // Ordered after the snapshots it invalidated, which answer nothing.
-                if let Some(record) = self.clients.get_mut(&client) {
-                    for tag in invalidates {
-                        record.pending.remove(&tag);
-                    }
                 }
             }
             Work::History {
@@ -748,8 +702,8 @@ impl State {
                         window.locate.in_flight = None;
                         window.locate.needed = true;
                     }
-                    if window.locate.on == Some(client) {
-                        window.locate.on = None;
+                    if let Phase::Locating { on, .. } = &mut window.phase {
+                        on.take_if(|on| *on == client);
                     }
                 }
             }
@@ -758,9 +712,7 @@ impl State {
                     check.in_flight = check.in_flight.filter(|current| *current != tag);
                 }
             }
-            Work::Snapshot {
-                window: Some(key), ..
-            } => {
+            Work::Snapshot { window: key } => {
                 let inflight = self.windows.get_mut(&key).and_then(|window| {
                     window
                         .stream
@@ -784,10 +736,7 @@ impl State {
                 );
             }
             Work::Paste { file, .. } => self.effects.push(Effect::RemoveFile { file }),
-            Work::Snapshot { window: None, .. }
-            | Work::Release { .. }
-            | Work::Input { .. }
-            | Work::Maintenance => {}
+            Work::Input { .. } | Work::Maintenance => {}
         }
     }
 
@@ -821,13 +770,6 @@ impl State {
     pub(super) fn abandon(&mut self, inflight: Inflight) {
         for watch in inflight.reserved {
             self.unreserve(watch.conn, CAPTURE_RESERVATION);
-        }
-        if let Some(Work::Snapshot { window, .. }) = self
-            .clients
-            .get_mut(&inflight.client)
-            .and_then(|record| record.pending.get_mut(&inflight.tag))
-        {
-            *window = None;
         }
     }
 
@@ -934,90 +876,6 @@ impl State {
         }
     }
 
-    // --- credit and sending ---
-
-    pub(super) fn can_reserve(&self, conn: ConnId, amount: u64) -> bool {
-        self.conns
-            .get(&conn)
-            .is_some_and(|state| state.outstanding + state.reserved + amount <= CREDIT)
-    }
-
-    pub(super) fn reserve(&mut self, conn: ConnId, amount: u64) {
-        if let Some(state) = self.conns.get_mut(&conn) {
-            state.reserved += amount;
-        }
-    }
-
-    pub(super) fn unreserve(&mut self, conn: ConnId, amount: u64) {
-        if let Some(state) = self.conns.get_mut(&conn) {
-            state.reserved = state.reserved.saturating_sub(amount);
-        }
-    }
-
-    pub(super) fn send(&mut self, conn: ConnId, msg: &ServerMsg, ends: Option<u32>) {
-        self.send_encoded(conn, msg.encode(), ends);
-    }
-
-    /// Control JSON is never refused; past the overdraft the connection is wedged.
-    pub(super) fn send_encoded(&mut self, conn: ConnId, json: Encoded, ends: Option<u32>) {
-        let Some(state) = self.conns.get_mut(&conn) else {
-            return;
-        };
-        state.outstanding += u64::from(charge(json.len()));
-        let wedged = state.outstanding + state.reserved > CREDIT + OVERDRAFT;
-        self.effects.push(Effect::Send {
-            conn,
-            msg: ToConn::Msg { json, ends },
-        });
-        if wedged {
-            warn!(
-                conn = conn.0,
-                "connection wedged: control messages past the overdraft"
-            );
-            self.closed(conn);
-        }
-    }
-
-    pub(super) fn broadcast(&mut self, msg: &ServerMsg) {
-        let json = msg.encode();
-        let conns: Vec<ConnId> = self.conns.keys().copied().collect();
-        for conn in conns {
-            self.send_encoded(conn, json.clone(), None);
-        }
-    }
-
-    pub(super) fn refuse(
-        &mut self,
-        conn: ConnId,
-        req: Option<u32>,
-        watch: Option<u32>,
-        code: ErrorCode,
-        message: &str,
-    ) {
-        let msg = ServerMsg::Error {
-            req,
-            watch,
-            code,
-            message: cut(message.to_owned()),
-        };
-        self.send(conn, &msg, None);
-    }
-
-    pub(super) fn refuse_tmux(
-        &mut self,
-        conn: ConnId,
-        req: Option<u32>,
-        watch: Option<u32>,
-        error: &TmuxError,
-    ) {
-        let code = match error {
-            TmuxError::BadRequest(_) => ErrorCode::BadRequest,
-            TmuxError::NoServer => ErrorCode::NoServer,
-            _ => ErrorCode::Tmux,
-        };
-        self.refuse(conn, req, watch, code, &error.to_string());
-    }
-
     // --- capacity ---
 
     /// Whether the client is ready with fewer than `limit` groups in flight.
@@ -1036,48 +894,15 @@ impl State {
             .filter(|work| matches!(work, Work::Snapshot { .. } | Work::History { .. }))
             .count()
     }
+}
 
-    // --- names ---
-
-    pub(super) fn parse_server(&self, text: &str) -> Option<(usize, ServerInstance)> {
-        let (name, instance) = text.split_once(':')?;
-        let endpoint = self
-            .endpoints
-            .iter()
-            .position(|endpoint| endpoint.name == name)?;
-        let (pid, start_time) = instance.split_once('-')?;
-        let server = ServerInstance {
-            pid: pid.parse().ok()?,
-            start_time: start_time.parse().ok()?,
-        };
-        Some((endpoint, server))
-    }
-
-    pub(super) fn server_name(&self, endpoint: usize, server: ServerInstance) -> String {
-        format!("{}:{server}", self.endpoints[endpoint].name)
-    }
-
-    pub(super) fn window_ref(
-        &self,
-        endpoint: usize,
-        server: ServerInstance,
-        window: WindowId,
-    ) -> WindowRef {
-        WindowRef {
-            server: self.server_name(endpoint, server),
-            window: window.0,
-        }
-    }
-
-    pub(super) fn session_ref(
-        &self,
-        endpoint: usize,
-        server: ServerInstance,
-        session: SessionId,
-    ) -> SessionRef {
-        SessionRef {
-            server: self.server_name(endpoint, server),
-            session: session.0,
+impl Window {
+    /// The control client the window depends on: its owner, or the one it waits for.
+    pub(super) fn client(&self) -> Option<ClientId> {
+        match self.phase {
+            Phase::Bound { owner, .. } => Some(owner),
+            Phase::Locating { on, .. } => on,
+            Phase::Orphaned { .. } => None,
         }
     }
 }
@@ -1124,17 +949,4 @@ pub(super) fn clamp(size: proto::Size) -> Size {
         cols: size.cols.clamp(*COLS.start(), *COLS.end()),
         rows: size.rows.clamp(*ROWS.start(), *ROWS.end()),
     }
-}
-
-/// tmux names and error texts are cut to `NAME_LIMIT` bytes, which bounds every
-/// control message.
-pub(super) fn cut(mut text: String) -> String {
-    if text.len() > NAME_LIMIT {
-        let mut end = NAME_LIMIT;
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        text.truncate(end);
-    }
-    text
 }

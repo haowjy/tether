@@ -566,11 +566,18 @@ fn snapshot_released(r: &mut Recorder) -> Result<()> {
     )?)?;
     let released_at = r.raw.len();
     r.pump_for(Duration::from_millis(500))?;
-    let answered = r.events[start..].iter().any(|event| {
-        matches!(event, Event::Done { tag, .. } | Event::Snapshot { tag, .. } if *tag == snapshot)
-    });
-    if answered {
-        return Err("the released snapshot was answered".into());
+    let answers: Vec<&Event> = r.events[start..]
+        .iter()
+        .filter(|event| {
+            matches!(event, Event::Done { tag, .. } | Event::Snapshot { tag, .. } if *tag == snapshot)
+        })
+        .collect();
+    let released = Event::Done {
+        tag: snapshot,
+        result: Err(TmuxError::Released),
+    };
+    if answers != [&released] {
+        return Err(format!("the released snapshot answered {answers:?}").into());
     }
     let after = &r.raw[released_at..];
     let streaming = [&b"%output %0 "[..], b"%extended-output %0 "]
