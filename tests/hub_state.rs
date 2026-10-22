@@ -808,6 +808,54 @@ fn a_killed_session_broadcasts_and_its_closed_window_too() {
 }
 
 #[test]
+fn session_changes_broadcast_once_and_only_from_the_reporter() {
+    let mut hub = Hub::new();
+    hub.add_window(1, 1, 1);
+    hub.add_window(2, 1, 2);
+    let (reporter_conn, other_conn) = (hub.connect(), hub.connect());
+    hub.open(reporter_conn, 1, 0);
+    hub.open(other_conn, 1, 1);
+    let (reporter, non_reporter) = (hub.client(0), hub.client(1));
+    hub.take(reporter_conn);
+    hub.take(other_conn);
+
+    // The unobserved window close and the session listing notification are one input.
+    hub.feed(reporter, "%window-close @2\n%sessions-changed\n");
+    assert_eq!(
+        hub.take(reporter_conn),
+        [Got::Json(json!({"type": "sessionsChanged"}))]
+    );
+    assert_eq!(
+        hub.take(other_conn),
+        [Got::Json(json!({"type": "sessionsChanged"}))]
+    );
+
+    // A client other than the endpoint's reporter must not duplicate either event.
+    hub.feed(non_reporter, "%window-close @2\n%sessions-changed\n");
+    assert!(hub.take(reporter_conn).is_empty());
+    assert!(hub.take(other_conn).is_empty());
+
+    // A watched close is resolved by Locate and reported as WindowClosed, not a relist.
+    hub.windows.remove(&0).expect("the watched fake window");
+    hub.feed(reporter, "%window-close @0\n");
+    hub.settle();
+    assert_eq!(
+        hub.take(reporter_conn),
+        [Got::Json(json!({
+            "type": "windowClosed",
+            "data": {"window": {"server": SERVER_NAME, "window": 0}}
+        }))]
+    );
+    assert_eq!(
+        hub.take(other_conn),
+        [Got::Json(json!({
+            "type": "windowClosed",
+            "data": {"window": {"server": SERVER_NAME, "window": 0}}
+        }))]
+    );
+}
+
+#[test]
 fn a_linked_window_counts_only_its_owners_output() {
     let mut hub = Hub::new();
     // @0 is linked into $0 and $1; @1 lives in $1 only.
