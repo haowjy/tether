@@ -4,17 +4,24 @@ Phone-first client for tmux on a dev server, over Tailscale. A Rust daemon bridg
 tmux control mode to an installable web app. The design and its review are in
 `docs/design/`; read them before adding a subsystem.
 
+## How work lands (initial build)
+
+tether is being built in one pass: commit straight to `main` in the primary
+checkout. No PRs, no feature branches, no worktrees. Keep each commit coherent and
+run `scripts/preflight.sh full` before pushing (the pre-push hook does it).
+
+Direct pushes to `main` never release. Cut a release only when Jimmy asks, with
+`scripts/manually-release.sh`. The PR-and-label release flow in `docs/releasing.md`
+applies once tether switches to PRs.
+
 ## Safety Rules
 
-- **Never merge a PR into `main` without explicit human approval** in the current
-  conversation. Approval for one PR does not carry to the next.
-- **Never create or push `v*` tags by hand.** CI owns them; the pre-push hook blocks it.
+- **Never create or push `v*` tags by hand.** The only tag path is
+  `scripts/manually-release.sh`, run when Jimmy asks; the pre-push hook blocks the rest.
 - **Never use `--no-verify` on git push** unless explicitly told to.
 - **Never edit generated agent directories** (`.claude/agents/`, `.claude/skills/`,
   `.codex/`, `.cursor/`, `.opencode/`, `.pi/`, `.agents/`). `meridian mars sync`
   overwrites them.
-- The primary checkout stays on `main`; do branch work in a worktree
-  (`git worktree add ../tether.worktrees/<slug> -b <branch> main`).
 
 ## Dev Commands
 
@@ -35,8 +42,5 @@ cargo run -- --version
 
 ## Releases
 
-Label-driven and CI-owned: see `docs/releasing.md`. Add a bullet under
-`CHANGELOG.md` `[Unreleased]` with each user-visible change.
-
-PRs use `.github/PULL_REQUEST_TEMPLATE.md`; fill every section and set one
-`release:*` label.
+Add a bullet under `CHANGELOG.md` `[Unreleased]` with each user-visible change;
+the release that ships it promotes the section. Mechanics: `docs/releasing.md`.
