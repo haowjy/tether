@@ -28,10 +28,15 @@ export type ClientMsg = { "type": "hello", "data": { protocol: number, client: C
   | { "type": "listSessions", "data": { req: number, } }
   | { "type": "newWindow", "data": { req: number, session: SessionRef, name?: string,
 /**
- * Checked against the file roots by the connection.
+ * Absolute and a directory, checked by the connection (fs.md "Path
+ * resolution"); not checked against the file roots.
  */
 dir?: string, } }
-  | { "type": "newSession", "data": { req: number, name?: string, dir?: string,
+  | { "type": "newSession", "data": { req: number, name?: string,
+/**
+ * As `newWindow`'s.
+ */
+dir?: string,
 /**
  * A scratch shell (after the core MVP).
  */
@@ -128,3 +133,131 @@ active: boolean,
 activity: number, };
 
 export type ErrorCode = "badRequest" | "noServer" | "tooManySessions" | "inputTooLarge" | "busy" | "tmux";
+
+/**
+ * `GET /fs/roots` and the answer to every Settings change.
+ */
+export type Roots = {
+/**
+ * The canonical `$HOME`: the picker starts here.
+ */
+home: string, roots: Array<RootStatus>, uploadsDir: RootStatus, };
+
+export type RootStatus = {
+/**
+ * As stored in `config.toml`.
+ */
+path: string,
+/**
+ * Null when the entry is missing, isn't a directory, or isn't absolute or `~/`.
+ */
+canonical: string | null, ok: boolean, };
+
+/**
+ * The body of `POST /fs/roots/add`, `/fs/roots/remove` and `/fs/uploads-dir`.
+ */
+export type PathBody = { path: string, };
+
+/**
+ * `GET /fs/list/{*path}`, and the picker's `GET /fs/dirs/{*path}`.
+ */
+export type Listing = {
+/**
+ * Canonical.
+ */
+path: string,
+/**
+ * The root it is under (the longest match), or `$HOME` for the picker.
+ */
+root: string,
+/**
+ * Null when the parent is outside every root.
+ */
+parent: string | null,
+/**
+ * Entries scanned, after the hidden and directories-only filters.
+ */
+total: number, offset: number,
+/**
+ * The directory has more entries than one scan reads.
+ */
+truncated: boolean, entries: Array<Entry>, };
+
+export type Entry = {
+/**
+ * U+FFFD in place of bytes that aren't UTF-8.
+ */
+name: string,
+/**
+ * After following a symlink.
+ */
+kind: EntryKind,
+/**
+ * The entry itself is a symlink.
+ */
+link: boolean,
+/**
+ * Files.
+ */
+size?: number,
+/**
+ * Unix seconds; absent for `broken` and in the picker.
+ */
+mtime?: number,
+/**
+ * Files: the type `/fs/raw` would send.
+ */
+mime?: string,
+/**
+ * `false` for a name that isn't UTF-8, which can't be opened; absent otherwise.
+ */
+utf8?: boolean, };
+
+export type EntryKind = "dir" | "file" | "other" | "broken";
+
+/**
+ * `201` from `POST /fs/upload`. Swift mirrors it by hand.
+ */
+export type Uploaded = {
+/**
+ * Absolute and canonical: native types it, quoted, into the tab.
+ */
+path: string, size: number, };
+
+export type CompleteRequest = {
+/**
+ * The input from its start to the cursor, as on screen.
+ */
+before: string,
+/**
+ * The input from the cursor to its end.
+ */
+after: string,
+/**
+ * Absolute; null while the tab's directory isn't known yet.
+ */
+cwd: string | null, };
+
+export type Completion = {
+/**
+ * At most 20, history first.
+ */
+chips: Array<Chip>, };
+
+export type Chip = {
+/**
+ * Typed at the cursor, verbatim: it only extends what is typed, and holds no
+ * control character.
+ */
+insert: string,
+/**
+ * What the chip shows: the whole history line, the command, carapace's display,
+ * or the file name with a `/` for a directory.
+ */
+label: string, source: ChipSource,
+/**
+ * At most 100 bytes.
+ */
+description?: string, };
+
+export type ChipSource = "history" | "command" | "carapace" | "path";

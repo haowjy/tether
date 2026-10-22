@@ -1,5 +1,5 @@
 //! `POST /fs/upload` (fs.md): the body streams into a 0600 part file in `uploads_dir`,
-//! flushed every 8 MiB, then renamed without replacing to a name the daemon chooses.
+//! flushed every 2 MiB, then renamed without replacing to a name the daemon chooses.
 //! Only the client name's extension is used. A part file is deleted on any failure, and
 //! leftovers from a daemon that died are swept at startup.
 
@@ -27,8 +27,9 @@ const IDLE: Duration = Duration::from_secs(30);
 /// Body bytes are written in chunks of this size...
 const CHUNK: usize = 64 * 1024;
 /// ...and every this many are `fdatasync`ed and their pages dropped, so the upload's
-/// dirty pages stay small on a disk the unit reaches at idle I/O priority.
-const FLUSH_EVERY: u64 = 8 << 20;
+/// dirty pages, charged to the unit and unreclaimable until written, stay small on a
+/// disk the unit reaches at idle I/O priority.
+const FLUSH_EVERY: u64 = 2 << 20;
 /// Nothing else in tether names a file like this.
 const PART_PREFIX: &str = ".tether-upload-";
 const PART_SUFFIX: &str = ".part";

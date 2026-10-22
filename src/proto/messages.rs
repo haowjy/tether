@@ -114,7 +114,8 @@ pub enum ClientMsg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         name: Option<String>,
-        /// Checked against the file roots by the connection.
+        /// Absolute and a directory, checked by the connection (fs.md "Path
+        /// resolution"); not checked against the file roots.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         dir: Option<String>,
@@ -124,6 +125,7 @@ pub enum ClientMsg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         name: Option<String>,
+        /// As `newWindow`'s.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         dir: Option<String>,

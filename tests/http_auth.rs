@@ -1,7 +1,7 @@
 //! The auth layers over a real socket (auth.md "Carrying the token", "Endpoints"):
 //! every route sits behind the Tailscale check; only the two `/auth` routes skip the
-//! device check, so every `/fs` route needs a token; a bad token on the WebSocket gets
-//! the upgrade and then close 4401.
+//! device check, so every `/fs` route and `/complete` need a token; a bad token on the
+//! WebSocket gets the upgrade and then close 4401.
 
 use std::time::{Duration, SystemTime};
 
@@ -16,8 +16,8 @@ mod daemon;
 
 use daemon::{LOGIN, WAIT, request, start};
 
-/// Every `/fs` route, with a body where it takes one.
-const FS_ROUTES: [(&str, &str, &str); 10] = [
+/// Every `/fs` route and `/complete`, with a body where it takes one.
+const DEVICE_ROUTES: [(&str, &str, &str); 11] = [
     ("GET", "/fs/roots", ""),
     ("POST", "/fs/roots/add", r#"{"path":"/tmp"}"#),
     ("POST", "/fs/roots/remove", r#"{"path":"/tmp"}"#),
@@ -28,6 +28,11 @@ const FS_ROUTES: [(&str, &str, &str); 10] = [
     ("GET", "/fs/dirs/tmp", ""),
     ("GET", "/fs/raw/etc/hostname", ""),
     ("POST", "/fs/upload?name=a.jpg", "{}"),
+    (
+        "POST",
+        "/complete",
+        r#"{"before":"ls /","after":"","cwd":null}"#,
+    ),
 ];
 
 /// Opens `/ws` with these headers and subprotocols: the upgrade's outcome.
@@ -72,7 +77,7 @@ async fn every_route_needs_the_tailscale_login() {
         ("GET", "/ws", ""),
         ("GET", "/no-such-route", ""),
     ];
-    for (method, path, body) in routes.into_iter().chain(FS_ROUTES) {
+    for (method, path, body) in routes.into_iter().chain(DEVICE_ROUTES) {
         let missing = request(port, method, path, &[], body).await;
         assert_eq!(missing.0, 403, "{method} {path} without a login");
         let stranger = [("Tailscale-User-Login", "someone@else")];
@@ -116,12 +121,13 @@ async fn only_the_auth_routes_skip_the_device_check() {
     let bearer = format!("Bearer {token}");
     let with_token = [("Tailscale-User-Login", LOGIN), ("Authorization", &bearer)];
     assert_ne!(request(port, "GET", "/ws", &with_token, "").await.0, 401);
-    // Every file route: refused by the layer without a token, reached with one.
+    // Every file route and `/complete`: refused by the layer without a token, reached
+    // with one.
     let wrong = [
         ("Tailscale-User-Login", LOGIN),
         ("Authorization", "Bearer tether_nope"),
     ];
-    for (method, path, body) in FS_ROUTES {
+    for (method, path, body) in DEVICE_ROUTES {
         for headers in [&login[..], &wrong[..]] {
             let (status, refused) = request(port, method, path, headers, body).await;
             assert_eq!(

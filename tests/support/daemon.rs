@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use tether::auth::{Auth, Store};
+use tether::complete;
 use tether::config::ConfigFile;
 use tether::http::{self, App};
 use tether::hub::{self, Endpoints};
@@ -80,6 +81,15 @@ pub async fn start(name: &str) -> Daemon {
         },
         paste_dir,
         config: ConfigFile::resolve(Some(&config)).expect("a config path"),
+        // No history, no PATH, no carapace: only paths complete.
+        complete: complete::Settings {
+            home: home.clone(),
+            history: None,
+            data_home: home.join(".local/share"),
+            path: Default::default(),
+            carapace: None,
+            scoped: false,
+        },
         home: home.clone(),
     };
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");

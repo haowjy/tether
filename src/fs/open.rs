@@ -53,6 +53,12 @@ impl Scope {
         }
     }
 
+    /// `/`: path completion lists names, never contents, in any directory Jimmy can
+    /// read (complete.md "Paths").
+    pub fn everything() -> Self {
+        Self::roots(vec![PathBuf::from("/")])
+    }
+
     /// The longest entry `path` equals or sits below, compared component by component,
     /// so `/a/repo2` is not under `/a/repo`.
     pub fn find(&self, path: &Path) -> Option<usize> {
@@ -88,7 +94,7 @@ pub fn open(scope: &Scope, path: &str, want: Want) -> Result<Opened, FsError> {
 
 /// Steps 1 to 3: shape, `realpath`, scope.
 fn resolve(scope: &Scope, path: &str) -> Result<PathBuf, FsError> {
-    shape(path).map_err(|_| FsError::BadRequest)?;
+    check_shape(path).map_err(|_| FsError::BadRequest)?;
     let canonical = std::fs::canonicalize(path).map_err(FsError::io)?;
     if canonical.to_str().is_none() {
         return Err(FsError::BadRequest);
@@ -160,7 +166,7 @@ fn fd_path(_: &File) -> io::Result<PathBuf> {
 /// a directory once links are followed. Not the roots, and no config. Blocks on a
 /// `stat`. The refusal names the cause, for `error { badRequest }`.
 pub fn check_dir(dir: &str) -> Result<(), &'static str> {
-    shape(dir)?;
+    check_shape(dir)?;
     match std::fs::metadata(dir) {
         Ok(meta) if meta.is_dir() => Ok(()),
         Ok(_) => Err("not a directory"),
@@ -172,8 +178,8 @@ pub fn check_dir(dir: &str) -> Result<(), &'static str> {
     }
 }
 
-/// Step 1: absolute, at most `MAX_PATH` bytes, no NUL.
-fn shape(path: &str) -> Result<(), &'static str> {
+/// Step 1: absolute, at most `MAX_PATH` bytes, no NUL. Also `/complete`'s `cwd`.
+pub fn check_shape(path: &str) -> Result<(), &'static str> {
     if path.len() > MAX_PATH {
         Err("the path is longer than 4096 bytes")
     } else if path.contains('\0') {

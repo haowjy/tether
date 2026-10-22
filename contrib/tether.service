@@ -25,10 +25,17 @@ RestartMaxDelaySec=60
 
 MemoryHigh=48M
 MemoryMax=64M
+# glibc raises its mmap threshold after the first large free, so later completion
+# indexes would come from the heap and stay resident after the idle drop. Pinned,
+# every allocation over 128 KiB is its own mapping, returned on free (complete.md).
+Environment=GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072
 CPUWeight=20
 Nice=10
 IOWeight=10
 IOSchedulingClass=idle
+# Each carapace run moves into its own transient scope (systemd-run --user --scope,
+# through the user manager this unit runs under), so only systemd-run counts here,
+# and only until it execs.
 TasksMax=32
 # The kernel kills tether before tmux or the agents in it.
 OOMScoreAdjust=500

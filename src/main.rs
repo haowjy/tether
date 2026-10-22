@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime};
 use clap::{Parser, Subcommand};
 use tether::auth::identity::{Node, ServeConfig};
 use tether::auth::{Auth, Store};
+use tether::complete;
 use tether::config::{self, Config, ConfigFile};
 use tether::fs;
 use tether::http::{self, App};
@@ -159,6 +160,7 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         host: HostInfo { id: host_id, name },
         paste_dir,
         config: file,
+        complete: complete::Settings::new(&config.complete, &home),
         home,
     };
     let signalled = async move {

@@ -3,6 +3,7 @@
 //! The TypeScript types in `web/proto/generated/` are rendered from these.
 
 pub mod auth;
+pub mod complete;
 pub mod frames;
 pub mod fs;
 mod messages;

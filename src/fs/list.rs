@@ -1,5 +1,6 @@
 //! Listings (fs.md "GET /fs/list"): one scan of the directory through its descriptor,
-//! sorted and cut to a page. Nothing is kept between requests; paging re-scans.
+//! sorted and cut to a page. Nothing is kept between requests; paging re-scans. Path
+//! completion reads the same scan (complete.md "Paths").
 
 use std::cmp::Ordering;
 use std::ffi::CStr;
@@ -64,7 +65,7 @@ struct Scanned {
 
 /// Every name in one buffer, so a 5,000-entry scan is two allocations.
 #[derive(Debug, Default)]
-struct Scan {
+pub struct Scan {
     names: Vec<u8>,
     entries: Vec<Scanned>,
     truncated: bool,
@@ -72,8 +73,8 @@ struct Scan {
 
 impl Scan {
     /// Names and `d_type`, `stat`ing only links and `DT_UNKNOWN`, so a symlinked
-    /// directory sorts as a directory.
-    fn read(dir: &Opened, filter: Filter) -> io::Result<Self> {
+    /// directory sorts as a directory. Blocks.
+    pub fn read(dir: &Opened, filter: Filter) -> io::Result<Self> {
         let mut scan = Self::default();
         let mut read = 0;
         let mut entries = Dir::read_from(&dir.file)?;
@@ -112,6 +113,13 @@ impl Scan {
             scan.names.extend_from_slice(with_nul);
         }
         Ok(scan)
+    }
+
+    /// Each name, in directory order, with its kind after following links.
+    pub fn names(&self) -> impl Iterator<Item = (&[u8], EntryKind)> {
+        self.entries
+            .iter()
+            .map(|scanned| (self.name(scanned).to_bytes(), scanned.kind))
     }
 
     fn name(&self, scanned: &Scanned) -> &CStr {
@@ -201,7 +209,7 @@ fn size_and_time(stat: &Stat) -> (u64, i64) {
 }
 
 /// Compares with ASCII case folded.
-fn fold_cmp(a: &[u8], b: &[u8]) -> Ordering {
+pub fn fold_cmp(a: &[u8], b: &[u8]) -> Ordering {
     a.iter()
         .map(u8::to_ascii_lowercase)
         .cmp(b.iter().map(u8::to_ascii_lowercase))

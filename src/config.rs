@@ -26,6 +26,20 @@ pub struct Config {
     pub roots: Vec<String>,
     /// Where uploads land; a root too.
     pub uploads_dir: String,
+    pub complete: Complete,
+}
+
+/// `[complete]` (complete.md): what the daemon can't see of the interactive shell.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Complete {
+    /// The history file, absolute or `~/`; default: the most recently modified of
+    /// zsh's, bash's and fish's.
+    pub history: Option<String>,
+    /// The interactive shell's `PATH`; default: the daemon's own.
+    pub path: Option<String>,
+    /// The carapace binary, absolute or `~/`; default: `carapace` on that `PATH`.
+    pub carapace: Option<String>,
 }
 
 /// Which tmux server is `main`. tether never starts it.
@@ -47,6 +61,7 @@ impl Default for Config {
             tmux: Tmux::default(),
             roots: Vec::new(),
             uploads_dir: DEFAULT_UPLOADS.to_owned(),
+            complete: Complete::default(),
         }
     }
 }

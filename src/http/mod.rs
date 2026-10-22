@@ -27,12 +27,14 @@ use tokio::time::{Instant, timeout_at};
 use tracing::{debug, error, warn};
 
 use crate::auth::{Auth, AuthError};
+use crate::complete::Completer;
 use crate::config::ConfigFile;
 use crate::fs::Slots;
 use crate::hub::HubHandle;
 use crate::proto::auth::ErrorBody;
 use crate::proto::{CloseCode, HostInfo};
 
+mod complete;
 mod enroll;
 mod fs;
 mod ws;
@@ -57,6 +59,8 @@ pub struct App {
     pub config: ConfigFile,
     /// `$HOME`: the picker's scope, and what `~/` in the roots means.
     pub home: PathBuf,
+    /// `[complete]` and what completion reads of the environment.
+    pub complete: crate::complete::Settings,
 }
 
 /// `App` plus the daemon-wide limits the connections share.
@@ -68,6 +72,9 @@ struct Ctx {
     pastes: Arc<Semaphore>,
     /// The file API's blocking threads, scans, raw responses and uploads.
     fs: Arc<Slots>,
+    complete: Completer,
+    /// `/complete` requests in flight.
+    completing: Arc<Semaphore>,
     /// Becomes true on shutdown: every socket closes with 4004.
     shutdown: watch::Receiver<bool>,
 }
@@ -85,11 +92,14 @@ pub async fn serve(
 ) -> io::Result<()> {
     let (stop, shutdown) = watch::channel(false);
     let mut stopping = shutdown.clone();
+    let completer = Completer::new(app.complete.clone());
     let ctx = Arc::new(Ctx {
         app,
         conns: Arc::new(Semaphore::new(ws::MAX_CONNS)),
         pastes: Arc::new(Semaphore::new(ws::PASTE_SLOTS)),
         fs: Arc::new(Slots::default()),
+        complete: completer,
+        completing: Arc::new(Semaphore::new(complete::IN_FLIGHT)),
         shutdown,
     });
     let listener = listener.tap_io(|socket| {
@@ -137,6 +147,7 @@ fn router(ctx: Arc<Ctx>) -> Router {
     let devices = Router::new()
         .route("/ws", get(ws::upgrade))
         .merge(fs::routes())
+        .merge(complete::routes())
         .route_layer(from_fn_with_state(ctx.clone(), device_check));
     Router::new()
         .route("/auth/info", get(enroll::info))

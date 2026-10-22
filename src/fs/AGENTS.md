@@ -11,7 +11,9 @@ Rules the code relies on, which are easy to break:
 - A client's path reaches the disk only through `open`, which returns a descriptor
   checked against the scope after opening (`/proc/self/fd` on Linux, `F_GETPATH` on
   macOS). Read and write through that descriptor (`pread`, `statat`, `openat`,
-  `renameat`), never by joining a path and opening it again.
+  `renameat`), never by joining a path and opening it again. Path completion
+  (`src/complete/`) opens through it too, with `Scope::everything()`, and reads names
+  with `list::Scan`; `check_shape` is also `/complete`'s `cwd` check.
 - Every blocking call goes through `Slots::blocking`, which moves the fs slot into the
   blocking closure; never `spawn_blocking` file work directly, and never
   `tokio::fs::File` (its buffer grows to 2 MiB). Take an fs slot last and release it

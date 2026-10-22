@@ -5,6 +5,19 @@ version section on release.
 
 ## [Unreleased]
 
+- Completion for the suggestion strip (`POST /complete`): chips from shell history
+  (bash, zsh or fish, ranked by recency and frequency), commands on `PATH`, carapace
+  for subcommands, flags and values, and directory listings for paths. A chip only
+  extends what is typed and never holds a control character. Under systemd each
+  carapace run gets its own transient scope, so its memory never counts against
+  tether's; everything completion holds is freed five idle minutes after the last
+  request. `[complete]` in `config.toml` sets the history file, the interactive
+  shell's `PATH` and the carapace binary. The unit now pins glibc's mmap threshold
+  so freed memory returns to the kernel.
+- Uploads flush every 2 MiB instead of 8 MiB, so far less dirty page cache sits in
+  tether's memory limit during an upload.
+- The fs and completion request and response types are generated into
+  `web/proto/generated/messages.ts`.
 - The file API (`/fs/*`): project roots and an uploads folder set from the app and
   saved in `config.toml` (comments and unknown keys kept), directory listings and a
   `$HOME` folder picker, file bytes with Range for the viewers and the native video

@@ -3,8 +3,9 @@
 The daemon's HTTP surface: axum on `127.0.0.1` only, published by `tailscale serve`.
 `mod.rs` builds the router and both auth layers and serves until shutdown; `enroll.rs`
 holds `/auth/info` and `/auth/enroll`; `fs.rs` the thin `/fs/*` handlers over
-[`src/fs/`](../fs/AGENTS.md); `ws.rs` runs one task per WebSocket, which drives the hub
-through `HubHandle`. Nothing here names a tmux type.
+[`src/fs/`](../fs/AGENTS.md); `complete.rs` the `/complete` handler over
+[`src/complete/`](../complete/AGENTS.md); `ws.rs` runs one task per WebSocket, which
+drives the hub through `HubHandle`. Nothing here names a tmux type.
 
 Rules the code relies on, which are easy to break:
 

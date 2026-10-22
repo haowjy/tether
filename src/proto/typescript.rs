@@ -1,5 +1,6 @@
 //! Renders the protocol's TypeScript types into `web/proto/generated/messages.ts`
-//! (daemon-core.md §5.5). The test fails while the committed file is stale;
+//! (daemon-core.md §5.5): the WebSocket messages, and the `/fs/*` and `/complete`
+//! bodies. The test fails while the committed file is stale;
 //! `UPDATE_PROTO_TYPES=1 cargo test --lib proto::typescript` rewrites it.
 
 use std::any::TypeId;
@@ -9,6 +10,8 @@ use std::path::Path;
 
 use ts_rs::{Config, TS, TypeVisitor};
 
+use super::complete::{Chip, ChipSource, CompleteRequest, Completion};
+use super::fs::{Entry, EntryKind, Listing, PathBody, RootStatus, Roots, Uploaded};
 use super::*;
 
 const PATH: &str = "web/proto/generated/messages.ts";
@@ -38,6 +41,17 @@ fn declarations(config: &Config) -> Vec<(TypeId, String)> {
         declare::<SessionListing>(config),
         declare::<WindowListing>(config),
         declare::<ErrorCode>(config),
+        declare::<Roots>(config),
+        declare::<RootStatus>(config),
+        declare::<PathBody>(config),
+        declare::<Listing>(config),
+        declare::<Entry>(config),
+        declare::<EntryKind>(config),
+        declare::<Uploaded>(config),
+        declare::<CompleteRequest>(config),
+        declare::<Completion>(config),
+        declare::<Chip>(config),
+        declare::<ChipSource>(config),
     ]
 }
 
@@ -95,6 +109,10 @@ fn generated_typescript_is_current() {
     let mut needed = BTreeSet::new();
     dependencies::<ClientMsg>(&mut needed);
     dependencies::<ServerMsg>(&mut needed);
+    dependencies::<Roots>(&mut needed);
+    dependencies::<Listing>(&mut needed);
+    dependencies::<CompleteRequest>(&mut needed);
+    dependencies::<Completion>(&mut needed);
     let missing = needed.difference(&declared).count();
     assert_eq!(missing, 0, "a protocol type is missing from declarations()");
 

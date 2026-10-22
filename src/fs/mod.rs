@@ -19,7 +19,7 @@ pub mod raw;
 mod slots;
 pub mod upload;
 
-pub use open::{Opened, Scope, Want, check_dir, open};
+pub use open::{Opened, Scope, Want, check_dir, check_shape, open};
 pub use slots::Slots;
 
 /// A path in a request: absolute, UTF-8, no NUL, at most this long.
