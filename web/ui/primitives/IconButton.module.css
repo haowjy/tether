@@ -1,0 +1,16 @@
+.button {
+  display: inline-grid;
+  place-items: center;
+  width: var(--size-target);
+  height: var(--size-target);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--color-text-muted);
+  transition: background var(--duration-1) var(--ease-out), color var(--duration-1) var(--ease-out);
+}
+.button:hover { background: var(--color-bg-hover); color: var(--color-text); }
+.button[aria-current="page"] { background: var(--color-bg-selected); color: var(--color-text); }
+.button:disabled { opacity: 0.5; }
+.error { color: var(--color-status-error); }

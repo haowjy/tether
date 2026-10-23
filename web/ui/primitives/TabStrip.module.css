@@ -1,0 +1,47 @@
+.strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.strip::-webkit-scrollbar { display: none; }
+/* A fade at an overflowing edge says there is more to scroll to. */
+.strip[data-start] { mask-image: linear-gradient(to right, transparent, #000 var(--space-5)); }
+.strip[data-end] { mask-image: linear-gradient(to left, transparent, #000 var(--space-5)); }
+.strip[data-start][data-end] { mask-image: linear-gradient(to right, transparent, #000 var(--space-5), #000 calc(100% - var(--space-5)), transparent); }
+
+.pill {
+  display: flex;
+  flex: none;
+  align-items: center;
+  max-width: 16rem;
+  height: var(--tab-height);
+  border-radius: var(--radius-2);
+  background: var(--tab-bg);
+  color: var(--pill-color, var(--color-text-muted));
+}
+.pill[data-tone="live"] { --pill-color: var(--color-status-live); }
+.pill[data-tone="reconnecting"] { --pill-color: var(--color-status-reconnecting); }
+.pill[data-tone="error"] { --pill-color: var(--color-status-error); }
+.pill[data-tone="gone"] { --pill-color: var(--color-status-gone); }
+.active { background: var(--tab-bg-active); font-weight: var(--weight-bold); }
+
+.select {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--space-3);
+  border: 0;
+  background: none;
+  color: inherit;
+  font-weight: inherit;
+  white-space: nowrap;
+}
+.session { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+/* The window part is kept before the session part: long session names truncate first. */
+.window { flex: none; margin-left: 0.3em; }
+.close { width: var(--tab-height); height: var(--tab-height); flex: none; color: var(--color-text-muted); }

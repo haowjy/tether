@@ -1,0 +1,83 @@
+/* Tier 2: meaning. Each colour has a dark and a light value (`light-dark()`), chosen by
+   `color-scheme`: the system's by default, or the platform's `data-scheme` on <html>. Only
+   this file reads the colour scales. Density changes the sizes. */
+:root {
+  color-scheme: dark light;
+
+  --color-bg: light-dark(var(--gray-1), var(--gray-12));
+  --color-bg-raised: light-dark(oklch(1 0 0), var(--gray-11));
+  --color-bg-sunken: light-dark(var(--gray-0), oklch(0.15 0.012 266));
+  --color-bg-hover: light-dark(var(--gray-2), var(--gray-10));
+  --color-bg-selected: light-dark(var(--blue-3), oklch(0.31 0.045 255));
+  --color-scrim: light-dark(oklch(0.2 0.01 262 / 0.35), oklch(0 0 0 / 0.55));
+
+  --color-text: light-dark(var(--gray-12), var(--gray-1));
+  --color-text-muted: light-dark(var(--gray-8), var(--gray-5));
+  --color-border: light-dark(var(--gray-3), var(--gray-9));
+  --color-accent: light-dark(var(--blue-7), var(--blue-9));
+  --color-on-accent: light-dark(oklch(0.99 0 0), oklch(0.2 0.03 245));
+  --color-focus-ring: light-dark(var(--blue-7), var(--blue-9));
+
+  /* Connection colour on a label, never a dot. The active pill is marked by fill and weight. */
+  --color-status-live: light-dark(var(--green-7), var(--green-9));
+  --color-status-reconnecting: light-dark(var(--amber-7), var(--amber-9));
+  --color-status-error: light-dark(var(--red-7), var(--red-9));
+  --color-status-gone: light-dark(var(--gray-8), var(--gray-5));
+  --color-status-error-bg: light-dark(var(--red-3), oklch(0.27 0.06 25));
+
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "tether-mono", "tether-symbols", ui-monospace, Menlo, Consolas, monospace;
+  --text-meta: var(--font-size-1);
+  --text-small: var(--font-size-2);
+  --text-heading: var(--font-size-5);
+  --text-title: var(--font-size-6);
+  --weight-medium: 560;
+  --weight-bold: 680;
+
+  /* The platform sets the insets it sized tmux from; env() covers the moment before. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* The terminal's theme (xterm.js), read by ui/theme.ts. */
+  --term-bg: var(--color-bg-sunken);
+  --term-fg: light-dark(oklch(0.25 0.01 262), oklch(0.9 0.005 262));
+  --term-cursor: light-dark(oklch(0.45 0.14 245), oklch(0.85 0.09 235));
+  --term-selection: light-dark(oklch(0.5 0.14 245 / 0.22), oklch(0.78 0.11 235 / 0.3));
+  --term-black: light-dark(oklch(0.25 0.01 262), oklch(0.3 0.01 262));
+  --term-red: light-dark(oklch(0.52 0.19 25), oklch(0.7 0.16 25));
+  --term-green: light-dark(oklch(0.5 0.14 145), oklch(0.76 0.14 145));
+  --term-yellow: light-dark(oklch(0.55 0.12 75), oklch(0.83 0.13 85));
+  --term-blue: light-dark(oklch(0.48 0.15 255), oklch(0.72 0.12 250));
+  --term-magenta: light-dark(oklch(0.5 0.17 320), oklch(0.74 0.13 320));
+  --term-cyan: light-dark(oklch(0.52 0.1 200), oklch(0.78 0.1 200));
+  --term-white: light-dark(oklch(0.62 0.01 262), oklch(0.86 0.005 262));
+  --term-bright-black: light-dark(oklch(0.48 0.012 262), oklch(0.5 0.012 262));
+  --term-bright-red: light-dark(oklch(0.58 0.19 25), oklch(0.77 0.15 25));
+  --term-bright-green: light-dark(oklch(0.56 0.14 145), oklch(0.84 0.14 145));
+  --term-bright-yellow: light-dark(oklch(0.6 0.12 75), oklch(0.9 0.12 90));
+  --term-bright-blue: light-dark(oklch(0.55 0.15 255), oklch(0.8 0.11 250));
+  --term-bright-magenta: light-dark(oklch(0.56 0.17 320), oklch(0.82 0.12 320));
+  --term-bright-cyan: light-dark(oklch(0.58 0.1 200), oklch(0.86 0.09 200));
+  --term-bright-white: light-dark(oklch(0.35 0.01 262), oklch(0.97 0.003 262));
+}
+
+/* The platform's scheme wins over the system's when it sets one (native follows the app's own appearance). */
+:root[data-scheme="dark"] { color-scheme: dark; }
+:root[data-scheme="light"] { color-scheme: light; }
+
+/* Density follows the pointer: touch for a coarse primary pointer, else compact. */
+:root,
+:root[data-density="compact"] {
+  --space-gutter: var(--space-4);
+  --size-target: 32px;
+  --text-body: var(--font-size-3);
+  --term-font-size: 13px;
+}
+:root[data-density="touch"] {
+  --space-gutter: var(--space-4);
+  --size-target: 44px;
+  --text-body: var(--font-size-4);
+  --term-font-size: 12px;
+}

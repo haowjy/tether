@@ -1,0 +1,21 @@
+/* The terminal's fonts, subset by scripts/subset-fonts.py. The core faces hold the first
+   paint (xterm measures its cell once, at open, so main.tsx waits for them). The symbols
+   fallback is fetched lazily, once a glyph in its ranges is drawn. */
+@font-face {
+  font-family: "tether-mono";
+  src: url("../../assets/fonts/tether-mono-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: block;
+}
+@font-face {
+  font-family: "tether-mono";
+  src: url("../../assets/fonts/tether-mono-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: block;
+}
+@font-face {
+  font-family: "tether-symbols";
+  src: url("../../assets/fonts/tether-symbols.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+E0A0-E0D7, U+E5FA-E6B8, U+E700-E7C5, U+F400-F532, U+23FB-23FE, U+2665, U+26A1, U+2B58;
+}

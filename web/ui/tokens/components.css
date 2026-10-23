@@ -1,0 +1,38 @@
+/* Tier 3: sizes and surfaces of the primitives. Density changes the sizes. */
+:root,
+:root[data-density="compact"] {
+  --row-height: 40px;
+  --row-pad-x: var(--space-3);
+  --tab-height: 32px;
+  --toolbar-height: 44px;
+  --field-height: 36px;
+}
+:root[data-density="touch"] {
+  --row-height: 48px;
+  --row-pad-x: var(--space-3);
+  --tab-height: 44px;
+  --toolbar-height: 52px;
+  --field-height: 44px;
+}
+
+:root {
+  --rail-width: 56px;
+  --tab-bg: transparent;
+  --tab-bg-active: var(--color-bg-hover);
+  --dialog-width: 480px;
+  --dialog-bg: var(--color-bg-raised);
+  /* The phone picker follows the theme's raised surface, dark in dark mode and light in light mode. */
+  --sheet-bg: var(--color-bg-raised);
+  --sheet-radius: var(--radius-4);
+  --band-bg: var(--color-bg-raised);
+
+  /* The phone toast sits above the bottom toolbar, never over its tabs. */
+  --toast-offset: 0px;
+
+  --z-toolbar: 10;
+  --z-band: 20;
+  --z-dialog: 30;
+  --z-toast: 40;
+}
+
+:root[data-layout="phone"] { --toast-offset: var(--toolbar-height); }
