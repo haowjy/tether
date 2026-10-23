@@ -16,7 +16,7 @@ pub(crate) fn from_replies(
     requested_end: i32,
     replies: Vec<Rows>,
 ) -> Result<History, TmuxError> {
-    let Ok([before, rows, physical, logical, after]) = <[Rows; 5]>::try_from(replies) else {
+    let Ok([before, rows, logical, after]) = <[Rows; 4]>::try_from(replies) else {
         return Err(TmuxError::BadReply);
     };
     if before != after {
@@ -44,8 +44,8 @@ pub(crate) fn from_replies(
     }
     let pair_last = requested_end.saturating_add(1).min(bottom);
     let pair_count = inclusive_count(first, pair_last);
-    let pair_map = if physical.len() == pair_count {
-        wrap::align(&physical, &logical)
+    let pair_map = if rows.len() == pair_count {
+        wrap::align(&rows, &logical)
     } else {
         WrapMap::empty(pair_count)
     };

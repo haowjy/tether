@@ -1,4 +1,4 @@
 display-message -p '#{version}	#{pid}	#{start_time}	#{window_width}	#{window_height}'
 refresh-client -C 80x24
 refresh-client -A '%0:pause'
-display-message -p -t %0 '#{history_size} #{pane_height}' ; capture-pane -p -e -t %0 -S 0 -E 6 ; capture-pane -p -e -N -T -t %0 -S 0 -E 7 ; capture-pane -p -e -J -t %0 -S 0 -E 7 ; display-message -p -t %0 '#{history_size} #{pane_height}'
+display-message -p -t %0 '#{history_size} #{pane_height}' ; capture-pane -p -e -N -T -t %0 -S 0 -E 7 ; capture-pane -p -J -t %0 -S 0 -E 7 ; display-message -p -t %0 '#{history_size} #{pane_height}'

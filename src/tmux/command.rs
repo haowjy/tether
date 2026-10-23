@@ -73,8 +73,8 @@ pub fn snapshot(pane: PaneId) -> Group {
         format!("refresh-client -A '{pane}:continue'"),
         state.clone(),
         format!("capture-pane -p -e -N -t {pane}"),
-        format!("capture-pane -p -e -N -T -t {pane}"),
-        format!("capture-pane -p -e -J -t {pane}"),
+        format!("capture-pane -p -N -T -t {pane}"),
+        format!("capture-pane -p -J -t {pane}"),
         format!("capture-pane -p -P -C -t {pane}"),
         format!("capture-pane -p -e -N -a -q -t {pane}"),
         state,
@@ -131,9 +131,8 @@ fn history(pane: PaneId, start: i32, end: i32) -> Result<Group, TmuxError> {
     let wrap_end = end.saturating_add(1);
     Ok(Group::of(&[
         state.clone(),
-        format!("capture-pane -p -e -t {pane} -S {start} -E {end}"),
         format!("capture-pane -p -e -N -T -t {pane} -S {start} -E {wrap_end}"),
-        format!("capture-pane -p -e -J -t {pane} -S {start} -E {wrap_end}"),
+        format!("capture-pane -p -J -t {pane} -S {start} -E {wrap_end}"),
         state,
     ]))
 }

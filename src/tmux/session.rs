@@ -620,7 +620,7 @@ mod tests {
             stream.push(b'\n');
         }
         stream.extend_from_slice(
-            b"%end 1 4 1\n%begin 1 5 1\n%end 1 5 1\n%begin 1 6 1\n%end 1 6 1\n%begin 1 7 1\n1000 24\n%end 1 7 1\n%begin 1 8 1\n42\t7\t$0\t@0\t%0\t80\t24\n%end 1 8 1\n",
+            b"%end 1 4 1\n%begin 1 5 1\n%end 1 5 1\n%begin 1 6 1\n1000 24\n%end 1 6 1\n%begin 1 7 1\n42\t7\t$0\t@0\t%0\t80\t24\n%end 1 7 1\n",
         );
         let events = session.feed(&stream).events;
         assert_eq!(

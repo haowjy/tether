@@ -5,6 +5,7 @@ version section on release.
 
 ## [Unreleased]
 
+- Preserve trailing spaces at soft-wrap boundaries when copying scrollback.
 - Add a startup memory budget (`memory_budget_mib`, default 72 MiB) that scales tmux
   session/socket caps and completion, plus a half-core CPU cap. Re-copy
   `contrib/tether.service` to apply `MemoryMax=72M`, no `MemoryHigh`, the 10 ms CPU

@@ -57,18 +57,18 @@ pub(crate) fn truncate_packed(bits: &[u8], rows: usize) -> Bytes {
     Bytes::from(prefix)
 }
 
-/// Aligns the `-N -T` physical rows with the `-J` logical rows. Their flattened cell
-/// bytes must agree exactly; only a physical boundary strictly inside one logical row
-/// is a soft wrap. Empty or repeated boundaries remain unset when their position is
-/// ambiguous.
+/// Aligns the `-N -T` physical rows with the `-J` logical rows. `capture-pane -e`
+/// adds SGR styling to the physical payload, which is ignored for alignment. Only a
+/// physical boundary strictly inside one logical row is a soft wrap. Empty or
+/// repeated boundaries remain unset when their position is ambiguous.
 pub(crate) fn align(physical: &[Bytes], logical: &[Bytes]) -> WrapMap {
     let mut map = WrapMap::empty(physical.len());
-    let total = physical.iter().map(Bytes::len).sum();
+    let total = physical.iter().map(|row| row.len()).sum();
     let mut flat = Vec::with_capacity(total);
     let mut physical_ends = Vec::with_capacity(physical.len() + 1);
     physical_ends.push(0);
     for row in physical {
-        flat.extend_from_slice(row);
+        append_without_sgr(&mut flat, row);
         physical_ends.push(flat.len());
     }
 
@@ -101,4 +101,23 @@ pub(crate) fn align(physical: &[Bytes], logical: &[Bytes]) -> WrapMap {
         }
     }
     map
+}
+
+/// `capture-pane -e` emits SGR sequences around styled cells. Those bytes belong in
+/// the history payload but not in the cell-text comparison against `-J`.
+fn append_without_sgr(out: &mut Vec<u8>, row: &[u8]) {
+    let mut at = 0;
+    while at < row.len() {
+        if row[at..].starts_with(b"\x1b[") {
+            let tail = &row[at + 2..];
+            if let Some(end) = tail.iter().position(|byte| (0x40..=0x7e).contains(byte)) {
+                if tail[end] == b'm' {
+                    at += end + 3;
+                    continue;
+                }
+            }
+        }
+        out.push(row[at]);
+        at += 1;
+    }
 }

@@ -1,11 +1,11 @@
 display-message -p '#{version}	#{pid}	#{start_time}	#{window_width}	#{window_height}'
 refresh-client -C 80x24
-refresh-client -A '%0:continue' ; display-message -p -t %0 '#{pane_id}	#{pane_width}	#{pane_height}	#{alternate_on}	#{alternate_saved_x}	#{alternate_saved_y}	#{cursor_x}	#{cursor_y}	#{cursor_flag}	#{insert_flag}	#{keypad_cursor_flag}	#{keypad_flag}	#{wrap_flag}	#{origin_flag}	#{scroll_region_upper}	#{scroll_region_lower}	#{mouse_standard_flag}	#{mouse_button_flag}	#{mouse_all_flag}	#{mouse_utf8_flag}	#{mouse_sgr_flag}	#{pane_tabs}' ; capture-pane -p -e -N -t %0 ; capture-pane -p -e -N -T -t %0 ; capture-pane -p -e -J -t %0 ; capture-pane -p -P -C -t %0 ; capture-pane -p -e -N -a -q -t %0 ; display-message -p -t %0 '#{pane_id}	#{pane_width}	#{pane_height}	#{alternate_on}	#{alternate_saved_x}	#{alternate_saved_y}	#{cursor_x}	#{cursor_y}	#{cursor_flag}	#{insert_flag}	#{keypad_cursor_flag}	#{keypad_flag}	#{wrap_flag}	#{origin_flag}	#{scroll_region_upper}	#{scroll_region_lower}	#{mouse_standard_flag}	#{mouse_button_flag}	#{mouse_all_flag}	#{mouse_utf8_flag}	#{mouse_sgr_flag}	#{pane_tabs}'
-load-buffer -b tether-2 '/tmp/tether-meridian-501/tether-fixture-42488/we ird'\''##{pane_id}$HOME;~.txt' ; paste-buffer -p -d -b tether-2 -t @0
-load-buffer -b tether-3 '/tmp/tether-meridian-501/tether-fixture-42488/missing.txt' ; paste-buffer -p -d -b tether-3 -t @0
+refresh-client -A '%0:continue' ; display-message -p -t %0 '#{pane_id}	#{pane_width}	#{pane_height}	#{alternate_on}	#{alternate_saved_x}	#{alternate_saved_y}	#{cursor_x}	#{cursor_y}	#{cursor_flag}	#{insert_flag}	#{keypad_cursor_flag}	#{keypad_flag}	#{wrap_flag}	#{origin_flag}	#{scroll_region_upper}	#{scroll_region_lower}	#{mouse_standard_flag}	#{mouse_button_flag}	#{mouse_all_flag}	#{mouse_utf8_flag}	#{mouse_sgr_flag}	#{pane_tabs}' ; capture-pane -p -e -N -t %0 ; capture-pane -p -N -T -t %0 ; capture-pane -p -J -t %0 ; capture-pane -p -P -C -t %0 ; capture-pane -p -e -N -a -q -t %0 ; display-message -p -t %0 '#{pane_id}	#{pane_width}	#{pane_height}	#{alternate_on}	#{alternate_saved_x}	#{alternate_saved_y}	#{cursor_x}	#{cursor_y}	#{cursor_flag}	#{insert_flag}	#{keypad_cursor_flag}	#{keypad_flag}	#{wrap_flag}	#{origin_flag}	#{scroll_region_upper}	#{scroll_region_lower}	#{mouse_standard_flag}	#{mouse_button_flag}	#{mouse_all_flag}	#{mouse_utf8_flag}	#{mouse_sgr_flag}	#{pane_tabs}'
+load-buffer -b tether-2 '/tmp/tether-meridian-501/tether-fixture-95101/we ird'\''##{pane_id}$HOME;~.txt' ; paste-buffer -p -d -b tether-2 -t @0
+load-buffer -b tether-3 '/tmp/tether-meridian-501/tether-fixture-95101/missing.txt' ; paste-buffer -p -d -b tether-3 -t @0
 delete-buffer -b tether-3
-load-buffer -b tether-4 '/tmp/tether-meridian-501/tether-fixture-42488/we ird'\''##{pane_id}$HOME;~.txt' ; paste-buffer -p -d -b tether-4 -t @99
+load-buffer -b tether-4 '/tmp/tether-meridian-501/tether-fixture-95101/we ird'\''##{pane_id}$HOME;~.txt' ; paste-buffer -p -d -b tether-4 -t @99
 delete-buffer -b tether-4
-load-buffer -b tether-5 '/tmp/tether-meridian-501/tether-fixture-42488/secret.txt' ; paste-buffer -p -d -b tether-5 -t @0
+load-buffer -b tether-5 '/tmp/tether-meridian-501/tether-fixture-95101/secret.txt' ; paste-buffer -p -d -b tether-5 -t @0
 delete-buffer -b tether-5
 refresh-client -A '%1:pause'
