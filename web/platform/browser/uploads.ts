@@ -9,6 +9,9 @@ import type { UploadEvent, Uploads } from "../types";
 export const QUEUE_LIMIT = 4;
 export const QUEUE_FULL = "Wait for the current uploads to finish";
 
+/** The daemon's per-file limit (fs.md "Constants"): a larger file is refused before a byte is sent. */
+const MAX_BYTES = 128 * 1024 * 1024;
+
 /** `busy` means another upload holds the daemon's slot; a couple of retries ride out a short one. */
 const BUSY_RETRIES = 3;
 
@@ -121,8 +124,8 @@ export function createBrowserUploads(): Uploads {
     for (const file of files) {
       const id = `u${String(++counter)}`;
       group.open++;
-      if (jobs.length >= QUEUE_LIMIT) {
-        group.channel.push({ id, error: QUEUE_FULL });
+      if (file.size > MAX_BYTES || jobs.length >= QUEUE_LIMIT) {
+        group.channel.push({ id, error: file.size > MAX_BYTES ? (REFUSALS["too_large"] ?? "") : QUEUE_FULL });
         if (--group.open === 0) group.channel.end();
         continue;
       }
@@ -147,19 +150,20 @@ export function createBrowserUploads(): Uploads {
 
   let input: HTMLInputElement | null = null;
   /** A picker opened and not yet answered: a new pick supersedes it. */
-  let awaiting: Group | null = null;
+  let awaiting: { group: Group; stop(): void } | null = null;
 
   return {
     pick(_handle, signal) {
       const group: Group = { channel: new Channel(), open: 0 };
-      awaiting?.channel.end();
-      awaiting = group;
+      // The superseded pick's listeners come off the shared input too, or its files would upload twice.
+      awaiting?.stop();
+      awaiting?.group.channel.end();
       input ??= Object.assign(document.createElement("input"), { type: "file", multiple: true, hidden: true });
       if (!input.isConnected) document.body.append(input);
       const el = input;
       el.value = "";
       const stop = (): void => {
-        if (awaiting === group) awaiting = null;
+        if (awaiting?.group === group) awaiting = null;
         el.removeEventListener("change", onChange);
         el.removeEventListener("cancel", onCancel);
       };
@@ -173,6 +177,7 @@ export function createBrowserUploads(): Uploads {
         stop();
         group.channel.end();
       };
+      awaiting = { group, stop };
       el.addEventListener("change", onChange);
       el.addEventListener("cancel", onCancel);
       signal.addEventListener("abort", stop, { once: true });

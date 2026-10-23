@@ -23,6 +23,10 @@ See [the design](docs/plan.md) and the [fs notes](docs/fs.md), or [the site](htt
 
 - Small and bounded
 - Private to the tailnet
+
+<img alt="map" usemap="#m" src="shot.png"><map name="m"><area shape="default" href="https://evil.example/"></map>
+<details><summary>more</summary>hidden</details>
+<svg><a href="https://evil.example/"><text y="9">svg link</text></a></svg>
 `;
 
 const MAIN_RS = `use std::io;

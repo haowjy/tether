@@ -91,11 +91,12 @@ export function MarkdownViewer({ api, file, onLink, describe }: { api: FsApi; fi
     <div
       class={styles.text}
       onClick={(e) => {
-        const a = e.target instanceof Element ? e.target.closest("a") : null;
-        if (!a) return;
+        // Nothing in a document navigates the page itself: every click is ours, whatever element it landed on.
         e.preventDefault();
-        onLink(linkTarget(a.getAttribute("href") ?? "", docUrl));
+        const a = e.target instanceof Element ? e.target.closest("a, area") : null;
+        if (a) onLink(linkTarget(a.getAttribute("href") ?? "", docUrl));
       }}
+      onAuxClick={(e) => { e.preventDefault(); }}
     >
       <Truncated preview={text.value} />
       <article ref={article} class={styles.md} dangerouslySetInnerHTML={{ __html: html }} />

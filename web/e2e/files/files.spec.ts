@@ -72,6 +72,9 @@ for (const [name, scenario] of SCREENS) {
 
     test("Markdown links open a file here and a web link in the browser", async ({ page }) => {
       await openFixture(page, "filesMarkdown", scenario, "#/files");
+      // The document's own markup that navigates or takes focus is gone, not merely unclicked.
+      await expect(page.getByRole("link", { name: "the design" })).toBeVisible();
+      await expect(page.locator("article").locator("area, map, details, summary, svg, [usemap]")).toHaveCount(0);
       await page.getByRole("link", { name: "the design" }).click();
       await expect(title(page, "plan.md")).toBeVisible();
       await expect(page.getByRole("heading", { level: 1, name: "Plan", exact: true })).toBeVisible();

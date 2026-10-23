@@ -39,9 +39,18 @@ export function imageSource(src: string, docUrl: string): string | null {
   return url.href;
 }
 
-/** Tags a document may not carry: script and styles, focusable controls, frames, media. */
-const FORBID_TAGS = ["style", "link", "form", "input", "button", "textarea", "select", "option", "iframe", "frame", "object", "embed", "video", "audio", "source", "track", "picture", "dialog"];
-const FORBID_ATTR = ["style", "class", "id", "tabindex", "contenteditable", "srcset", "autofocus", "draggable"];
+/**
+ * What a document may carry: prose, lists, tables, code, links and images. An allowlist,
+ * because HTML keeps growing navigating and fetching elements (`area`, `svg` `image`, `details`
+ * is focusable); nothing outside it survives, whatever the browser adds next.
+ */
+const ALLOWED_TAGS = [
+  "p", "br", "hr", "div", "span", "blockquote", "pre", "code", "kbd", "mark", "em", "strong", "b", "i", "s", "del", "ins", "sub", "sup", "small",
+  "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "dl", "dt", "dd",
+  "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td", "a", "img",
+];
+/** `src` stays only until the image hook below turns it into `data-src`. */
+const ALLOWED_ATTR = ["href", "src", "alt", "title", "width", "height", "colspan", "rowspan", "align", "start"];
 
 /**
  * Markdown text → sanitized HTML. Images keep their resolved URL in `data-src` and load
@@ -60,5 +69,5 @@ export async function renderMarkdown(text: string, docUrl: string): Promise<stri
       else node.setAttribute("class", "md-blocked");
     }
   });
-  return purify.sanitize(md.render(text), { FORBID_TAGS, FORBID_ATTR, ALLOW_DATA_ATTR: false });
+  return purify.sanitize(md.render(text), { ALLOWED_TAGS, ALLOWED_ATTR, ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false });
 }
