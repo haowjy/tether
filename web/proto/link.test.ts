@@ -24,12 +24,12 @@ const welcome: ServerMsg = {
   data: { protocol: 1, daemon: { version: "0.1", completion: true }, host: { id: "h", name: "devbox" } },
 };
 
-function setup() {
+function setup(token: string | null = "tok", kind: "ios" | "web" = "ios") {
   vi.stubGlobal("WebSocket", FakeSocket);
   let sock!: FakeSocket;
   const events = { welcomes: 0, messages: [] as ServerMsg[], frames: [] as unknown[], closes: [] as LinkClose[] };
   const link = new HostLink(
-    { url: "wss://h/ws", token: "tok", build: "1", createSocket: (u, p) => (sock = new FakeSocket(u, p)) as unknown as WebSocket },
+    { url: "wss://h/ws", ...(token && { token }), build: "1", kind, createSocket: (u, p) => (sock = new FakeSocket(u, p)) as unknown as WebSocket },
     {
       welcome: () => { events.welcomes++; },
       message: (m) => events.messages.push(m),
@@ -52,6 +52,13 @@ describe("HostLink", () => {
       type: "hello",
       data: { protocol: 1, client: { kind: "ios", build: "1" } },
     });
+  });
+
+  it("offers tether.v1 alone, as a web client, when there is no token", () => {
+    const { sock } = setup(null, "web");
+    expect(sock.protocols).toEqual(["tether.v1"]);
+    sock.open();
+    expect(JSON.parse(sock.sent[0] ?? "")).toMatchObject({ data: { client: { kind: "web" } } });
   });
 
   it("holds everything but hello until welcome", () => {

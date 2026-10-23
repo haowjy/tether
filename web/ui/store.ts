@@ -24,6 +24,12 @@ export class Store<T extends object> {
 /** Renders again whenever `store` changes. */
 export function useStore<T extends object>(store: Store<T>): T {
   const [, rerender] = useState(0);
-  useEffect(() => store.subscribe(() => { rerender((n) => n + 1); }), [store]);
-  return store.snapshot;
+  const rendered = store.snapshot;
+  useEffect(() => {
+    const off = store.subscribe(() => { rerender((n) => n + 1); });
+    // A change between this render and the subscription (a fetch that settled first) would be missed.
+    if (store.snapshot !== rendered) rerender((n) => n + 1);
+    return off;
+  }, [store]);
+  return rendered;
 }

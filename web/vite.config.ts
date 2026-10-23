@@ -1,60 +1,46 @@
-import { execFileSync } from "node:child_process";
 import preact from "@preact/preset-vite";
-import type { ProxyOptions } from "vite";
+import type { Plugin } from "vite";
 import { defineConfig } from "vitest/config";
+import { serviceWorker } from "./sw/vite-plugin";
+import { devProxy } from "./vite.dev-proxy";
 
-/** The dev box owner's Tailscale login, which `tailscale serve` would add in production. */
-function devLogin(): string {
-  const fromEnv = process.env["TETHER_DEV_LOGIN"];
-  if (fromEnv) return fromEnv;
-  try {
-    const status = JSON.parse(execFileSync("tailscale", ["status", "--json"], { encoding: "utf8" })) as {
-      Self?: { UserID?: number };
-      User?: Record<string, { LoginName?: string }>;
-    };
-    const login = status.User?.[String(status.Self?.UserID)]?.LoginName;
-    if (login) return login;
-  } catch {
-    // fall through to the explanation
-  }
-  throw new Error("Can't find the Tailscale login: set TETHER_DEV_LOGIN (web/README.md).");
+/** A production build fails if its module graph holds a test adapter or the harness (client-architecture.md §5.11). */
+function forbidTestModules(): Plugin {
+  return {
+    name: "tether-forbid-test-modules",
+    apply: "build",
+    buildEnd() {
+      const leaked = [...this.getModuleIds()].filter((id) => /\/(platform\/test|harness)\//.test(id) && !id.includes("node_modules"));
+      if (leaked.length > 0) this.error(`The build includes test-only modules:\n${leaked.join("\n")}`);
+    },
+  };
 }
 
-export default defineConfig(({ command, mode }) => ({
-  plugins: [preact()],
-  // The iOS app loads the build from a custom scheme, so asset URLs are relative.
-  base: "./",
-  // The bundle ships inside the iOS app and never crosses a network, so xterm.js's size
-  // isn't worth splitting for.
-  build: { target: "es2022", chunkSizeWarningLimit: 1024 },
-  // Dev server only: the daemon wants a loopback peer carrying the owner's login, which
-  // `tailscale serve` adds in production. Nothing here reaches a build.
-  server:
-    command === "serve" && mode !== "test"
-      ? {
-          proxy: Object.fromEntries(
-            // Keys are path prefixes, or a regex when they start with `^`: `/complete` alone
-            // would also catch the modules under web/complete/.
-            ["/ws", "/auth", "/fs", "^/complete$"].map((path): [string, ProxyOptions] => [
-              path,
-              {
-                target: `http://127.0.0.1:${process.env["TETHER_PORT"] ?? "7850"}`,
-                ws: path === "/ws",
-                headers: { "Tailscale-User-Login": devLogin() },
-                // `/fs/*` and `/complete` carry the device token as native's scheme handler
-                // would: the dev shim keeps it in a cookie (dev/shim.ts), sent here as a
-                // Bearer token.
-                configure: (proxy) => {
-                  proxy.on("proxyReq", (req, incoming) => {
-                    const token = /(?:^|;\s*)tether_dev_token=([^;]+)/.exec(incoming.headers.cookie ?? "")?.[1];
-                    req.removeHeader("cookie");
-                    if (token) req.setHeader("Authorization", `Bearer ${decodeURIComponent(token)}`);
-                  });
-                },
-              },
-            ]),
-          ),
-        }
-      : {},
-  test: { include: ["**/*.test.ts"], exclude: ["node_modules", "dist"] },
+/** The Shiki grammars the file viewer ships, each its own lazy chunk (client-architecture.md §8.4). */
+const GRAMMARS = ["shellscript", "json", "yaml", "toml", "markdown", "typescript", "javascript", "python", "rust", "go", "swift", "c", "diff"];
+/** `bash` is Shiki's alias of the `shellscript` grammar. */
+const ALIASES: Record<string, string> = { bash: "shellscript" };
+
+export default defineConfig(({ mode }) => ({
+  // The daemon serves the build at its origin's root.
+  base: "/",
+  plugins: [preact(), serviceWorker(), forbidTestModules(), ...(mode === "harness" || mode === "test" ? [] : [devProxy()])],
+  build: {
+    target: "es2022",
+    // scripts/check-build.mjs reads the manifest to enforce the shell budgets and to keep
+    // platform/test and harness/ out of the module graph.
+    manifest: true,
+    rolldownOptions: {
+      output: {
+        // Each allowlisted grammar and its one-line `shiki/langs/<name>` wrapper share one
+        // chunk, so Vite emits no 44-byte re-export stubs for them.
+        manualChunks(id: string) {
+          const found = /node_modules\/(?:shiki\/dist\/langs|@shikijs\/langs\/dist)\/([\w-]+)\.mjs/.exec(id)?.[1];
+          const grammar = found && (ALIASES[found] ?? found);
+          return grammar && GRAMMARS.includes(grammar) ? `grammar-${grammar}` : undefined;
+        },
+      },
+    },
+  },
+  test: { include: ["**/*.test.ts"], exclude: ["node_modules", "dist", "e2e/**"] },
 }));

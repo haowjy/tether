@@ -1,5 +1,5 @@
 import type { Frame } from "../proto/frames";
-import type { LinkClose, LinkHandlers } from "../proto/link";
+import type { LinkClose, LinkHandlers, WelcomeMsg } from "../proto/link";
 import type { ClientMsg, ErrorCode, ServerMsg } from "../proto/generated/messages";
 import { CloseCode } from "../proto/generated/messages";
 import { backoffMs, type Halt } from "../tabs/connection";
@@ -55,8 +55,10 @@ export interface TabPort {
 export interface HostOptions {
   /** Opens a socket; called again after every loss. */
   open(handlers: LinkHandlers): Link;
-  /** The daemon closed with 4401: native marks the host "not enrolled". */
-  onRejected(): void;
+  /** The daemon closed with 4401 (not enrolled) or 4503 (cannot decide now): admission re-reads why. */
+  onRefused(code: typeof CloseCode.BadToken | typeof CloseCode.AuthUnavailable): void;
+  /** The socket is welcomed: the daemon's identity, for admission to check against its saved id. */
+  onWelcome?(welcome: WelcomeMsg): void;
   /** Two sockets in a row stuck in CONNECTING: reload the web view. */
   onStuck(): void;
   random?: () => number;
@@ -187,7 +189,7 @@ export class Host {
     clearTimeout(this.retryTimer);
     this.status = "connecting";
     const link: Link = this.opts.open({
-      welcome: () => { if (this.link === link) this.onWelcome(); },
+      welcome: (welcome) => { if (this.link === link) this.onWelcome(welcome); },
       message: (msg) => { if (this.link === link) this.onMessage(msg); },
       frame: (frame) => { if (this.link === link) this.onFrame(frame); },
       close: (close) => { if (this.link === link) this.onClose(close); },
@@ -216,7 +218,8 @@ export class Host {
     for (const p of pending) p.fail(error);
   }
 
-  private onWelcome(): void {
+  private onWelcome(welcome: WelcomeMsg): void {
+    this.opts.onWelcome?.(welcome);
     this.status = "open";
     this.attempt = 0;
     this.stuck = 0;
@@ -227,7 +230,7 @@ export class Host {
   private onClose(close: LinkClose): void {
     this.link = null;
     this.watchRoutes.clear();
-    if (close.code === CloseCode.BadToken) this.opts.onRejected();
+    if (close.code === CloseCode.BadToken || close.code === CloseCode.AuthUnavailable) this.opts.onRefused(close.code);
     const halt =
       close.code === CloseCode.BadToken ? "unauthorized" : close.code === CloseCode.Incompatible ? "incompatible" : undefined;
     this.failAll(new RequestError(halt ? `host halted: ${halt}` : "connection lost", halt ?? "lost"));

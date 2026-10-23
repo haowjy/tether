@@ -27,9 +27,10 @@ export interface LinkHandlers {
 export interface LinkOptions {
   /** `ws(s)://host/ws` */
   url: string;
-  token: string;
+  /** Native's device token; the browser holds none and offers `tether.v1` alone. */
+  token?: string;
   build: string;
-  kind?: "ios" | "web";
+  kind: "ios" | "web";
   /** Injectable for tests. */
   createSocket?: (url: string, protocols: string[]) => WebSocket;
 }
@@ -50,12 +51,12 @@ export class HostLink {
   constructor(opts: LinkOptions, handlers: LinkHandlers) {
     this.handlers = handlers;
     const create = opts.createSocket ?? ((u, p) => new WebSocket(u, p));
-    this.ws = create(opts.url, ["tether.v1", `tether.auth.${opts.token}`]);
+    this.ws = create(opts.url, opts.token ? ["tether.v1", `tether.auth.${opts.token}`] : ["tether.v1"]);
     this.ws.binaryType = "arraybuffer";
     this.ws.onopen = () => {
       this.send({
         type: "hello",
-        data: { protocol: PROTOCOL_VERSION, client: { kind: opts.kind ?? "ios", build: opts.build } },
+        data: { protocol: PROTOCOL_VERSION, client: { kind: opts.kind, build: opts.build } },
       });
     };
     this.ws.onmessage = (ev: MessageEvent<unknown>) => { this.receive(ev.data); };

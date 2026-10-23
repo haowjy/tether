@@ -165,7 +165,7 @@ describe("reconnect is per host", () => {
     const t = setup();
     const a = t.tab("a", winA);
     t.link().drop(4401);
-    expect(t.events).toEqual(["rejected"]);
+    expect(t.events).toEqual(["refused 4401"]);
     expect(a.state()).toMatchObject({ halt: "unauthorized", retryInMs: null });
     vi.advanceTimersByTime(120_000);
     expect(t.links).toHaveLength(1);

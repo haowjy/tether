@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { HttpRefusal } from "../net/http";
 import { encodePath, httpFsApi, rawPathOf } from "./api";
-import { linkTarget } from "./markdown";
+import { linkTarget } from "./render/markdown";
 
 describe("paths in URLs", () => {
   it("encodes each segment and decodes back", () => {

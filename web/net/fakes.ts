@@ -34,7 +34,7 @@ export function makeHost() {
   const events: string[] = [];
   const host = new Host({
     open: (h) => { const l = new FakeLink(h); links.push(l); return l; },
-    onRejected: () => events.push("rejected"),
+    onRefused: (code) => events.push(`refused ${String(code)}`),
     onStuck: () => events.push("stuck"),
     random: () => 0.5, // exact backoff base
   });
