@@ -1,6 +1,5 @@
 Nice-to-have, by area:
 
-- Home and the picker: a keyboard-only walk test (tab order, Escape, focus return).
 - Files: open at the active tab's directory (needs the terminal lane to publish `cwd`); name each
   running upload row (`UploadEvent` has no file name); keep a parent folder's scroll when going up;
   Vite still emits one 44 to 60 byte re-export stub per grammar (14 files of the shell's 48).
