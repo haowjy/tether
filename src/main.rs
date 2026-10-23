@@ -60,7 +60,7 @@ enum Command {
 enum DeviceCommand {
     /// List native devices and enrolled Tailscale nodes.
     List,
-    /// Add a device and print its token once (a desktop browser, Playwright).
+    /// Add a native device for the dev shim or Playwright and print its token once.
     Add { name: String },
     /// Remove a device: its token stops working, its sockets close within 10 s.
     Remove { name: String },

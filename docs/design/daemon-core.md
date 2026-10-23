@@ -333,9 +333,8 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 
 ```text
 display-message -p -t %P '#{history_size} #{pane_height}' ;
-capture-pane -p -e -t %P -S <start> -E <end> ;
 capture-pane -p -e -N -T -t %P -S <start> -E <end+1> ;
-capture-pane -p -e -J -t %P -S <start> -E <end+1> ;
+capture-pane -p -J -t %P -S <start> -E <end+1> ;
 display-message -p -t %P '#{history_size} #{pane_height}'
 ```
 
@@ -362,7 +361,7 @@ group's first reply is in the captured grid and output after its last reply is n
 ```text
 refresh-client -A '%P:continue' ; display-message -p -t %P '<STATE>' ;
 capture-pane -p -e -N -t %P ;
-capture-pane -p -e -N -T -t %P ; capture-pane -p -e -J -t %P ;
+capture-pane -p -N -T -t %P ; capture-pane -p -J -t %P ;
 capture-pane -p -P -C -t %P ;
 capture-pane -p -e -N -a -q -t %P ;
 display-message -p -t %P '<STATE>'
@@ -1112,10 +1111,14 @@ sends `Credit` whenever `take_credit()` is non-zero.
 
 One WebSocket per app per host at `GET /ws`. Each daemon is one host and the app
 connects to each directly, so the socket identifies the host and no message names
-one. The token rides in the subprotocol list, `Sec-WebSocket-Protocol: tether.v1,
-tether.auth.<token>`; the daemon answers `tether.v1`
-([auth.md](auth.md#carrying-the-token)). Text frames carry JSON; binary frames carry
-pane bytes; the protocol relies on WebSocket keeping them in order.
+one. The daemon negotiates only `tether.v1`. Native clients send the credential beside
+it as `tether.auth.<token>` in `Sec-WebSocket-Protocol`; browsers send only
+`tether.v1` ([auth.md](auth.md#carrying-the-token)). Text frames carry JSON; binary
+frames carry pane bytes; the protocol relies on WebSocket keeping them in order.
+
+Configuration, runtime-directory and below-minimum-budget startup errors exit with
+status 78; all other startup failures, including a held runtime lock or socket bind
+errors, exit with status 1 (`main.rs`, `runtime.rs`).
 
 ### 5.2 Handshake and versions
 
@@ -1132,10 +1135,14 @@ stateDiagram-v2
 
 Close codes: **4000** idle; **4001** incompatible version; **4002** wedged; **4003**
 protocol violation (including no `hello` in time); **4004** daemon shutdown; **4005**
-over the connection cap; **4009** message too large; **4401** bad, unknown or revoked
-token; **4503** auth unavailable (the daemon can't read `auth.toml`, so it can't judge
-the token). The client reconnects after any of them except 4001 and 4401; after 4503 it
-keeps its token and retries with the usual backoff
+over the connection cap; **4009** message too large; **4401** device or node admission
+refused (including a missing, ambiguous, unknown or revoked native token, or a node
+that is not enrolled or no longer admitted); **4503** authentication unavailable (the
+daemon cannot read `auth.toml`, the bounded auth lane is busy, or tailnet identity is
+unavailable, so it cannot decide whether to admit the device). **4423** is reserved for
+passkey unlock and is not sent.
+The client reconnects after any sent code except 4001 and 4401; after 4503 it keeps its
+credential and retries with the usual backoff
 ([auth.md](auth.md#carrying-the-token)).
 
 - **The client speaks one version; the daemon holds a range,**
@@ -1152,13 +1159,13 @@ keeps its token and retries with the usual backoff
   for the connection to log and ignore; serde's catch-all variant can't do it alone,
   since it matches only a message without a `data` field. A known type with bad data,
   or text that isn't a message, is a protocol violation (4003).
-- **A bad token, an unreadable auth file and a socket over the cap** get the upgrade and
-  then an immediate close (4401, 4503, 4005), because a browser WebSocket can't see a
-  refused upgrade's status. The cap counts sockets from the upgrade, before `hello`. On
-  its own timer the connection re-checks its device
-  ([auth.md](auth.md#carrying-the-token)) and closes with 4401 if it was removed, or
-  4503 if the file can't be read at that moment. Only `hello` is accepted before
-  `welcome`.
+- **A refused device, an unavailable identity or a socket over the cap** gets the
+  upgrade and then an immediate close (4401, 4503, 4005), because a browser WebSocket
+  can't see a refused upgrade's status. The cap counts sockets from the upgrade, before
+  `hello`. On its own timer the connection re-checks its device
+  ([auth.md](auth.md#carrying-the-token)): refused admission closes with 4401, while an
+  unreadable auth file or unavailable identity closes with 4503. Only `hello` is
+  accepted before `welcome`.
 - `host.id` is the persistent host id ([auth.md](auth.md#state-on-disk)).
 
 ### 5.3 JSON messages
@@ -1293,8 +1300,7 @@ The **effective budget** is the lower of the configured budget and that limit.
   <h> is below what tether may hold at its caps; remove it", since the unit would
   stall at caps (`MemoryHigh` in [plan.md](plan.md#resource-budget)). It changes no
   cap.
-- The startup log line names the effective budget, the tier, and its caps. The debug
-  endpoint reports them.
+- The startup log line names the effective budget, the tier, and its caps.
 
 The budget is read once. A change takes effect at the next start, including one made
 with `systemctl --user set-property`, which changes the cgroup at once but not the
@@ -1335,10 +1341,11 @@ wait or a retry, never a wrong result. Every other limit stays fixed:
 - **Completion's constants**, when completion is on: halving them would change
   ranking with the budget. Completion is on or off.
 
-The tier table, the per-item costs in KiB, and a unit test that recomputes each
-row's ceiling and checks it against its range all live in `src/budget.rs`. `Caps`
-has three fields; the hub's `State`, the socket semaphore and `complete` take theirs
-once, at construction.
+The tier table and per-item costs in KiB live in `src/budget.rs`. Its unit test checks
+the five published §6.3 ceilings against the spec, recomputes each tier from fixed and
+per-cap costs, and verifies its 4 MiB headroom against the tier boundary. `Caps` has
+three fields; the hub's `State`, the socket semaphore and `complete` take theirs once,
+at construction.
 
 ### 6.2 Limits
 
