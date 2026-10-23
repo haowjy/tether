@@ -28,6 +28,8 @@ version section on release.
   reconnecting, and `mailto:` links open the mail app.
 - PWA: a missing cached file falls back to the network, Update works after a hard reload, and
   the page is not cached with a CSP that omits the socket's origin.
+- Files: opened first (at `#/files` before the host's name is known), its messages name the host
+  ("Can't reach pop-os") instead of staying "the server" for the page's life.
 - Settings: a finished Remove this device or Clear local data closes Settings in Safari too.
 - The session-limit message says "1 tmux session" when the limit is one.
 - Show refused auth row names in device listing, list nodes by stored ID, and send

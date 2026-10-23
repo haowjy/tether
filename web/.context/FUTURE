@@ -6,5 +6,3 @@ Nice-to-have, by area:
 - Terminal: an end-to-end test of copy.
 - PWA: re-point the lazy-viewer gate in e2e/pwa at the Markdown chunk (it fetches another page's
   entry script, which takes the same code path).
-- Test platform: scripted upload events as a `createTestPlatform` option (Files' fixtures overwrite
-  `uploads.pick` at render instead).

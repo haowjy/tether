@@ -1,17 +1,20 @@
-// Fixtures for the Files lane: the screen on a fake file tree, framed as Home's phone pane
-// or the desktop destination, open at `#/files`. The saved workspace stands in for the
-// router's Files place after a reload, so each fixture can open at a folder or a preview.
-import { h } from "preact";
+// Fixtures for the Files lane: the real app on a fake file tree served through the fake
+// daemon's `/fs` routes, open at `#/files`. The saved workspace stands in for the router's
+// Files place after a reload, so each fixture can open at a folder or a preview. Watches are
+// answered, so an inserted path reaches a tab's real input.
 import type { SavedWorkspace } from "../../platform/types";
 import type { Fixture, Fixtures } from "../fixture";
 import { LISTING, SAVED } from "../shared";
-import { Frame } from "./Frame";
-import { filesTree, HOME, REPO } from "./fakes";
+import { filesTree, HOME, REPO, serveTree, type FilesFs } from "./fakes";
+import type { FakeTree } from "../../platform/test/fs";
 
-const at = (place: NonNullable<SavedWorkspace["files"]>["place"] | null): Fixture => ({
+const at = (place: NonNullable<SavedWorkspace["files"]>["place"] | null, tree?: FakeTree, configure?: (fs: FilesFs) => void): Fixture => ({
   options: () => ({ workspace: { ...SAVED, files: place && { hostId: "h-pop", place } } }),
-  daemon: (d) => { d.listing = LISTING; },
-  render: () => h(Frame, {}),
+  daemon: (d) => {
+    d.listing = LISTING;
+    d.watch = "ok";
+    serveTree(d, tree, configure);
+  },
 });
 
 export const fixtures: Fixtures = {
@@ -25,13 +28,7 @@ export const fixtures: Fixtures = {
   filesBinary: at({ kind: "file", path: `${REPO}/tether.bin` }),
   filesEmpty: at({ kind: "dir", path: `${REPO}/empty` }),
   /** No roots configured at all. */
-  filesNoRoots: {
-    ...at(null),
-    render: () => h(Frame, { tree: { ...filesTree(), roots: [], dirs: [HOME, `${HOME}/code`] } }),
-  },
+  filesNoRoots: at(null, { ...filesTree(), roots: [], dirs: [HOME, `${HOME}/code`] }),
   /** The folder refuses to list. */
-  filesDenied: {
-    ...at({ kind: "dir", path: REPO }),
-    render: () => h(Frame, { configure: (fs) => { fs.denied.add(REPO); } }),
-  },
+  filesDenied: at({ kind: "dir", path: REPO }, undefined, (fs) => { fs.denied.add(REPO); }),
 };

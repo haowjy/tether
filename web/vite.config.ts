@@ -16,6 +16,24 @@ function forbidTestModules(): Plugin {
   };
 }
 
+/** The harness has no daemon: every `/fs/raw` image is one SVG, so an `<img>` in a Files fixture loads. */
+function harnessImages(): Plugin {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400"><rect width="640" height="400" fill="#3b6ea8"/><circle cx="320" cy="200" r="90" fill="white"/></svg>';
+  return {
+    name: "tether-harness-images",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (/^\/fs\/raw\/[^?]*\.(png|jpe?g)(\?|$)/.test(req.url ?? "")) {
+          res.setHeader("Content-Type", "image/svg+xml");
+          res.end(svg);
+        } else {
+          next();
+        }
+      });
+    },
+  };
+}
+
 /** The Shiki grammars the file viewer ships, each its own lazy chunk (client-architecture.md §8.4). */
 const GRAMMARS = ["shellscript", "json", "yaml", "toml", "markdown", "typescript", "tsx", "javascript", "python", "rust", "go", "swift", "c", "diff"];
 /** `bash` is Shiki's alias of the `shellscript` grammar. */
@@ -24,7 +42,7 @@ const ALIASES: Record<string, string> = { bash: "shellscript" };
 export default defineConfig(({ mode }) => ({
   // The daemon serves the build at its origin's root.
   base: "/",
-  plugins: [preact(), serviceWorker(), forbidTestModules(), ...(mode === "harness" || mode === "test" ? [] : [devProxy()])],
+  plugins: [preact(), serviceWorker(), forbidTestModules(), ...(mode === "harness" ? [harnessImages()] : []), ...(mode === "harness" || mode === "test" ? [] : [devProxy()])],
   build: {
     target: "es2022",
     // scripts/checks.mjs build reads the manifest to enforce the shell budgets.

@@ -4,6 +4,7 @@
 import { HttpRefusal } from "../../net/http";
 import type { Entry, FsApi, Listing, Roots } from "../../files/api";
 import { within } from "../../files/browser";
+import type { FakeDaemon } from ".";
 
 export interface FakeTree {
   home: string;
@@ -71,7 +72,8 @@ export class FakeFs implements FsApi {
     });
   }
 
-  text(): Promise<{ text: string; size: number; truncated: boolean }> {
+  text(path: string): Promise<{ text: string; size: number; truncated: boolean }> {
+    if (this.tree.files[path] === undefined) return Promise.reject(new HttpRefusal(404, "not_found"));
     return Promise.resolve({ text: "", size: 0, truncated: false });
   }
 
@@ -121,4 +123,43 @@ export class FakeFs implements FsApi {
     if (!this.hold) return run();
     return new Promise((resolve, reject) => { this.held.push(() => { run().then(resolve, reject); }); });
   }
+}
+
+const json = (status: number, body: unknown): Response =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+/** `/home/a%20b` → `/home/a b`: the inverse of the client's per-segment percent-encoding. */
+const decodePath = (encoded: string): string => encoded.split("/").map(decodeURIComponent).join("/");
+
+/**
+ * The daemon's `/fs/*` routes (fs.md "Routes") over `fs`, for `FakeDaemon.fs`: the app's real
+ * HTTP client talks to the tree. A raw read answers the whole file as 206 with its
+ * `Content-Range`, which the client's one-byte probe and its text preview both accept.
+ */
+export function serveFs(fs: FakeFs): NonNullable<FakeDaemon["fs"]> {
+  const page = (query: URLSearchParams): [number, boolean] => [Number(query.get("offset") ?? 0), query.get("hidden") === "1"];
+  const bodyPath = (body: string | null): string => (JSON.parse(body ?? "{}") as { path: string }).path;
+  const route = async ({ method, path, query, body }: Parameters<NonNullable<FakeDaemon["fs"]>>[0]): Promise<Response> => {
+    const at = (prefix: string): string => decodePath(path.slice(prefix.length));
+    if (method === "GET" && path === "/fs/roots") return json(200, await fs.roots());
+    if (method === "GET" && path.startsWith("/fs/list/")) return json(200, await fs.list(at("/fs/list"), ...page(query)));
+    if (method === "GET" && path.startsWith("/fs/dirs/")) return json(200, await fs.dirs(at("/fs/dirs"), ...page(query)));
+    if (method === "POST" && path === "/fs/roots/add") return json(200, await fs.addRoot(bodyPath(body)));
+    if (method === "POST" && path === "/fs/roots/remove") return json(200, await fs.removeRoot(bodyPath(body)));
+    if (method === "POST" && path === "/fs/uploads-dir") return json(200, await fs.setUploadsDir(bodyPath(body)));
+    if (method === "GET" && path.startsWith("/fs/raw/")) {
+      const target = at("/fs/raw");
+      const probed = await fs.probe(target);
+      if (probed.kind === "dir") throw new HttpRefusal(400, "not_a_file");
+      const { text } = await fs.text(target);
+      if (text === "") throw new HttpRefusal(416, "bad_range");
+      const bytes = new TextEncoder().encode(text).length;
+      return new Response(text, { status: 206, headers: { "Content-Type": probed.mime ?? "application/octet-stream", "Content-Range": `bytes 0-${String(bytes - 1)}/${String(bytes)}` } });
+    }
+    return json(404, { error: "not_found" });
+  };
+  return (request) => route(request).catch((error: unknown) => {
+    if (error instanceof HttpRefusal) return json(error.status, { error: error.code });
+    throw error;
+  });
 }

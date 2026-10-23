@@ -1,12 +1,8 @@
-// The Files fixtures' stand-ins: a file tree with content (platform/test/fs.ts is the
-// listing; this adds what the viewers read), and uploads a spec drives event by event.
-import { encodePath } from "../../files/api";
+// The Files fixtures' file tree with content (platform/test/fs.ts is the listing; this adds
+// what the viewers read).
 import { HttpRefusal } from "../../net/http";
-import { FakeFs, type FakeTree } from "../../platform/test/fs";
-import type { UploadEvent, Uploads } from "../../platform/types";
-
-const svg = (fill: string): string =>
-  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400"><rect width="640" height="400" fill="${fill}"/><circle cx="320" cy="200" r="90" fill="white"/></svg>`)}`;
+import type { FakeDaemon } from "../../platform/test";
+import { FakeFs, serveFs, type FakeTree } from "../../platform/test/fs";
 
 const README = `# tether
 
@@ -80,7 +76,7 @@ const CONTENT: Record<string, string> = {
   [`${REPO}/.env`]: "TOKEN=hidden\n",
 };
 
-/** The file tree with content for the viewers and a `data:` URL for each image. */
+/** The file tree with content for the viewers. Images are served by the harness's dev server (vite.config.ts). */
 export class FilesFs extends FakeFs {
   /** Paths whose listing is refused, for the error state. */
   denied = new Set<string>();
@@ -95,56 +91,15 @@ export class FilesFs extends FakeFs {
     return super.addRoot(path);
   }
 
-  override text(path = ""): Promise<{ text: string; size: number; truncated: boolean }> {
+  override text(path: string): Promise<{ text: string; size: number; truncated: boolean }> {
     const text = CONTENT[path] ?? `${path.split("/").pop() ?? path}\n`;
     return Promise.resolve({ text, size: text.length, truncated: false });
   }
-
-  override rawUrl(path: string): string {
-    // Documents resolve their relative links against this, so it has the real route's shape.
-    return path.endsWith(".png") || path.endsWith(".jpg") ? svg("#3b6ea8") : `/fs/raw${encodePath(path)}`;
-  }
 }
 
-/** An upload stream a spec drives: `push` an event, `end` the pick. */
-export class UploadScript implements Uploads {
-  picks = 0;
-  private buffered: UploadEvent[] = [];
-  private waiting: ((r: IteratorResult<UploadEvent>) => void) | null = null;
-  private ended = false;
-
-  pick(): AsyncIterable<UploadEvent> {
-    this.picks++;
-    this.buffered = [];
-    this.ended = false;
-    return {
-      [Symbol.asyncIterator]: () => ({
-        next: () => {
-          const event = this.buffered.shift();
-          if (event) return Promise.resolve({ done: false, value: event });
-          if (this.ended) return Promise.resolve({ done: true, value: undefined });
-          return new Promise((resolve) => { this.waiting = resolve; });
-        },
-      }),
-    };
-  }
-
-  push(event: UploadEvent): void {
-    if (this.waiting) {
-      const resolve = this.waiting;
-      this.waiting = null;
-      resolve({ done: false, value: event });
-    } else {
-      this.buffered.push(event);
-    }
-  }
-
-  end(): void {
-    this.ended = true;
-    if (this.waiting) {
-      const resolve = this.waiting;
-      this.waiting = null;
-      resolve({ done: true, value: undefined });
-    }
-  }
+/** Serves a tree over the fake daemon's `/fs` routes; the real app browses it through its own HTTP client. */
+export function serveTree(daemon: FakeDaemon, tree: FakeTree = filesTree(), configure?: (fs: FilesFs) => void): void {
+  const fs = new FilesFs(tree, 8);
+  configure?.(fs);
+  daemon.fs = serveFs(fs);
 }

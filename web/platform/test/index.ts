@@ -3,6 +3,7 @@
 // HTTP (`fetch`, which answers /auth/*) and the socket (a FakeLink that welcomes and answers
 // listings and watches). Nothing here knows which environment it stands in for.
 import { FakeLink } from "./host";
+import { UploadScript } from "./uploads";
 import type { AuthInfo } from "../../net/admission";
 import type { LinkHandlers } from "../../proto/link";
 import type { ClientMsg, TmuxListing } from "../../proto/generated/messages";
@@ -17,14 +18,8 @@ import type {
   SavedWorkspace,
   TabKey,
   UpdateState,
-  UploadEvent,
   Viewport,
 } from "../types";
-
-/** An upload that ends at once with no events: the stub until the Files lane scripts uploads. */
-function noEvents(): AsyncIterable<UploadEvent> {
-  return { [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }) };
-}
 
 export const PHONE: Viewport = {
   layout: "phone",
@@ -63,9 +58,9 @@ export interface FakeDaemon {
   listing: TmuxListing | null;
   /** How the daemon answers `watch`: a snapshot, a refusal for its session limit, or nothing (the default). */
   watch?: "ok" | { limit: string } | "never";
-  /** Answers `/fs/*` requests; `undefined` falls through to a 404. */
-  fs?: (request: { method: string; path: string; query: URLSearchParams; body: string | null }) => Response | undefined;
-  /** Requests seen, `"METHOD /path"`, in order. */
+  /** Answers `/fs/*` requests (`serveFs` serves a tree); `undefined` falls through to a 404. */
+  fs?: (request: { method: string; path: string; query: URLSearchParams; body: string | null }) => Response | Promise<Response> | undefined;
+  /** Requests seen, `"METHOD /path?query"`, in order. */
   requests: string[];
 }
 
@@ -88,6 +83,8 @@ export interface TestPlatform extends Platform {
   setViewport(patch: Partial<Viewport>): void;
   setLifecycle(patch: Partial<Lifecycle>): void;
   setUpdate(state: UpdateState): void;
+  /** What `uploads.pick` streams: a spec pushes progress, a path or an error, then ends the pick. */
+  uploadScript: UploadScript;
   /** Every socket the app opened, newest last. */
   links: FakeLink[];
   focusRequests: string[];
@@ -120,7 +117,7 @@ function daemonFetch(daemon: FakeDaemon): typeof fetch {
   return (input, init) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://x");
     const method = init?.method ?? "GET";
-    daemon.requests.push(`${method} ${url.pathname}`);
+    daemon.requests.push(`${method} ${url.pathname}${url.search}`);
     if (daemon.info === "down") return Promise.reject(new TypeError("network"));
     switch (`${method} ${url.pathname}`) {
       case "GET /auth/info":
@@ -182,8 +179,10 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
   let lifecycle = options.lifecycle ?? { visible: true, online: true, locked: false };
   const hosts = options.hosts ?? [{ handle: "h1", hostId: null, name: null, pageOrigin: PAGE_ORIGIN }];
 
+  const uploadScript = new UploadScript();
   const platform: TestPlatform = {
     daemon,
+    uploadScript,
     fetch: daemonFetch(daemon),
     links: [],
     focusRequests: [],
@@ -265,7 +264,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
         return Promise.resolve();
       },
     },
-    uploads: { pick: () => noEvents() },
+    uploads: { pick: () => uploadScript.pick() },
     clipboard: {
       writeText: (text) => {
         platform.clipboardWrites.push(text);

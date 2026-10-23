@@ -1,21 +1,34 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectAccessible, expectNoHorizontalScroll, label, openFixture, SCENARIOS, type Scenario } from "../shared/harness";
 
-// The Files screen on a fake file tree (harness/files/): browsing, previews, history,
-// uploads and the insert-path offer, on the phone and the desktop layout.
+// The Files screen on a fake file tree served through the fake daemon (harness/files/):
+// browsing, previews, history, uploads and the insert-path offer, on the phone and the
+// desktop layout. The app is the real one: specs read the daemon's requests and the input
+// the terminal's driver sent.
 
 const desktop: Scenario = { layout: "desktop", scheme: "dark", density: "compact" };
 const phone: Scenario = { layout: "phone", scheme: "dark", density: "touch" };
 const SCREENS = [["desktop", desktop], ["phone", phone]] as const;
 
 const REPO = "/home/jimmy/tether";
+const UPLOADED = "/home/jimmy/tether-uploads/20261022-101010Z-abcd.jpg";
 const hash = (page: Page): Promise<string> => page.evaluate(() => location.hash);
 const title = (page: Page, name: string | RegExp) => page.getByRole("heading", { level: 1, name });
-const calls = (page: Page): Promise<number> => page.evaluate(() => window.__files?.calls.length ?? -1);
-const inserted = (page: Page): Promise<[string, string][]> => page.evaluate(() => window.__files?.inserted ?? []);
+/** The fake daemon's `/fs` requests so far, `"METHOD /path?query"`. */
+const fsRequests = (page: Page): Promise<string[]> => page.evaluate(() => window.__harness?.platform.daemon.requests.filter((r) => r.includes(" /fs/")) ?? []);
+/** Each `[tmux window, text]` the app typed into a tab: the real driver's `input` messages, by the window their watch is on. */
+const typed = (page: Page): Promise<[number | undefined, string][]> =>
+  page.evaluate(() => {
+    const sent = window.__harness?.platform.links.flatMap((l) => l.sent) ?? [];
+    const windowOf = new Map(sent.flatMap((m) => (m.type === "watch" ? [[m.data.watch, m.data.window.window] as const] : [])));
+    return sent.flatMap((m) => (m.type === "input" ? [[windowOf.get(m.data.watch), m.data.items.map((i) => ("text" in i ? i.text : `<${JSON.stringify(i)}>`)).join("")] as [number | undefined, string]] : []));
+  });
+const script = (page: Page, run: "push" | "end", event?: object): Promise<void> =>
+  page.evaluate(([call, e]) => { const s = window.__harness?.platform.uploadScript; if (call === "push") s?.push(e as never); else s?.end(); }, [run, event] as const);
 
-/** The active tab's id in the fixture's saved workspace: tether / agent. */
+/** The active tab's id in the fixture's saved workspace: tether / agent, tmux window 1. */
 const AGENT = "h-pop/main:1-1/1";
+const AGENT_WINDOW = 1;
 const NOTES = "h-pop/main:1-1/3";
 
 for (const [name, scenario] of SCREENS) {
@@ -30,7 +43,7 @@ for (const [name, scenario] of SCREENS) {
       const rows = page.getByRole("group", { name: "Contents" }).getByRole("button");
       await expect(rows).toHaveCount(9);
       await expect(rows.first()).toContainText("src");
-      expect(await page.evaluate(() => window.__files?.calls.filter((c) => c.startsWith("list")))).toEqual([`list ${REPO} 0`, `list ${REPO} 8`]);
+      expect((await fsRequests(page)).filter((r) => r.includes("/fs/list/"))).toEqual([`GET /fs/list${REPO}?offset=0&hidden=0`, `GET /fs/list${REPO}?offset=8&hidden=0`]);
       await expect(page.getByRole("button", { name: /Show more/ })).toHaveCount(0);
       await page.getByRole("button", { name: "Show hidden files" }).click();
       await expect(rows).toHaveCount(11);
@@ -91,13 +104,13 @@ for (const [name, scenario] of SCREENS) {
       await page.getByRole("button", { name: "~/tether", exact: true }).click();
       await page.getByRole("button", { name: "src" }).click();
       await page.getByRole("button", { name: "main.rs" }).click();
-      await expect(title(page, "main.rs")).toBeVisible();
-      const listed = await calls(page);
+      await expect(page.getByLabel("Contents of main.rs")).toBeVisible();
+      const listed = (await fsRequests(page)).length;
 
       await page.goBack();
       await expect(title(page, "src")).toBeVisible();
       // The folder was still loaded: Back made no request.
-      expect(await calls(page)).toBe(listed);
+      expect((await fsRequests(page)).length).toBe(listed);
       await page.goBack();
       await expect(title(page, "tether")).toBeVisible();
       await page.goBack();
@@ -121,8 +134,9 @@ for (const [name, scenario] of SCREENS) {
     test("Insert path goes to the active tab, with no Enter, and opens Terminal there", async ({ page }) => {
       await openFixture(page, "filesCode", scenario, "#/files");
       await page.getByRole("button", { name: "Insert path into tether / agent" }).click();
-      expect(await inserted(page)).toEqual([[AGENT, `${REPO}/src/main.rs`]]);
       await expect.poll(() => hash(page)).toBe("#/terminal");
+      // The quoted-or-bare path, as text and nothing else: no Enter. It is typed once the tab's watch binds.
+      await expect.poll(() => typed(page)).toEqual([[AGENT_WINDOW, `${REPO}/src/main.rs`]]);
       expect(await page.evaluate(() => window.__harness?.app.snapshot.workspace.active)).toBe(AGENT);
     });
 
@@ -133,40 +147,45 @@ for (const [name, scenario] of SCREENS) {
       await expect(button).toHaveAttribute("aria-disabled", "true");
       await expect(button).toHaveAccessibleDescription("Open a terminal tab first");
       await button.click({ force: true });
-      expect(await inserted(page)).toEqual([]);
+      expect(await typed(page)).toEqual([]);
     });
 
     test("an upload shows progress, then offers the path for the tab it began in", async ({ page }) => {
       await openFixture(page, "filesFolder", scenario, "#/files");
       await page.getByRole("button", { name: "Upload" }).click();
-      expect(await page.evaluate(() => window.__files?.uploads.picks)).toBe(1);
-      await page.evaluate(() => window.__files?.uploads.push({ id: "u1", progress: 0 }));
+      expect(await page.evaluate(() => window.__harness?.platform.uploadScript.picks)).toBe(1);
+      await script(page, "push", { id: "u1", progress: 0 });
       await expect(page.getByText("Waiting to upload")).toBeVisible();
-      await page.evaluate(() => window.__files?.uploads.push({ id: "u1", progress: 0.4 }));
+      await script(page, "push", { id: "u1", progress: 0.4 });
       await expect(page.getByText("Uploading 40%")).toBeVisible();
-      // Another tab becomes active meanwhile: the offer stays with the first.
+      // The user goes to another tab and back to Files meanwhile: the offer stays with the first.
       await page.evaluate((id) => window.__harness?.app.dispatch({ type: "activated", id }), NOTES);
-      await page.evaluate(() => { window.__files?.uploads.push({ id: "u1", path: "/home/jimmy/tether-uploads/20261022-101010Z-abcd.jpg" }); window.__files?.uploads.end(); });
+      await expect.poll(() => hash(page)).toBe("#/terminal");
+      await page.evaluate(() => window.__harness?.app.router.go("files"));
+      await expect(page.getByText("Uploading 40%")).toBeVisible();
+      await script(page, "push", { id: "u1", path: UPLOADED });
+      await script(page, "end");
       await expect(page.getByText("Saved 20261022-101010Z-abcd.jpg")).toBeVisible();
       await page.getByRole("button", { name: "Insert path into tether / agent" }).click();
-      expect(await inserted(page)).toEqual([[AGENT, "/home/jimmy/tether-uploads/20261022-101010Z-abcd.jpg"]]);
       await expect.poll(() => hash(page)).toBe("#/terminal");
+      await expect.poll(() => typed(page)).toEqual([[AGENT_WINDOW, UPLOADED]]);
     });
 
     test("when the target tab is gone mid-upload nothing is inserted anywhere", async ({ page }) => {
       await openFixture(page, "filesFolder", scenario, "#/files");
       await page.getByRole("button", { name: "Upload" }).click();
-      await page.evaluate(() => window.__files?.uploads.push({ id: "u1", progress: 0.5 }));
+      await script(page, "push", { id: "u1", progress: 0.5 });
       await expect(page.getByText("Uploading 50%")).toBeVisible();
       await page.evaluate((id) => window.__harness?.app.dispatch({ type: "closed", id }), AGENT);
-      await page.evaluate(() => { window.__files?.uploads.push({ id: "u1", path: "/home/jimmy/tether-uploads/20261022-101010Z-abcd.jpg" }); window.__files?.uploads.end(); });
+      await script(page, "push", { id: "u1", path: UPLOADED });
+      await script(page, "end");
       await expect(page.getByText("Saved 20261022-101010Z-abcd.jpg")).toBeVisible();
       // The notes tab is still open and now active, but the offer does not move to it.
       const offer = page.getByRole("button", { name: "Insert path" });
       await expect(offer).toHaveAttribute("aria-disabled", "true");
       await expect(offer).toHaveAccessibleDescription("That tab was closed");
       await offer.click({ force: true });
-      expect(await inserted(page)).toEqual([]);
+      expect(await typed(page)).toEqual([]);
       // The file stays in Files.
       await page.getByRole("button", { name: "Preview" }).click();
       await expect(title(page, "20261022-101010Z-abcd.jpg")).toBeVisible();
@@ -175,7 +194,8 @@ for (const [name, scenario] of SCREENS) {
     test("a failed upload says why and can be dismissed", async ({ page }) => {
       await openFixture(page, "filesFolder", scenario, "#/files");
       await page.getByRole("button", { name: "Upload" }).click();
-      await page.evaluate(() => { window.__files?.uploads.push({ id: "u9", error: "Wait for the current uploads to finish" }); window.__files?.uploads.end(); });
+      await script(page, "push", { id: "u9", error: "Wait for the current uploads to finish" });
+      await script(page, "end");
       await expect(page.getByRole("alert").filter({ hasText: "Wait for the current uploads to finish" })).toBeVisible();
       await page.getByRole("list", { name: "Uploads" }).getByRole("button", { name: "Dismiss" }).click();
       await expect(page.getByRole("list", { name: "Uploads" })).toHaveCount(0);
@@ -314,7 +334,9 @@ for (const scenario of SCENARIOS) {
         await expect(page.getByRole("status", { name: /^Loading/ })).toHaveCount(0);
         if (fixture === "filesFolder") {
           await page.getByRole("button", { name: "Upload" }).click();
-          await page.evaluate(() => { window.__files?.uploads.push({ id: "u1", progress: 0.4 }); window.__files?.uploads.push({ id: "u2", path: "/home/jimmy/tether-uploads/20261022-101010Z-abcd.jpg" }); window.__files?.uploads.push({ id: "u3", error: "That file is over the 128 MiB limit" }); });
+          await script(page, "push", { id: "u1", progress: 0.4 });
+          await script(page, "push", { id: "u2", path: UPLOADED });
+          await script(page, "push", { id: "u3", error: "That file is over the 128 MiB limit" });
           await expect(page.getByText("Saved 20261022-101010Z-abcd.jpg")).toBeVisible();
         }
         if (state === "add folder") {

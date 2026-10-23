@@ -10,7 +10,8 @@ import type { HostClient } from "../../net/hosts";
 export interface FilesSession {
   /** The host's adapter handle: uploads and video take it. */
   handle: string;
-  hostName: string;
+  /** The host's name now: it is unknown until `/auth/info` answers, so it is read on each use. */
+  readonly hostName: string;
   browser: FileBrowser;
   uploads: UploadTracker;
   /** Scroll position by folder path, so Back finds the list where it was. */
@@ -25,7 +26,7 @@ export function filesSession(app: AppController, host: HostClient): FilesSession
   const browser = new FileBrowser({ api: host.fs, hidden: false });
   const session: FilesSession = {
     handle: host.entry.handle,
-    hostName: host.name ?? "the server",
+    get hostName() { return app.hosts.get(host.entry.handle)?.name ?? "the server"; },
     browser,
     uploads: new UploadTracker((path) => { void browser.uploaded(path); }),
     scroll: new Map(),
