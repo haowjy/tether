@@ -47,8 +47,8 @@ the Mac keyboard connection or the software keyboard. Capture the current screen
    trust your developer certificate, then ⌘R again.
 
 The spike compiles against the real iPhoneOS SDK with Xcode 27.1. A signed device build
-is blocked because Xcode has no Apple account configured. On the `tether-keyboard-p6`
-iOS 26.3.1 Simulator, the app launches and remains running; keyboard and accessory
+is blocked because Xcode has no Apple account configured. On an iOS 26.3.1
+Simulator, the app launches and remains running; keyboard and accessory
 behavior are not verified. No real-device results are available yet.
 
 ## What's on screen

@@ -138,8 +138,8 @@ also exercises the custom-scheme origin.
 8. Have a Bluetooth or Magic Keyboard nearby for section 4, unpaired for now.
 
 The spike compiles against the real iPhoneOS SDK with Xcode 27.1. A signed device build
-is blocked because Xcode has no Apple account configured. On the `tether-keyboard-p6`
-iOS 26.3.1 Simulator, the app launches and remains running; keyboard and accessory
+is blocked because Xcode has no Apple account configured. On an iOS 26.3.1
+Simulator, the app launches and remains running; keyboard and accessory
 behavior are not verified. There are no real-device results yet.
 
 ### Run the checklist
