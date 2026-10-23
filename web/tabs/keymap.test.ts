@@ -62,8 +62,11 @@ describe("decideKey, desktop", () => {
     expect(decideKey(ev("V", { ctrlKey: true, shiftKey: true }), "xterm")).toEqual({ kind: "browser" });
   });
 
-  it("copies on Ctrl+Shift+C", () => {
+  it("copies on Ctrl+Shift+C and leaves the terminal on Ctrl+Shift+F", () => {
     expect(decideKey(ev("C", { ctrlKey: true, shiftKey: true }), "xterm")).toEqual({ kind: "copy" });
+    expect(decideKey(ev("F", { ctrlKey: true, shiftKey: true }), "xterm")).toEqual({ kind: "leave" });
+    expect(decideKey(ev("F", { ctrlKey: true, shiftKey: true }), "owned")).toEqual({ kind: "leave" });
+    expect(decideKey(ev("f", { ctrlKey: true }), "xterm")).toEqual({ kind: "default" });
   });
 
   it("does nothing while an IME composes, however the browser reports it", () => {

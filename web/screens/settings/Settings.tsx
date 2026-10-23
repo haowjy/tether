@@ -59,6 +59,7 @@ export function Settings() {
   const { open, close } = useOverlay("settings");
   const hosts = useAppView((v) => v.hosts);
   const phone = useAppView((v) => v.viewport.layout === "phone");
+  const keyboard = useAppView((v) => v.viewport.directInput === "xterm");
   const canRemove = removable(hosts);
   // The one host this device would be removed from. The browser has exactly one.
   const target = canRemove[0];
@@ -81,6 +82,14 @@ export function Settings() {
                   Every browser and app on {device} uses tether on {hostName}. Removing it signs them all out; enrol again with <code>tether enroll</code>.
                 </p>
                 <Button variant="secondary" class={styles.danger} onClick={(e) => { ask("removeDevice", e.currentTarget); }}>Remove this device</Button>
+              </section>
+            )}
+            {keyboard && (
+              <section class={styles.section} aria-labelledby="settings-keys">
+                <h3 id="settings-keys" class={styles.heading}>Keyboard</h3>
+                <p class={styles.detail}>
+                  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> leaves the terminal and focuses the tab strip; Enter on a tab returns. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> copies the selection and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> pastes. Every other key goes to tmux.
+                </p>
               </section>
             )}
             <section class={styles.section} aria-labelledby="settings-data">

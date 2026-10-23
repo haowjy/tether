@@ -97,4 +97,20 @@ test.describe("keyboard only", () => {
     await expect(picker).toBeHidden();
     await expect(page.getByRole("button", { name: /^tether \/ agent, / })).toBeVisible();
   });
+
+  test("a focused terminal is left with Ctrl+Shift+F, which moves focus to the tab strip", async ({ page }) => {
+    await openFixture(page, "restored", desktop, "#/terminal");
+    const active = page.getByRole("button", { name: /^tether \/ agent, / });
+    await expect(active).toBeVisible();
+    // The terminal's own input holds focus on arrival.
+    await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
+    await page.keyboard.press("Control+Shift+F");
+    await expect(active).toBeFocused();
+    // The chord is not typed into the shell.
+    const typed = await page.evaluate(() => window.__harness?.platform.links.flatMap((l) => l.sent).filter((m) => m.type === "input").length);
+    expect(typed).toBe(0);
+    // Enter on the tab returns to the terminal.
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
+  });
 });

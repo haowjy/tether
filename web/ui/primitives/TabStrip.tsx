@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { cx } from "../cx";
+import { useFocusRef } from "../focus";
 import { IconButton } from "./IconButton";
 import styles from "./TabStrip.module.css";
 
@@ -58,25 +59,31 @@ export function TabStrip({ pills, active, onSelect, onClose }: TabStripProps) {
 
   return (
     <div ref={scroller} class={styles.strip} data-start={edges.start || undefined} data-end={edges.end || undefined} onScroll={measure}>
-      {pills.map((pill) => {
-        const isActive = pill.id === active;
-        return (
-          <div key={pill.id} class={cx(styles.pill, isActive && styles.active)} data-tone={pill.tone}>
-            <button
-              type="button"
-              class={styles.select}
-              aria-current={isActive ? "true" : undefined}
-              aria-label={`${pill.full}, ${pill.state}`}
-              title={pill.full}
-              onClick={() => { onSelect(pill.id); }}
-            >
-              <span class={styles.session}>{pill.session}</span>
-              <span class={styles.window}>/ {pill.window}</span>
-            </button>
-            {isActive && <IconButton icon="close" label={`Close ${pill.full}`} class={styles.close} onClick={() => { onClose(pill.id); }} />}
-          </div>
-        );
-      })}
+      {pills.map((pill) => (
+        <PillView key={pill.id} pill={pill} active={pill.id === active} onSelect={onSelect} onClose={onClose} />
+      ))}
+    </div>
+  );
+}
+
+/** One pill. The active one's select button is the focus target `tabs`, where Ctrl+Shift+F leaves the terminal. */
+function PillView({ pill, active, onSelect, onClose }: { pill: Pill; active: boolean; onSelect: (id: string) => void; onClose: (id: string) => void }) {
+  const focusRef = useFocusRef(active ? "tabs" : undefined);
+  return (
+    <div class={cx(styles.pill, active && styles.active)} data-tone={pill.tone}>
+      <button
+        type="button"
+        ref={focusRef}
+        class={styles.select}
+        aria-current={active ? "true" : undefined}
+        aria-label={`${pill.full}, ${pill.state}`}
+        title={pill.full}
+        onClick={() => { onSelect(pill.id); }}
+      >
+        <span class={styles.session}>{pill.session}</span>
+        <span class={styles.window}>/ {pill.window}</span>
+      </button>
+      {active && <IconButton icon="close" label={`Close ${pill.full}`} class={styles.close} onClick={() => { onClose(pill.id); }} />}
     </div>
   );
 }

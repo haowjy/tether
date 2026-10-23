@@ -306,6 +306,8 @@ export class Terminals extends Store<TerminalsView> {
               const text = renderer.selectionText();
               if (text) void this.app.platform.clipboard.writeText(text);
             },
+            // A keypress is a gesture, so this focus is allowed on a touch laptop too.
+            leave: () => { this.app.focus.focusTarget("tabs", true); },
           }
         : null,
     );

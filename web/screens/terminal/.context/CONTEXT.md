@@ -27,7 +27,7 @@ The Terminal destination. The design is client-architecture.md §5.4, §6.4, §6
   notice. A screen that disables the action selects `canInsert` from the `terminalsOf(app)`
   store. P3 reads `term/index.ts`:
   `bufferText`, `mouseMode`, `cellAt`, `setPanArea`; and `tabs/keymap.ts` (`decideKey(event, "owned")`).
-- **Cmd combinations are the browser's, everywhere, and Ctrl+Shift+C copies everywhere.** Telling
+- **Ctrl+Shift+F leaves the terminal** (`decideKey` returns `leave`; the sink focuses the `tabs` target, the active pill's select button). Cmd combinations are the browser's, everywhere, and Ctrl+Shift+C copies everywhere.** Telling
   macOS from the rest needs `navigator`, which only `platform/` may read; no terminal key is lost
   by this (nobody sends Super+key to a shell, and `^C` still is Ctrl+C).
 - `e2e/terminal/` runs a real daemon, isolated, on `e2e/shared/stack.ts`: see it for why a front proxy

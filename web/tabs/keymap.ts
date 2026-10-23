@@ -29,6 +29,8 @@ export type KeyDecision =
   | { kind: "bytes"; bytes: string }
   /** Ctrl+Shift+C: copy the selection. */
   | { kind: "copy" }
+  /** Ctrl+Shift+F: leave the terminal for the tab strip. */
+  | { kind: "leave" }
   /** Not routed here: xterm's own encoding in xterm mode, nothing in owned mode (the text arrives through `beforeinput`). */
   | { kind: "default" };
 
@@ -74,6 +76,8 @@ export function decideKey(e: KeyFacts, mode: KeyMode): KeyDecision {
   if (e.ctrlKey && e.shiftKey && !e.altKey) {
     const key = e.key.toLowerCase();
     if (key === "c") return { kind: "copy" };
+    // No default Chrome, Firefox or Safari shortcut takes Ctrl+Shift+F on macOS, Linux or Windows, and a terminal cannot tell it from Ctrl+F.
+    if (key === "f") return { kind: "leave" };
     if (key === "v") return { kind: "browser" };
   }
   const nav = NAVIGATION[e.key];

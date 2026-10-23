@@ -7,6 +7,8 @@ export interface InputSink {
   input(events: InputEvent[]): void;
   /** Ctrl+Shift+C: the selection's logical text is already known to the caller. */
   copy(): void;
+  /** Ctrl+Shift+F: the keyboard user leaves the terminal. */
+  leave(): void;
 }
 
 /**
@@ -40,11 +42,13 @@ export function createDesktopInput(term: Terminal): (sink: InputSink | null) => 
       case "key":
       case "bytes":
       case "copy":
+      case "leave":
         if (event.type === "keydown") {
           event.preventDefault();
           if (decision.kind === "key") sink.input([{ key: decision.name }]);
           else if (decision.kind === "bytes") sink.input([{ bytes: decision.bytes }]);
-          else sink.copy();
+          else if (decision.kind === "copy") sink.copy();
+          else sink.leave();
         }
         return false;
     }
