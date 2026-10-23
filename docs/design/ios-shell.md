@@ -427,7 +427,7 @@ a mismatch can only happen in dev mode and shows an error banner.
 |---|---|---|
 | `ready` | `boot { bridgeVersion, hosts, tabs, active, viewport, locked }` | Start; restore the saved tabs and the active one ([payloads](#boot-and-host-payloads)) |
 | `token { host }` | `{ token }`, `{ locked }` or `{ notEnrolled }` | WebSocket token ([auth.md](auth.md#carrying-the-token)) |
-| `hostRejected { host }` | | The host closed the socket with 4401: mark it "not enrolled". The web halts that host's tabs as unauthorized until a tap on a pill retries |
+| `hostRejected { host }` | | The host closed the socket with 4401: mark it "not enrolled" and show its Add host/enrolment screen. The web halts that host's tabs as unauthorized; a tap on its pill retries. In the browser lane, the daemon's `401 not_enrolled` response opens the browser enrolment screen |
 | `recreateWebView` | | Two consecutive connect timeouts on a host's socket ([plan.md](plan.md#reconnect)): discard the web view and load a fresh one. No data, no reply. All state that matters is on the server and in native's saved tabs |
 | `saveTabs { tabs, active }` | | Persist the open-tab list and which tab is on screen |
 | `focus { mode }` | | `terminal`, `hidden`, `webText`, `select` |

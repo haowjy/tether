@@ -44,18 +44,21 @@ fn main() {
             raw <= FILE_LIMIT,
             "embedded asset {name} is {raw} bytes (limit {FILE_LIMIT})"
         );
+        let bytes = fs::read(path).expect("read asset");
         // Both copies live in OUT_DIR: web/dist is rewritten by any `pnpm run build`, which
         // doesn't rerun this script, so the table must not point into it.
         let copied = out.join(format!("asset-{index}.raw"));
-        fs::copy(path, &copied).expect("copy asset");
-        let gzip = gzip(path);
+        fs::write(&copied, &bytes).expect("copy asset");
+        let gzip = gzip(&bytes);
         let compressed = out.join(format!("asset-{index}.gz"));
         fs::write(&compressed, gzip).expect("write compressed asset");
+        let etag = format!("\"{}\"", sha256(&bytes));
+        let etag_text = format!("{etag:?}");
         let path_text = format!("{:?}", name);
         let raw_path = format!("{:?}", copied);
         let gzip_path = format!("{:?}", compressed);
         generated.push_str(&format!(
-            "    Asset {{ path: {path_text}, raw: include_bytes!({raw_path}), gzip: include_bytes!({gzip_path}) }},\n"
+            "    Asset {{ path: {path_text}, raw: include_bytes!({raw_path}), gzip: include_bytes!({gzip_path}), etag: {etag_text} }},\n"
         ));
     }
     generated.push_str("];\n");
@@ -103,8 +106,7 @@ fn visit(root: &Path, dir: &Path, files: &mut Vec<(String, PathBuf)>) {
     }
 }
 
-fn gzip(path: &Path) -> Vec<u8> {
-    let bytes = fs::read(path).expect("read asset");
+fn gzip(bytes: &[u8]) -> Vec<u8> {
     let mut child = Command::new("gzip")
         .args(["-n", "-9", "-c"])
         .stdin(Stdio::piped())
@@ -115,13 +117,36 @@ fn gzip(path: &Path) -> Vec<u8> {
         .stdin
         .take()
         .expect("gzip stdin")
-        .write_all(&bytes)
+        .write_all(bytes)
         .expect("write gzip input");
     let output = child.wait_with_output().expect("finish gzip");
-    assert!(
-        output.status.success(),
-        "gzip failed for {}",
-        path.display()
-    );
+    assert!(output.status.success(), "gzip failed for an embedded asset");
     output.stdout
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    let macos = cfg!(target_os = "macos");
+    let mut command = Command::new(if macos { "shasum" } else { "sha256sum" });
+    if macos {
+        command.args(["-a", "256"]);
+    }
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("SHA-256 utility is available on POSIX build hosts");
+    child
+        .stdin
+        .take()
+        .expect("sha256 stdin")
+        .write_all(bytes)
+        .expect("write SHA-256 input");
+    let output = child.wait_with_output().expect("finish SHA-256");
+    assert!(output.status.success(), "SHA-256 utility failed");
+    String::from_utf8(output.stdout)
+        .expect("SHA-256 output is UTF-8")
+        .split_ascii_whitespace()
+        .next()
+        .expect("SHA-256 digest")
+        .to_owned()
 }

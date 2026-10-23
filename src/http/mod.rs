@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{DefaultBodyLimit, FromRequestParts as _, Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::header;
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::{get, post};
@@ -15,7 +15,7 @@ use tokio::sync::{Semaphore, watch};
 use tracing::{error, warn};
 
 use crate::auth::{Auth, AuthError, Front, Session};
-use crate::blocking::Lanes;
+use crate::blocking::{Lanes, PermitPool};
 use crate::budget::Caps;
 use crate::config::ConfigFile;
 use crate::fs::Slots;
@@ -51,8 +51,7 @@ pub struct App {
 struct Ctx {
     app: App,
     accepts: Arc<Semaphore>,
-    shell: Arc<Semaphore>,
-    shell_waiters: Arc<Semaphore>,
+    shell: PermitPool,
     conns: Arc<Semaphore>,
     pastes: Arc<Semaphore>,
     fs: Slots,
@@ -126,7 +125,9 @@ async fn tailscale_check(
             Err(refused) => {
                 warn!(%refused, path = request.uri().path(), "refused by the Tailscale check");
                 match refused {
-                    crate::auth::IdentityError::Unavailable(_) => identity_unavailable(),
+                    crate::auth::IdentityError::Unavailable(_) => {
+                        Refusal::from(HttpError::IdentityUnavailable).into_response()
+                    }
                     _ => Refusal::from(HttpError::Forbidden).into_response(),
                 }
             }
@@ -230,52 +231,13 @@ async fn auth_refusal(request: Request, refused: AuthError) -> Response {
     if upgrade {
         let (mut parts, _) = request.into_parts();
         if let Ok(upgrade) = WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
-            return match refused {
-                AuthError::BadOrigin => bad_origin(),
-                AuthError::Forbidden => Refusal::from(HttpError::Forbidden).into_response(),
-                AuthError::IdentityUnavailable(_) | AuthError::Store(_) | AuthError::Busy => {
-                    ws::refuse(upgrade, CloseCode::AuthUnavailable)
-                }
-                _ => ws::refuse(upgrade, CloseCode::BadToken),
-            };
+            if matches!(&refused, AuthError::BadOrigin | AuthError::Forbidden) {
+                return Refusal::from(&refused).into_response();
+            }
+            return ws::refuse(upgrade, CloseCode::from(&refused));
         }
     }
-    match refused {
-        AuthError::BadOrigin => bad_origin(),
-        AuthError::Forbidden => Refusal::from(HttpError::Forbidden).into_response(),
-        AuthError::NodeRefused(reason) => (
-            StatusCode::FORBIDDEN,
-            axum::Json(serde_json::json!({"error":"node_refused", "reason":reason.as_str()})),
-        )
-            .into_response(),
-        AuthError::NotEnrolled { node_name } => (
-            StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({"error":"not_enrolled", "node":{"name":node_name}})),
-        )
-            .into_response(),
-        AuthError::IdentityUnavailable(_) => identity_unavailable(),
-        AuthError::Store(_) => Refusal::from(HttpError::AuthUnavailable).into_response(),
-        AuthError::Busy => Refusal::from(HttpError::Busy).into_response(),
-        AuthError::NoToken | AuthError::Ambiguous | AuthError::Unknown | AuthError::WrongFront => {
-            Refusal::from(HttpError::AuthRequired).into_response()
-        }
-    }
-}
-
-fn bad_origin() -> Response {
-    (
-        StatusCode::FORBIDDEN,
-        axum::Json(serde_json::json!({ "error": "bad_origin" })),
-    )
-        .into_response()
-}
-
-fn identity_unavailable() -> Response {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        axum::Json(serde_json::json!({ "error": "identity_unavailable" })),
-    )
-        .into_response()
+    Refusal::from(&refused).into_response()
 }
 
 fn common_headers(response: &mut Response, shell: bool) {

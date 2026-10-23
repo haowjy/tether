@@ -12,6 +12,7 @@ use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use serde::ser::SerializeStruct as _;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::warn;
@@ -27,12 +28,42 @@ const NAME_LIMIT: usize = 64;
 const AUTH: &str = "auth.toml";
 const HOST_ID: &str = "host_id";
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct AuthFile {
-    #[serde(default, rename = "device", skip_serializing_if = "Vec::is_empty")]
     pub devices: Vec<Device>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
+    refused_devices: Vec<toml::Value>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum DeviceRow<'a> {
+    Known(&'a Device),
+    Refused(&'a toml::Value),
+}
+
+impl Serialize for AuthFile {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let has_devices = !self.devices.is_empty() || !self.refused_devices.is_empty();
+        let fields = usize::from(has_devices) + usize::from(self.pending.is_some());
+        let mut file = serializer.serialize_struct("AuthFile", fields)?;
+        if has_devices {
+            let rows = self
+                .devices
+                .iter()
+                .map(DeviceRow::Known)
+                .chain(self.refused_devices.iter().map(DeviceRow::Refused))
+                .collect::<Vec<_>>();
+            file.serialize_field("device", &rows)?;
+        }
+        if let Some(pending) = &self.pending {
+            file.serialize_field("pending", pending)?;
+        }
+        file.end()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,7 +276,11 @@ impl Store {
         self.update(|file| {
             let before = file.devices.len();
             file.devices.retain(|device| device.name != name);
-            file.devices.len() < before
+            let removed = file.devices.len() < before;
+            let before = file.refused_devices.len();
+            file.refused_devices
+                .retain(|row| row.get("name").and_then(toml::Value::as_str) != Some(name));
+            removed || file.refused_devices.len() < before
         })
     }
 
@@ -405,20 +440,25 @@ fn parse(path: &Path, text: &str) -> Result<AuthFile, StoreError> {
         line: files::toml_line(text, &error),
     })?;
     let mut devices = Vec::with_capacity(raw.devices.len());
+    let mut refused_devices = Vec::new();
     for value in raw.devices {
         let name = value
             .get("name")
             .and_then(toml::Value::as_str)
             .unwrap_or("<unnamed>")
             .to_owned();
-        match value.try_into::<Device>() {
+        match value.clone().try_into::<Device>() {
             Ok(device) if device.valid() => devices.push(device),
-            _ => warn!(device = %name, "refused invalid or unknown device row"),
+            _ => {
+                warn!(device = %name, "refused invalid or unknown device row");
+                refused_devices.push(value);
+            }
         }
     }
     Ok(AuthFile {
         devices,
         pending: raw.pending,
+        refused_devices,
     })
 }
 
@@ -595,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_device_fields_refuse_only_that_row_and_legacy_rows_stay_native() {
+    fn refused_device_rows_survive_other_writes_and_can_be_removed_by_name() {
         let (store, _cleanup) = temp_store();
         fs::write(
             store.dir().join(AUTH),
@@ -607,6 +647,45 @@ mod tests {
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].name, "old");
         assert_eq!(devices[0].kind, DeviceKind::Native);
+
+        store
+            .set_pending(Duration::from_secs(600), SystemTime::now())
+            .expect("write a pending code");
+        let rows = device_rows(&store);
+        assert_eq!(rows.len(), 2);
+        let future = rows
+            .iter()
+            .find(|row| row.get("name").and_then(toml::Value::as_str) == Some("future"))
+            .expect("refused row survived the pending-code write");
+        assert_eq!(
+            future.get("future_scope").and_then(toml::Value::as_str),
+            Some("read-only")
+        );
+
+        assert!(store.remove_device("old").expect("remove the native row"));
+        assert_eq!(
+            device_rows(&store)
+                .iter()
+                .filter(|row| row.get("name").and_then(toml::Value::as_str) == Some("future"))
+                .count(),
+            1,
+            "removing a typed row must preserve the refused row"
+        );
+        assert!(
+            store
+                .remove_device("future")
+                .expect("remove the refused row by name")
+        );
+        assert!(device_rows(&store).is_empty());
+    }
+
+    fn device_rows(store: &Store) -> Vec<toml::Value> {
+        let text = fs::read_to_string(store.dir().join(AUTH)).expect("auth.toml");
+        let document: toml::Value = toml::from_str(&text).expect("valid auth.toml");
+        document
+            .get("device")
+            .and_then(toml::Value::as_array)
+            .map_or_else(Vec::new, |rows| rows.to_vec())
     }
 
     #[test]

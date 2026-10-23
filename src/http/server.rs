@@ -25,7 +25,8 @@ use tokio::time::{Instant, Sleep, sleep, sleep_until, timeout_at};
 use tower::ServiceExt as _;
 use tracing::{debug, warn};
 
-use super::{App, Ctx, Front, router, ws};
+use super::{App, Ctx, Front, router, shell, ws};
+use crate::blocking::PermitPool;
 use crate::budget::ACCEPTED_CONNECTIONS;
 use crate::complete::Completer;
 use crate::fs::Slots;
@@ -83,8 +84,7 @@ pub async fn serve(
     let ctx = Arc::new(Ctx {
         app,
         accepts: Arc::new(tokio::sync::Semaphore::new(ACCEPTED_CONNECTIONS)),
-        shell: Arc::new(tokio::sync::Semaphore::new(4)),
-        shell_waiters: Arc::new(tokio::sync::Semaphore::new(16)),
+        shell: PermitPool::new(shell::SLOTS, Some(shell::WAITERS), None),
         conns: Arc::new(tokio::sync::Semaphore::new(caps.sockets)),
         pastes: Arc::new(tokio::sync::Semaphore::new(ws::PASTE_SLOTS)),
         fs,

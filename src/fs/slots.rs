@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::FsError;
-use crate::blocking::Lane;
+use crate::blocking::{Lane, PermitPool};
 
 const SCANS: usize = 1;
 const RAW_RESPONSES: usize = 2;
@@ -19,29 +19,29 @@ const UPLOADS: usize = 1;
 pub struct Slots {
     /// The fs lane: every blocking call, `lane.run(work).await??`.
     pub lane: Lane,
-    scan: Arc<Semaphore>,
-    raw: Arc<Semaphore>,
+    scan: PermitPool,
+    raw: PermitPool,
     upload: Arc<Semaphore>,
 }
 
 impl Slots {
     pub fn new(lane: Lane) -> Self {
         Self {
-            lane,
-            scan: Arc::new(Semaphore::new(SCANS)),
-            raw: Arc::new(Semaphore::new(RAW_RESPONSES)),
+            scan: lane.permits(SCANS),
+            raw: lane.permits(RAW_RESPONSES),
             upload: Arc::new(Semaphore::new(UPLOADS)),
+            lane,
         }
     }
 
     /// The scan slot, for one directory listing.
     pub async fn scan(&self) -> Result<OwnedSemaphorePermit, FsError> {
-        Ok(self.lane.wait_for(&self.scan).await?)
+        Ok(self.scan.acquire().await?)
     }
 
     /// A raw-response slot, held by the response's producer until it ends.
     pub async fn raw(&self) -> Result<OwnedSemaphorePermit, FsError> {
-        Ok(self.lane.wait_for(&self.raw).await?)
+        Ok(self.raw.acquire().await?)
     }
 
     /// The upload slot, or `busy` at once: native sends one upload at a time.

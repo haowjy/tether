@@ -132,6 +132,7 @@ async fn run(
                     host,
                 };
                 let now = Instant::now();
+                let rechecks = rechecks(ctx.app.auth.clone(), session.clone());
                 let mut conn = Conn {
                     ctx: &ctx,
                     session: &session,
@@ -140,12 +141,12 @@ async fn run(
                     sink: &mut sink,
                     stream: &mut stream,
                     channel,
+                    rechecks,
                     outbox: Outbox::new(),
                     own: VecDeque::from([encode(&welcome)]),
                     current: None,
                     unflushed: 0,
                     heard: now,
-                    checked: now,
                     identity_failures: 0,
                     pastes: 0,
                 };
@@ -203,6 +204,7 @@ struct Conn<'a> {
     sink: &'a mut Sink,
     stream: &'a mut Stream,
     channel: mpsc::Receiver<ToConn>,
+    rechecks: mpsc::Receiver<Result<(), AuthError>>,
     outbox: Outbox,
     /// The connection's own JSON (welcome, pong, a paste's refusal): never charged to
     /// the hub's credit, and written before the outbox's frames.
@@ -213,8 +215,6 @@ struct Conn<'a> {
     unflushed: u32,
     /// When the client last sent anything.
     heard: Instant,
-    /// When the device was last re-checked.
-    checked: Instant,
     identity_failures: u8,
     /// Paste files written, to name the next.
     pastes: u64,
@@ -245,6 +245,13 @@ impl Conn<'_> {
                     }
                     // The hub dropped this connection as wedged.
                     None => return End::Close(CloseCode::Wedged),
+                },
+                result = self.rechecks.recv() => match result {
+                    Some(result) => match self.rechecked(result) {
+                        Ok(()) => {},
+                        Err(end) => return end,
+                    },
+                    None => return End::Gone,
                 },
                 incoming = self.stream.next(), if self.own.len() < OWN_QUEUE => {
                     if let Err(end) = self.receive(incoming).await {
@@ -380,49 +387,55 @@ impl Conn<'_> {
         if now >= self.heard + IDLE {
             return Err(End::Close(CloseCode::Idle));
         }
-        if now >= self.checked + RECHECK {
-            self.checked = now;
-            if let Err(refused) = self.ctx.app.auth.recheck(self.session).await {
-                let (conn, device) = (self.id.0, &self.device.name);
-                if matches!(self.session, Session::Node { .. })
-                    && matches!(&refused, AuthError::IdentityUnavailable(_))
-                {
-                    self.identity_failures = self.identity_failures.saturating_add(1);
-                    if self.identity_failures < 3 {
-                        warn!(
-                            conn,
-                            %device,
-                            failures = self.identity_failures,
-                            cause = %refused,
-                            "node identity check unavailable; keeping socket"
-                        );
-                        return Ok(self.next_tick());
-                    }
-                }
-                match &refused {
-                    AuthError::NoToken | AuthError::Unknown | AuthError::NotEnrolled { .. } => {
-                        info!(conn, %device, "the device was removed");
-                    }
-                    AuthError::Store(_) | AuthError::Busy | AuthError::IdentityUnavailable(_) => {
-                        error!(conn, %device, cause = %refused, "can't re-check the device");
-                    }
-                    AuthError::Ambiguous
-                    | AuthError::WrongFront
-                    | AuthError::BadOrigin
-                    | AuthError::Forbidden
-                    | AuthError::NodeRefused(_) => {
-                        info!(conn, %device, cause = %refused, "node identity was revoked");
-                    }
-                }
-                return Err(End::Close(CloseCode::from(&refused)));
-            }
-            self.identity_failures = 0;
-        }
         Ok(self.next_tick())
     }
 
     fn next_tick(&self) -> Instant {
-        (self.heard + IDLE).min(self.checked + RECHECK)
+        self.heard + IDLE
+    }
+
+    fn rechecked(&mut self, result: Result<(), AuthError>) -> Result<(), End> {
+        let refused = match result {
+            Ok(()) => {
+                self.identity_failures = 0;
+                return Ok(());
+            }
+            Err(refused) => refused,
+        };
+        let stable_id = match self.session {
+            Session::Node { node, .. } => Some(node.id.as_str()),
+            Session::Native(_) | Session::NodeUnenrolled { .. } => None,
+        };
+        let (conn, device) = (self.id.0, &self.device.name);
+        if stable_id.is_some() && matches!(&refused, AuthError::IdentityUnavailable(_)) {
+            self.identity_failures = self.identity_failures.saturating_add(1);
+            if self.identity_failures < 3 {
+                warn!(
+                    conn,
+                    %device,
+                    stable_id = ?stable_id,
+                    failures = self.identity_failures,
+                    cause = %refused,
+                    "node identity check unavailable; keeping socket"
+                );
+                return Ok(());
+            }
+        }
+        match &refused {
+            AuthError::NoToken | AuthError::Unknown | AuthError::NotEnrolled { .. } => {
+                info!(conn, %device, stable_id = ?stable_id, "the device was removed");
+            }
+            AuthError::Store(_) | AuthError::Busy | AuthError::IdentityUnavailable(_) => {
+                error!(conn, %device, stable_id = ?stable_id, cause = %refused, "can't re-check the device");
+            }
+            AuthError::Ambiguous
+            | AuthError::BadOrigin
+            | AuthError::Forbidden
+            | AuthError::NodeRefused(_) => {
+                info!(conn, %device, stable_id = ?stable_id, cause = %refused, "node identity was revoked");
+            }
+        }
+        Err(End::Close(CloseCode::from(&refused)))
     }
 
     /// `fs::check_dir` on the dir lane: a `stat`, and no config, so a broken
@@ -452,6 +465,31 @@ impl Conn<'_> {
             .await
             .map_err(|_| End::Gone)
     }
+}
+
+/// Re-check outside the socket's I/O loop: LocalAPI and auth-lane waits must not
+/// prevent reads, writes, or idle-timeout handling.
+fn rechecks(auth: crate::auth::Auth, session: Session) -> mpsc::Receiver<Result<(), AuthError>> {
+    let (sender, receiver) = mpsc::channel(1);
+    tokio::spawn(async move {
+        let start = (Instant::now() + RECHECK).into();
+        let mut timer = tokio::time::interval_at(start, RECHECK);
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = sender.closed() => return,
+                _ = timer.tick() => {},
+            }
+            let result = tokio::select! {
+                _ = sender.closed() => return,
+                result = auth.recheck(&session) => result,
+            };
+            if sender.send(result).await.is_err() {
+                return;
+            }
+        }
+    });
+    receiver
 }
 
 /// Resolves on shutdown, or if the sender is gone. Its guard on the value never

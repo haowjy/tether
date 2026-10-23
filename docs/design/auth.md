@@ -62,7 +62,7 @@ holding the 64 connection permits; other Unix users on the box can't.
   tailscaled on the dev box learns of it, with no documented bound. `tether device
   remove` takes effect at once, and is the revocation tether relies on.
 - Tailnet state is up to 10 s old when used, and up to 30 s while LocalAPI is
-  failing (§3.3): a handler added beside tether, or a change to the box's own node,
+  failing ([security state](#security-state-is-read-when-it-is-used)): a handler added beside tether, or a change to the box's own node,
   is acted on within 10 s while LocalAPI answers.
 
 **Trusted, out of scope:** root and the Tailscale operator (they can write the
@@ -98,28 +98,23 @@ and at the upgrade; `tether device remove` is the revocation for a live socket.
 **The tailnet-state cell.** A request that finds the cell empty or older than 10 s
 starts a read, unless one is in flight, and waits for it; concurrent requests share
 it. When a read fails, requests use the held value without waiting while it is
-under 30 s old, and one background read retries with exponential backoff from 2 s to 30 s while
-requests keep needing the cell, so an outage costs no latency until the hold expires.
-This is the tech lead's deviation from the proposal's fixed 2 s retry, keeping repeated
-LocalAPI failures light on a busy host. Past 30 s,
-or with nothing held, a request that needs the cell gets `503
-identity_unavailable` at once (a socket re-check counts a failure). The reads go
-over one keep-alive LocalAPI connection, apart from whois, with the 2 s timeout and
-a 64 KiB answer limit per answer. Native requests need the cell too, for the
-auto-detected allowlist, so the cell is read about once per 10 s while anyone is
-connected; the
-serve config adds about 2 KB to each read.
+under 30 s old. A background retry continues independently of request demand, with
+backoff from 2 s to 30 s. Past 30 s, or with nothing held, a request that needs the
+cell gets `503 identity_unavailable` at once (a socket re-check counts a failure).
+If the held value has expired, LocalAPI recovery may take up to 30 s to be observed,
+and requests needing the cell remain unavailable until a scheduled retry succeeds.
+The reads go over one keep-alive LocalAPI connection, apart from whois, with the 2 s
+timeout and a 64 KiB answer limit per answer. Native requests need the cell too for
+the auto-detected allowlist; an open native WebSocket does not refresh it.
 
 ## Constants
 
-The cell retry starts at 2 s and doubles up to 30 s after failures.
-
 | Constant | Value |
 |---|---|
-| tether's runtime directory | `$XDG_RUNTIME_DIR/tether/`, `0700`, owned by the daemon's user. Holds `lock`, `serve.sock`, `local.sock` (both `0600`) and `paste/` |
+| tether's runtime directory | `$XDG_RUNTIME_DIR/tether/` on Linux, `$TMPDIR/tether/` on macOS; `0700`, owned by the daemon's user. Holds `lock`, `serve.sock`, `local.sock` (both `0600`) and `paste/` |
 | whois calls in flight | 2 daemon-wide; up to 16 distinct addresses waiting, the 17th `503 busy` |
 | LocalAPI timeout; answer limit | 2 s; 64 KiB (a real whois answer is 1.5–2.5 KB) |
-| tailnet-state cell | a value at most 10 s old is used; after a failed read the held value is used until it is 30 s old, with a background retry starting at 2 s and doubling to 30 s |
+| tailnet-state cell | a value at most 10 s old is used; after a failed read the held value is used until 30 s old; background retry starts at 2 s and doubles to 30 s |
 | live-socket re-check | the existing 10 s re-check; 3 consecutive whois failures close with 4503 |
 | minimum browsers | Safari and iOS 17.5, Chrome 123, Firefox 120: the minimums support `light-dark()` and send `Sec-Fetch-Site` |
 | minimum Tailscale on the server | 1.94, the first with `unix:` proxy targets |
@@ -131,7 +126,7 @@ The cell retry starts at 2 s and doubles up to 30 s after failures.
 1. **The runtime directory.** `$XDG_RUNTIME_DIR/tether/`. On Linux, without
    `XDG_RUNTIME_DIR` the daemon refuses to start: a fallback under `/tmp` is a path
    another user can create first. On macOS it is the per-user temporary directory
-   (`confstr(_CS_DARWIN_USER_TEMP_DIR)`). The daemon creates the directory with mode
+   (`$TMPDIR`). The daemon creates the directory with mode
    `0700` if it is missing. If it exists, it must be a directory, not a symlink,
    owned by the daemon's user, with mode `0700`; otherwise the daemon refuses to
    start. The directory is never deleted or recreated.
@@ -178,13 +173,13 @@ auth_required`: the node lane doesn't exist there.
   a spoofed copy.
 - `Tailscale-User-Login` is present and, once decoded (Serve Q-encodes a non-ASCII
   value, RFC 2047), in the allowlist: the self node's owner login from the
-  tailnet-state cell (§3.3), or the logins given with `--allow-login`. Serve sets the
+  tailnet-state cell ([security state](#security-state-is-read-when-it-is-used)), or the logins given with `--allow-login`. Serve sets the
   header for user-owned nodes and strips spoofed copies; it sends none for tagged
   nodes or Funnel.
 
 A failure is `403 forbidden`. The daemon doesn't refuse to start when Funnel is on:
 the Funnel header refuses each such request, and the canonical origin refuses an
-entry with Funnel on (§3.7).
+entry with Funnel on ([canonical origin](#canonical-origin)).
 
 ## Node identity
 
@@ -270,7 +265,7 @@ reference and the command that fixes it.
 | HTTPS | Browsers need a secure context for the service worker, and Serve marks only TLS requests `https` |
 | Funnel off | Funnel puts the entry on the internet; the node lane is tailnet-only |
 
-**When it is read.** From the tailnet-state cell (§3.3): on every node-lane request,
+**When it is read.** From the tailnet-state cell ([security state](#security-state-is-read-when-it-is-used)): on every node-lane request,
 every node-lane socket re-check, `GET /auth/info` and `tether enroll`. A handler
 added beside tether, or a stray reference to `serve.sock`, is therefore acted on
 within 10 s, by new requests and by live sockets alike. Request headers (`Host`,
@@ -403,7 +398,7 @@ things:
 
 1. Reads `auth.toml` and looks up the device by stable ID and login, as for a new
    request. Gone: close 4401. File unreadable: close 4503 (as native).
-2. Reads the canonical origin from the tailnet-state cell (§3.3). None, or not the
+2. Reads the canonical origin from the tailnet-state cell ([canonical origin](#canonical-origin)). None, or not the
    recorded one: close 4401. A cell past its 30 s hold counts a failure, as in
    step 3.
 3. Calls whois for the recorded address. A different stable ID, "no such peer", or
@@ -452,7 +447,8 @@ node. Optional `[pending]` as today.
 **A device row with a field the daemon doesn't know is refused, alone**, and logged
 by name; other rows keep working. A later version may add fields that narrow a
 device (an expiry, a scope); an older daemon that ignored them would grant that
-device full power.
+device full power. Refused rows remain as raw TOML values across writes to other
+rows or `[pending]`; `tether device remove <name>` can remove a refused row by name.
 
 ```toml
 [[device]]
@@ -475,7 +471,7 @@ enrolled_by = "jimmy@github"
 | Command | Effect |
 |---|---|
 | `tether enroll [--ttl 10m]` | Print a new code, the host URL for the app, and the browser URL (`browserOrigin`, or the refusal message with its fix). The code works for either kind |
-| `tether device list` | Devices with name, kind, enrolled date and `enrolled_by`; for nodes, the stable ID and whether tailscaled currently knows a peer with it (from `/status` with peers) |
+| `tether device list` | Devices with name, kind, enrolled date and `enrolled_by`; for nodes, the stable ID and a best-effort known-peer status from `/status` when its bounded answer fits |
 | `tether device remove <name>` | Remove a device of either kind; its requests are refused at once and its sockets close at the next re-check |
 | `tether device add <name>` | Add a **native** device and print its token once, for the dev shim or Playwright against a real daemon |
 
@@ -483,8 +479,8 @@ enrolled_by = "jimmy@github"
 
 Every route on both fronts sits behind the Tailscale check (`403 forbidden`), and
 every route on `serve.sock` behind the `Host: localhost` rule. API paths are
-reserved before static routing (`/ws`, `/auth/`, `/fs/`, `/complete`, `/debug`): an
-unknown path under them is a JSON 404, never the shell.
+reserved before static routing (`/auth`, `/ws`, `/fs`, `/complete`, `/debug`): an
+unknown path under them, for any method, is a JSON 404, never the shell.
 
 | Route | Native lane | Node lane (`serve.sock`) | Request → response |
 |---|---|---|---|
@@ -501,9 +497,9 @@ unknown path under them is a JSON 404, never the shell.
 
 Every non-shell response carries `Cache-Control: no-store`, `X-Content-Type-Options:
 nosniff` and `Cross-Origin-Resource-Policy: same-origin`, so another origin can't
-embed one with `<img>` or `<video>`. New errors: `403 bad_origin`, `403
+embed one with `<img>` or `<video>`. New shared error codes: `403 bad_origin`, `403
 node_refused` (with `reason`: `tagged`, `login_mismatch`, `shared`, `routes`,
-`self`, `unknown_node`), `401 not_enrolled`, `503 identity_unavailable`.
+`self`, `unknown_node`), `401 not_enrolled`, and `503 identity_unavailable`.
 
 **Shell responses** carry `Content-Security-Policy: default-src 'none'; script-src
 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src
@@ -520,50 +516,27 @@ pass through it.
 
 ## Module shape
 
-- `node.rs` (new, pure): `forwarded_addr(headers) -> Result<IpAddr, Refused>`;
-  `node_rules(&Whois, login, self_id) -> Result<NodeId, Refusal>`;
-  `Origin::canonical(&ServeConfig, &SocketId) -> Result<Origin, OriginRefusal>`,
-  which counts every reference to the socket and where `OriginRefusal` carries the
-  entry or reference and the fix;
-  `admission(method, upgrade, headers, &Origin) -> Result<(), Refused>`;
-  `presented(headers) -> Presented { None, Native(Authorization | Subprotocol),
-  Ambiguous }`; `decode_login(&HeaderValue)` for Serve's Q-encoding.
-- `identity.rs`: one keep-alive LocalAPI connection for the tailnet-state cell and
-  a pool of 2 for whois, each with the 2 s timeout and the 64 KiB limit; whois
-  single-flight by address, waiters counted by distinct address; the cell and its
-  background retry (§3.3); `ServeConfig` parses `TCP` forwards, `Web` entries,
-  `Handlers`, `unix:` targets, `AllowFunnel`, `Foreground` and `Services`.
-- `store.rs`: `Device.kind` (serde default `Native`) and per-kind fields;
-  `deny_unknown_fields` on the device row, applied row by row so one bad row is
-  refused alone; `enroll(code, name, by, Kind, now)`; `remove_node(node_id)`.
-- `mod.rs`: `check` dispatches on the front and `presented`; `admit(device, now) ->
-  Grant` is the single post-lookup policy, called by `check` and `recheck`.
-- `http/mod.rs`: the accept loop (resource-limits §3.7) accepts on both sockets and
-  inserts `Front::Serve | Front::Local` into every request's extensions, replacing
-  `ConnectInfo<SocketAddr>`. `device_check` runs the canonical origin and `admission` for the node lane
-  before whois. The `/auth/node/*` routes sit outside the `devices` router, like
-  `/auth/enroll`, and call the same steps.
-- `main.rs`: startup in §3.5's order: directory, lock, sockets, then the paste
-  directory and part files ("once the lock is ours" replaces "once the port is
-  ours"). Startup reads nothing from LocalAPI: the exit when `Node::read` or
-  `ServeConfig::read` fails goes, and so does the startup Funnel refusal. The cell's
-  first fill logs the canonical origin or the refusal message.
-- `config.rs`: `runtime_dir()` returns `$XDG_RUNTIME_DIR/tether` on Linux or an error
-  (exit 78), the per-user temporary directory on macOS; the paste directory is its
-  `paste/`.
-- **Deleted in the same change:** `Config.port` and `DEFAULT_PORT` (config's
-  "unknown keys are ignored" keeps old files with `port` parsing);
-  `ServeConfig::reaches`, `url_for(port)` and `funnels_to(port)`, replaced by
-  `Origin::canonical`; the loopback check in `identity::check` and
-  `IdentityError::NotLoopback`; the `TcpListener` bind and its log line;
-  `runtime_dir()`'s `/tmp/tether-<uid>` fallback. `small_buffers` takes the Unix
-  stream instead of `&TcpStream`. In `web/vite.config.ts`, `TETHER_PORT` and the
-  `http://127.0.0.1:7850` target become `TETHER_SOCKET` and a `socketPath` target
-  on `local.sock`. Tests that bind ports connect to the sockets.
-- Dependencies: `hyper` gains `server`; `hyper-util` gains `server`, `http1` and
-  `service`. `flock` comes from `rustix::fs::flock`.
+- `node.rs`: pure forwarded-address parsing, node eligibility and browser-origin
+  admission rules.
+- `identity.rs`: the tailnet-state cell and LocalAPI clients; bounded, single-flight
+  whois; Serve-config parsing and canonical-origin calculation; Tailscale login
+  decoding. Cell fills and retries log changes in origin or availability.
+- `store.rs`: `auth.toml` read-modify-write, native and node devices, and pending
+  enrolment. Invalid device rows are kept as raw TOML when refused; writes preserve
+  them, and removal can match their `name`.
+- `mod.rs`: front and credential dispatch, device admission, and live-socket
+  re-checks. Node re-checks use the freshly read device row before applying policy.
+- `http/server.rs`: bounded Unix-socket accept loop, socket fronts, and shutdown.
+  `http/mod.rs` orders shared Tailscale/login and device checks; `http/error.rs` is
+  the shared HTTP error/status/body mapping; `http/shell.rs` serves only the
+  build-time manifest; `http/ws.rs` keeps LocalAPI/auth re-check waits off the
+  socket's I/O loop.
+- `config.rs`: `runtime_dir()` returns `$XDG_RUNTIME_DIR/tether` on Linux or
+  `$TMPDIR/tether` on macOS; both are private, checked directories.
+- `build.rs`: embeds the shell assets and computes their gzip payloads and ETags at
+  build time.
 - The log never carries `Authorization` or `Sec-WebSocket-Protocol` values;
-  refusals log the reason, the path and, for the node lane, the stable ID.
+  node-lane refusals include the stable ID.
 
 ## Seams
 
@@ -678,6 +651,26 @@ On the Swift side, Security and LocalAuthentication cover everything.
 - `Unlocker`: the lock state machine; holds the tokens while unlocked.
 - `AuthClient`: `/auth/info` and `/auth/enroll` for one host, on an ephemeral
   `URLSession`.
+
+## Probe gates
+
+These deployment and device probes remain the ship gate; HTTP tests with a fake
+LocalAPI do not replace them. `browser-setup.md` links here for the complete checklist.
+
+| Gate | Check on the real system | Settles |
+|---|---|---|
+| G1 | On the dev box with Tailscale 1.104.1, publish `serve.sock` with `sudo tailscale serve --https=443 unix:<serve.sock>`; confirm sudo is required, later Serve changes need root, and another Unix user gets `EACCES` on the socket | Unix Serve publication and runtime-directory boundary |
+| G2 | Through Serve from laptop, phone browser and PWA, inspect Host, forwarded host/address and identity headers on GET, POST and WebSocket upgrade; try forged identity headers and Safari HTTP/2 WebSocket | Serve header trust and browser authority |
+| G3 | Check real whois fields and refusals for tagged, shared, subnet-router, self and login-mismatch nodes; admit only a plain owner node and an exit-node route; confirm `/status?peers=false` includes self ID and owner | Node rules and tailnet-state parsing |
+| G4 | Measure whois latency, tailscaled CPU and response sizes for 1,000 calls over new and keep-alive connections and for 20 concurrent calls; measure status and Serve-config answers | Per-request whois and bounded keep-alive pools |
+| G5 | With Private Relay on, use iOS Safari and the PWA to reach the tailnet hostname and confirm requests arrive with the phone's node address | Phone browser networking |
+| G6 | Confirm the app's `URLSession` sends no Origin or `Sec-Fetch-*` on `POST /auth/enroll` | Native enrolment compatibility |
+| G7 | Compare canonical-origin results with `tailscale serve status` across Unix target, Service, path/text handlers, duplicate publications, TCP forwards, non-root mount, HTTP, Funnel and symlink spellings | Serve-config origin classification |
+| G8 | Open raw `.svg` and `.html` files top-level and verify scripts are sandboxed; verify raw `.js` is refused as a script and service worker | Same-origin file content isolation |
+| G9 | From another tailnet machine, another host port, another user's tether and the internet, exercise WebSocket hijack, POST, forms and raw media; add a co-resident handler while a tab is open | Cross-origin defence and live revocation |
+| G10 | In Safari, iOS Safari, PWA and Chrome, try typed URL, bookmark, cold PWA launch, external link and `<video>` Range requests | Cold shell and media fetch metadata |
+| G11 | Remove an enrolled node and measure live close latency; stop LocalAPI for 15 s and 40 s and verify two re-check failures are tolerated but the third closes with 4503 | Revocation and outage behavior |
+| G12 | Under the resource-limit R3 run, cold-load two browsers, fill distinct-address whois waiters and flood the 64-connection Serve backstop | Shell and admission headroom |
 
 ## Open risks
 

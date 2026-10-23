@@ -111,7 +111,13 @@ pub fn node_rules(
         id: node.stable_id.clone(),
         address,
         login: profile.login_name.clone(),
-        name: node.dns_name.trim_end_matches('.').to_owned(),
+        name: node
+            .dns_name
+            .trim_end_matches('.')
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .to_owned(),
     })
 }
 

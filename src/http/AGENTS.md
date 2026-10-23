@@ -24,17 +24,18 @@ Rules the code relies on, which are easy to break:
 - A bad native token never falls back to node admission. A browser is tokenless, and
   its node lane is available only on `serve.sock`. `/auth/enroll` refuses browser
   Origin/fetch metadata because it returns a native token.
-- Use `Refusal`/`HttpError` for the shared route errors and status/header mapping.
-  Browser admission's distinct `bad_origin`, `node_refused`, `not_enrolled` and
-  `identity_unavailable` JSON shapes are kept in `mod.rs` until the generated web
-  error type can change with the protected frontend lane; don't add string codes in
-  other handlers.
+- Use `Refusal`/`HttpError` in `error.rs` for the shared route errors and
+  status/header mapping. Browser admission's `bad_origin`, `node_refused`,
+  `not_enrolled` and `identity_unavailable` codes are part of the shared generated
+  protocol type; don't hand-build error JSON or duplicate HTTP-code maps in handlers.
 - In `ws.rs`, every `ToConn` goes into the `Outbox`, and `take_credit()` goes back
   as `FromConn::Credit` whenever it is non-zero. The connection's own JSON (welcome,
   pong, a paste's refusal) is never charged; it waits in `own`, and while `own` is
   full the socket isn't read.
 - The write future holds no state: the frame and the unflushed charges live in `Conn`,
   so `select!` can drop the future at any await without losing the frame or charge.
+- The periodic device re-check runs outside the socket I/O loop; the loop receives its
+  bounded result channel so a slow LocalAPI call cannot stall terminal reads/writes.
 - The upgraded-socket cap comes from `App::caps`; inbound size, paste slots, hello,
   idle and auth-recheck limits remain constants in `ws.rs` and `daemon-core.md`.
   Shell responses have independent 4-slot/16-waiter caps and a 30 s write stall.
@@ -48,3 +49,5 @@ Rules the code relies on, which are easy to break:
   directory, not the roots, no config) on the dir lane and passed through. Paste files
   are written on the auth lane. Nothing here calls the blocking pool except through
   `App::lanes` (`src/blocking.rs`).
+- Route-specific slot and waiter limits use `PermitPool`; shell owns the named 4-slot,
+  16-waiter limits. Do not add another semaphore-plus-waiter implementation.

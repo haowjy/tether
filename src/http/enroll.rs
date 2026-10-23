@@ -11,7 +11,7 @@ use axum::http::header;
 use axum::response::{IntoResponse as _, Response};
 use tracing::{error, info, warn};
 
-use super::{Ctx, Login, Refusal, bad_origin, identity_unavailable};
+use super::{Ctx, Login, Refusal};
 use crate::auth::store::EnrollError;
 use crate::proto::auth::{AuthInfo, EnrollRequest, EnrollResponse, ProtocolRange};
 use crate::proto::{HttpError, MIN_PROTOCOL, PROTOCOL_VERSION};
@@ -19,7 +19,7 @@ use crate::proto::{HttpError, MIN_PROTOCOL, PROTOCOL_VERSION};
 pub(super) async fn info(State(ctx): State<Arc<Ctx>>) -> Response {
     let origin = match ctx.app.auth.browser_origin().await {
         Ok(origin) => origin,
-        Err(_) => return identity_unavailable(),
+        Err(_) => return Refusal::from(HttpError::IdentityUnavailable).into_response(),
     };
     let (browser_origin, browser_refused) = match origin {
         Ok(origin) => (Some(origin.origin), None),
@@ -54,7 +54,7 @@ pub(super) async fn enroll(
     body: Result<Json<EnrollRequest>, JsonRejection>,
 ) -> Response {
     if headers.contains_key(header::ORIGIN) || headers.contains_key("sec-fetch-site") {
-        return bad_origin();
+        return Refusal::from(HttpError::BadOrigin).into_response();
     }
     let Json(request) = match body {
         Ok(body) => body,

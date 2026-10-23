@@ -75,10 +75,11 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
 - **Server platform:** `tether serve` runs on Linux only for now. It needs tailscaled's
   LocalAPI Unix socket for the login allowlist, node `whois`, self-node status and
   Serve config; the macOS Tailscale apps (App Store and standalone) don't expose one.
-  The Mac is for recording
-  the 3.7b tmux fixtures ([daemon-core.md §8](daemon-core.md#8-testing)) and building
-  the iOS app, not for running the daemon. On macOS there is no cgroup or hard memory
-  cap; if run there, the budget only sizes the counts.
+  A Mac is a fine client: its browser is judged by whois on the Linux server and needs
+  no local Tailscale LocalAPI. The Mac is also for recording the 3.7b tmux fixtures
+  ([daemon-core.md §8](daemon-core.md#8-testing)) and building the iOS app, not for
+  running the daemon. On macOS there is no cgroup or hard memory cap; if run there,
+  the budget only sizes the counts.
 - **Scratch shell:** kept, landing after the core MVP.
 
 ## Architecture
@@ -592,6 +593,8 @@ handler of one HTTPS entry with Funnel off. It checks `Host: localhost`, one
 and `Sec-Fetch-Site: same-origin` on reads. API responses are `no-store` with
 `Cross-Origin-Resource-Policy: same-origin`; the embedded shell has a restrictive
 CSP. Native auth remains cookie-free and needs no Origin exception.
+The native UI at `tether-app://ui` has a separate scheme-handler CSP and sandbox for
+daemon responses ([ios-shell.md](ios-shell.md#web-content-security)).
 
 **Device files fail closed.** The daemon reads `auth.toml` on every check. An unreadable
 or malformed file returns a retryable unavailable response (HTTP 503, socket close

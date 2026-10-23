@@ -8,7 +8,10 @@ version section on release.
 - Use pnpm 10.23.0 to install, build and check the web client.
 - Serve the browser/PWA shell from the daemon over private Unix sockets and admit
   browsers as enrolled tailnet nodes. Native device-token auth is unchanged; `tether
-  device list/remove` now includes node devices.
+  device list/remove` now includes node devices. **Breaking upgrade:** run `sudo
+  tailscale serve --bg --https=443 unix:/run/user/<uid>/tether/serve.sock` to replace
+  the old loopback target; until then the iOS app gets HTTP 502. The old `port` config
+  key is ignored.
 - Rebuild the web client's skeleton: one Platform interface with browser and test adapters,
   admission read from the daemon at every launch, a design system of owned primitives with
   light and dark themes, and Playwright with axe over every route. `scripts/preflight.sh full

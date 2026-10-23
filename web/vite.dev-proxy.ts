@@ -15,17 +15,21 @@
 //
 // The Enrol and admission-problem screens can't be reached through it: the harness drives them.
 import { request, type IncomingMessage, type ServerResponse } from "node:http";
+import { isAbsolute, join } from "node:path";
 import type { Plugin, ProxyOptions } from "vite";
 
 /** The one list of daemon paths, as Vite proxy keys (a leading `^` makes the key a regex, so `/wsx` is not `/ws`) and as the check's matchers. */
 const API_PATHS = ["/ws", "/auth", "/fs", "/complete"].map((path) => `^${path}(?:[/?]|$)`);
 const API_MATCHERS = API_PATHS.map((key) => new RegExp(key));
 
-/** The daemon's socket when TETHER_SOCKET names it (socketPath wins over host and port), else loopback TCP. */
+/** The daemon's local front; TETHER_SOCKET overrides its platform runtime path. */
 function daemonTarget(): { host: string; port: number; socketPath?: string } {
-  const socketPath = process.env["TETHER_SOCKET"];
-  const tcp = { host: "127.0.0.1", port: Number(process.env["TETHER_PORT"] ?? "7850") };
-  return socketPath ? { ...tcp, socketPath } : tcp;
+  const runtimeDir = process.platform === "darwin" ? process.env["TMPDIR"] : process.env["XDG_RUNTIME_DIR"];
+  const socketPath = process.env["TETHER_SOCKET"] ?? (runtimeDir && join(runtimeDir, "tether/local.sock"));
+  if (!socketPath || !isAbsolute(socketPath)) {
+    throw new Error("Set TETHER_SOCKET or an absolute XDG_RUNTIME_DIR (TMPDIR on macOS) for tether's local.sock.");
+  }
+  return { host: "127.0.0.1", port: 0, socketPath };
 }
 
 function token(): string {

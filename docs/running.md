@@ -10,8 +10,9 @@ your tmux server and never starts one, so start tmux the way you always do.
 socket for login, whois, status and Serve config; the macOS Tailscale apps (App Store
 and standalone) don't expose one. LocalAPI availability is not a startup gate: tether
 starts before tailscaled and reports identity-dependent requests unavailable until
-the API responds. The Mac is for recording tmux 3.7b fixtures and building the iOS
-app, not for running the production daemon.
+the API responds. A Mac is also a fine client: a browser there is identified by whois
+on the server and needs no local Tailscale LocalAPI. The Mac remains useful for
+recording tmux 3.7b fixtures and building the iOS app, but not for running the daemon.
 
 ## Install
 
@@ -49,6 +50,10 @@ files, so if you set `TMUX_TMPDIR` there, set `socket_path` here.
 sudo tailscale serve --bg --https=443 unix:/run/user/<uid>/tether/serve.sock
 ```
 
+**Upgrade from the loopback-TCP daemon:** run this command to replace its `/` handler.
+Until then, the iOS app gets HTTP 502 because nothing is listening on the old target.
+The old `port` key is ignored and can be deleted from `config.toml`.
+
 Use Tailscale 1.94 or later. Replace `<uid>` with `id -u`. The canonical browser origin
 exists only while `serve.sock` is the sole root handler of one HTTPS Serve entry, with
 Funnel off; another handler beside it, a second publication, or a TCP forward to the
@@ -68,8 +73,7 @@ The daemon creates `$XDG_RUNTIME_DIR/tether/` with mode `0700`, requiring it to 
 real directory owned by the daemon user. It refuses a missing Linux `XDG_RUNTIME_DIR`,
 a symlink, the wrong owner or any mode other than `0700` with exit 78. It holds an
 exclusive lock before replacing stale `serve.sock`/`local.sock` sockets or cleaning
-`paste/`, so a second daemon cannot damage the running one. An old `port = 7850` key
-is ignored and can be removed. If the existing Serve config still targets
+`paste/`, so a second daemon cannot damage the running one. If the existing Serve config still targets
 `http://127.0.0.1:7850`, tether logs the one publish command above and `tether enroll`
 prints it as the browser refusal.
 
@@ -245,7 +249,7 @@ browser profile. Removing the node revokes every browser on that machine.
 | `503 identity_unavailable` | LocalAPI whois or tailnet state is unavailable; tether retries and never interprets a failed lookup as “not enrolled” |
 | `503 auth_unavailable`, or the native socket closes with 4503 | `auth.toml` can't be read, usually a typo from a hand edit; the log names the line. Fix it: native keeps its token and retries |
 | tether exits with “already running” | another daemon holds the runtime lock; do not delete its sockets or paste files |
-| tether exits at start with status 78 naming `XDG_RUNTIME_DIR` | Linux runtime directory is absent or unsafe; use the user's real `/run/user/<uid>` runtime directory with mode 0700 |
+| tether exits at start with status 78 naming a runtime directory variable | `XDG_RUNTIME_DIR` on Linux or `TMPDIR` on macOS is absent or unsafe; use the user's private runtime directory |
 | the app shows no sessions | no tmux server on the configured socket |
 | tether exits at start with status 78 | configuration is invalid or the effective budget is below 42 MiB; fix the journal's named cause, then start tether again |
 | the journal says "no cgroup memory limit is in force" | the user manager lacks the memory controller or the host uses cgroup v1/hybrid; `MemoryMax` isn't enforced |

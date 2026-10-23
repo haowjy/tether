@@ -249,7 +249,7 @@ pub fn prepare_runtime_dir(path: &Path) -> Result<(), RuntimeDirError> {
 
 #[derive(Debug, Error)]
 pub enum RuntimeDirError {
-    #[error("XDG_RUNTIME_DIR is required on Linux (no /tmp fallback)")]
+    #[error("XDG_RUNTIME_DIR is required on Linux or TMPDIR on macOS (no /tmp fallback)")]
     NoRuntimeDir,
     #[error("{path}: {cause}")]
     Unsafe { path: PathBuf, cause: &'static str },

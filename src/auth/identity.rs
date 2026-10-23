@@ -67,12 +67,13 @@ pub struct TailnetState {
     pub self_id: String,
     pub owner_login: Option<String>,
     pub dns_name: String,
-    pub backend_state: String,
     pub serve: ServeConfig,
 }
 
 const STATE_MAX_AGE: Duration = Duration::from_secs(10);
 const STATE_MAX_HOLD: Duration = Duration::from_secs(30);
+
+type CellObserver = dyn Fn(&Result<TailnetState, LocalApiError>) + Send + Sync;
 
 /// A shared, age-bounded view of the self node and Serve config.
 #[derive(Clone)]
@@ -80,6 +81,7 @@ pub struct TailnetStateCell {
     api: LocalApi,
     state: Arc<Mutex<CellState>>,
     changed: Arc<Notify>,
+    observe: Arc<CellObserver>,
 }
 
 struct CellState {
@@ -91,7 +93,10 @@ struct CellState {
 }
 
 impl TailnetStateCell {
-    pub fn new(api: LocalApi) -> Self {
+    pub fn new(
+        api: LocalApi,
+        observe: impl Fn(&Result<TailnetState, LocalApiError>) + Send + Sync + 'static,
+    ) -> Self {
         Self {
             api,
             state: Arc::new(Mutex::new(CellState {
@@ -102,6 +107,7 @@ impl TailnetStateCell {
                 retry_delay: Duration::from_secs(2),
             })),
             changed: Arc::new(Notify::new()),
+            observe: Arc::new(observe),
         }
     }
 
@@ -141,14 +147,6 @@ impl TailnetStateCell {
                         Err(LocalApiError::Unavailable)
                     };
                 }
-                if age > STATE_MAX_HOLD {
-                    if !state.in_flight {
-                        state.in_flight = true;
-                        let cell = self.clone();
-                        tokio::spawn(async move { cell.refresh().await });
-                    }
-                    return Err(LocalApiError::Unavailable);
-                }
             }
             if state.in_flight {
                 if state.failed {
@@ -166,42 +164,22 @@ impl TailnetStateCell {
         }
     }
 
-    pub async fn peek(&self) -> Option<TailnetState> {
+    /// The last successful value, even when it is too old to make an auth decision.
+    pub async fn last_known(&self) -> Option<TailnetState> {
         self.state
             .lock()
             .await
             .value
             .as_ref()
-            .filter(|(at, _)| Instant::now().duration_since(*at) <= STATE_MAX_HOLD)
             .map(|(_, value)| value.clone())
     }
 
     async fn refresh(&self) {
         let result = self.api.tailnet_state().await;
-        let retry = {
-            let mut state = self.state.lock().await;
-            state.in_flight = false;
-            match result {
-                Ok(value) => {
-                    state.value = Some((Instant::now(), value));
-                    state.failed = false;
-                    state.retrying = false;
-                    state.retry_delay = Duration::from_secs(2);
-                    false
-                }
-                Err(_) => {
-                    state.failed = true;
-                    if !state.retrying {
-                        state.retrying = true;
-                        true
-                    } else {
-                        false
-                    }
-                }
-            }
-        };
-        self.changed.notify_waiters();
-        if retry {
+        if matches!(
+            self.complete(result).await,
+            Completion::Failed { start_retry: true }
+        ) {
             let cell = self.clone();
             tokio::spawn(async move { cell.retry().await });
         }
@@ -225,30 +203,44 @@ impl TailnetStateCell {
                 state.in_flight = true;
             }
             let result = self.api.tailnet_state().await;
-            let success = {
-                let mut state = self.state.lock().await;
-                state.in_flight = false;
-                match result {
-                    Ok(value) => {
-                        state.value = Some((Instant::now(), value));
-                        state.failed = false;
-                        state.retrying = false;
-                        state.retry_delay = Duration::from_secs(2);
-                        true
-                    }
-                    Err(_) => {
-                        state.failed = true;
-                        state.retry_delay = (state.retry_delay * 2).min(Duration::from_secs(30));
-                        false
-                    }
-                }
-            };
-            self.changed.notify_waiters();
-            if success {
+            if matches!(self.complete(result).await, Completion::Succeeded) {
                 return;
             }
         }
     }
+
+    async fn complete(&self, result: Result<TailnetState, LocalApiError>) -> Completion {
+        let completion = {
+            let mut state = self.state.lock().await;
+            state.in_flight = false;
+            match &result {
+                Ok(value) => {
+                    state.value = Some((Instant::now(), value.clone()));
+                    state.failed = false;
+                    state.retrying = false;
+                    state.retry_delay = Duration::from_secs(2);
+                    Completion::Succeeded
+                }
+                Err(_) => {
+                    state.failed = true;
+                    let start_retry = !state.retrying;
+                    state.retrying = true;
+                    if !start_retry {
+                        state.retry_delay = (state.retry_delay * 2).min(Duration::from_secs(30));
+                    }
+                    Completion::Failed { start_retry }
+                }
+            }
+        };
+        (self.observe)(&result);
+        self.changed.notify_waiters();
+        completion
+    }
+}
+
+enum Completion {
+    Succeeded,
+    Failed { start_retry: bool },
 }
 
 impl TailnetState {
@@ -364,8 +356,6 @@ impl LocalApi {
     pub async fn tailnet_state(&self) -> Result<TailnetState, LocalApiError> {
         #[derive(Deserialize)]
         struct Status {
-            #[serde(rename = "BackendState", default)]
-            backend_state: String,
             #[serde(rename = "Self")]
             this: Option<SelfNode>,
             #[serde(rename = "User", default)]
@@ -407,7 +397,6 @@ impl LocalApi {
             self_id: this.stable_id,
             owner_login,
             dns_name: this.dns_name.trim_end_matches('.').to_owned(),
-            backend_state: status.backend_state,
             serve: serve.unwrap_or_default(),
         })
     }
@@ -636,30 +625,71 @@ pub fn check_login(
 /// Serve Q-encodes non-ASCII logins as an RFC 2047 encoded word.
 pub fn decode_login(value: &axum::http::HeaderValue) -> Option<String> {
     let raw = value.to_str().ok()?;
-    let Some(encoded) = raw.strip_prefix("=?") else {
+    if !raw.starts_with("=?") {
         return Some(raw.to_owned());
-    };
-    let mut parts = encoded.strip_suffix("?=")?.splitn(3, '?');
-    let charset = parts.next()?;
-    let encoding = parts.next()?;
-    let payload = parts.next()?;
+    }
+    let input = raw.as_bytes();
+    let mut offset = 0;
+    let mut decoded = Vec::with_capacity(input.len());
+    while offset < input.len() {
+        if input[offset..].starts_with(b"=?") {
+            let (word, next) = decode_word(input, offset)?;
+            decoded.extend(word);
+            offset = next;
+            let mut after_whitespace = offset;
+            while input
+                .get(after_whitespace)
+                .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                after_whitespace += 1;
+            }
+            if input[after_whitespace..].starts_with(b"=?") {
+                offset = after_whitespace;
+            }
+        } else {
+            let next = input[offset..]
+                .windows(2)
+                .position(|pair| pair == b"=?")
+                .map_or(input.len(), |next| offset + next);
+            decoded.extend_from_slice(&input[offset..next]);
+            offset = next;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn decode_word(input: &[u8], start: usize) -> Option<(Vec<u8>, usize)> {
+    if !input[start..].starts_with(b"=?") {
+        return None;
+    }
+    let charset_start = start + 2;
+    let charset_end = charset_start + input[charset_start..].iter().position(|b| *b == b'?')?;
+    let charset = std::str::from_utf8(&input[charset_start..charset_end]).ok()?;
+    let encoding_start = charset_end + 1;
+    let encoding_end = encoding_start + input[encoding_start..].iter().position(|b| *b == b'?')?;
+    let encoding = std::str::from_utf8(&input[encoding_start..encoding_end]).ok()?;
+    let payload_start = encoding_end + 1;
+    let payload_end = payload_start
+        + input[payload_start..]
+            .windows(2)
+            .position(|pair| pair == b"?=")?;
     if !charset.eq_ignore_ascii_case("utf-8") || !encoding.eq_ignore_ascii_case("q") {
         return None;
     }
-    let mut bytes = Vec::with_capacity(payload.len());
-    let mut input = payload.bytes();
-    while let Some(byte) = input.next() {
+    let mut decoded = Vec::with_capacity(payload_end - payload_start);
+    let mut payload = input[payload_start..payload_end].iter().copied();
+    while let Some(byte) = payload.next() {
         match byte {
-            b'_' => bytes.push(b' '),
+            b'_' => decoded.push(b' '),
             b'=' => {
-                let high = hex(input.next()?)?;
-                let low = hex(input.next()?)?;
-                bytes.push(high * 16 + low);
+                let high = hex(payload.next()?)?;
+                let low = hex(payload.next()?)?;
+                decoded.push(high * 16 + low);
             }
-            byte => bytes.push(byte),
+            byte => decoded.push(byte),
         }
     }
-    String::from_utf8(bytes).ok()
+    Some((decoded, payload_end + 2))
 }
 
 fn hex(byte: u8) -> Option<u8> {
@@ -718,11 +748,6 @@ struct Service {
 }
 
 impl ServeConfig {
-    pub async fn read(api: &LocalApi) -> Result<Self, LocalApiError> {
-        let state = api.tailnet_state().await?;
-        Ok(state.serve)
-    }
-
     pub fn canonical_origin(
         &self,
         wanted: SocketIdentity,

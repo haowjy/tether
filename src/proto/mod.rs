@@ -11,7 +11,7 @@ mod messages;
 #[cfg(test)]
 mod typescript;
 
-pub use error::{ErrorBody, HttpError};
+pub use error::{ErrorBody, ErrorNode, HttpError};
 pub use messages::*;
 
 /// The protocol this daemon speaks; the newest a client may speak.

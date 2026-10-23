@@ -17,6 +17,7 @@ mod daemon;
 
 use daemon::{
     LOGIN, WAIT, request, send, send_owned, send_with_host, start, start_as, start_with_fake,
+    start_without_allow_login,
 };
 
 /// Every `/fs` route and `/complete`, with a body where it takes one.
@@ -91,6 +92,32 @@ async fn every_route_needs_the_tailscale_login() {
         panic!("upgraded without a login");
     };
     assert_eq!(refused.status(), 403);
+}
+
+#[tokio::test]
+async fn the_default_allowlist_refreshes_tailnet_state_after_idle() {
+    let daemon = start_without_allow_login("default-allow-idle").await;
+    let login = [("Tailscale-User-Login", LOGIN)];
+    assert_eq!(
+        send(daemon.serve_port, "GET", "/auth/info", &login, &[])
+            .await
+            .status,
+        200
+    );
+    let native = daemon.device();
+    let token = native[1].1.strip_prefix("Bearer ").expect("token");
+
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    let shell = send(daemon.serve_port, "GET", "/", &login, &[]);
+    let protocols = format!("tether.v1, tether.auth.{token}");
+    let websocket = open(daemon.port, Some(LOGIN), &protocols);
+    let fs = send_owned(daemon.port, "GET", "/fs/roots", &native, &[]);
+    let (shell, websocket, fs) = tokio::join!(shell, websocket, fs);
+    assert_eq!(shell.status, 200, "{}", shell.text());
+    let (mut socket, protocol) = websocket.expect("native WebSocket admitted after idle");
+    assert_eq!(protocol.as_deref(), Some("tether.v1"));
+    socket.close(None).await.expect("close test socket");
+    assert_eq!(fs.status, 200, "{}", fs.text());
 }
 
 #[tokio::test]
@@ -363,7 +390,7 @@ async fn serve_decodes_q_encoded_logins_before_matching_the_allowlist() {
         "/",
         &[(
             "Tailscale-User-Login",
-            "=?UTF-8?Q?jos=C3=A9=40example.test?=",
+            "=?UTF-8?Q?jos=C3=A9=40?= =?UTF-8?Q?example.test?=",
         )],
         &[],
     )
@@ -542,7 +569,7 @@ async fn node_rules_refuse_ineligible_nodes_and_allow_exit_node_routes() {
     .await;
     assert_eq!(reply.status, 401, "{}", reply.text());
     assert_eq!(reply.json()["error"].as_str(), Some("not_enrolled"));
-    assert_eq!(reply.json()["node"]["name"].as_str(), Some("laptop.ts.net"));
+    assert_eq!(reply.json()["node"]["name"].as_str(), Some("laptop"));
     assert_eq!(
         daemon
             .fake
@@ -848,6 +875,15 @@ async fn a_node_enrols_with_the_shared_code_and_shell_paths_do_not_call_whois() 
     assert_eq!(reply.status, 200);
     assert_eq!(reply.header("content-encoding"), Some("gzip"));
     assert_eq!(reply.header("vary"), Some("Accept-Encoding"));
+    let etag = reply.header("etag").expect("shell ETag");
+    assert!(etag.starts_with('"') && etag.ends_with('"'), "{etag}");
+    let conditional_headers = no_browser_metadata
+        .iter()
+        .copied()
+        .chain([("If-None-Match", etag)])
+        .collect::<Vec<_>>();
+    let conditional = send(daemon.serve_port, "GET", "/", &conditional_headers, &[]).await;
+    assert_eq!(conditional.status, 304);
     assert_eq!(
         daemon
             .fake
@@ -860,6 +896,9 @@ async fn a_node_enrols_with_the_shared_code_and_shell_paths_do_not_call_whois() 
     let unknown = send(daemon.serve_port, "GET", "/auth/unknown", &login, &[]).await;
     assert_eq!(unknown.status, 404);
     assert_eq!(unknown.json()["error"].as_str(), Some("not_found"));
+    let unknown_post = send(daemon.serve_port, "POST", "/auth/unknown", &login, &[]).await;
+    assert_eq!(unknown_post.status, 404);
+    assert_eq!(unknown_post.json()["error"].as_str(), Some("not_found"));
     assert_eq!(
         daemon
             .fake
@@ -895,10 +934,7 @@ async fn a_node_enrols_with_the_shared_code_and_shell_paths_do_not_call_whois() 
     .await;
     assert_eq!(unenrolled.status, 401);
     assert_eq!(unenrolled.json()["error"].as_str(), Some("not_enrolled"));
-    assert_eq!(
-        unenrolled.json()["node"]["name"].as_str(),
-        Some("laptop.ts.net")
-    );
+    assert_eq!(unenrolled.json()["node"]["name"].as_str(), Some("laptop"));
     assert_eq!(
         daemon
             .fake

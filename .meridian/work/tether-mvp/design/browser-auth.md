@@ -1040,8 +1040,12 @@ Tests stand in for tailscaled with a fake LocalAPI on a Unix socket, and connect
   non-root mount, or Funnel on: every node-lane request is `403 bad_origin`, and `/auth/info` reports `null`
   with a message naming the entry. A handler added while a node-lane socket is open
   closes it 4401 at the next re-check; removed again, new requests are admitted
-  within 10 s. A tailnet-state read failing for 20 s keeps admitting, with no
-  request waiting on a read; past 30 s, requests that need the cell are 503.
+  within 10 s. With the default allowlist (no `--allow-login`), after more than 30 s
+  idle and a healthy LocalAPI, the next request starts or joins a tailnet-state read
+  and waits for it; shell, native and fs requests then succeed.
+- **Cell outage at 20 s:** requests keep using the held value without waiting.
+- **Cell outage past 30 s:** requests needing the cell are 503 until a retry succeeds.
+  After LocalAPI recovers, retry backoff can delay recovery by up to 30 s.
 - **Read at use:** the fake `/status` changing the self node's stable ID or owner is
   acted on within 10 s, without restart.
 - **Lanes:** a token and nothing else uses the native lane on either front; a bad

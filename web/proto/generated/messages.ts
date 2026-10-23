@@ -142,16 +142,26 @@ activity: number, };
 
 export type ErrorCode = "badRequest" | "noServer" | "tooManySessions" | "inputTooLarge" | "busy" | "tmux";
 
+export type ErrorNode = { name: string, };
+
 /**
  * Every HTTP error body.
  */
-export type ErrorBody = { error: HttpError, };
+export type ErrorBody = { error: HttpError,
+/**
+ * Present for `node_refused`, so the browser can explain the permanent refusal.
+ */
+reason?: string,
+/**
+ * Present for `not_enrolled`, so the browser can name the node to enrol.
+ */
+node?: ErrorNode, };
 
 /**
  * Every code an HTTP route answers with. Each has one status (`src/http/error.rs`),
  * except `bad_request` for a body that isn't the route's JSON, which takes axum's.
  */
-export type HttpError = "bad_request" | "auth_required" | "forbidden" | "bad_code" | "outside_roots" | "outside_home" | "denied" | "not_found" | "not_a_directory" | "not_a_file" | "memory_backed" | "config_read_only" | "too_large" | "bad_range" | "busy" | "auth_unavailable" | "config_unavailable" | "no_space" | "internal";
+export type HttpError = "bad_request" | "auth_required" | "forbidden" | "bad_origin" | "node_refused" | "not_enrolled" | "bad_code" | "outside_roots" | "outside_home" | "denied" | "not_found" | "not_a_directory" | "not_a_file" | "memory_backed" | "config_read_only" | "too_large" | "bad_range" | "busy" | "auth_unavailable" | "identity_unavailable" | "config_unavailable" | "no_space" | "internal";
 
 /**
  * `GET /fs/roots` and the answer to every Settings change.

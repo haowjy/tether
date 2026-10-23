@@ -147,6 +147,31 @@ pub async fn start_as(
     tcp_forward: bool,
     whois_available: bool,
 ) -> Daemon {
+    start_as_with_allowlist(
+        name,
+        login,
+        extra_handler,
+        tcp_forward,
+        whois_available,
+        true,
+    )
+    .await
+}
+
+/// Starts the production default-allowlist path, where the owner's login comes from
+/// the tailnet-state cell instead of `--allow-login`.
+pub async fn start_without_allow_login(name: &str) -> Daemon {
+    start_as_with_allowlist(name, LOGIN, false, false, true, false).await
+}
+
+async fn start_as_with_allowlist(
+    name: &str,
+    login: &str,
+    extra_handler: bool,
+    tcp_forward: bool,
+    whois_available: bool,
+    explicit_allowlist: bool,
+) -> Daemon {
     let dir = std::env::temp_dir().join(format!("tether-http-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let store = Store::open(dir.join("state")).expect("a state dir");
@@ -228,7 +253,11 @@ pub async fn start_as(
     let app = App {
         auth: Auth::with_local_api(
             store.clone(),
-            vec![login.to_owned()],
+            if explicit_allowlist {
+                vec![login.to_owned()]
+            } else {
+                Vec::new()
+            },
             lanes.auth.clone(),
             LocalApi::at(api_socket),
             Some(&serve_socket),

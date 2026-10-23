@@ -1241,8 +1241,9 @@ found each point while running the daemon.
     4004, and the phone could get `watchEnded { detached }` instead of reconnecting.
     Verified with a transient unit.
   - tailscaled is a system unit that a user unit can't order itself after, so at boot
-    tether may start first, find no LocalAPI socket and exit. A backoff with no start
-    limit keeps it retrying until tailscaled is up.
+    tether may start before it. The earlier daemon exited when LocalAPI was absent;
+    the browser-auth daemon instead starts and retries its tailnet-state cell in the
+    background.
 - **Rejected:** the default `KillMode=control-group` (the false "detached" above);
   ordering after `tailscaled.service` (a user unit can't); a fixed `RestartSec=2` with
   the default start limit (a slow boot would exhaust it and leave tether down).
@@ -1575,11 +1576,14 @@ found each point while running the daemon.
 - **Why:** a browser WebSocket can't see a refused upgrade's status (it reports 1006,
   like a network failure), so an HTTP 401 would leave the app retrying a dead token.
 
-### No `Origin` check
+### No `Origin` check (native lane only)
 
-- **Decided:** 2026-10-21, design (auth).
+- **Decided:** 2026-10-21, design (auth); superseded for browser/node requests by
+  [browser authentication](#browser-authentication-enrolled-tailnet-nodes).
 - **Why:** origin checks stop cross-site hijacking of ambient credentials, and tether
-  has none: no cookies, and a bearer token a foreign page can't read.
+  has none on the native lane: no cookies, and a bearer token a foreign page can't
+  read. Enrolled node requests carry ambient node identity and now require exact
+  Origin and fetch metadata checks.
 
 ### An unreadable `auth.toml` fails closed but retryable: 503 and close 4503
 
@@ -1601,31 +1605,37 @@ found each point while running the daemon.
   functions over one state file" rejected, and a removed device would stay valid while
   the file is broken); failing open.
 
-### The auth error codes and `/auth/info.name`, as built
+### The auth error codes and `/auth/info.name`, as built (error contract superseded)
 
 - **Decided:** 2026-10-22, tech lead, documenting the p40 build.
 - **What:**
-  - Errors besides `bad_code` and `auth_required`: `forbidden` (403, the Tailscale
+  - The original errors besides `bad_code` and `auth_required`: `forbidden` (403, the Tailscale
     check), `bad_request` (400, 415, 422, a body that isn't the route's JSON),
-    `internal` (500, the enrolment transaction failed), and the new `auth_unavailable`
-    (503) ([auth.md](auth.md#endpoints)).
+    `internal` (500, the enrolment transaction failed), and `auth_unavailable`
+    (503). Browser admission adds `bad_origin`, `node_refused`, `not_enrolled` and
+    `identity_unavailable` in the shared `HttpError` contract
+    ([auth.md](auth.md#endpoints), [fs.md](fs.md#errors)).
   - `/auth/info.name`, and with it `welcome.host.name`, is the config key `name`, else
     the machine name from tailscaled's MagicDNS name. No spec named a source.
-  - The config keys are `port` (default 7850), `name`, and `[tmux] program, socket_name,
-    socket_path` ([plan.md](plan.md#config)).
+  - At that point the config keys included `port` (default 7850), `name`, and
+    `[tmux] program, socket_name, socket_path`; browser auth removes `port`, which
+    older config files continue to parse as an ignored key ([plan.md](plan.md#config)).
 - **Rejected:** none recorded; the spec was silent.
 
-### The Funnel check reads LocalAPI, not `tailscale serve status`
+### The startup Funnel check reads LocalAPI (superseded)
 
 - **Decided:** 2026-10-22, design (p40).
-- **What:** at startup the daemon reads `/localapi/v0/serve-config` through its own
-  LocalAPI client and refuses to run if Funnel is on for its port. It follows web
-  proxies, TCP forwards and foreground serve sessions; if tailscaled can't be read, it
-  refuses to start.
+- **What:** the earlier port-based daemon read `/localapi/v0/serve-config` at startup
+  and refused to run if Funnel was on for its port. This rule is superseded by the
+  browser-auth canonical-origin check: it reads Serve config from the shared cell,
+  refuses Funnel for node admission, and does not make LocalAPI availability a startup
+  gate.
 - **Why:** the JSON is the same as `tailscale serve status --json`, there is no
   subprocess to run on an overloaded box, and the client already exists for the login
   allowlist.
 - **Rejected:** shelling out to `tailscale serve status --json`.
+- **Superseded:** the startup refusal and port-specific check; see
+  [browser authentication](#browser-authentication-enrolled-tailnet-nodes).
 
 ## File API
 
@@ -2324,24 +2334,30 @@ the p61 review. The product calls behind it are Jimmy's
 - **What:** the Tokio blocking pool has 8 threads split into four lanes: fs 4 (10 s
   wait, 8 waiting callers shared across fs slots and blocking calls), index 1 (300 ms),
   dir 1 (300 ms), auth 2 (10 s, no waiter cap). Every blocking call uses its lane;
-  Tokio's `fs` feature is disabled. A lane permit stays with its blocking closure until
-  work ends. A panic returns `busy`.
+  Tokio's `fs` feature is disabled. `PermitPool` owns route slots, the shared waiter
+  budget and an optional deadline; fs scan/raw pools share the fs lane queue, and the
+  shell owns named 4-slot/16-waiter limits with no queue deadline. A lane permit stays
+  with its blocking closure until work ends. A panic returns `busy`.
 - **Why:** a hung filesystem mount must not consume threads used for authentication. Auth waiters are
   uncapped because device checks arrive in bursts, such as a thumbnail grid. Directory
   checks share one lane because paths supplied by users may name hung mounts;
   fs slot waiters count against the same bounded queue as fs blocking work.
 - **Rejected:** one shared pool, which lets hung filesystem work starve auth; a separate
   `newWindow` lane, which would add another pool share for the same directory checks;
-  listing individual `tokio::fs` APIs as forbidden, instead of disabling the feature.
+  duplicating the slots-plus-waiters rule with route-specific semaphore pairs; listing
+  individual `tokio::fs` APIs as forbidden, instead of disabling the feature.
 
 ## Shared HTTP error contract
 
 - **Decided:** 2026-10-22, tech lead (p72, `a5e231c`).
 - **What:** every route refusal uses `proto::HttpError` and the JSON body
-  `ErrorBody { error: HttpError }`. `http::Refusal` maps the code to one status table;
+  `ErrorBody { error: HttpError, reason?, node? }`. Browser admission adds
+  `bad_origin`, `node_refused`, `not_enrolled` and `identity_unavailable` to that
+  shared type. `http::Refusal` maps the code to one status table;
   it preserves axum's 400/415/422 JSON-rejection status, maps oversized bodies to 413
   `too_large`, adds `Retry-After: 1` to `busy` and `Content-Range` to `bad_range`, and
-  maps auth failures to the same HTTP status and WebSocket close code.
+  maps auth failures to HTTP errors; WebSocket auth failures have their own close-code
+  mapping.
 - **Why:** route handlers share one wire contract, status mapping and auth mapping.
 - **Rejected:** separate refusal builders and duplicated HTTP/WebSocket auth-code maps;
   treating an oversized enrolment body as generic `bad_request`.
@@ -2439,12 +2455,53 @@ the p61 review. The product calls behind it are Jimmy's
   account on it. On Tailscale 1.100 and later, changing Serve after publishing a Unix
   target needs root; root publishes each Unix user's tether. The operator remains
   trusted and can replace the publication.
-- **Rejected:** a replayable browser cookie; a token in browser storage; Tailscale
-  identity without enrolment; a loopback TCP peer check or `sock_diag` UID lookup;
-  choosing an auth lane from peer UID; caching whois by address; trusting the Serve
-  TCP-forward peer UID without inspecting the full Serve config; a configurable
-  `browser_origin`; and a startup-only security snapshot. Public HTTPS and passkeys
-  remain a separate future lane on its own socket.
+- **Rejected:**
+  - A replayable browser cookie: any HTTPS service on the same hostname could replay it.
+  - A token in browser storage: injected script could read it, and media requests cannot
+    attach an authorization header.
+  - Tailscale identity without enrolment: no per-device revocation.
+  - A loopback TCP peer check or `sock_diag` UID lookup: local users can forge forwarded
+    headers or still fill permits; UID lookup has no macOS counterpart.
+  - Choosing the auth lane by peer UID, or requiring the Tailscale UID on the socket:
+    a Serve TCP forward also arrives from tailscaled with client-controlled headers.
+  - A Tailscale app capability or grant as the device list: node-wide, so every Unix
+    user's daemon would share one list, and changing it needs the admin console.
+  - Caching whois by address: an address can move to another node.
+  - Requiring Tailscale 1.100: the root requirement for later Serve changes does not
+    protect against the trusted operator replacing the publication.
+  - A configurable `browser_origin`: one unsafe Serve publication should refuse
+    admission, not choose between several.
+  - Reading security state at startup or shell boot: it misses changes while the
+    daemon runs.
+  - Closing a live socket on its first failed whois re-check: a slow LocalAPI would
+    drop every connection; removal itself is checked without whois.
+  - Ignoring unknown device-row fields: a future scoped or expiring row could be read
+    as a full-power device by an older daemon.
+  - Public HTTPS or passkeys in this change: they need a separate future lane and
+    security design.
+- **Changes:** the older “No `Origin` check” applies only to native-token requests;
+  the daemon now serves the browser shell; it binds locked private Unix sockets rather
+  than a TCP port; `port` is ignored; startup does not require LocalAPI or refuse
+  Funnel; the check refuses Serve Funnel requests and node admission when the
+  canonical origin is unsafe. The shared HTTP error type now carries browser
+  admission's four codes rather than separate hand-built bodies. Refused raw device
+  rows survive unrelated auth-file writes and can be removed by name.
+
+### Tailnet-state retries back off from 2 s to 30 s
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** after a failed LocalAPI fill, retry in the background after 2 s and double
+  the delay on repeated failures, capped at 30 s. A healthy cell is refreshed by the
+  first request after its 10 s freshness period; only a failed read enables the
+  30-second stale-value hold. An empty or expired cell with no failed read starts or
+  joins a fill and waits.
+- **Why:** repeated LocalAPI failures should not make the daemon hammer tailscaled on
+  a busy host.
+- **Side effect:** after a held value expires, requests fail closed with
+  `503 identity_unavailable`; when tailscaled recovers, detection can lag by up to
+  30 s until the scheduled retry succeeds.
+- **Rejected:** retrying at a fixed 2 s forever, which imposes needless LocalAPI load
+  throughout a long outage.
 
 ## Resource limits
 

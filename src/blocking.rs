@@ -94,16 +94,30 @@ pub struct Lane(Arc<Inner>);
 #[derive(Debug)]
 struct Inner {
     spec: &'static Spec,
-    threads: Arc<Semaphore>,
-    waiting: AtomicUsize,
+    threads: PermitPool,
+}
+
+/// A bounded set of permits with one waiter budget shared by related pools. The
+/// optional deadline distinguishes request lanes from routes that wait until a slot
+/// opens or the caller disconnects.
+#[derive(Debug, Clone)]
+pub struct PermitPool {
+    slots: Arc<Semaphore>,
+    waiters: Arc<Waiters>,
+    deadline: Option<Duration>,
+}
+
+#[derive(Debug)]
+struct Waiters {
+    count: AtomicUsize,
+    limit: Option<usize>,
 }
 
 impl Lane {
     fn new(spec: &'static Spec) -> Self {
         Self(Arc::new(Inner {
             spec,
-            threads: Arc::new(Semaphore::new(spec.threads)),
-            waiting: AtomicUsize::new(0),
+            threads: PermitPool::new(spec.threads, spec.waiters, Some(spec.wait)),
         }))
     }
 
@@ -116,7 +130,7 @@ impl Lane {
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
-        let thread = self.wait_for(&self.0.threads).await?;
+        let thread = self.0.threads.acquire().await?;
         #[expect(clippy::disallowed_methods, reason = "the lanes own the pool")]
         let joined = tokio::task::spawn_blocking(move || {
             let _thread = thread;
@@ -141,45 +155,77 @@ impl Lane {
         }
     }
 
-    /// A permit of `slots`, waited for under this lane's wait and waiter cap: fs's scan
-    /// and raw-response slots queue with its threads.
-    pub async fn wait_for(&self, slots: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, Busy> {
-        if let Ok(permit) = slots.clone().try_acquire_owned() {
+    /// Another permit count in this lane; shares its total waiter cap and deadline.
+    pub fn permits(&self, count: usize) -> PermitPool {
+        self.0.threads.with_slots(count)
+    }
+}
+
+impl PermitPool {
+    pub fn new(count: usize, waiters: Option<usize>, deadline: Option<Duration>) -> Self {
+        Self::with_waiters(
+            count,
+            Arc::new(Waiters {
+                count: AtomicUsize::new(0),
+                limit: waiters,
+            }),
+            deadline,
+        )
+    }
+
+    fn with_slots(&self, count: usize) -> Self {
+        Self::with_waiters(count, self.waiters.clone(), self.deadline)
+    }
+
+    fn with_waiters(count: usize, waiters: Arc<Waiters>, deadline: Option<Duration>) -> Self {
+        Self {
+            slots: Arc::new(Semaphore::new(count)),
+            waiters,
+            deadline,
+        }
+    }
+
+    pub async fn acquire(&self) -> Result<OwnedSemaphorePermit, Busy> {
+        if let Ok(permit) = self.slots.clone().try_acquire_owned() {
             return Ok(permit);
         }
-        let cap = self.0.spec.waiters.unwrap_or(usize::MAX);
-        // Reserve a waiter only while below the cap; the CAS keeps concurrent callers
-        // from admitting more than the lane allows.
-        let mut waiting = self.0.waiting.load(Ordering::Acquire);
+        let _waiting = self.waiters.reserve()?;
+        let acquire = self.slots.clone().acquire_owned();
+        match self.deadline {
+            Some(deadline) => tokio::time::timeout(deadline, acquire)
+                .await
+                .map_err(|_| Busy)?,
+            None => acquire.await,
+        }
+        .map_err(|_| Busy)
+    }
+}
+
+impl Waiters {
+    fn reserve(self: &Arc<Self>) -> Result<Waiting, Busy> {
+        let mut count = self.count.load(Ordering::Acquire);
         loop {
-            if waiting >= cap {
+            if self.limit.is_some_and(|limit| count >= limit) {
                 return Err(Busy);
             }
-            match self.0.waiting.compare_exchange_weak(
-                waiting,
-                waiting + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break,
-                Err(current) => waiting = current,
+            let next = count.checked_add(1).ok_or(Busy)?;
+            match self
+                .count
+                .compare_exchange_weak(count, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return Ok(Waiting(self.clone())),
+                Err(current) => count = current,
             }
-        }
-        let _waiting = Waiting(&self.0.waiting);
-        match tokio::time::timeout(self.0.spec.wait, slots.clone().acquire_owned()).await {
-            Ok(Ok(permit)) => Ok(permit),
-            // Timed out, or closed (never: no semaphore here is closed).
-            _ => Err(Busy),
         }
     }
 }
 
-/// One caller counted as waiting, until dropped.
-struct Waiting<'a>(&'a AtomicUsize);
+/// One caller counted as waiting, until it acquires a slot or stops waiting.
+struct Waiting(Arc<Waiters>);
 
-impl Drop for Waiting<'_> {
+impl Drop for Waiting {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        self.0.count.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -190,21 +236,21 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn waits_have_a_deadline_and_a_cap() {
         let fs = Lane::new(&FS);
-        let raw = Arc::new(Semaphore::new(2));
+        let raw = fs.permits(2);
         let held: Vec<_> = (0..2)
-            .map(|_| raw.clone().try_acquire_owned().expect("free"))
+            .map(|_| raw.slots.clone().try_acquire_owned().expect("free"))
             .collect();
         let cap = FS.waiters.expect("a cap");
         // Eight requests wait; the ninth is refused at once.
         let waiters: Vec<_> = (0..cap)
             .map(|_| {
-                let (fs, raw) = (fs.clone(), raw.clone());
-                tokio::spawn(async move { fs.wait_for(&raw).await.map(drop) })
+                let raw = raw.clone();
+                tokio::spawn(async move { raw.acquire().await.map(drop) })
             })
             .collect();
         tokio::task::yield_now().await;
-        assert_eq!(fs.wait_for(&raw).await.map(drop), Err(Busy));
-        assert_eq!(fs.0.waiting.load(Ordering::Acquire), cap);
+        assert_eq!(raw.acquire().await.map(drop), Err(Busy));
+        assert_eq!(raw.waiters.count.load(Ordering::Acquire), cap);
         // Freed slots pass to the waiters in turn, well within the wait.
         drop(held);
         let started = tokio::time::Instant::now();
@@ -219,11 +265,11 @@ mod tests {
 
         // With every slot held for good, a waiter is refused after the wait.
         let _held: Vec<_> = (0..2)
-            .map(|_| raw.clone().try_acquire_owned().expect("free"))
+            .map(|_| raw.slots.clone().try_acquire_owned().expect("free"))
             .collect();
         let started = tokio::time::Instant::now();
-        assert_eq!(fs.wait_for(&raw).await.map(drop), Err(Busy));
+        assert_eq!(raw.acquire().await.map(drop), Err(Busy));
         assert_eq!(started.elapsed(), FS.wait);
-        assert_eq!(fs.0.waiting.load(Ordering::Acquire), 0);
+        assert_eq!(raw.waiters.count.load(Ordering::Acquire), 0);
     }
 }

@@ -41,6 +41,7 @@ fn declarations(config: &Config) -> Vec<(TypeId, String)> {
         declare::<SessionListing>(config),
         declare::<WindowListing>(config),
         declare::<ErrorCode>(config),
+        declare::<ErrorNode>(config),
         declare::<ErrorBody>(config),
         declare::<HttpError>(config),
         declare::<Roots>(config),

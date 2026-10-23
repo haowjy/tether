@@ -9,12 +9,14 @@ use axum::response::{IntoResponse, Response};
 
 use crate::auth::AuthError;
 use crate::fs::FsError;
-use crate::proto::{CloseCode, ErrorBody, HttpError};
+use crate::proto::{CloseCode, ErrorBody, ErrorNode, HttpError};
 
 #[derive(Debug)]
 pub(super) struct Refusal {
     status: StatusCode,
     error: HttpError,
+    reason: Option<String>,
+    node: Option<ErrorNode>,
     /// A 416's file size, for `Content-Range: bytes */<size>`.
     size: Option<u64>,
 }
@@ -25,19 +27,25 @@ impl From<HttpError> for Refusal {
         use HttpError::*;
         let status = match error {
             BadRequest => StatusCode::BAD_REQUEST,
-            AuthRequired => StatusCode::UNAUTHORIZED,
-            Forbidden | BadCode | OutsideRoots | OutsideHome | Denied => StatusCode::FORBIDDEN,
+            AuthRequired | NotEnrolled => StatusCode::UNAUTHORIZED,
+            Forbidden | BadOrigin | NodeRefused | BadCode | OutsideRoots | OutsideHome | Denied => {
+                StatusCode::FORBIDDEN
+            }
             NotFound => StatusCode::NOT_FOUND,
             NotADirectory | NotAFile | MemoryBacked | ConfigReadOnly => StatusCode::CONFLICT,
             TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             BadRange => StatusCode::RANGE_NOT_SATISFIABLE,
-            Busy | AuthUnavailable | ConfigUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Busy | AuthUnavailable | IdentityUnavailable | ConfigUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             NoSpace => StatusCode::INSUFFICIENT_STORAGE,
             Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self {
             status,
             error,
+            reason: None,
+            node: None,
             size: None,
         }
     }
@@ -57,6 +65,8 @@ impl From<JsonRejection> for Refusal {
         Self {
             status,
             error,
+            reason: None,
+            node: None,
             size: None,
         }
     }
@@ -100,41 +110,65 @@ impl From<&FsError> for HttpError {
 /// A failed device check over HTTP; a socket gets `CloseCode::from` instead.
 impl From<&AuthError> for Refusal {
     fn from(refused: &AuthError) -> Self {
-        Self::from(auth(refused).0)
+        let mut response = Self::from(HttpError::from(refused));
+        match refused {
+            AuthError::NodeRefused(reason) => {
+                response.reason = Some(reason.as_str().to_owned());
+            }
+            AuthError::NotEnrolled { node_name } => {
+                response.node = Some(ErrorNode {
+                    name: node_name.clone(),
+                });
+            }
+            _ => {}
+        }
+        response
+    }
+}
+
+impl From<&AuthError> for HttpError {
+    fn from(refused: &AuthError) -> Self {
+        match refused {
+            AuthError::NoToken | AuthError::Ambiguous | AuthError::Unknown => Self::AuthRequired,
+            AuthError::BadOrigin => Self::BadOrigin,
+            AuthError::Forbidden => Self::Forbidden,
+            AuthError::NodeRefused(_) => Self::NodeRefused,
+            AuthError::NotEnrolled { .. } => Self::NotEnrolled,
+            AuthError::IdentityUnavailable(_) => Self::IdentityUnavailable,
+            AuthError::Store(_) | AuthError::Busy => Self::AuthUnavailable,
+        }
     }
 }
 
 /// A failed device check on a socket: a browser can't see a refused upgrade's status.
 impl From<&AuthError> for CloseCode {
     fn from(refused: &AuthError) -> Self {
-        auth(refused).1
-    }
-}
-
-/// 4401 makes the app drop its token, so it means only "this token is gone". An
-/// `auth.toml` that can't be read fails closed but retryable: 503 or 4503.
-fn auth(refused: &AuthError) -> (HttpError, CloseCode) {
-    match refused {
-        AuthError::NoToken
-        | AuthError::Ambiguous
-        | AuthError::Unknown
-        | AuthError::WrongFront
-        | AuthError::BadOrigin
-        | AuthError::Forbidden
-        | AuthError::NodeRefused(_)
-        | AuthError::NotEnrolled { .. } => (HttpError::AuthRequired, CloseCode::BadToken),
-        AuthError::IdentityUnavailable(_) => {
-            (HttpError::AuthUnavailable, CloseCode::AuthUnavailable)
-        }
-        AuthError::Store(_) | AuthError::Busy => {
-            (HttpError::AuthUnavailable, CloseCode::AuthUnavailable)
+        match refused {
+            AuthError::Store(_) | AuthError::Busy | AuthError::IdentityUnavailable(_) => {
+                Self::AuthUnavailable
+            }
+            AuthError::NoToken
+            | AuthError::Ambiguous
+            | AuthError::Unknown
+            | AuthError::BadOrigin
+            | AuthError::Forbidden
+            | AuthError::NodeRefused(_)
+            | AuthError::NotEnrolled { .. } => Self::BadToken,
         }
     }
 }
 
 impl IntoResponse for Refusal {
     fn into_response(self) -> Response {
-        let mut response = (self.status, Json(ErrorBody { error: self.error })).into_response();
+        let mut response = (
+            self.status,
+            Json(ErrorBody {
+                error: self.error,
+                reason: self.reason,
+                node: self.node,
+            }),
+        )
+            .into_response();
         let headers = response.headers_mut();
         if self.error == HttpError::Busy {
             headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));

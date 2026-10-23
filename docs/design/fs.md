@@ -30,7 +30,7 @@ auth is [auth.md](auth.md). Decisions and the alternatives rejected are in
 | upload idle timeout | 30 s waiting for a body byte | aborted with `400 bad_request`; the partial file is deleted |
 | upload flush | every 2 MiB: `fdatasync`, then drop the written pages | the dirty pages in between are charged to the unit, and the [ceiling](#limits-and-the-memory-ceiling) counts them |
 | page drop during a raw read | files over 8 MiB: after each chunk, everything from the response's first byte to the current position | |
-| socket buffers, every accepted socket | `SO_SNDBUF` and `SO_RCVBUF` 64 KiB (Linux doubles them); each socket is the loopback hop from `tailscale serve`, so this costs no phone throughput | the writer waits |
+| socket buffers, every accepted socket | `SO_SNDBUF` and `SO_RCVBUF` 64 KiB (Linux doubles them); Serve reaches the daemon over a local Unix-socket hop, not another network round trip | the writer waits |
 | path in a request | 4,096 bytes, UTF-8, absolute, no NUL | `400 bad_request` |
 | JSON request body (`/fs/roots/*`, `/fs/uploads-dir`) | 4 KiB | `413` |
 | config write retries on a concurrent edit | 3 | `503 busy` |
@@ -365,16 +365,20 @@ tether uses that prefix.
 
 ## Errors
 
-JSON `{"error": "<code>"}`, as auth's routes ([auth.md](auth.md#endpoints)), which
-also covers `forbidden`, `auth_required`, `auth_unavailable` and axum's own JSON
-rejections.
+JSON `{"error": "<code>"}`, from the shared `HttpError` type ([auth.md](auth.md#endpoints)).
+The auth middleware also uses this body for `forbidden`, `auth_required`,
+`auth_unavailable`, `bad_origin`, `node_refused`, `not_enrolled` and
+`identity_unavailable`; axum JSON rejections use `bad_request` or `too_large`.
 
 | Status | `error` | Cause |
 |---|---|---|
 | 400 | `bad_request` | a path that is relative, too long, has a NUL, doesn't decode, or canonicalizes to non-UTF-8; a bad query value; an upload body that stalled past the idle timeout or broke (the client went away) |
+| 401 | `not_enrolled` | the browser's current Tailscale node has no enrolled device row |
 | 403 | `outside_roots` | the canonical path, or the opened descriptor's, is under no root |
 | 403 | `outside_home` | the picker outside `$HOME`; `roots/add` or `uploads-dir` at or outside it |
 | 403 | `denied` | `EACCES` or `EPERM` |
+| 403 | `bad_origin` | Browser Origin, forwarded host or fetch metadata does not match the canonical Serve origin |
+| 403 | `node_refused` | The current Tailscale node fails a node-lane rule; includes the refusal reason |
 | 404 | `not_found` | `ENOENT`, `ENOTDIR` while resolving, `ELOOP` at open |
 | 409 | `not_a_directory`, `not_a_file` | the wrong kind for the route; a FIFO, socket or device is `not_a_file`; an upload when `uploads_dir` isn't an absolute or `~/` path or isn't a directory |
 | 409 | `memory_backed` | on Linux, an upload destination directory on tmpfs or ramfs; its pages would remain charged to tether's unit while the file exists |
@@ -383,6 +387,7 @@ rejections.
 | 416 | `bad_range` | a range starting past the end |
 | 503 | `busy` | no slot within the wait, too many waiting, the upload slot taken, or config write retries spent; `Retry-After: 1` |
 | 503 | `config_unavailable` | `config.toml` exists but can't be read or parsed |
+| 503 | `identity_unavailable` | LocalAPI could not establish the current Tailscale identity |
 | 507 | `no_space` | `ENOSPC` or `EDQUOT` during an upload |
 | 500 | `internal` | any other I/O error, including an upload's rename on a filesystem with no no-replace support; the cause is logged, never sent |
 
@@ -394,11 +399,12 @@ consume auth's two threads. Every wait but the upload flush has a deadline; at m
 callers wait across fs slots and blocking work. Nothing is held between requests: no
 listing cache, no cursor, no open descriptor.
 
-**Shutdown must not wait on a stream.** `http::serve` bounds its graceful wait to 2 s,
-as it does for sockets. axum never force-closes a connection, so the connection task of
-a stalled raw response outlives that wait, and it holds a `Ctx` and so a `HubHandle`;
-with a handle alive the hub never sees "every handle dropped" and never closes its
-control clients. `main` therefore calls `HubHandle::stop` itself once `serve` returns
+**Shutdown must not wait on a stream.** `http::serve` gives its connection tasks a
+2 s grace, then calls `JoinSet::abort_all` and joins the aborted tasks before it
+returns. A stalled raw response would otherwise retain its `Ctx` and `HubHandle`;
+because another handle would remain alive, the hub could not infer that all HTTP
+clients were gone and close its control clients. `main` therefore calls
+`HubHandle::stop` explicitly after `serve` returns
 ([daemon-core.md §4.7](daemon-core.md#47-public-interface)). A SIGTERM with a paused
 raw stream then ends in 2.0 s with exit 0.
 

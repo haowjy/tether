@@ -5,12 +5,12 @@ use std::convert::Infallible;
 use std::io::Write as _;
 use std::sync::Arc;
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::get;
-use axum::{Json, Router};
 use bytes::Bytes;
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -25,6 +25,7 @@ struct Asset {
     path: &'static str,
     raw: &'static [u8],
     gzip: &'static [u8],
+    etag: &'static str,
 }
 
 mod embedded {
@@ -33,6 +34,8 @@ mod embedded {
 }
 
 const CHUNK: usize = 16 * 1024;
+pub(super) const SLOTS: usize = 4;
+pub(super) const WAITERS: usize = 16;
 
 pub(super) fn routes() -> Router<Arc<Ctx>> {
     Router::new()
@@ -54,37 +57,25 @@ pub(super) fn is_shell_path(path: &str) -> bool {
 }
 
 pub(super) async fn fallback(request: Request) -> Response {
-    if (request.method() == Method::GET || request.method() == Method::HEAD)
-        && ["/auth/", "/ws", "/fs/", "/complete", "/debug"]
-            .iter()
-            .any(|prefix| {
-                request.uri().path() == *prefix || request.uri().path().starts_with(prefix)
-            })
+    if ["/auth", "/ws", "/fs", "/complete", "/debug"]
+        .iter()
+        .any(|prefix| {
+            let path = request.uri().path();
+            path == *prefix
+                || path
+                    .strip_prefix(prefix)
+                    .is_some_and(|remainder| remainder.starts_with('/'))
+        })
     {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "not_found" })),
-        )
-            .into_response();
+        return Refusal::from(HttpError::NotFound).into_response();
     }
     StatusCode::NOT_FOUND.into_response()
 }
 
 async fn asset(State(ctx): State<Arc<Ctx>>, request: Request) -> Response {
-    let slot = match ctx.shell.clone().try_acquire_owned() {
+    let slot = match ctx.shell.acquire().await {
         Ok(slot) => slot,
-        Err(_) => {
-            let waiter = match ctx.shell_waiters.clone().try_acquire_owned() {
-                Ok(waiter) => waiter,
-                Err(_) => return Refusal::from(HttpError::Busy).into_response(),
-            };
-            let slot = match ctx.shell.clone().acquire_owned().await {
-                Ok(slot) => slot,
-                Err(_) => return Refusal::from(HttpError::Busy).into_response(),
-            };
-            drop(waiter);
-            slot
-        }
+        Err(_) => return Refusal::from(HttpError::Busy).into_response(),
     };
     let path = if request.uri().path() == "/" {
         "/index.html"
@@ -103,7 +94,7 @@ async fn asset(State(ctx): State<Arc<Ctx>>, request: Request) -> Response {
         (
             Bytes::from_static(asset.raw),
             Bytes::from_static(asset.gzip),
-            etag(asset.raw),
+            asset.etag.to_owned(),
         )
     } else {
         return StatusCode::NOT_FOUND.into_response();

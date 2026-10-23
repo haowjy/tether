@@ -36,8 +36,6 @@ pub enum AuthError {
     Ambiguous,
     #[error("unknown or revoked device")]
     Unknown,
-    #[error("node lane is only available on serve.sock")]
-    WrongFront,
     #[error("browser origin is not admitted")]
     BadOrigin,
     #[error("request headers do not describe a tailnet node")]
@@ -100,6 +98,7 @@ pub fn admit(device: &Device, _now: std::time::SystemTime) -> Result<Grant, Auth
     }
 }
 
+#[derive(Clone)]
 pub struct Auth {
     store: Store,
     allow: Vec<String>,
@@ -113,11 +112,6 @@ pub struct Auth {
 }
 
 impl Auth {
-    /// Uses the system LocalAPI and default runtime socket path.
-    pub fn new(store: Store, allow: Vec<String>, lane: Lane) -> Self {
-        Self::with_local_api(store, allow, lane, identity::LocalApi::system(), None)
-    }
-
     pub fn with_local_api(
         store: Store,
         allow: Vec<String>,
@@ -129,7 +123,23 @@ impl Auth {
         let serve_socket = serve_path
             .as_deref()
             .and_then(|path| identity::SocketIdentity::of(path).ok());
-        let state = identity::TailnetStateCell::new(api.clone());
+        let logged_origin = Arc::new(Mutex::new(None));
+        let observed_path = serve_path.clone();
+        let observed_origin = logged_origin.clone();
+        let state = identity::TailnetStateCell::new(api.clone(), move |result| match result {
+            Ok(state) => {
+                let origin = serve_socket.zip(observed_path.as_deref()).map_or_else(
+                    || {
+                        Err(identity::OriginRefusal {
+                            message: "tether's serve.sock is not bound".to_owned(),
+                        })
+                    },
+                    |(socket, path)| state.serve.canonical_origin(socket, path),
+                );
+                log_origin(&observed_origin, origin);
+            }
+            Err(error) => log_unavailable(&observed_origin, error.to_string()),
+        });
         Self {
             store,
             explicit_allow: !allow.is_empty(),
@@ -139,32 +149,12 @@ impl Auth {
             state,
             serve_socket,
             serve_path,
-            logged_origin: Arc::new(Mutex::new(None)),
+            logged_origin,
         }
     }
 
     pub fn start(&self) {
         self.state.start();
-        let state = self.state.clone();
-        let socket = self.serve_socket;
-        let path = self.serve_path.clone();
-        let logged = self.logged_origin.clone();
-        tokio::spawn(async move {
-            match state.get().await {
-                Ok(state) => {
-                    let origin = socket.zip(path.as_deref()).map_or_else(
-                        || {
-                            Err(identity::OriginRefusal {
-                                message: "tether's serve.sock is not bound".to_owned(),
-                            })
-                        },
-                        |(socket, path)| state.serve.canonical_origin(socket, path),
-                    );
-                    log_origin(&logged, origin);
-                }
-                Err(error) => log_unavailable(&logged, error.to_string()),
-            }
-        });
     }
 
     pub fn store(&self) -> &Store {
@@ -180,8 +170,10 @@ impl Auth {
 
     pub async fn machine_name(&self, fallback: &str) -> String {
         self.state
-            .peek()
+            .get()
             .await
+            .ok()
+            .or(self.state.last_known().await)
             .map(|state| state.machine_name().to_owned())
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| fallback.to_owned())
@@ -202,7 +194,12 @@ impl Auth {
     }
 
     pub async fn cached_browser_origin(&self) -> Option<CanonicalOrigin> {
-        let state = self.state.peek().await?;
+        let state = self
+            .state
+            .get()
+            .await
+            .ok()
+            .or(self.state.last_known().await)?;
         let socket = self.serve_socket?;
         let path = self
             .serve_path
@@ -272,8 +269,17 @@ impl Auth {
         node::admission(method, upgrade, headers, &origin).map_err(map_node_error)?;
         let address = node::forwarded_addr(headers).map_err(map_node_error)?;
         let whois = self.whois(address).await?;
-        let node =
-            node::node_rules(&whois, address, login, &state.self_id).map_err(map_node_error)?;
+        let node = match node::node_rules(&whois, address, login, &state.self_id) {
+            Ok(node) => node,
+            Err(error) => {
+                let stable_id = whois
+                    .node
+                    .as_ref()
+                    .map_or("unknown", |node| node.stable_id.as_str());
+                warn!(stable_id, %error, "refused a Tailscale node");
+                return Err(map_node_error(error));
+            }
+        };
         let file = self.read().await?;
         let device = file
             .devices
@@ -285,6 +291,7 @@ impl Auth {
             })
             .cloned();
         let Some(device) = device else {
+            warn!(stable_id = %node.id, "Tailscale node is not enrolled");
             return if allow_unenrolled {
                 Ok(Session::NodeUnenrolled { node, origin })
             } else {
@@ -321,15 +328,15 @@ impl Auth {
                 origin,
             } => {
                 let file = self.read().await?;
-                let enrolled = file.devices.iter().any(|current| {
+                let current = file.devices.iter().find(|current| {
                     current.kind == DeviceKind::Node
                         && current.node_id == device.node_id
                         && current.login == device.login
                 });
-                if !enrolled {
+                let Some(current) = current else {
                     return Err(AuthError::Unknown);
-                }
-                admit(device, std::time::SystemTime::now())?;
+                };
+                admit(current, std::time::SystemTime::now())?;
                 let state = self.tailnet_state().await?;
                 match self.canonical_origin(&state) {
                     Ok(current) if current == *origin => {}
