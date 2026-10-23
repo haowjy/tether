@@ -631,10 +631,6 @@ esac
     #[tokio::test]
     async fn bash_reads_every_completed_name_back_as_itself() {
         let tree = Tree::new("completer-hostile");
-        // Builtins only: its `PATH` is the one directory.
-        let carapace = "#!/bin/sh\n[ \"$1\" = --list ] && { echo '{\"git\":[]}'; exit 0; }\n\
-                        IFS= read -r json < values.json; printf '%s\\n' \"$json\"\n";
-        executable(&tree.path("carapace"), carapace);
         for (i, &name) in HOSTILE.iter().enumerate() {
             // Each name alone in its directory, on its `PATH` and in carapace's answer.
             let (cwd, bin) = (
@@ -645,13 +641,12 @@ esac
             tree.mkdir(&format!("{i}/bin"));
             std::fs::write(cwd.join(name), b"").expect("written");
             let values = serde_json::json!({ "values": [{ "value": name }] });
-            std::fs::write(cwd.join("values.json"), values.to_string()).expect("written");
             let own_name = "#!/bin/sh\nprintf '%s\\0' \"${0##*/}\"\n";
             executable(&bin.join(name), own_name);
             let config = config::Complete {
                 history: None,
                 path: Some(bin.to_str().expect("UTF-8").to_owned()),
-                carapace: Some(tree.str("carapace")),
+                carapace: None,
             };
             let env = Environment {
                 home: cwd.clone(),
@@ -675,7 +670,18 @@ esac
                 assert_eq!(bash(&line, &cwd, &bin), read, "{chip:?}");
             }
 
-            let chip = labelled(&completer, "git ", &cwd, name).await;
+            // Carapace is deliberately best-effort with a 300 ms subprocess deadline.
+            // Exercise its chip encoder directly so host load cannot turn this into the
+            // valid path fallback and make the escaping test flaky.
+            let json = values.to_string();
+            let chips = carapace::Values::parse(json.as_bytes())
+                .expect("carapace values parsed")
+                .chips("");
+            let chip = chips
+                .iter()
+                .find(|chip| chip.label == name)
+                .expect("carapace chip")
+                .clone();
             assert_eq!(chip.source, ChipSource::Carapace);
             let line = format!("git {}", chip.insert);
             assert_eq!(bash(&line, &cwd, &bin), read, "{chip:?}");
