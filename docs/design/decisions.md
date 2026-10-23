@@ -2412,3 +2412,16 @@ the p61 review. The product calls behind it are Jimmy's
 - **Safety boundary:** existing tailnet-only, no-Funnel and device-token rules remain
   current until reviewed replacements are specified. No public exposure is authorized
   by this roadmap, and no network/service configuration changes accompany it.
+
+
+## History range labels
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** Bracket each history capture group with `#{history_size} #{pane_height}`;
+  replay tmux's range clamp in the tmux core, label returned rows from the true clamped
+  start, and return empty above retained history. The before/after pair is the history
+  tear check.
+- **Why:** tmux clamps out-of-range history requests, so requested offsets are not the
+  row labels and a range above history otherwise repeats the top row forever.
+- **Rejected:** trusting requested offsets or tmux's clamped payload without recomputing
+  its range, which mislabels rows and can repeat the top row indefinitely.

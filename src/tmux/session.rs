@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, VecDeque};
 use bytes::Bytes;
 
 use super::command::{self, Group};
+use super::history;
 use super::parse::{Line, Notification, NotificationKind, Parser};
 use super::snapshot::{self, Rows};
 use super::{
@@ -107,7 +108,10 @@ enum Request {
     Release {
         pane: PaneId,
     },
-    History,
+    History {
+        start: i32,
+        end: i32,
+    },
     Paste,
     Plain,
 }
@@ -200,7 +204,7 @@ impl Session {
                     .for_each(|group| group.release(pane));
                 Request::Release { pane }
             }
-            Op::History { .. } => Request::History,
+            Op::History { start, end, .. } => Request::History { start, end },
             Op::Paste { .. } => Request::Paste,
             Op::Vote { .. }
             | Op::ClearVote { .. }
@@ -484,9 +488,9 @@ impl Session {
                     .and_then(|row| reply::session_location(&row))
                     .map(Reply::SessionLocation)
                     .ok_or(TmuxError::BadReply),
-                Request::History => Ok(Reply::History(
-                    done.replies.into_iter().next().unwrap_or_default(),
-                )),
+                Request::History { start, end } => {
+                    history::from_replies(start, end, done.replies).map(Reply::History)
+                }
                 Request::Release { .. } | Request::Paste | Request::Plain => Ok(Reply::Ok),
             }
         };
@@ -609,14 +613,14 @@ mod tests {
                 window: WindowId(0),
             },
         );
-        let mut stream = b"%begin 1 3 1\n".to_vec();
+        let mut stream = b"%begin 1 3 1\n1000 24\n%end 1 3 1\n%begin 1 4 1\n".to_vec();
         let row = [b'x'; 1000];
         for _ in 0..=MAX_REPLY / row.len() {
             stream.extend_from_slice(&row);
             stream.push(b'\n');
         }
         stream.extend_from_slice(
-            b"%end 1 3 1\n%begin 1 4 1\n42\t7\t$0\t@0\t%0\t80\t24\n%end 1 4 1\n",
+            b"%end 1 4 1\n%begin 1 5 1\n1000 24\n%end 1 5 1\n%begin 1 6 1\n42\t7\t$0\t@0\t%0\t80\t24\n%end 1 6 1\n",
         );
         let events = session.feed(&stream).events;
         assert_eq!(

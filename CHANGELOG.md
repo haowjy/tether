@@ -5,6 +5,9 @@ version section on release.
 
 ## [Unreleased]
 
+- History requests report tmux's true clamped line numbers, stop cleanly above retained
+  history, and detect a changed history range around the capture.
+
 - Keep Meridian work notes and knowledge base in repo-local paths for cross-machine handoffs.
 
 - Record Tailscale-first, public-HTTPS follow-up and multi-server settings roadmap.

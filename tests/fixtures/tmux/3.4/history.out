@@ -1,19 +1,48 @@
-%begin 1792642079 271 0
-%end 1792642079 271 0
+%begin 1792747785 317 0
+%end 1792747785 317 0
 %session-changed $0 fixture
-%begin 1792642079 276 1
-3.4	3821133	1792642079	80	24
-%end 1792642079 276 1
-%begin 1792642079 277 1
-%end 1792642079 277 1
+%begin 1792747785 319 1
+3.8	79451	1792747785	80	24
+%end 1792747785 319 1
+%begin 1792747785 320 1
+%end 1792747785 320 1
 %layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
-%extended-output %0 0 : printf '%s\134n' '%begin 123 456 1' '%output %1 fake' '%end 123 456 1' 'last'
+%extended-output %0 0 : printf '%s\134n
+%extended-output %0 0 : ' '
+%extended-output %0 0 : %begin 
+%extended-output %0 0 : 12
+%extended-output %0 0 : 3 4
+%extended-output %0 0 : 56
+%extended-output %0 0 :  1
+%extended-output %0 0 : ' '
+%extended-output %0 0 : %o
+%extended-output %0 0 : utpu
+%extended-output %0 0 : t %
+%extended-output %0 0 : 1 
+%extended-output %0 0 : fa
+%extended-output %0 0 : ke'
+%extended-output %0 0 :  '%e
+%extended-output %0 0 : n
+%extended-output %0 0 : d 
+%extended-output %0 0 : 12
+%extended-output %0 0 : 3
+%extended-output %0 0 :  4
+%extended-output %0 0 : 56
+%extended-output %0 0 :  1'
+%extended-output %0 0 :  
+%extended-output %0 0 : 'l
+%extended-output %0 0 : as
+%extended-output %0 0 : t'
 %extended-output %0 0 : \015\012
-%extended-output %0 0 : %begin 123 456 1\015\012%output %1 fake\015\012%end 123 456 1\015\012last\015\012$ 
-%begin 1792642079 284 1
+%extended-output %0 0 : %begin 123 456 1\015\012%output %1 fake\015\012%end 123 456 1\015\012last\015\012
+%extended-output %0 0 : $ 
+%begin 1792747785 325 1
+%end 1792747785 325 1
 %pause %0
-%end 1792642079 284 1
-%begin 1792642079 285 1
+%begin 1792747785 326 1
+0 24
+%end 1792747785 326 1
+%begin 1792747785 327 1
 $ printf '%s\n' '%begin 123 456 1' '%output %1 fake' '%end 123 456 1' 'last'
 %begin 123 456 1
 %output %1 fake
@@ -21,5 +50,9 @@ $ printf '%s\n' '%begin 123 456 1' '%output %1 fake' '%end 123 456 1' 'last'
 last
 $
 
-%end 1792642079 285 1
+%end 1792747785 327 1
+%begin 1792747785 328 1
+0 24
+%end 1792747785 328 1
+%window-renamed @0 bash
 %exit

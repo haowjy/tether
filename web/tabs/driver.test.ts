@@ -127,16 +127,19 @@ describe("losing the watch or the link", () => {
 });
 
 describe("history", () => {
-  it("asks again from where a short chunk ended and stops at the end of the range", async () => {
+  it("follows the true start after clamping, asks again after a short chunk, and stops at the end", async () => {
     const t = setup();
     const l = t.bind();
     const b64 = (s: string): string => btoa(s);
-    const rows = t.tab.history(-4, -1);
-    expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 1, watch: 1, start: -4, end: -1 } });
-    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [b64("a"), b64("b")] } });
+    const rows = t.tab.history(-400, -1);
+    expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 1, watch: 1, start: -400, end: -1 } });
+    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [] } });
     await Promise.resolve();
-    expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 2, watch: 1, start: -2, end: -1 } });
-    l.say({ type: "historyChunk", data: { req: 2, watch: 1, start: -2, lines: [b64("c"), b64("d")] } });
+    expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 2, watch: 1, start: -4, end: -1 } });
+    l.say({ type: "historyChunk", data: { req: 2, watch: 1, start: -4, lines: [b64("a"), b64("b")] } });
+    await Promise.resolve();
+    expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 3, watch: 1, start: -2, end: -1 } });
+    l.say({ type: "historyChunk", data: { req: 3, watch: 1, start: -2, lines: [b64("c"), b64("d")] } });
     expect((await rows).map((r) => new TextDecoder().decode(r))).toEqual(["a", "b", "c", "d"]);
   });
 

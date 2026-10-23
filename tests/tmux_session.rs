@@ -572,7 +572,7 @@ fn input_and_history_carry_bytes_unchanged() {
     );
 
     let replay = whole("history");
-    let Ok(Reply::History(rows)) = done(&replay, 1) else {
+    let Ok(Reply::History(history)) = done(&replay, 1) else {
         panic!("history rows");
     };
     for row in [
@@ -581,7 +581,10 @@ fn input_and_history_carry_bytes_unchanged() {
         b"%end 123 456 1",
         b"last",
     ] {
-        assert!(rows.iter().any(|captured| captured == row), "{row:?}");
+        assert!(
+            history.rows.iter().any(|captured| captured == row),
+            "{row:?}"
+        );
     }
 }
 

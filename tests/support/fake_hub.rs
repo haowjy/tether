@@ -408,6 +408,7 @@ impl Hub {
         // A shell at the top left of a fresh screen.
         match name {
             "pane_id" => pane.to_string(),
+            "history_size" => "1000".to_owned(),
             "pane_width" => size.cols.to_string(),
             "pane_height" => size.rows.to_string(),
             "alternate_saved_x" | "alternate_saved_y" => u32::MAX.to_string(),

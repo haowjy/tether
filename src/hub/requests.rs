@@ -310,11 +310,13 @@ impl State {
             return self.capture_history(conn, req, watch, start, start + half - 1);
         }
         self.unreserve(conn, CAPTURE_RESERVATION);
-        let rows = match result {
-            Ok(Reply::History(rows)) => rows,
+        let history = match result {
+            Ok(Reply::History(history)) => history,
             Err(error) => return self.refuse_tmux(conn, Some(req), Some(watch), &error),
             Ok(_) => return self.refuse_tmux(conn, Some(req), Some(watch), &TmuxError::BadReply),
         };
+        let start = history.start;
+        let rows = history.rows;
         // Keep the rows that fit the reservation; the client asks again from there.
         let chunk = |lines: Vec<Base64>| ServerMsg::HistoryChunk {
             req,

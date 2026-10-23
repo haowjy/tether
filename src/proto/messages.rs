@@ -263,8 +263,8 @@ pub enum ServerMsg {
         req: u32,
         tmux: Option<TmuxListing>,
     },
-    /// `capture-pane -e` bytes per row, from `start`. May hold fewer rows than asked;
-    /// the client asks again from where it ends.
+    /// `capture-pane -e` bytes per physical row; `start` is the true tmux line number
+    /// of `lines[0]`. May hold fewer rows than asked, or be empty above history.
     HistoryChunk {
         req: u32,
         watch: u32,

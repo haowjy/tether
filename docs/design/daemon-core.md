@@ -276,7 +276,7 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 | `Release { pane }` | `refresh-client -A '%P:pause'` | maint. |
 | `Vote { window, size }` / `ClearVote { window }` | `refresh-client -C '@W:CxR'` / `refresh-client -C '@W:'` | maint. |
 | `Subscribe { window }` / `Unsubscribe { window }` | `refresh-client -B 'w<W>:@W:#{pane_current_path}'` / `refresh-client -B 'w<W>'` | maint. |
-| `History { pane, start, end }` | `capture-pane -p -e -t %P -S <start> -E <end>` | user |
+| `History { pane, start, end }` | §3.4 history capture group | user |
 | `Input { window, items }` | text and bytes: `send-keys -t @W -H 68 69 …`, ≤ 512 bytes per command; a key: `send-keys -t @W <name>` | user |
 | `Paste { window, path }` | `load-buffer -b tether-<tag> '<path>' ; paste-buffer -p -d -b tether-<tag> -t @W` | user |
 
@@ -328,6 +328,22 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
   `confirm-before`, `command-prompt`): one would stall every later reply. The one
   exception is `NewWindow`'s `if-shell -F` guard, on a one-shot (§3.8), which only
   evaluates a format.
+
+**History ranges.** `History { pane, start, end }` runs this group:
+
+```text
+display-message -p -t %P '#{history_size} #{pane_height}' ;
+capture-pane -p -e -t %P -S <start> -E <end> ;
+display-message -p -t %P '#{history_size} #{pane_height}'
+```
+
+The bounds before and after must match or the answer is `Torn`. `capture-pane` clamps
+its start to `-history_size` and its end to `pane_height - 1`; a request wholly above
+the retained history can still print the top row. The tmux core recomputes the
+intersection with those bounds, drops rows outside it, and returns the first real row
+number with the physical rows. A range above the top is empty. This makes a request
+that starts before retained history resume at the true top instead of labelling its
+first row with the requested number.
 
 ### 3.5 Snapshot
 
@@ -1160,7 +1176,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `windowRenamed` | `window, name` | |
 | `sessionsChanged` | | the listing changed: tmux reported a session created, closed or renamed, or a window nobody watches was closed or moved. At most one per input the hub handles, however many changes it brought (§4.5). The web refetches the listing, debounced, which also prunes its tabs ([plan.md](plan.md#reconnect)) |
 | `sessions` | `req, tmux: TmuxListing \| null` | `null` when no tmux server is running. `TmuxListing` is `{ server, version, sessions: [{ id, name, attachedElsewhere, windows: [{ id, index, name, active, activity }] }] }`; `activity` in unix seconds |
-| `historyChunk` | `req, watch, start, lines: [base64]` | `capture-pane -e` bytes per row, from `start`; may hold fewer rows than asked (§4.6), and the client asks again from where it ends |
+| `historyChunk` | `req, watch, start, lines: [base64]` | `capture-pane -e` bytes per physical row; `start` is the true tmux line number of `lines[0]`. May hold fewer rows than asked (§4.6); the client follows the returned `start`, including an empty range that advanced to the retained-history top |
 | `created` | `req, window, session` | |
 | `error` | `req?, watch?, code, message` | refuses one request; a watch it names stays as it was. `badRequest, noServer, tooManySessions, inputTooLarge, busy, tmux` |
 

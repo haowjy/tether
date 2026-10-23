@@ -5,6 +5,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
+use super::history::STATE_FORMAT as HISTORY_STATE_FORMAT;
 use super::reply::{
     CREATED_FORMAT, LISTING_CLIENT_FORMAT, LISTING_SERVER_FORMAT, LISTING_WINDOW_FORMAT,
     LOCATE_FORMAT, LOCATE_SESSION_FORMAT, STARTUP_FORMAT,
@@ -98,9 +99,7 @@ pub fn op(op: &Op, tag: Tag) -> Result<Group, TmuxError> {
             "refresh-client -B '{}'",
             subscription_name(*window)
         )),
-        Op::History { pane, start, end } => {
-            Group::one(format!("capture-pane -p -e -t {pane} -S {start} -E {end}"))
-        }
+        Op::History { pane, start, end } => history(*pane, *start, *end)?,
         Op::Input { window, items } => input(*window, items)?,
         Op::Paste { window, path } => {
             let path = path
@@ -116,6 +115,21 @@ pub fn op(op: &Op, tag: Tag) -> Result<Group, TmuxError> {
             ])
         }
     })
+}
+
+/// Brackets a history capture with the values that define tmux's line-number range.
+/// The history size changes when output scrolls its top; the pane height changes the
+/// last visible line. One command list makes the pair a tear check for this capture.
+fn history(pane: PaneId, start: i32, end: i32) -> Result<Group, TmuxError> {
+    if end < start {
+        return Err(TmuxError::BadRequest("history end is before its start"));
+    }
+    let state = format!("display-message -p -t {pane} '{HISTORY_STATE_FORMAT}'");
+    Ok(Group::of(&[
+        state.clone(),
+        format!("capture-pane -p -e -t {pane} -S {start} -E {end}"),
+        state,
+    ]))
 }
 
 /// Deletes what a failed paste left in tmux's buffers. Commands after a failure in a

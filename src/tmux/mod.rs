@@ -12,6 +12,7 @@ use thiserror::Error;
 
 pub mod command;
 pub mod fake;
+pub mod history;
 pub mod layout;
 pub mod oneshot;
 pub mod parse;
@@ -382,10 +383,18 @@ pub enum Reply {
     Ok,
     Location(Location),
     SessionLocation(SessionLocation),
-    /// `capture-pane -e` rows, without line ends.
-    History(Vec<Bytes>),
+    /// `capture-pane -e` rows, without line ends, labelled from tmux's history range.
+    History(History),
     Listing(Listing),
     Created(Created),
+}
+
+/// A clamped history capture. `start` is the first physical tmux row returned, not
+/// necessarily the first line number the client asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct History {
+    pub start: i32,
+    pub rows: Vec<Bytes>,
 }
 
 /// Every session and its windows, for the session sheet.

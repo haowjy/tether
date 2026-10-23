@@ -115,8 +115,8 @@ export class TabDriver {
 
   /**
    * Scrollback rows `start..=end` (tmux line numbers, negative is history), one entry per
-   * row. A chunk may hold fewer rows than asked, so this asks again from where it ended;
-   * an empty chunk ends the range. Rejects when the watch goes away.
+   * row. A chunk may hold fewer rows than asked, so this follows its true start; an empty
+   * chunk can advance to tmux's top before the range ends. Rejects when the watch goes away.
    */
   async history(start: number, end: number): Promise<Uint8Array[]> {
     const watch = this.watchId;
@@ -124,13 +124,21 @@ export class TabDriver {
     for (let next = start; next <= end; ) {
       if (!this.bound || watch === null || this.watchId !== watch) throw new Error("watch ended");
       const from = next;
-      const lines = await this.opts.host.request(
+      const chunk = await this.opts.host.request(
         (req) => ({ type: "history", data: { req, watch, start: from, end } }),
-        (reply) => (reply.type === "historyChunk" && reply.data.watch === watch ? reply.data.lines : undefined),
+        (reply) => (reply.type === "historyChunk" && reply.data.watch === watch ? reply.data : undefined),
       );
-      if (lines.length === 0) break;
-      rows.push(...lines.map(decodeBase64));
-      next += lines.length;
+      if (chunk.lines.length === 0) {
+        if (chunk.start <= from) break;
+        next = chunk.start;
+        continue;
+      }
+      rows.push(...chunk.lines.map(decodeBase64));
+      const after = chunk.start + chunk.lines.length;
+      // tmux can move a request up to the oldest retained row; follow it, but never retry
+      // a chunk that made no progress.
+      if (after <= from) break;
+      next = after;
     }
     return rows;
   }
