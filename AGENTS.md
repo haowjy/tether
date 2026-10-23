@@ -47,6 +47,10 @@ cargo run -- --version
 pnpm --dir web install       # the web client uses pnpm
 ```
 
+The crate's minimum Rust is 1.85 (`rust-version` in Cargo.toml); the pinned toolchain is newer,
+so syntax stabilised later (let chains, 1.88) passes preflight and fails CI's MSRV job. Check with
+`cargo +1.85 check --locked --all-targets`.
+
 Use **pnpm, never npm**, for anything in `web/`: installs, scripts, `pnpm exec`. The lockfile
 is `web/pnpm-lock.yaml`; don't add a `package-lock.json`.
 
