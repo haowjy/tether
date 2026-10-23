@@ -1,9 +1,12 @@
 # Client architecture: the rebuilt web client
 
-Status: design for review, revision 3, 2026-10-23. Nothing here is built. Revision 2
+Status: design for review, revision 4, 2026-10-23. Nothing here is built. Revision 2
 answered [review 1](client-architecture-review-1.md) and the
-[alignment review](client-architecture-review-alignment.md); revision 3 applies the
-local fixes from [review 2](client-architecture-review-2.md). The
+[alignment review](client-architecture-review-alignment.md); revision 3 applied
+[review 2](client-architecture-review-2.md); revision 4 applies
+[review 3](client-architecture-review-3.md), mostly by deleting mechanisms: the update
+roll call, the second listing fetcher, the copies of navigation state, admission in the
+adapter, and the browser's second focus owner. The
 [disposition table](#review-disposition) at the end says where each finding went.
 
 This spec covers the web client that replaces today's `web/` views. That client runs
@@ -28,21 +31,27 @@ One Preact app, three **platform adapters**, and one rule for each hard boundary
 - **Keep the UI-free core and delete every view.** These survive with their tests:
   `proto/`, `net/`, `tabs/`, the terminal write pipeline, sizing and prompt tracker,
   the `/fs` client, and `Store`. Every component and stylesheet goes, along with the dev
-  shim and the suggestion strip. A new pure **workspace** core owns tabs, restore,
-  pruning, Files position and routes.
-- **One `Platform` interface holds everything environment-specific.** That covers boot
-  and admission, socket and HTTP transport, input and focus, viewport, lifecycle,
-  storage, uploads, clipboard, links, video, haptics and restart. It has three
-  implementations: `browser`, `native` and `test`. Lint keeps every use of
+  shim and the suggestion strip. A new pure **workspace** core owns tabs, the active
+  tab, restore and pruning, and nothing else.
+- **Every piece of state has one owner.** One fetcher feeds the sessions listing to
+  Home and to pruning. Browser history is the navigation stack (overlays, Files
+  folders, preview); everything else learns of it only as a `navigated` event.
+- **One `Platform` interface holds everything environment-specific.** That covers boot,
+  socket and HTTP transport, input and focus, viewport, lifecycle, storage, uploads,
+  clipboard, links, video, haptics, restart and, in the browser, updates and install.
+  It has one change channel and three implementations: `browser`, `native` and `test`.
+  It exposes no environment name, so nothing can branch on one. Admission is daemon
+  protocol, so it lives in `net/`, not in the adapter. Lint keeps every use of
   `window.webkit`, `visualViewport`, `indexedDB`, `navigator` and
-  `document.visibilityState` inside `web/platform/`. The browser adapter holds no
-  credential and has no dev mode.
+  `document.visibilityState`, bare or through `window`/`globalThis`, inside
+  `web/platform/`. The browser adapter holds no credential and has no dev mode.
 - **The design system is owned primitives on native HTML, with no component library.**
   Tokens come in three tiers of CSS custom properties: primitive, semantic and
   component. There is a light and a dark theme. **Density** depends on the pointer:
   `compact` for a fine pointer, `touch` with 44 px targets. **Layout** depends on the
   screen size: the desktop rail, or phone Home. About fifteen primitives are built on
-  `<dialog>`, `<button>` and `<input>`. No `preact/compat`.
+  `<dialog>`, `<button>` and `<input>`. No `preact/compat`. Only `app/focus.ts` moves
+  DOM focus.
 - **Terminal input depends on the input device, not the user agent.** A desktop with a
   fine pointer keeps xterm's own textarea, under a strict key-handler contract. Phone
   browsers use a tether-owned input that sends only committed text. Native keeps native
@@ -54,16 +63,21 @@ One Preact app, three **platform adapters**, and one rule for each hard boundary
   Long-press selects text from a bounded snapshot.
 - **The PWA's service worker serves the shell from cache and nothing else.** It
   precaches the whole build and never touches `/ws`, `/auth`, `/fs` or `/complete`. A
-  new version replaces the old only when Jimmy taps Update, coordinated across
-  windows. Nothing typed offline is ever queued.
+  new version takes over only when Jimmy taps Update, and only the page he tapped
+  reloads; other pages keep running on the previous build's cache and offer Reload.
+  Nothing typed offline is ever queued.
 - **Lanes own disjoint files in one checkout.** One writer lays the skeleton and every
-  shared file (W0). Home, Terminal, Files, the PWA, the native adapter and the touch
-  input then proceed in parallel, each against named daemon prerequisites.
+  shared file (W0), and stays on as their owner, taking change requests from the other
+  lanes. Home, Terminal, Files and the PWA then proceed in parallel, the touch input
+  after Terminal and the native adapter after that, each against named daemon
+  prerequisites. Coders don't commit: the lead commits each change by pathspec and
+  preflights a clean export of exactly that commit.
 
 ```mermaid
 flowchart TB
-  screens["screens/: home, picker, terminal, files, enrol, settings (views only)"]
+  screens["screens/: home, picker, terminal, files, enrol, settings"]
   ui["ui/: tokens and primitives"]
+  app["app/: controller, router, focus, listing fetcher, persist"]
   cores["UI-free cores: workspace, sessions, drafts, tabs, net, proto, term, touch, files"]
   types(("platform/types.ts<br/>the Platform interface"))
   pb["platform/browser"]
@@ -71,6 +85,9 @@ flowchart TB
   pt["platform/test"]
   screens --> ui
   screens --> cores
+  screens --> app
+  app --> cores
+  app --> types
   cores --> types
   pb -. implements .-> types
   pn -. implements .-> types
@@ -96,7 +113,11 @@ One name per concept. The code, the specs and the UI copy use these.
 | **host** | One tether daemon endpoint, identified by `hostId` (`/auth/info.hostId`, `welcome.host.id`). The browser has exactly one, the daemon behind its page origin. Native has a saved list | `WindowRef.server`, a tmux server *instance*. UI copy shows the host's name (`pop-os`) with no label word; native settings call the list "Servers" (connection-roadmap.md) |
 | **tab** | A tether tab: one tmux window open in tether. Its identity is the **tab key**, `(hostId, WindowRef)` | A browser tab. Closing a tether tab never touches tmux |
 | **destination** | Home, Terminal or Files: the top level of navigation | |
-| **overlay** | A modal surface stacked on a destination: the picker, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files (§6.1) |
+| **overlay** | A modal surface stacked on a destination: the picker, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files; the **status band** |
+| **navigation stack** | The browser history entries tether pushes: destination, overlay, Files folder and preview (§6.6). Its only writer is the router | The tab strip, which never enters history |
+| **listing** | One host's tmux sessions and windows, from `listSessions`. One fetcher gets it (§6.3) | |
+| **status band** | The band on the terminal's top edge that says a tab is reconnecting, limited or failed, with Retry (§8.2) | an overlay |
+| **persist now** | `app/persist.ts`: hand every pending draft and workspace write to storage at once (§5.5) | |
 | **picker** | The Open session picker behind terminal `+`. It only attaches existing windows | Home's creation actions |
 | **draft** | The local multiline text for one tab key. It is edited in the draft editor and sent only by Insert | Direct input |
 | **direct input** | Keystrokes that go to tmux as they are typed | |
@@ -120,28 +141,30 @@ means kept with its tests; "Revise" names the change.
 | `net/http.ts`, `net/fakes.ts` | **Keep** | |
 | `tabs/connection.ts`, `tabs/driver.ts` | **Keep**. The driver gains the `limited` state (§6.4) and the paste result (§7.5) | Tested state machine. `cover`/`uncover` already end and resume the watch |
 | `tabs/input.ts` | **Keep**. `InputEvent` moves to `platform/types.ts` | `toMessages` and `shellQuote` are pure |
-| `term/pipeline.ts`, `term/index.ts` | **Keep**. The pipeline takes the wrap map once L3 lands | Serialized writes, renderer boundary |
+| `term/pipeline.ts`, `term/index.ts` | **Keep**, unchanged. The pipeline gets no wrap map: L3 replays soft wraps inside the snapshot bytes, so xterm marks the continuation rows itself. `term/index.ts` gains the renderer API P3 needs (§11) | Serialized writes, renderer boundary |
 | `term/prompt.ts` | **Keep** | Tap-to-position on the prompt line reads its OSC 133 marks (plan.md "Cursor movement"; §7.6) |
-| `term/size.ts` | **Revise**: three ways to produce the stable box (§5.4). Native keeps `collapsedHeight`. A trailing 150 ms debounce is added | Rotation with the keyboard up must keep its rows (`size.test.ts` keeps that case) |
+| `term/size.ts` | **Revise**: one formula over `Viewport` (§5.4), with no per-environment branch and no `reason`. A trailing 150 ms debounce is added | Rotation with the keyboard up must keep its rows (`size.test.ts` keeps that case) |
 | `term/xterm.ts` | **Revise**: stdin is on only when direct input is `xterm`. One renderer instance lives for the page's life and moves between layouts. `cursorPan` reads the pan area (§5.4), not `container.clientHeight` | It is hard-wired inert today; recreating it would lose the buffer; the browser's container never shrinks for the keyboard |
-| `app/sync.ts` (`HostSync`) | **Keep**, moved to `workspace/sync.ts`. Retries a failed listing while any tab is `restoring` | Lists on connect and on a debounced `sessionsChanged`, and prunes |
-| `app/status.ts` (`describe`) | **Keep**, moved to `workspace/status.ts`, with copy for `limited`, 4005 and admission | Pure |
-| `app/hosts.ts` | **Revise** into `net/hosts.ts`. The registry stays; `TokenLink` moves into the native transport | The token is a native concern |
+| `app/sync.ts` (`HostSync`) | **Revise** into `app/listing.ts`, the one listing fetcher (§6.3). It feeds `sessions/` and the workspace reducer, forwards `windowRenamed` as `renamed`, and retries a failed listing while any tab is `restoring` | Its triggers and debounce are right; a second fetcher in `sessions/` would double every listing |
+| `app/status.ts` (`describe`) | **Keep**, moved to `tabs/status.ts`, with copy for `limited`. Host copy (4005, admission) goes to `ui/hostProblem.ts` | Pure; tab-state copy belongs with the tab state |
+| `app/hosts.ts` | **Revise** into `net/hosts.ts`. The registry stays, and gains each host's admission state (§4). `TokenLink` moves into the native transport | The token is a native concern |
+| (new) `net/admission.ts` | **New**: pure. `/auth/info`, the session reply, close codes and native token refusals in; `Admission` out (§4.2) | Admission is daemon protocol, the same in every environment, so it is unit-tested once |
 | `app/app.ts`, `app/windows.ts` | **Delete**. Their logic moves into `workspace/` and `sessions/` | Sheet routing, native `prompt` for names, and `typeChip` all go |
 | `app/Chrome.tsx`, `Sheets.tsx`, `TabBar.tsx`, `app.css` | **Delete** | Old views |
-| `files/api.ts`, `browser.ts`, `kinds.ts`, `images.ts`, `fakes.ts` | **Keep**. `browser.ts` drops its Settings and root-picker places, which are outside the minimal pass | Tested `/fs` client and navigation state |
+| `files/api.ts`, `browser.ts`, `kinds.ts`, `images.ts`, `fakes.ts` | **Keep**. `browser.ts` drops its Settings and root-picker places, which are outside the minimal pass. `FileBrowser` is the only holder of the Files place; it follows `navigated` (§6.6) | Tested `/fs` client and navigation state |
 | `files/markdown.ts`, `files/code.ts` | **Keep**, moved to `files/render/`, which may use the DOM | They build DOM and run DOMPurify |
 | `files/FilesSheet.tsx`, `Viewers.tsx`, `files.css` | **Delete**. The viewers are rebuilt in `screens/files/` on `files/render/` | Old views |
 | `complete/` (strip, suggester, its test) | **Delete** | The suggestion strip is deferred (client README). Git keeps it |
 | `ui/store.ts`, `ui/format.ts` | **Keep** | Pure |
 | `ui/theme.ts` | **Keep**. Reads the new `--term-*` tokens; takes the scheme from `Viewport.scheme` instead of calling `matchMedia` (lint rule 3) | Token-driven |
-| `ui/hostProblem.ts` | **Revise**: copy per platform and per admission state (§4.2) | Today's copy names the iPhone |
+| `ui/hostProblem.ts` | **Revise**: copy per admission state (§4.2), worded by how the host admits this client (as a tailnet node, or by a native token), never by environment name. It also takes the host copy for 4005 | Today's copy names the iPhone |
 | `ui/tokens.css`, `Tappable.tsx`, `Sheet.tsx`, `icons.tsx` | **Delete**. Replaced by `ui/tokens/` and `ui/primitives/` | Hand-rolled, and built for native-owned focus |
 | `native/bridge.ts` | **Revise** into `platform/native/bridge.ts`, at bridge version 2 (§5.10) | |
 | `dev/shim.ts` | **Delete** | Desktop development uses the real browser adapter (§5.11) |
 | `main.tsx`, `index.html` | **Rewrite**: pick the adapter, boot, render `<App>` | |
 | `eslint.config.js` | **Rewrite** the focus and boundary rules (§3.3) | |
-| `vite.config.ts` | **Revise**: `base: "/"`, a service-worker entry, budget output, and the dev proxy of §5.11 | |
+| `vite.config.ts` | **Revise**: `base: "/"`, budget output, `manualChunks` for the grammar allowlist (§8.4), and the dev proxy of §5.11. It imports `sw/vite-plugin.ts`, which W4 owns: the worker entry, the precache list, and the manifest link and `theme-color` metas injected into `index.html` | W4 iterates on the worker without touching W0's files |
+
 | `tsconfig.json` | **Revise**: exclude `sw/`. `sw/tsconfig.json` uses the `WebWorker` lib | The worker has different globals |
 
 ### 3.2 New layout
@@ -150,71 +173,89 @@ means kept with its tests; "Revise" names the change.
 web/
   main.tsx, index.html   pick the Platform, boot, render <App>
   platform/
-    types.ts         the Platform interface and its shared types (§5). No implementation
-    browser/         one file per capability: boot.ts, transport.ts, focus.ts, viewport.ts,
-                     lifecycle.ts, storage.ts, uploads.ts, clipboard.ts, links.ts, pwa.ts
+    types.ts         the Platform interface and every type it names (§5). No implementation
+    browser/         index.ts (assembles the Platform) and one file per capability: boot.ts,
+                     transport.ts, viewport.ts, lifecycle.ts, storage.ts, uploads.ts,
+                     clipboard.ts, links.ts, pwa.ts (updates and install)
     native/          bridge.ts (v2) and adapter.ts
     test/            in-memory Platform for vitest and the Playwright harness
   proto/             wire types, frames, link
-  net/               host.ts, http.ts, hosts.ts (registry)
-  tabs/              connection.ts, driver.ts, input.ts, keymap.ts (KeyboardEvent → InputItem)
+  net/               host.ts, http.ts, hosts.ts (registry, admission state), admission.ts (pure)
+  tabs/              connection.ts, driver.ts, input.ts, keymap.ts (KeyboardEvent → InputItem),
+                     status.ts (describe)
   term/              pipeline, size, prompt, xterm renderer, xterm-input.ts (desktop source)
   touch/             phone-only: owned-input.ts, gesture.ts (recognizer), selection.ts
-  workspace/         pure: tabs, active tab, restore, pruning, routes, Files position,
-                     focus owner, labels, status; sync.ts (HostSync)
-  sessions/          pure: listings per host, search, expansion, creation requests
+  workspace/         pure: tabs, active tab, restore, pruning, labels
+  sessions/          pure: listing cache per host, search, expansion, creation requests
   drafts/            pure: draft records, Insert state machine, eviction
-  files/             /fs client and browser state; render/ (markdown, code)
-  app/               <App> root, controller, router, focus.ts (the focus controller)
+  files/             /fs client and FileBrowser (the Files place); render/ (markdown, code)
+  app/               <App> root and its context, controller, router.ts (the navigation
+                     stack), focus.ts (the focus controller), listing.ts (the listing
+                     fetcher), persist.ts (persist now)
   screens/
     shell/           rail (desktop), destination frame, host banner
     home/            open tabs, sessions list, creation dialogs, bottom nav (phone)
     picker/          the Open session picker
-    terminal/        tab strip, terminal surface, overlays, draft slot
+    terminal/        tab strip, terminal surface, status band, draft slot
     files/           folder list, preview, upload, insert path
     enrol/           enrolment and admission-problem screens
     settings/        Remove this device, Clear local data, Add to Home Screen
   ui/
     tokens/          primitives.css, semantic.css, components.css, fonts.css
-    primitives/      Button, IconButton, Tooltip, TextField, SearchField, Dialog, Sheet,
-                     Disclosure, Row, RovingList, TabStrip, Banner, Toast, Overlay,
-                     EmptyState, Spinner, Icon, DraftEditor
+    primitives/      Button, IconButton, Tooltip, TextField, SearchField, Dialog (with a
+                     sheet variant), Disclosure, Row, RovingList, TabStrip, Banner, Toast,
+                     StatusBand, EmptyState, Spinner, Icon, DraftEditor
     store.ts, format.ts, theme.ts, hostProblem.ts
-  sw/                the service worker, built as its own entry
+  sw/                the service worker, built as its own entry; vite-plugin.ts
   public/            icons, apple-touch-icon
-  harness/           test-mode entry for Playwright; never in a production build
+  harness/           test-mode entry for Playwright; never in a production build.
+                     index.ts imports one fixture directory per lane (harness/<lane>/)
   e2e/               Playwright specs, one directory per lane
 ```
 
-Each screen module exports an `effects.ts` that the controller registers. A lane can
-then add the effects its screen needs (creation, upload, insert path, draft insert)
-without editing `app/`.
+**Screens call their own cores directly.** `app/` provides one context (`useApp()`):
+the platform, the host registry, the router, the focus controller and persist now. A
+screen's own logic (creation, upload, insert path, draft insert) lives in the screen or
+its core and calls through that context, so a lane adds behaviour without editing
+`app/`. The controller in `app/` runs only the workspace reducer's effects. Each screen
+styles itself with a CSS module (`*.module.css`) beside it, so five lanes writing CSS
+at once can't collide on class names.
 
 ### 3.3 Lint rules
 
 Today's rule bans `<button>`, `<input>`, `<textarea>`, `<select>` and `contenteditable`
 everywhere, because native owned all focus. The new rules keep one focus controller per
 environment, and let the web have forms. Every rule uses core ESLint
-(`no-restricted-syntax`, `no-restricted-imports`, `no-restricted-globals`) in
-per-directory `files:` blocks, so no plugin is needed.
+(`no-restricted-syntax`, `no-restricted-imports`, `no-restricted-globals`,
+`no-restricted-properties`) in per-directory `files:` blocks, so no plugin is needed.
+W0 seeds each rule, and each form of rule 3, with a violation in a lint fixture that
+its tests expect to fail.
 
 1. **Raw editable and interactive elements appear only in `ui/primitives/`,
-   `term/xterm-input.ts` and `touch/owned-input.ts`.** Screens use `TextField`,
-   `SearchField` and `Button`.
-2. **`.focus()` and `.blur()` are called only in** `app/focus.ts`,
-   `ui/primitives/Dialog.tsx`, `ui/primitives/Sheet.tsx`, `term/xterm-input.ts`,
-   `touch/owned-input.ts` and `platform/browser/focus.ts`. Everything else asks the
-   focus controller (§6.5).
-3. **Environment globals appear only in `platform/`.** These are `window.webkit`,
+   `term/xterm-input.ts`, `touch/owned-input.ts` and `platform/browser/uploads.ts`**
+   (its hidden file input, §5.7). Screens use `TextField`, `SearchField` and `Button`.
+2. **`.focus()` and `.blur()` are called only in `app/focus.ts`.** Elements that can
+   hold focus register with the focus controller instead (§6.5).
+3. **Environment globals appear only in `platform/`.** The names are `webkit`,
    `visualViewport`, `indexedDB`, `localStorage`, `sessionStorage`, `navigator`,
-   `document.visibilityState`, `window.open`, `matchMedia` and `BroadcastChannel`.
+   `open`, `matchMedia`, `BroadcastChannel`, plus `document.visibilityState` and
+   `document.hasFocus`. `no-restricted-globals` alone catches only the bare name, so the
+   rule has three parts:
+   - `no-restricted-globals` for each bare name;
+   - `no-restricted-properties` for `window`, `globalThis` and `self` with each name,
+     and for `document` with `visibilityState` and `hasFocus`;
+   - `no-restricted-syntax` for any `MemberExpression` whose property is `webkit`, and
+     for destructuring from `window`, `globalThis` or `self`
+     (`VariableDeclarator[init.name=/^(window|globalThis|self)$/] > ObjectPattern`).
 4. **Import boundaries.**
    - Only `main.tsx` imports `platform/browser/` or `platform/native/`.
    - Only tests and `harness/` import `platform/test/`.
    - Only `term/` imports xterm.
    - `screens/` never imports a platform implementation.
 5. **No Preact and no `window` or `document` in `workspace/`, `sessions/`, `drafts/`,
-   `tabs/` or `touch/gesture.ts`.** These are sans-IO where they hold state: events in,
+   `tabs/`, `net/admission.ts` or `touch/gesture.ts`.** These are sans-IO where they
+   hold state: events in,
+
    state and effects out, as plan.md asks of the daemon's cores. `proto/link.ts` may use
    `WebSocket`, and `files/render/` may use the DOM.
 
@@ -233,51 +274,65 @@ with no handshake. That replaces ios-shell.md's "no other web text inputs" rule 
 sequenceDiagram
   participant M as main.tsx
   participant P as Platform
+  participant H as net/hosts.ts
   participant D as daemon
   M->>P: boot()
-  alt browser
-    P->>D: GET /auth/info
-    D-->>P: hostId, name, protocol, browserOrigin, browserRefused
-    P->>P: browserOrigin == location.origin?
-    P->>D: GET /auth/node/session
-    D-->>P: 200 {deviceName} | 401 not_enrolled {node} | 403 node_refused | 503
-  else native
-    P->>P: bridge ready → boot {hosts, workspace, viewport, locked}
+  P-->>M: hosts, workspace, viewport, lifecycle
+  M->>H: start(hosts)
+  alt host.pageOrigin set (browser: admitted as a tailnet node)
+    H->>D: GET /auth/info
+    D-->>H: hostId, name, protocol, browserOrigin, browserRefused
+    H->>D: GET /auth/node/session
+    D-->>H: 200 {deviceName} | 401 not_enrolled {node} | 403 node_refused | 503
+  else pageOrigin null (native: admitted by token)
+    H->>H: admitted until the transport reports a token refusal
   end
-  P-->>M: BootResult
+  H->>H: net/admission.ts → Admission
   M->>M: render App, or the enrol / problem screen for that host
 ```
 
+- **Admission is daemon protocol, so it lives in `net/`.** `net/admission.ts` is pure:
+  the `/auth/info` reply, the session reply, the page origin, close codes (4401, 4503)
+  and native token refusals go in, and an `Admission` comes out. `net/hosts.ts` holds
+  each host's admission state, runs the two GETs through `transport.httpBase`, and
+  retries `deciding` with that host's backoff. The adapter supplies only facts: each
+  `HostEntry`'s `pageOrigin`, and the transport. The same mapping therefore runs, and is
+  unit-tested, in every environment.
 - **The browser holds no credential.** Auth rev 4 admits a browser as an enrolled
   tailnet node, decided by the daemon from the peer address Serve forwards. There is no
   cookie and no token in JavaScript. The browser transport opens `/ws` offering only
   `tether.v1`, and fetches `/fs/*` with relative URLs.
-- **Boot reads admission from the daemon at every launch.** First `GET /auth/info`.
-  Then the page origin is compared with `browserOrigin`. Then `GET /auth/node/session`.
-  Nothing about enrolment is stored in the browser.
+- **Admission is read from the daemon at every launch.** For a host with a
+  `pageOrigin`: first `GET /auth/info`, then `pageOrigin` is compared with
+  `browserOrigin`, then `GET /auth/node/session`. Nothing about enrolment is stored in
+  the browser.
 - **Native** boots as today through the bridge, with the saved workspace, hosts and
-  lock state. Its tokens never reach page code; they stay inside the native transport.
+  lock state. Its hosts have no `pageOrigin`: a token admits them, and the token never
+  reaches page code. A `{ notEnrolled }` token reply, or native's `hostRejected`,
+  reaches `net/admission.ts` as a token refusal through the transport (§5.2).
 - **Protocol mismatch.** It is detected when `/auth/info.protocol` falls outside the
   range the client speaks, or when the socket closes with 4001 and `incompatible { min,
   max }`. Input is disabled on that host's tabs. The host banner says the page is out
-  of date and offers Update (browser, §9.3) or "Update the app" (native). It is never
-  retried.
+  of date and offers Update where `platform.updates` exists (§9.3), else "Update the
+  app". It is never retried.
 
 ### 4.2 Admission states
 
 | Daemon answer (auth rev 4 §3.8) | `Admission` | What the client shows |
 |---|---|---|
 | `200 {deviceName}` | `admitted` | the app |
-| `browserOrigin` ≠ `location.origin` | `wrongOrigin { origin }` | "Open tether at `<origin>`", with a link. No socket opens |
+| `browserOrigin` ≠ the host's `pageOrigin` | `wrongOrigin { origin }` | "Open tether at `<origin>`", with a link. No socket opens |
 | `browserOrigin: null`, `browserRefused: <reason>` | `originRefused { reason }` | why browsers can't use this host (`ambiguous_origin`, `not_https`…), with the `tether` command that fixes it. No retry |
 | `401 not_enrolled {node: {name}}`, or close 4401 then that answer | `notEnrolled { nodeName }` | the Enrol screen (§4.3) |
 | `403 node_refused {reason}` | `nodeRefused { reason }` | the reason in words ("This device is a subnet router"). No form, no retry |
 | `503 identity_unavailable`, `auth_unavailable`, `busy`; close 4503 | `deciding` | keeps the current screen and workspace, retries with the host's backoff, and says "Checking access…" after 10 s |
 | no answer | `unreachable` | Home's offline state (§9.4), drafts included |
 
-A 4401 close mid-session is not taken as `notEnrolled` on its own. The client first asks
-`GET /auth/node/session` why, because the node may now be refused. While it waits, tabs
-and drafts stay. Enrolling again resumes where Jimmy was.
+A 4401 close mid-session is not taken as `notEnrolled` on its own. `net/hosts.ts` first
+asks `GET /auth/node/session` why, because the node may now be refused. While it waits,
+tabs and drafts stay. Enrolling again resumes where Jimmy was. For a token-admitted host
+`notEnrolled` means the app's server pairing is gone; its copy points to the app's
+Servers settings, and no Enrol screen is shown.
 
 ### 4.3 The Enrol screen and Settings
 
@@ -285,19 +340,23 @@ and drafts stay. Enrolling again resumes where Jimmy was.
   device-name field, prefilled with `nodeName` and editable, and the sentence "This lets
   every browser and app on `<node>` use tether on `<host>`." The instruction above the
   code field says to run `tether enroll` on the server. Submitting calls
-  `platform.enrol(code, deviceName)`, which posts `POST /auth/node/enroll`, and then
-  boots again. `EnrolResult` is `enrolled`, `badCode` ("That code is wrong or has
+  `hosts.enrol(host, code, deviceName)` in `net/hosts.ts`, which posts
+  `POST /auth/node/enroll` through `httpBase` and then checks admission again.
+  `EnrolResult` is `enrolled`, `badCode` ("That code is wrong or has
   expired", under the field), `nodeRefused { reason }` (the refusal screen), or
   `tryAgain` for a `503` ("tether is busy, try again"; the code is not consumed).
 - **Settings** is an overlay opened from a Settings row at the bottom of Home. It holds:
-  - **Remove this device** (browser only). It asks for confirmation: "Every browser and
-    app on `<node>` will lose access to `<host>`." Then it closes this page's sockets,
-    calls `platform.removeDevice()` (`POST /auth/node/remove`) and shows Enrol. Drafts
-    stay.
+  - **Remove this device**, for a host admitted as a tailnet node (its entry has a
+    `pageOrigin`). It asks for confirmation: "Every browser and app on `<node>` will
+    lose access to `<host>`." Then it closes this page's sockets, calls
+    `hosts.removeDevice(host)` (`POST /auth/node/remove` through `httpBase`) and shows
+    Enrol. Drafts stay.
   - **Clear local data.** After a confirmation it deletes drafts and the saved workspace
     on this device only.
-  - **Add to Home Screen** (phone browser, not installed). It shows the iOS steps: Share,
-    then Add to Home Screen. It is never a forced screen.
+  - **Add to Home Screen**, when `platform.install` is present and reports the page not
+    installed, in the phone layout. It shows the iOS steps: Share, then Add to Home
+    Screen. It is never a forced screen.
+
 - One enrolment covers the whole machine: Safari, the installed PWA and any other
   browser on that node. Storage is not shared, though: Safari and the PWA keep separate
   drafts and workspaces. The Enrol screen and the install steps say both.
@@ -307,82 +366,117 @@ and drafts stay. Enrolling again resumes where Jimmy was.
 ### 5.1 The interface
 
 Methods that can fail return typed results rather than throwing, so screens can render
-the failure.
+the failure. **Optional members are capabilities only some environments have**
+(`updates`, `install`, `uploads.send`). Code checks for the member, never for an
+environment: the interface has no `kind`. W0 writes every type named here into
+`platform/types.ts` before the lanes fork.
 
 ```ts
 interface Platform {
-  readonly kind: "browser" | "native" | "test";
-
   boot(): Promise<BootResult>;
-  subscribe(listener: (change: PlatformChange) => void): Unsubscribe;
+  /** The one change channel. The controller in app/ routes each event to its owner. */
+  subscribe(listener: (event: PlatformEvent) => void): Unsubscribe;
   transport: Transport;          // §5.2
   input: InputPlatform;          // §5.3
-  viewport: ViewportSource;      // §5.4
-  lifecycle: LifecycleSource;    // §5.5
   storage: PlatformStorage;      // §5.6
   uploads: Uploads;              // §5.7
   clipboard: { writeText(text: string): Promise<"ok" | "denied"> };
   openURL(url: string): void;                       // http(s) only
-  playVideo(host: string, path: string): "handled" | "inline"; // native player, or a <video> in the page
-  haptic(kind: HapticKind): void;                   // ios-shell's semantic kinds; browser: no-op
+  playVideo(handle: string, path: string): "handled" | "inline"; // native player, or a <video> in the page
+  haptic(kind: HapticKind): void;                   // browser: no-op
   restart(reason: "stuck" | "update"): void;        // native: recreateWebView; browser: reload, bounded (§5.2)
-  enrol?(code: string, deviceName: string): Promise<EnrolResult>; // browser only
-  removeDevice?(): Promise<"ok" | "failed">;        // browser only
+  updates?: Updates;                                // §9.3; present where a service worker runs
+  install?: { installed(): boolean };               // §4.3; present in the browser
 }
 
 interface BootResult {
   hosts: HostEntry[];                    // browser: exactly one, this origin's daemon
-  admission: Record<string, Admission>;  // §4.2
-  workspace: SavedWorkspace | null;
-  viewport: Viewport;
-  directInput: "xterm" | "owned" | "native";
+  workspace: SavedWorkspace | null;      // §6.1
+  viewport: Viewport;                    // §5.4
+  lifecycle: Lifecycle;                  // §5.5
 }
 
-type PlatformChange =
-  | { type: "hosts"; hosts: HostEntry[] }              // native host list changed
-  | { type: "lock"; locked: boolean }                  // native app lock
-  | { type: "admission"; host: string; admission: Admission }
-  | { type: "directInput"; directInput: BootResult["directInput"] }; // pointer changed
+interface HostEntry {
+  /** The adapter's handle for this endpoint; transport methods take it. */
+  handle: string;
+  /** The daemon's identity and name, when the adapter already knows them (native's
+   *  saved list). Browser: null until net/hosts.ts reads /auth/info or `welcome.host`. */
+  hostId: string | null;
+  name: string | null;         // "pop-os"
+  /** The page origin the daemon must name as browserOrigin. Set when the daemon admits
+   *  this client as a tailnet node; null when a native token admits it (§4.1). */
+  pageOrigin: string | null;
+}
+
+type PlatformEvent =
+  | { type: "hosts"; hosts: HostEntry[] }                    // native host list changed
+  | { type: "viewport"; viewport: Viewport }                 // §5.4
+  | { type: "lifecycle"; lifecycle: Lifecycle }              // §5.5
+  | { type: "input"; tab: TabKey; events: InputEvent[] }     // native responder (§5.3)
+  | { type: "composeEdit"; id: string; tab: TabKey; text: string; baseRevision: number }
+  | { type: "composeInsert"; id: string; tab: TabKey; text: string; revision: number }
+  | { type: "draftChanged"; key: TabKey }                    // another page changed a draft
+  | { type: "storage"; state: "closing" | "closed" }         // §5.6, IndexedDB upgrade
+  | { type: "update"; state: UpdateState };                  // §9.3, only with `updates`
+
+interface Updates { check(): Promise<void>; apply(): void }   // §9.3
+type UpdateState = "none" | "ready";
+type HapticKind = "selection" | "rigid";   // tab switch; selection mode starts (ios-shell "Haptics")
+interface SafeArea { top: number; right: number; bottom: number; left: number }
+type Unsubscribe = () => void;
 ```
+
+`Admission`, `EnrolResult` and the admission calls are not here: they live in `net/`
+(§4). `TabKey`, `InputEvent`, `SavedWorkspace` and `DraftRecord` are defined in §6.1,
+§7 and §5.6, and exported from `platform/types.ts` because the adapters carry them.
 
 ### 5.2 Transport
 
 ```ts
 interface Transport {
   /** Returns a Link at once. A refusal arrives as a synthetic close, like 4401. */
-  openSocket(host: string, handlers: LinkHandlers): Link;
-  /** Where every /fs and /complete URL starts. */
-  httpBase(host: string): string;  // browser: "" (same origin); native: "tether-app://h-<id>"
+  openSocket(handle: string, handlers: LinkHandlers): Link;
+  /** Where every /auth, /fs and /complete URL starts. */
+  httpBase(handle: string): string;  // browser: "" (same origin); native: "tether-app://h-<id>"
 }
 ```
 
 - **Native** fetches the token from the bridge asynchronously inside the `Link`. A
   `{ locked }` reply closes the link with a synthetic code that `Host` maps to the
-  halt `locked`, and `{ notEnrolled }` maps to `notEnrolled`. `Host`'s synchronous
-  `open` therefore stays as it is.
+  halt `locked`, and `{ notEnrolled }` closes it with a synthetic code that
+  `net/admission.ts` reads as a token refusal. `Host`'s synchronous `open` therefore
+  stays as it is.
 - **Browser** opens `wss://<origin>/ws` offering `tether.v1` only.
-- **`onStuck`**: two sockets in a row stuck in CONNECTING. It calls
-  `platform.restart("stuck")`. Native recreates the web view. The browser reloads at
-  most once per 10 minutes, tracked by a `sessionStorage` timestamp, and flushes
-  drafts first. After that it halts with "Can't reach pop-os" and Retry, so a slow
-  cellular link can't loop reloads.
+- **Stuck sockets.** When two sockets in a row stick in CONNECTING, `Host` reports
+  `stuck`. The controller runs persist now, then calls `platform.restart("stuck")`.
+  Native recreates the web view. The browser reloads at most once per 10 minutes,
+  tracked by a `sessionStorage` timestamp. After that it halts with "Can't reach
+  pop-os" and Retry, so a slow cellular link can't loop reloads.
 
 ### 5.3 Input and focus
 
 ```ts
 interface InputPlatform {
-  /** Native only: keystrokes from native's responder, with the tab key native targeted. */
-  onInput(listener: (target: TabKey, events: InputEvent[]) => void): Unsubscribe;
-  /** The focus mode the screen needs (§6.5). Browser: DOM focus. Native: bridge `focus`. */
+  /** The focus mode the screen needs (§6.5). Native: bridge `focus`. Browser: no-op,
+   *  because app/focus.ts already moved DOM focus in the same dispatch. */
   setFocus(mode: "terminal" | "hidden" | "webText" | "select"): void;
+  /** Native compose: answer a composeEdit or composeInsert (bridge `draftResult`).
+   *  Browser and test: no-op. */
+  composeResult(id: string, status: DraftStatus): void;
+  /** Native compose: show a draft changed elsewhere (bridge `draftChanged`). */
+  composeShow(tab: TabKey, text: string, revision: number): void;
 }
+type DraftStatus = "ok" | "tooLarge" | "full" | { conflict: { text: string; revision: number } };
 ```
+
+Native's keystrokes arrive as `input` events on the one channel, each with the tab key
+native targeted.
 
 `directInput` picks the terminal input source (§7). It is `xterm` when the primary
 pointer is fine and can hover (`(pointer: fine) and (hover: hover)`), `owned` when the
-primary pointer is coarse, and `native` in the app. It is re-evaluated when that media
-query changes, for example when an iPad gains a trackpad, and reported as a
-`PlatformChange`. User-agent sniffing is not used.
+primary pointer is coarse, and `native` in the app. It is a `Viewport` field, from the
+same pointer media query as `density`, so a change (an iPad gaining a trackpad) arrives
+as a `viewport` event. User-agent sniffing is not used.
 
 ### 5.4 Viewport, keyboard and the stable box
 
@@ -390,12 +484,13 @@ query changes, for example when an iPad gains a trackpad, and reported as a
 interface Viewport {
   layout: "desktop" | "phone";
   density: "compact" | "touch";
+  directInput: "xterm" | "owned" | "native";   // §5.3
   scheme: "light" | "dark";
+  width: number;           // CSS px of the window or web view
+  stableHeight: number;    // its height with no software keyboard
   visibleHeight: number;   // on screen now
-  stableHeight: number;    // with no software keyboard (native: collapsedHeight)
   safeArea: SafeArea;      // of the keyboard-hidden layout
   keyboard: boolean;
-  reason: "initial" | "keyboard" | "resize" | "rotation";
 }
 ```
 
@@ -403,19 +498,29 @@ interface Viewport {
 software keyboard and everything that appears with it: the draft editor, the
 keyboard-open toolbar and overlays. Nothing that only shows or hides ever resizes tmux.
 
-- **Native** computes rows exactly as today: from `collapsedHeight`, minus the safe-area
-  insets and the measured chrome heights. Every `viewport` message carries the
+**One sizing formula, in every environment.** `term/size.ts` computes
+
+```text
+cols = floor((width − safeArea.left − safeArea.right − chrome.x) / cell.width)
+rows = floor((stableHeight − safeArea.top − safeArea.bottom − chrome.y) / cell.height)
+```
+
+and recomputes whenever an input changes. `chrome` is the tether chrome in flow around
+the terminal in the keyboard-hidden layout (the rail, the tab strip, the toolbar's
+resting slot), measured by the terminal screen when layout or density changes. A
+keyboard opening changes none of these inputs, so it never resizes tmux, and the sizer
+needs no event reason. Only the adapters differ, in how they define `stableHeight`:
+
+- **Native**: `collapsedHeight`, as today. Every `viewport` message carries the
   keyboard-hidden safe area, so a rotation with the keyboard up still yields the
   collapsed layout's rows.
-- **Browser, phone layout.** The app root is `100svh` tall: the small viewport height,
-  which doesn't change when Safari's toolbars collapse or the keyboard opens. The
-  terminal container and the bottom toolbar's resting slot share that root, in flow, so
-  the stable box is the root minus the toolbar's resting height, and no tmux row sits
-  under the toolbar. While the keyboard is up, the toolbar is translated out of its slot
-  to sit on the visual viewport's bottom edge. The draft editor is always positioned
-  over the terminal, never in flow. The container's `ResizeObserver` box is the stable
-  box.
-- **Browser, desktop layout.** The container's box is the stable box.
+- **Browser**: the app root, which is `100svh` tall: the small viewport height, which
+  doesn't change when Safari's toolbars collapse or the keyboard opens. On desktop that
+  is the window's height. In the phone layout the terminal container and the bottom
+  toolbar's resting slot share that root, in flow, so no tmux row sits under the
+  toolbar. While the keyboard is up, the toolbar is translated out of its slot to sit on
+  the visual viewport's bottom edge. The draft editor is always positioned over the
+  terminal, never in flow.
 - **The pan area** is what remains visible of the terminal: `visibleHeight` minus the
   translated toolbar and the draft editor when they cover it. `cursorPan` reads this
   number, not `container.clientHeight`, which in the browser never shrinks. Native keeps
@@ -425,14 +530,15 @@ keyboard-open toolbar and overlays. Nothing that only shows or hides ever resize
   until the font is loaded and the box has been measured once, so tmux never sees the
   80×24 placeholder.
 - **Keyboard detection (browser).** `keyboard` is true when all of these hold: a text
-  owner is focused, `directInput` is `owned` (in either layout: an iPad without a
+  owner is focused (`platform/browser/viewport.ts` tracks `focusin` and `focusout`),
+  `directInput` is `owned` (in either layout: an iPad without a
   trackpad gets the desktop layout and a software keyboard), `visualViewport.scale` is
   about 1 (pinch zoom excluded), and the visible height is at least 120 px less than
   `stableHeight`. It is driven by `visualViewport` resize and scroll events. No timer.
 - **Colour scheme.** The viewport also carries `scheme: "light" | "dark"`, from
   `prefers-color-scheme` in the browser and the system appearance in native; a change
-  arrives as a `viewport` update, and `ui/theme.ts` re-themes xterm from it.
-- **Layout** is `phone` when `min(width, height) < 600` CSS px, else `desktop`. A
+  arrives as a `viewport` event, and `ui/theme.ts` re-themes xterm from it.
+- **Layout** is `phone` when `min(width, stableHeight) < 600` CSS px, else `desktop`. A
   landscape phone therefore stays in the phone layout. Changing layout never recreates
   the terminal renderer: one instance is reparented.
 - **Pinch zoom stays allowed outside the terminal.** The viewport meta drops
@@ -446,19 +552,24 @@ keyboard-open toolbar and overlays. Nothing that only shows or hides ever resize
 ### 5.5 Lifecycle
 
 ```ts
-interface LifecycleSource {
-  subscribe(listener: (state: { visible: boolean; online: boolean }) => void): Unsubscribe;
-}
+interface Lifecycle { visible: boolean; online: boolean; locked: boolean }  // browser: never locked
 ```
 
 The browser listens to `visibilitychange`, `pagehide`/`pageshow` and `online`/`offline`.
-Native listens to `lifecycle` and `network`. One owner, `net/hosts.ts`, reacts:
+Native listens to `lifecycle`, `network` and its app lock. Each `lifecycle` event
+reaches the controller, which splits the work between two owners:
 
-- **Hidden:** pending draft and workspace writes are flushed, then every socket closes
-  cleanly. The daemon ends the watches, so tmux gets its size back.
-- **Visible:** reconnect at once and rewatch the tab on screen.
-- **Online:** reset backoff. `online: true` is a hint, never proof the host is
-  reachable.
+- **Persistence** has one owner, `app/persist.ts`. Its `persistNow()` hands every
+  pending draft write (`drafts/` debounces them) and the assembled workspace to
+  storage at once. The controller calls it when the page is hidden, before
+  `platform.restart`, before `updates.apply()`, and on `storage: closing`.
+- **Sockets** have one owner, `net/hosts.ts`, which imports no persistence. The
+  registry runs a host's socket only while `visible && !locked`:
+  - **Hidden or locked:** every socket closes cleanly, after persist now. The daemon
+    ends the watches, so tmux gets its size back.
+  - **Visible and unlocked:** reconnect at once and rewatch the tab on screen.
+  - **Online:** reset backoff. `online: true` is a hint, never proof the host is
+    reachable.
 
 Nothing is written in an unload handler.
 
@@ -466,7 +577,6 @@ Nothing is written in an unload handler.
 
 ```ts
 interface PlatformStorage {
-  loadWorkspace(): Promise<SavedWorkspace | null>;
   saveWorkspace(ws: SavedWorkspace): void;          // coalesced, latest wins
   drafts: DraftStore;
   clearLocalData(): Promise<void>;
@@ -476,15 +586,25 @@ interface DraftStore {
   put(record: DraftRecord, baseRevision: number): Promise<"ok" | "conflict" | "failed">;
   delete(key: TabKey): Promise<void>;
   list(): Promise<DraftRecord[]>;
-  onChange(listener: (key: TabKey) => void): Unsubscribe;   // another page changed it
 }
+interface DraftRecord { key: TabKey; text: string; revision: number; editedAt: number }
 ```
+
+The saved workspace arrives in `BootResult`; a draft another page changed arrives as a
+`draftChanged` event.
 
 **Browser.**
 
 - **Database.** One IndexedDB database, `tether`, schema version 1, with two stores.
-  `workspace` holds one record per host; `drafts` is keyed by tab key. Every write is
+  `workspace` holds the one saved workspace; `drafts` is keyed by tab key. Every write is
   one small record, never the whole workspace per keystroke.
+- **Schema upgrades.** A later build may open `tether` at a higher version while pages
+  on the old build still hold connections, and the upgrade is blocked until they close.
+  So every page handles `versionchange`: the adapter emits `storage: closing`, the
+  controller runs persist now, and once those writes complete the adapter closes the
+  database and emits `storage: closed`. The page then shows "Reload to finish
+  updating". Later writes stay in memory, and the draft editor says they won't survive
+  a reload.
 - **Persistence.** `navigator.storage.persist()` is requested on the first draft save;
   the client promises nothing about the result. If IndexedDB is unavailable, the
   workspace lives in memory and the draft editor says drafts won't survive a reload.
@@ -494,27 +614,36 @@ interface DraftStore {
   by side. Draft
   writes compare revisions: a `put` whose base revision is older than the stored one
   returns `conflict`, and the editor reloads the newer text with "Edited in another
-  window". A `BroadcastChannel` named `tether` tells other pages a draft changed.
+  window". A `BroadcastChannel` named `tether` carries one message, `{ draft: <tab key
+  string> }`, to tell other pages a draft changed; pages ignore any other message, so
+  builds of different versions never depend on each other's messages.
 
 **Native.** The workspace goes to native through `saveWorkspace`, because native's copy
 survives a crash of the web content process. Drafts go through the same `DraftStore`
 interface over the bridge (`draftGet`, `draftPut`, `draftDelete`, `draftList`), and
 native persists the records. **The web applies every draft rule (§7.4) in both
 environments.** Native compose never writes a record itself: each edit goes to the web
-as `draftEdit { tab, text, baseRevision }`, debounced 300 ms in Swift. The web applies
-the cap, the revision check and eviction, persists through `draftPut`, and answers
-`draftResult { status }` (`ok`, `tooLarge`, `full`, `conflict` with the newer text).
-When a draft changes from elsewhere, the web sends native `draftChanged { tab, text,
-revision }` so compose shows it. Swift holds no draft rules.
+as `draftEdit { tab, text, baseRevision }` (a `composeEdit` event), debounced 300 ms in
+Swift. The web applies the cap, the revision check and eviction, persists through
+`draftPut`, and answers with `input.composeResult` (bridge `draftResult { status }`:
+`ok`, `tooLarge`, `full`, `conflict` with the newer text). When a draft changes from
+elsewhere, `input.composeShow` sends native `draftChanged { tab, text, revision }` so
+compose shows it. Swift holds no draft rules. **The revision check runs in JS:** the
+native `DraftStore` compares `baseRevision` with its cached copy of the record before
+calling `draftPut`, and returns `conflict` itself. Native has one page, so no other
+writer can slip between the check and the write.
+
 
 ### 5.7 Uploads, file pick and image paste
 
 ```ts
 interface Uploads {
   /** Call synchronously in the tap. Ends on completion, failure, or the picker's cancel. */
-  pick(host: string, signal: AbortSignal): AsyncIterable<UploadEvent>;
-  /** One pasted image the page already holds. Browser only. */
-  send?(host: string, file: File, signal: AbortSignal): AsyncIterable<UploadEvent>;
+  pick(handle: string, signal: AbortSignal): AsyncIterable<UploadEvent>;
+  /** One pasted image the page already holds. A capability: present in the browser;
+   *  native receives image paste in its own input. */
+  send?(handle: string, file: File, signal: AbortSignal): AsyncIterable<UploadEvent>;
+
 }
 type UploadEvent =
   | { id: string; progress: number }
@@ -543,22 +672,22 @@ scheme as a secure context for the Clipboard API (a G3 probe).
 
 | Capability | browser | native | test |
 |---|---|---|---|
-| boot | `/auth/info`, `/auth/node/session`, IndexedDB | bridge `ready` | fixture |
-| changes | admission from 401, 4401, 4503 | bridge `hosts`, `lock`, `hostRejected` | settable |
-| transport | same-origin `/ws` offering `tether.v1` | `tether-app://h-<id>`, token subprotocol | fake `Link` (`net/fakes.ts`) |
+| boot | one host with `pageOrigin: location.origin`; IndexedDB | bridge `ready`; hosts with no `pageOrigin` | fixture |
+| events | viewport, lifecycle, `draftChanged`, `storage`, `update` | bridge `hosts`, `viewport`, `lifecycle`, `network`, lock, `input`, `draftEdit`, `draftInsert` | `emit(event)` |
+| transport | same-origin `/ws` offering `tether.v1` | `tether-app://h-<id>`, token subprotocol; `{ notEnrolled }` and `hostRejected` as token refusals | fake `Link` (`net/fakes.ts`); fake `/auth` replies, so the real `net/admission.ts` runs |
 | direct input | `xterm` or `owned` | `native` | scripted events |
-| focus | DOM, through `app/focus.ts` | bridge `focus` | records requests |
+| focus | `setFocus` is a no-op: `app/focus.ts` moves DOM focus | bridge `focus` | records requests |
 | viewport | `visualViewport`, media queries, `100svh` | bridge `viewport` | settable |
-| lifecycle | page visibility, online | bridge `lifecycle`, `network` | settable |
-| storage | IndexedDB, `BroadcastChannel` | bridge `saveWorkspace` and draft records | in memory; can be told to fail |
+| lifecycle | page visibility, online; never locked | bridge `lifecycle`, `network`, app lock | settable |
+| storage | IndexedDB, `BroadcastChannel`, `versionchange` | bridge `saveWorkspace` and draft records | in memory; can be told to fail or to close |
 | uploads | file input, `/fs/upload` | bridge `pickMedia`, `upload` | scripted |
 | clipboard | `navigator.clipboard` in the gesture | bridge to `UIPasteboard` | records |
 | links | `window.open(url, "_blank", "noopener")` | bridge `openURL` | records |
 | video | inline `<video src="/fs/raw/…">` | bridge `playVideo` | records |
 | haptics | none | bridge `haptic` | records |
 | restart | bounded reload | bridge `recreateWebView` | records |
-| enrol, remove device | `/auth/node/enroll`, `/auth/node/remove` | absent (native enrols natively) | scripted |
-| service worker | registered | never | never |
+| updates | the service worker (`pwa.ts`) | absent | scripted |
+| install | `display-mode: standalone` (`pwa.ts`) | absent | settable |
 
 ### 5.10 Bridge version 2 and the ios-shell.md edits
 
@@ -579,7 +708,9 @@ becomes 2.
 | "Haptics" | unchanged kinds. The entries for suggestion chips go, along with the strip |
 | "What is native and what is web", "The accessory" | the suggestion strip leaves the web column. The compose field's draft rules point to §7.4; "retention remains to settle" is replaced by its retention rule |
 | "Project layout" | `web/native/bridge.ts` becomes `web/platform/native/bridge.ts`; the `--safe-*` tokens move to `ui/tokens/semantic.css` |
-| "Hosts" | `hostRejected` stays and surfaces as an `admission` change |
+| "Hosts" | `hostRejected` stays. The native transport turns it into a token refusal, which `net/admission.ts` maps to `notEnrolled` |
+| "The bridge": lock | the app lock state rides the `lifecycle` event as `locked` (§5.5) |
+
 
 ### 5.11 Development without a shim
 
@@ -591,7 +722,7 @@ dev-only code is Vite's proxy, which follows auth rev 4's "Dev mode":
   subprotocols. The token lives in the proxy process. Page code never sees it.
 - It answers `GET /auth/node/session` itself with `200 {deviceName: "vite dev"}`, since
   a token-bearing request there is a `400`. It rewrites `/auth/info.browserOrigin` to
-  Vite's own origin, so the unchanged adapter boots.
+  Vite's own origin, so the unchanged adapter and `net/admission.ts` admit the page.
 - It refuses callers that did not come through Serve (rev 4's L5).
 
 Consequences:
@@ -608,11 +739,12 @@ Consequences:
 
 ### 6.1 The workspace core
 
-`workspace/` is a pure reducer. Events go in: `opened`, `closed`, `activated`,
-`listing`, `windowClosed`, `serverExited`, `renamed`, `navigated`, `restored`,
-`watching`, `limited`. State and effects come out: `cover`, `uncover`, `save`, `focus`,
-`notice`. The controller in `app/` runs the effects against `TabDriver`, the router and
-the platform. `TabDriver` keeps owning its own watch; the workspace only says which tab
+`workspace/` is a pure reducer over the open tabs and nothing else. Events go in:
+`opened`, `closed`, `activated`, `listing`, `windowClosed`, `serverExited`, `renamed`,
+`navigated`, `restored`, `watching`. State and effects come out: `cover`, `uncover`,
+`save`, `focus`, `notice`. The controller in `app/` runs the effects against
+`TabDriver`, the focus controller and persist now. `TabDriver` keeps owning its own
+watch and its connection states, `limited` included; the workspace only says which tab
 is on screen.
 
 ```ts
@@ -620,11 +752,30 @@ type TabKey = { host: string; window: WindowRef };   // WindowRef = { server, wi
 interface WorkspaceState {
   tabs: Tab[];                    // in strip order
   active: string | null;          // the active tab's key string
-  destination: "home" | "terminal" | "files";
-  overlay: Overlay | null;        // picker, create, settings, confirm
-  files: { folders: string[]; preview: FileRef | null };  // a stack, kept across destinations
+  onTerminal: boolean;            // from `navigated` only; never set any other way
 }
 ```
+
+**State that is not here has its own owner.** Overlays, Files folders and the preview
+are the navigation stack (§6.6). The Files place is held by `FileBrowser`, the
+listing by `sessions/`, expansion by `sessions/`, the focus owner by `app/focus.ts`.
+Each lane therefore extends its own state without asking W0.
+
+**The saved workspace is assembled, not owned.** `app/persist.ts` builds it from each
+owner when it saves, and hands each owner its part at boot:
+
+```ts
+interface SavedWorkspace {
+  version: 1;
+  tabs: { key: TabKey; label: string }[];   // the last label, so restored pills have names
+  active: string | null;
+  files: { hostId: string; place: FilesPlace } | null;   // FileBrowser's place
+  expanded: Record<string, string[]>;       // sessions/ expansion, by hostId
+}
+```
+
+A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
+`net/hosts.ts` knows that host's `hostId` (§6.2).
 
 - **Identity is the tab key**, never a name or an index. Opening a window that already
   has a tab activates that tab.
@@ -656,24 +807,33 @@ interface WorkspaceState {
    the closures: "2 tabs closed: their windows are gone". Same-named windows are never
    substituted. Tabs on another server instance follow plan.md's rule: the listing
    covers the `main` server only, so it never prunes scratch tabs.
-4. A refused or failed listing decides nothing. `HostSync` retries it with the host's
-   backoff while any tab is `restoring`.
-5. If the host now reports a different `hostId`, the saved workspace for the old one is
-   discarded. Drafts keyed to the old host stay in storage until cleared or evicted, but
-   never attach to the new host's tabs.
+4. A refused or failed listing decides nothing. The listing fetcher (§6.3) retries it
+   with the host's backoff while any tab is `restoring`.
+5. Saved tabs wait, in `restoring`, until `net/hosts.ts` learns their host's `hostId`
+   (from `/auth/info` in the browser, from the saved list in native, and checked again
+   against `welcome.host.id`). Saved tabs and the Files place whose `hostId` no current
+   host reports are discarded then. Drafts keyed to the old host stay in storage until
+   cleared or evicted, but never attach to the new host's tabs.
 
 ### 6.3 The sessions listing
 
 `sessions/` caches one listing per host and exposes search and expansion as pure
-functions over it.
+functions over it. It never fetches.
 
+- **One fetcher.** `app/listing.ts` joins each host as a `TabPort` and is the only code
+  that sends `listSessions`. Each result goes two ways from the same reply: to
+  `sessions/` as `listed`, which Home and the picker render, and to the workspace
+  reducer as `listing`, which drives pruning (§6.2). Both therefore see the same
+  listing. It also forwards `windowRenamed` to the workspace as `renamed`.
 - **When it fetches:**
   - entering Home;
   - opening the picker;
   - every socket `linkUp`;
-  - a `sessionsChanged` hint, debounced 300 ms, while the page is visible.
+  - a `sessionsChanged` hint, debounced 300 ms, while the page is visible;
+  - a retry with the host's backoff while any tab is `restoring` (§6.2).
 
-  There is no timer and no fetch per keystroke: search filters the cached listing.
+  At most one request per host is in flight; a trigger during it queues one more. There
+  is no polling timer and no fetch per keystroke: search filters the cached listing.
 - **The socket stays up while Home or the picker is visible**, even with no tab open, so
   `sessionsChanged` keeps arriving. This costs one of the daemon's three sockets while
   Home is on screen. It closes 30 s after both are gone if no tab needs it.
@@ -684,7 +844,8 @@ functions over it.
   - no tmux server ("No tmux server is running on pop-os". tether never starts one);
   - a server with no sessions;
   - network failure.
-- **Expansion** is a set of session ids per host, saved in the workspace. Search expands
+- **Expansion** is a set of session ids per host, owned by `sessions/` and saved in the
+  saved workspace. Search expands
   matching parents temporarily; clearing search restores the saved set.
 - **Creation** sends `newSession` or `newWindow` with an optional name and an optional
   absolute directory. The `created` reply opens and activates the new window's tab. The
@@ -716,7 +877,7 @@ lost:
   tmux sessions at once. Watching a window in a fourth gets `watchEnded { reason:
   "limit", message }`. The tab goes to state `limited`:
   - Its pill turns the error colour.
-  - The terminal overlay shows the daemon's message ("tether on pop-os allows 3 tmux
+  - The status band shows the daemon's message ("tether on pop-os allows 3 tmux
     sessions at a time").
   - Under it: "Close tabs from other sessions, in this or another tether window or the
     app, to open this one." Then Retry.
@@ -730,9 +891,14 @@ lost:
 
 ### 6.5 The focus controller
 
-There is one focus controller per environment. In the web it is `app/focus.ts`. In
-native it remains Swift's `FocusController`, which the web reaches through
-`platform.input.setFocus`.
+There is one focus controller per environment. In the web it is `app/focus.ts`, the
+only code that calls `.focus()` or `.blur()` (lint rule 2). Elements that can hold
+focus register with it: each primitive's field or dialog on mount, the direct-input
+element once (`term/xterm-input.ts` hands over xterm's textarea, `touch/owned-input.ts`
+its own). A dialog's initial focus and its focus return are the controller's, run in
+the same dispatch that called `showModal()` or closed it. In native the controller
+remains Swift's `FocusController`, which `app/focus.ts` reaches through
+`platform.input.setFocus`; in the browser that call is a no-op.
 
 | Owner | Held by | Entered by |
 |---|---|---|
@@ -762,9 +928,20 @@ native it remains Swift's `FocusController`, which the web reaches through
 
 ### 6.6 Routes and browser history
 
-The URL carries only the destination. Overlays and the Files position live in
-`history.state` and the workspace. File paths never enter the URL, so browser history
-sync never sees them.
+**Browser history is the navigation stack, and `app/router.ts` is its only writer.**
+Each entry's `history.state` holds the overlay open on it, the Files folder and the
+preview, and the logical parent. The URL carries only the destination, so file paths
+never enter it and browser history sync never sees them. Everything else learns of
+navigation one way: the router emits `navigated { destination, entry }` after every
+push, replace and `popstate`.
+
+- The workspace reducer reads only `onTerminal` from it.
+- `FileBrowser` shows the entry's Files place. A tap in Files asks the router to push;
+  `FileBrowser` changes only when the resulting `navigated` arrives.
+- A screen renders the overlay named in the top entry. An overlay is
+  `{ screen, name, params }`, opaque to the router, so each lane adds overlays in its own
+  screen.
+- The focus controller sends native its resting mode from it (§6.5).
 
 | Route | Destination |
 |---|---|
@@ -773,20 +950,21 @@ sync never sees them.
 | `#/terminal` | Terminal, showing the active tab |
 
 - **Entries.** Each of these pushes an entry: changing destination, opening an overlay,
-  drilling into a folder, opening a preview. Switching or opening tabs never does; it
-  replaces state.
+  drilling into a folder, opening a preview. Switching or opening tabs never touches
+  history at all: tabs live only in the workspace.
 - **Back** closes the top overlay first, then the preview, then pops folders, then
   leaves the destination. It never touches tmux.
-- **Closing an overlay by an action**, such as picking a window, calls
-  `history.back()`. The controller applies the tab switch only after the resulting
-  `popstate`, so the switch's `replaceState` never races the pop.
+- **Closing an overlay by an action**, such as picking a window, is `history.back()`
+  plus the tab activation. The activation writes no history, so the two can't race.
 - **In-app back buttons go to the logical parent.** If the previous entry is that
   parent (recorded in `history.state.parent`), they call `history.back()`. Otherwise,
   after a reload or a deep link, they `replaceState` to the parent, so Back never leaves
   the app unexpectedly.
-- **Reload** restores the destination from the hash, and the tabs and Files position
-  from the workspace. Overlays do not survive a reload.
-- **Native** uses the same router. WKWebView's back gestures are off, so only in-app
+- **Reload** restores the destination from the hash, and the tabs and Files place from
+  the saved workspace: the router replaces the first entry with that place. Overlays do
+  not survive a reload.
+- **Native** uses the same router.
+ WKWebView's back gestures are off, so only in-app
   controls navigate.
 
 ## 7. Terminal input, gestures and copy
@@ -1006,9 +1184,17 @@ doesn't come up, until it decides.
   DOM text. Native selection handles work on it. New output keeps streaming under it;
   the snapshot stays anchored. Copy calls `platform.clipboard.writeText` inside the tap,
   with failure feedback. Dismissing selection frees the snapshot.
-- **Logical copy.** Soft wraps are joined using the wrap map. Until L3 lands it, copy
-  after a reconnect, a tab switch or a history fetch is not claimed to keep newlines
-  correct.
+- **Logical copy.** Two sources, each carrying its own wrap facts:
+  - **Rows in xterm's buffer.** L3 keeps the snapshot's wrap map inside the daemon: it
+    replays each soft wrap in the snapshot bytes without a cursor move, so xterm marks
+    the continuation row `isWrapped` itself. The pipeline gets no wrap map, and copy
+    joins rows by `isWrapped`, through the renderer's `bufferText(rows)`.
+  - **Rows in the history view.** Each `history` chunk carries `wraps`, a packed bitmap
+    (bit *i*: row *i* continues on the next). The DOM history view keeps it per row,
+    and copy joins at the marked boundaries.
+
+  Until L3 lands, copy after a reconnect, a tab switch or a history fetch is not claimed
+  to keep newlines correct.
 
 P3b owns this. Its gates are in §12.
 
@@ -1024,7 +1210,7 @@ P3b owns this. Its gates are in §12.
 
 **Owning the primitives means owning their accessibility.** They must implement:
 
-- initial focus and focus return for dialogs and sheets;
+- initial focus and focus return for dialogs, run by the focus controller;
 - Escape and backdrop dismissal in app code, since Safari lacks `closedby`;
 - roving focus with arrows, Home and End in long lists;
 - an accessible name on every icon button;
@@ -1041,23 +1227,26 @@ densities, and keyboard-only Playwright walks of Home, the picker, Terminal and 
 | `IconButton`, `Tooltip` | `<button aria-label>`; the tooltip shows on hover and keyboard focus | rail, toolbar, close, back, keyboard |
 | `TextField`, `SearchField` | `<input>` | search, creation name and directory, enrol code and device name |
 | `Dialog` | `<dialog>.showModal()` | desktop picker, creation forms, Settings, confirmations |
-| `Sheet` | the same `<dialog>`, styled as a tall bottom sheet with safe-area padding | phone picker |
+| `Dialog` sheet variant | the same `<dialog>` and code, styled as a tall bottom sheet with safe-area padding | phone picker |
 | `Disclosure` | `<button aria-expanded>` and a region. Controlled, because search forces expansion | session groups |
 | `Row` | `<button>` with fixed slots: leading icon, label, metadata, trailing | session, window, folder, file and open-tab rows; Home's Settings row |
 | `RovingList` | a list with arrow-key roving `tabindex` | Home and picker lists, file list |
 | `TabStrip` | buttons with `aria-current`, a separate close button on the active pill, horizontal scroll, the active pill scrolled into view | terminal tabs. Not an ARIA `tablist`: the tabs carry their own close buttons and share one panel |
 | `Banner` | a `role="status"` region | host problems, offline, Update ready |
 | `Toast` | one polite live region, one message at a time | "2 tabs closed", insertion results |
-| `Overlay` | a band over the terminal's top edge | reconnecting, limited, failed, with Retry |
+| `StatusBand` | a band over the terminal's top edge | reconnecting, limited, failed, with Retry |
 | `EmptyState`, `Spinner` | | no tabs, no matches, empty folder, loading |
 | `Icon` | inline SVG from one owned set (a Lucide subset, ISC licence), sizes 16, 20 and 24 | everywhere |
 | `DraftEditor` | `<textarea>` | §7.4 |
 
 ### 8.3 Token tiers
 
-Three tiers of CSS custom properties live in `ui/tokens/`. Only the semantic tier reads
-primitives. Screens read only semantic tokens. Components read component or semantic
-tokens.
+Three tiers of CSS custom properties live in `ui/tokens/`. **Colour goes through the
+semantic tier:** only `semantic.css` reads the colour primitives (`--gray-*`,
+`--green-*`, `--amber-*`, `--red-*`, `--blue-*`), and a preflight grep fails on any
+other use. Screens and components may read the spacing, radius, type and duration
+scales directly, since those don't change with theme. Components read component or
+semantic tokens for everything else.
 
 | Tier | Examples | Changes with |
 |---|---|---|
@@ -1087,16 +1276,19 @@ tokens.
   three colours: `--color-status-live` (green), `--color-status-reconnecting` (amber),
   or `--color-status-error` (red: halted, limited, not admitted). The active pill is
   marked by fill (`--tab-bg-active`) and weight, never by hue, so status and selection
-  never share a channel. The overlay's text and the accessible label carry the state
-  too, so colour is never the only signal.
+  never share a channel. The status band's text and the accessible label carry the
+  state too, so colour is never the only signal.
 
 ### 8.4 Fonts and the shell budget
 
-Today's build is 5.1 MB. Two 1.06 MB Nerd Font files make up 2.1 MB of it, and 3.1 MB
-is JavaScript, most of it Shiki grammars (the C++ grammar alone is 800 KB). The daemon
-embeds the shell within 3 MiB gzipped, at most 1.5 MiB per file and 128 files (browser
-auth, daemon-core "Static shell"). Every byte also crosses a weak link on first load.
-Preflight enforces these budgets on gzipped output:
+Today's build is 2.49 MiB gzipped (2,614,021 bytes in 52 files; 5.1 MB raw), already
+within 0.5 MiB of the daemon's cap. Two 1.06 MB Nerd Font files make up 2.1 MB of the raw
+size, and 3.1 MB is JavaScript, most of it Shiki grammars (the C++ grammar alone is
+800 KB raw). Thirteen of the 52 files are 44-byte re-export stubs Vite emits for the
+grammars. The daemon embeds the shell within 3 MiB gzipped, at most 1.5 MiB per file
+and 128 files (browser auth, daemon-core "Static shell"). Every byte also crosses a weak
+link on first load. Preflight enforces these budgets on gzipped output, and counts every
+emitted file, stubs included:
 
 | Asset | Budget | How |
 |---|---|---|
@@ -1105,7 +1297,7 @@ Preflight enforces these budgets on gzipped output:
 | Terminal font, regular and bold | 2 × 120 KB | JetBrains Mono NL subset to Latin, Latin-1, box drawing, block elements and Powerline |
 | Nerd Font symbols | 150 KB | a fallback file subset to the glyph ranges Jimmy's prompt and tmux status line use. It is listed after the core font in `--font-mono`, loaded after first paint, and the renderer clears its glyph atlas once it arrives |
 | Lazy chunks (markdown, Shiki core, viewers) | loaded on first use | precached by the service worker like everything else (§9.2) |
-| Shiki grammars | an allowlist: shell, JSON, YAML, TOML, Markdown, TS/JS, Python, Rust, Go, Swift, C and diff | each is its own lazy chunk |
+| Shiki grammars | an allowlist: shell, JSON, YAML, TOML, Markdown, TS/JS, Python, Rust, Go, Swift, C and diff | each is its own lazy chunk; `manualChunks` keeps Vite from emitting re-export stubs for them |
 | Whole embedded shell | ≤ 1.5 MiB gz, ≤ 64 files | half the daemon's cap, so growth stays visible |
 
 W0 measures the subsets and commits the font files together with the script that made
@@ -1121,7 +1313,8 @@ browser-behaviors.md in the same commit as its code. None touches the fixed choi
 | Mockup | Change | Reason |
 |---|---|---|
 | Spacing, type, radii and icon sizes are chosen per element: gaps from 4 to 25 px, text from 11 to 20 px, six radii, icons from 15 to 21 px | One scale per property (§8.3). Icons are 16, 20 or 24 px | Hand-tuned values read as unrelated. Tokens make light/dark and density possible |
-| The phone picker is a light sheet over a dark app | The sheet uses the current theme's raised surface: dark in dark mode, light in light mode (open question 2) | With light/dark theming, a fixed light sheet is the one surface that ignores the theme. `--sheet-bg` alone reverts it |
+| The phone picker is a light sheet over a dark app | The sheet uses the current theme's raised surface: dark in dark mode, light in light mode (tech-lead call, 2026-10-23) | With light/dark theming, a fixed light sheet is the one surface that ignores the theme. `--sheet-bg` alone reverts it |
+
 | Search fields are 42 px; dialog buttons are about 41 px | At least 44 px in `touch` | The contract's 44 px target |
 | Inactive phone pills clip mid-label ("notes /") | The window part is always shown before the session part. A fade mask at the strip's scrolling edge signals overflow | The contract keeps the window portion visible first |
 | New session and New window are muted text rows | Secondary buttons, with their labels | Creation is a distinct, consequential action |
@@ -1149,9 +1342,10 @@ The daemon serves the manifest at `/manifest.webmanifest`:
 - icons at 192 px, 512 px and a maskable 512 px;
 - an `apple-touch-icon`, and a `theme-color` meta tag per colour scheme in `index.html`.
 
-`name` is "tether pop-os", using the host's name, so two installed servers can be told
-apart. The daemon fills that one field of an embedded template; L2 owns it. The phone
-browser works uninstalled. Settings offers Add to Home Screen with the iOS steps.
+`name` is "tether <host>" ("tether pop-os"), so two installed servers can be told apart
+(tech-lead call, 2026-10-23). The daemon fills that one field of an embedded template;
+L2 owns it. The phone browser works uninstalled. Settings offers Add to Home Screen with
+the iOS steps.
 
 ### 9.2 Service worker
 
@@ -1161,7 +1355,7 @@ adapter registers it; the native app never does.
 | Request | Strategy |
 |---|---|
 | Navigation (`/`, `/index.html`) | Cache first, from the active worker's precache. The network is used only when nothing is cached. The worker's version *is* the page's version |
-| `/assets/*`, `/manifest.webmanifest`, icons | Cache only, looked up with `caches.match(request)` across every `tether-shell-*` cache, so a page still running an older build finds its own chunks after a newer worker takes control |
+| `/assets/*`, `/manifest.webmanifest`, icons | Cache only, looked up with `caches.match(request)` across every `tether-shell-*` cache, so a page still running the previous build finds its own chunks after a newer worker takes control |
 | `/ws`, `/auth/*`, `/fs/*`, `/complete`, `/debug`, any non-GET | never intercepted (`respondWith` is not called) and never cached |
 
 - **The precache list** is generated at build time and holds the whole build: every JS
@@ -1174,32 +1368,45 @@ adapter registers it; the native app never does.
   times, honouring `Retry-After`, before failing the install. On an update it first
   copies every URL already present in an older `tether-shell-*` cache (hashed assets
   are immutable), so an update downloads only what changed.
-- **Caches** are named `tether-shell-<build hash>`. Each page posts its build hash to
-  its controlling worker on load and on `controllerchange`. Activation, and every later
-  `message` from a page, deletes the `tether-shell-*` caches whose hash no live window
-  client has reported.
+- **Caches** are named `tether-shell-<build hash>`, and the worker knows its own hash
+  from the build. **One cleanup rule, at activation only:** the activating worker keeps
+  its own cache and the cache of the build it replaced, and deletes every other
+  `tether-shell-*` cache. It learns the replaced build from a one-entry cache,
+  `tether-meta`, whose `/active` entry holds the active build's hash; activation reads
+  it, then writes its own. The record lives in Cache Storage, not worker memory, so it
+  survives the browser terminating an idle worker. A cache left by a worker that waited
+  and was superseded before activating is neither kept build, so it goes too.
+- **A page two builds behind** has a designed outcome: its next lazy chunk misses in
+  every cache, and it shows "Update required" with Reload. Nothing tracks which build
+  each page runs.
 
 ### 9.3 Update flow
 
+`platform/browser/pwa.ts` implements `updates` and `install`; screens see only the
+capability and the `update` event.
+
 1. **Checks follow the lifecycle.** On launch, and on becoming visible at most once an
-   hour, the page calls `registration.update()`: one conditional GET of `/sw.js`. No
-   timer.
+   hour, the controller calls `updates.check()`, which is `registration.update()`: one
+   conditional GET of `/sw.js`. No timer.
 2. **Install.** A new worker installs the complete new shell, then waits. Nothing
    reloads.
-3. **Offer.** The page shows "Update ready" in a Banner on Home, never over the
-   terminal, with an Update button.
-4. **Update.** The tapping page asks the waiting worker how many window clients exist
-   (`clients.matchAll({ type: "window" })`), then posts `update` on the `tether`
-   `BroadcastChannel`. Every tether page flushes its drafts and replies `ready`. A page
-   in IME composition replies after composition ends. When that many have replied
-   (counting itself), or after 5 s, the tapping page tells the
-   waiting worker to `skipWaiting`. On `controllerchange`, only the tapping page
-   reloads. Every other page shows "Reload to finish updating" and keeps working on its
-   old, still-cached assets. No `clients.claim`, and no reload without a tap in that
-   page.
-5. **Protocol mismatch** (§4.1). The page calls `registration.update()` first, then
-   offers Update, or Reload if no new worker exists. Input stays disabled. It is never
-   retried.
+3. **Offer.** An `update: ready` event makes Home show "Update ready" in a Banner,
+   never over the terminal, with an Update button.
+4. **Update.** The controller runs persist now, then `updates.apply()` tells the
+   waiting worker to `skipWaiting`, and the tapping page reloads on
+   `controllerchange`. Every other page also sees `controllerchange`: it shows "Reload
+   to finish updating" and keeps working on the previous build, whose cache the new
+   worker kept. Activation doesn't touch another page's drafts, IME composition or
+   database connection, so nothing is asked of those pages and no message passes
+   between builds. No `clients.claim`, and no reload without a tap in that page. If the
+   new build upgrades the IndexedDB schema, the other pages close their connections
+   through `versionchange` (§5.6).
+5. **Protocol mismatch**
+ (§4.1). With `updates` present, the page calls
+   `updates.check()` first, then offers Update, or Reload if no new worker exists.
+   Without it (native), the banner says "Update the app". Input stays disabled. It is
+   never retried.
+
 
 ### 9.4 Offline
 
@@ -1221,16 +1428,19 @@ through the `test` adapter until it lands.
 
 | Needed by | Daemon work | Lane | Stub until then |
 |---|---|---|---|
-| W0 boot, Enrol, Settings | `/auth/info.browserOrigin`, `/auth/node/session`, `/auth/node/enroll`, `/auth/node/remove`, `tether.v1`-only node sockets | L2 | `test` adapter admission fixtures; Vite proxy (§5.11) |
+| W0 boot, Enrol, Settings | `/auth/info.browserOrigin`, `/auth/node/session`, `/auth/node/enroll`, `/auth/node/remove`, `tether.v1`-only node sockets | L2 | fake `/auth` replies in the `test` adapter, so the real `net/admission.ts` runs; Vite proxy (§5.11) |
 | W2 `limited` state | `watchEnded { reason: "limit" }`; `limit` in `WatchEndReason` | resource-limits build | a fake host that sends it |
 | W2, P3a Insert and paste states | `paste { req }`, `pasted { req }`, `req` on refusals | L4 | the client reports `sent` |
-| P3b logical copy | wrap maps in snapshots and history | L3 | copy without the newline claim |
+| P3b logical copy | soft wraps replayed inside snapshot bytes; `wraps` on `history` chunks | L3 | copy without the newline claim |
+
 | W4 served-bundle checks | the static shell, the templated manifest | L2 | none: W4's served checks wait for L2 |
 
 ## 11. Build lanes
 
-Repository policy: one checkout, commits straight to `main`, no worktrees. Lanes
-therefore own disjoint files, with one writer per file.
+Repository policy: one checkout, commits straight to `main`, no worktrees (a tech-lead
+call: no worktree exception for this build). Lanes therefore own disjoint files, with
+one writer per file, and the few files several lanes must change have one owner and a
+hand-off protocol.
 
 ```mermaid
 flowchart LR
@@ -1238,44 +1448,64 @@ flowchart LR
   W0 --> W2[W2 Terminal, desktop input]
   W0 --> W3[W3 Files]
   W0 --> W4[W4 PWA]
-  W0 --> W5[W5 native adapter]
   W2 --> P3a[P3a phone input and draft]
   W2 --> P3b[P3b gestures and selection]
-  P3a -. draft bridge .-> W5
   W1 --> G2{{G2}}
   W2 --> G2
   W3 --> G2
   W4 --> G2
   P3a --> G3{{G3}}
   P3b --> G3
-  W5 --> G3
+  G3 --> W5["W5 native adapter (build plan P4)"]
 ```
+
+W5 follows the build plan: native is P4, after P3. Its bridge-v2 types are in W0's
+`platform/types.ts` from the start, and `drafts/` and the touch input are finished
+when it begins, so it builds against settled code.
 
 | Lane | Owns (writes only these) | Delivers | Verifies |
 |---|---|---|---|
-| **W0 skeleton** | the deletions; every shared file: `package.json` and its lock, `index.html`, both `tsconfig`s, `eslint.config.js`, `vite.config.ts`, `main.tsx`; `platform/types.ts`, `platform/browser/{boot,transport,focus,viewport,lifecycle,storage,clipboard,links}.ts`, `platform/test/`; `net/`, `proto/link.ts`; `app/`, `workspace/`, `ui/` (except `ui/primitives/DraftEditor.tsx`); `screens/shell/`, `screens/enrol/`; `harness/`, `e2e/shared/`; the budget, harness and copy-rule checks in `scripts/` | Old views gone. Every dependency any lane will need (Playwright, axe) is installed before the lanes fork. Tokens, every primitive, the workspace core with restore and pruning, the router, the focus controller, stub screens on their routes with `effects.ts` hooks, the Enrol screen, the font subsets | Unit tests for workspace, router, labels and restore. The kept suites stay green. Each lint rule fails on a seeded violation. Playwright on the harness opens every route in both layouts, themes and densities. Budgets are enforced |
-| **W1 Home, picker, Settings** | `screens/home/`, `screens/picker/`, `screens/settings/`, `sessions/`, `e2e/home/` | Open tabs; the sessions list with search and expansion; creation dialogs; the picker as dialog and sheet; listing states; Settings | `sessions/` unit tests (search, expansion, 24+ groups). Playwright through the Vite proxy against isolated `tmux -L` servers on 3.4 and 3.7b: create, open, attachedElsewhere, pruning after a kill under an off-screen tab |
-| **W2 Terminal and desktop input** | `screens/terminal/` (except `draft/` and `selection/`), `term/`, `tabs/`, `e2e/terminal/`, additions to `tests/fixtures/proto/keys.json` | The tab strip, the terminal surface, sizing from the stable box, desktop direct input, paste and image paste interception, the overlays including `limited` | keymap tests against `keys.json`. Playwright in Chromium and WebKit: typing; named keys in vim and less; Shift+Enter in `cat -v` shows `^[[13;2u` once; Japanese IME candidate selection with arrows; paste with bracketed mode on and off, never double-bracketed; 300 KiB paste refused; the 4th session refused with its message; reconnect after a socket kill; window drag resizes tmux once |
-| **W3 Files** | `screens/files/`, `files/`, `platform/browser/uploads.ts`, `e2e/files/` | Folder list, preview with the kept viewers, inline video, upload, the insert-path offer | `files/` tests kept. Playwright: browse, preview, upload then insert the quoted path into the captured tab, the target gone mid-upload, a fifth queued upload refused |
-| **W4 PWA** | `sw/`, `public/`, `platform/browser/pwa.ts`, `e2e/pwa/` | Service worker, update coordination, Update banner, offline Home. The manifest template's content is handed to L2 | Built bundle served by the daemon through Serve, from an enrolled second machine: install in Chromium; offline launch; update with an open terminal, an unsaved draft and a second window; no API response in Cache Storage |
-| **W5 native adapter** | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v2, native transport, `saveWorkspace`, `copy`. The draft bridge (`draftEdit`, `draftInsert`, `draftChanged`) waits for P3a's `drafts/` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap Home search from Terminal with the keyboard up |
-| **P3a phone input and draft** (after W2) | `touch/owned-input.ts`, `drafts/`, `ui/primitives/DraftEditor.tsx`, `screens/terminal/draft/` | The owned input; the draft editor, its keyboard-open layout prototyped first | `drafts/` unit tests (caps, eviction, revisions, Insert states). Simulator Safari probes, raising the keyboard with the keyboard button (terminal taps wait for P3b): opening the draft editor leaves tmux size unchanged; with the keyboard up, a prompt on tmux's last row stays visible above the toolbar and editor. The real-iPhone checklist (§12) queued for Jimmy |
-| **P3b gestures and selection** (after W2) | `touch/gesture.ts`, `touch/selection.ts`, `screens/terminal/selection/` | The recognizer, touch scroll with history, the selection layer, copy | Recognizer unit tests (tap, hold, scroll, cancel, long-press while streaming). Simulator probes. The selection-versus-click and logical-copy gates (§12) |
+| **W0 skeleton** | the deletions; every shared file: `package.json` and its lock, `index.html`, both `tsconfig`s, `eslint.config.js`, `vite.config.ts`, `main.tsx`; `platform/types.ts`, `platform/browser/{index,boot,transport,viewport,lifecycle,storage,clipboard,links}.ts`, `platform/test/`; `net/`, `proto/link.ts`; `app/`, `workspace/`, `ui/` (except `ui/primitives/DraftEditor.tsx`); `screens/shell/`, `screens/enrol/`; `harness/index.ts`, `harness/shared/`, `e2e/shared/`; `scripts/` checks and `.githooks/pre-push`. It also creates, then hands over, one stub per lane: `sw/vite-plugin.ts` and `platform/browser/pwa.ts` (W4), and `harness/<lane>/index.ts` (each lane) | Old views gone. Every dependency any lane will need (Playwright, axe) is installed before the lanes fork. Tokens, every primitive, CSS modules, the workspace core with restore and pruning, the listing fetcher, persist now, `net/admission.ts`, the router, the focus controller, the `useApp()` context, stub screens on their routes, the Enrol screen, the font subsets, `preflight.sh --commit` | Unit tests for workspace, admission, router, labels and restore. The kept suites stay green. Each lint rule, and each form of rule 3, fails on a seeded violation. Playwright on the harness opens every route in both layouts, themes and densities. Budgets are enforced |
+| **W1 Home, picker, Settings** | `screens/home/`, `screens/picker/`, `screens/settings/`, `sessions/`, `harness/home/`, `e2e/home/` | Open tabs; the sessions list with search and expansion; creation dialogs; the picker as dialog and sheet; listing states; Settings | `sessions/` unit tests (search, expansion, 24+ groups). Playwright through the Vite proxy against isolated `tmux -L` servers on 3.4 and 3.7b: create, open, attachedElsewhere, pruning after a kill under an off-screen tab, one `listSessions` per reconnect |
+| **W2 Terminal and desktop input** | `screens/terminal/` (except `draft/` and `selection/`), `term/`, `tabs/`, `harness/terminal/`, `e2e/terminal/`, additions to `tests/fixtures/proto/keys.json` | The tab strip, the terminal surface, sizing from the stable box, desktop direct input, paste and image paste interception, the status band including `limited`. **For P3**, in `term/index.ts` and `tabs/keymap.ts`: `bufferText(rows)` (logical text by `isWrapped`), `mouseMode()`, `cellAt(x, y)`, `setPanArea(px)`, and the owned-mode keymap branch (Ctrl/Alt+printable, §7.3) | keymap tests against `keys.json`. Playwright in Chromium and WebKit: typing; named keys in vim and less; Shift+Enter in `cat -v` shows `^[[13;2u` once; Japanese IME candidate selection with arrows; paste with bracketed mode on and off, never double-bracketed; 300 KiB paste refused; the 4th session refused with its message; reconnect after a socket kill; window drag resizes tmux once |
+| **W3 Files** | `screens/files/`, `files/`, `platform/browser/uploads.ts`, `harness/files/`, `e2e/files/` | Folder list, preview with the kept viewers, inline video, upload, the insert-path offer | `files/` tests kept. Playwright: browse, preview, Back through folders and preview, upload then insert the quoted path into the captured tab, the target gone mid-upload, a fifth queued upload refused |
+| **W4 PWA** | `sw/` (including `vite-plugin.ts`), `public/`, `platform/browser/pwa.ts`, `harness/pwa/`, `e2e/pwa/` | Service worker, its build plugin (entry, precache list, manifest link and `theme-color` metas), `updates` and `install`, the Update banner's state, offline Home. The manifest template's content is handed to L2 | Built bundle served by the daemon through Serve, from an enrolled second machine: install in Chromium; offline launch; the multi-window and two-updates gates (§12); no API response in Cache Storage |
+| **P3a phone input and draft** (after W2) | `touch/owned-input.ts`, `drafts/`, `ui/primitives/DraftEditor.tsx`, `screens/terminal/draft/`, `harness/draft/` | The owned input; the draft editor, its keyboard-open layout prototyped first | `drafts/` unit tests (caps, eviction, revisions, Insert states). Simulator Safari probes, raising the keyboard with the keyboard button (terminal taps wait for P3b): opening the draft editor leaves tmux size unchanged; with the keyboard up, a prompt on tmux's last row stays visible above the toolbar and editor. The real-iPhone checklist (§12) queued for Jimmy |
+| **P3b gestures and selection** (after W2) | `touch/gesture.ts`, `touch/selection.ts`, `screens/terminal/selection/`, `harness/gesture/` | The recognizer, touch scroll with history, the selection layer, copy | Recognizer unit tests (tap, hold, scroll, cancel, long-press while streaming). Simulator probes. The selection-versus-click and logical-copy gates (§12) |
+| **W5 native adapter** (P4, after G3) | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v2, native transport, `saveWorkspace`, the draft bridge, `copy` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap Home search from Terminal with the keyboard up, compose edits and Insert |
 
-**Working in one tree.** `scripts/preflight.sh full` checks the whole tree, so one lane's
-half-written file fails every lane's push. Therefore:
+**How a commit lands.** Coders don't commit (a tech-lead call). For each reviewed change:
 
-- Every lane keeps the tree compiling and lint-clean at every save, stubbing rather than
-  leaving broken code.
-- Commits use explicit pathspecs within the lane's files, never `git add -A`.
-- The lead serializes pushes.
-- Shared files have one owner. After W0, `ui/`, `workspace/`, `app/`, `net/`,
-  `platform/types.ts` and the repo-level config belong to the W0 writer, who stays on as
-  design-system and shared-file owner. Other lanes ask for changes rather than edit.
-- `docs/design/decisions.md`, `browser-behaviors.md`, plan.md and `CHANGELOG.md` are
-  edited only by the lead, from each lane's notes, in that lane's commit.
+1. The lead commits it with explicit pathspecs within the lane's files, never
+   `git add -A`.
+2. The lead pushes that one commit. The pre-push hook runs
+   `scripts/preflight.sh full --commit <sha>`, which exports exactly that commit
+   (`git archive <sha> | tar -x -C <tmp>`), links `web/node_modules` into it, shares the
+   checkout's Cargo target directory to keep builds incremental, and runs the full
+   preflight there. Another lane's uncommitted file can neither rescue a commit that
+   depends on it nor block one that doesn't, and every commit on `main` is one that
+   passed.
+3. Lanes still keep their own files compiling and lint-clean at every save, so the
+   lead's working-tree checks stay useful.
 
-If this proves too slow, the lead can ask Jimmy for a worktree exception for this build.
+**Hot spots and the hand-off protocol.** After W0, `ui/`, `workspace/`, `app/`, `net/`,
+`platform/types.ts`, `platform/browser/index.ts`, `harness/index.ts` and the repo-level
+config belong to the W0 writer, who stays on as design-system and shared-file owner. The
+design keeps these requests rare: each lane extends its own state, overlays, harness
+fixtures and build plugin in its own files. When a lane still needs a change in a
+W0-owned file:
+
+1. It sends the lead the request: the file, the exact change, and why.
+2. It keeps working against a local stand-in in its own files, never by editing the
+   W0 file.
+3. The W0 writer makes the change as its own commit, which the lead lands first.
+4. The lane's next commit deletes the stand-in and uses the real change.
+
+W2-owned code that P3 needs is named in W2's Delivers column, so P3 starts against a
+finished API rather than a request.
+
+`docs/design/decisions.md`, `browser-behaviors.md`, plan.md and `CHANGELOG.md` are
+edited only by the lead, from each lane's notes, in that lane's commit.
 
 ## 12. Risks and probe gates
 
@@ -1288,7 +1518,9 @@ If this proves too slow, the lead can ask Jimmy for a worktree exception for thi
 | Logical copy | The terminal-interaction-design.md matrix: soft wrap, hard break at the exact column, blank lines, indentation, CJK, emoji and combining cells, partial selection, after reconnect and history fetch (after L3) |
 | Native clipboard and focus | Simulator then device: `copy` through the bridge; Home search tapped from Terminal with the keyboard up; picker sheet with its search focused; rotation |
 | `<dialog>` sheet on iOS: focus, scroll, keyboard | iPhone Safari and WKWebView: a long list in the picker, its search focused, rotation |
-| Multi-window update | Two Chromium windows and a PWA open; Update in one; no other window reloads; no lost draft |
+| Multi-window update | Two Chromium windows and a PWA open, each with an unsaved draft; Update in one. Only that window reloads; the others show "Reload to finish updating", keep their drafts, and still open a lazy viewer (Markdown) after the worker has been idle long enough to be terminated |
+| Two updates in a row | Build h1 open in one window; update to h2 in another, then to h3. The h1 window's next lazy chunk shows "Update required"; Cache Storage holds only `tether-shell-h2` and `tether-shell-h3` |
+| IndexedDB schema upgrade | A harness build that opens `tether` at version 2 while a version-1 page is open: the old page persists, closes and shows "Reload to finish updating"; the upgrade is not blocked; no draft is lost |
 | No paste acknowledgement yet | L4; until then the UI says "sent" |
 | The font subset misses glyphs | Render Jimmy's real prompt and tmux status line on a scratch server |
 | Shell budgets too tight | Measured in W0; raised only with the measurement in the commit |
@@ -1300,50 +1532,75 @@ For `docs/design/decisions.md`, each with the alternatives rejected:
 1. **Keep the UI-free core; delete every view, the dev shim and the strip.** Rejected:
    porting the old components, which were built for native-owned focus and sheets;
    keeping `complete/` dormant (dead code; git keeps it).
-2. **One `Platform` interface with three implementations, enforced by lint.** Rejected:
-   `if (native)` branches in shared code (scattered and untestable); a separate browser
-   app (two terminal implementations); promoting the dev shim (it injects identity and
-   fakes a keyboard).
-3. **The browser adapter holds no credential and has no dev mode. Dev uses a
+2. **One `Platform` interface with three implementations, one change channel and no
+   environment name, enforced by lint.** Optional members are capabilities. Rejected:
+   `if (native)` branches in shared code (scattered and untestable); a public `kind`
+   field (it invites those branches); one change channel per concern (five ways to
+   learn of a change); a separate browser app (two terminal implementations);
+   promoting the dev shim (it injects identity and fakes a keyboard).
+3. **Admission is protocol, in `net/admission.ts`, the same in every environment.**
+   Rejected: admission inside the browser adapter (split across the adapter, the
+   transport and `Host`, and replaced by fixtures in tests, so the real mapping was never
+   tested).
+4. **The browser adapter holds no credential and has no dev mode. Dev uses a
    token-injecting proxy.** Rejected: a JS-held token (readable by script); a dev branch
    in the adapter (one flag away from production auth); a `vite build --watch` loop
    through Serve (no hot reload).
-4. **The workspace is a pure reducer keyed by `(hostId, WindowRef)`. Restore is decided
-   by `watching` or the first listing. The URL carries the destination only.**
-   Rejected: names or indices as identity; tabs in history entries (Back would walk
-   tabs, which the contract forbids); file paths in the URL (they would leak into
-   history sync).
-5. **tmux is sized only from the stable box. Layout follows `min(width, height)`;
-   density follows the pointer.** Rejected: the visible box (the keyboard would resize
-   tmux); width alone (a landscape phone would get the desktop layout); density from
-   width (a touch laptop would get small targets).
-6. **Owned primitives on native HTML, no `preact/compat`.** Rejected: Radix, React Aria,
-   Headless UI, Ariakit and Base UI (no Preact 11 support, compat risk, bytes). Zag
-   stays the escape hatch.
-7. **Three token tiers.** Rejected: one flat token file, as today, which can't express
-   density or per-component overrides.
-8. **Desktop keeps xterm's textarea under the key-handler contract. Phone browsers use
+5. **Every piece of state has one owner.** The workspace is a pure reducer over tabs
+   keyed by `(hostId, WindowRef)`. Restore is decided by `watching` or the first
+   listing. One fetcher gets the listing for Home and pruning. Browser history is the
+   navigation stack (overlays, Files folders, preview), written only by the router; the
+   URL carries the destination only. Rejected: names or indices as identity; tabs in
+   history entries (Back would walk tabs, which the contract forbids); file paths in the
+   URL (they would leak into history sync); a listing fetch in both `HostSync` and
+   `sessions/` (two round trips per event, two caches that disagree); overlays and the
+   Files position copied into the workspace (two stores to keep in step after Back).
+6. **tmux is sized only from the stable box, by one formula over `Viewport`. Layout
+   follows `min(width, stableHeight)`; density follows the pointer.** Rejected: the
+   visible box (the keyboard would resize tmux); a sizer branch per environment; width
+   alone (a landscape phone would get the desktop layout); density from width (a touch
+   laptop would get small targets).
+7. **Owned primitives on native HTML, no `preact/compat`; only `app/focus.ts` moves DOM
+   focus.** Rejected: Radix, React Aria, Headless UI, Ariakit and Base UI (no Preact 11
+   support, compat risk, bytes); focus calls in primitives and the adapter (several
+   focus controllers). Zag stays the escape hatch.
+8. **Three token tiers; colour only through the semantic tier.** Rejected: one flat
+   token file, as today, which can't express density or per-component overrides;
+   semantic-only tokens for screens (every spacing step would need an alias).
+9. **Desktop keeps xterm's textarea under the key-handler contract. Phone browsers use
    an owned input with a sentinel. Named keys go by tmux name.** Rejected: xterm's
    textarea on phones (open IME and dictation bugs); an owned input on desktop (it would
    rebuild keyboard layouts and dead keys); xterm-encoded arrows (wrong after an
    incomplete mode restore).
-9. **Paste is intercepted before xterm and sent as one `paste`. Image paste uploads,
+10. **Paste is intercepted before xterm and sent as one `paste`. Image paste uploads,
    then inserts into the captured tab.** Rejected: `term.paste()` (double bracketing);
    inserting into whichever tab is active when the upload completes; splitting large
    pastes (breaks bracketing).
-10. **One gesture recognizer owns touch.** Rejected: separate click, scroll and
+11. **One gesture recognizer owns touch.** Rejected: separate click, scroll and
     selection handlers (the remote click fires before a long-press is recognized).
-11. **Native focus mode is set by the screen, not by field focus.** Rejected:
+12. **Native focus mode is set by the screen, not by field focus.** Rejected:
     borrowing on pointer-down (races the native guard); releasing to `terminal` on blur
     (raises the keyboard over Home).
-12. **The service worker serves the shell cache-first, precaches the whole build, and
-    updates on a coordinated tap.** Rejected: network-first navigation (installs updates
-    without the tap, and waits on weak links); caching on use (an old page loses lazy
-    chunks after an upgrade); caching API or file responses; Background Sync;
-    `skipWaiting` on install; a worker in the native app.
-13. **Drafts are owned by the web in both environments, persisted by the platform.**
+13. **The service worker serves the shell cache-first, precaches the whole build, and
+    updates on a tap in one page. Activation keeps the current and the replaced cache;
+    every page handles IndexedDB `versionchange`.** Rejected: network-first navigation
+    (installs updates without the tap, and waits on weak links); caching on use (an old
+    page loses lazy chunks after an upgrade); a cross-window roll call before
+    `skipWaiting` (activation doesn't touch other pages' drafts or composition, so it
+    protects nothing, and a waiting worker's `clients.matchAll` counts no windows);
+    cache cleanup by build hashes pages report (the reports live in worker memory and
+    die when the browser terminates the worker); caching API or file responses;
+    Background Sync; `skipWaiting` on install; a worker in the native app.
+14. **Drafts are owned by the web in both environments, persisted by the platform.**
     Rejected: native-only rules for native compose (two rule sets for one feature).
-14. **The mockup departures** in §8.5, one line each.
+15. **Lanes in one checkout: coders don't commit; the lead commits by pathspec and
+    preflights a clean export of each pushed commit.** Rejected: preflight on the
+    working tree (it checks other lanes' uncommitted files, not the commit); serializing
+    lanes on a clean tree (loses the parallelism); worktrees (repository policy).
+16. **Snapshot soft wraps are restored inside the daemon; only history chunks carry a
+    wrap bitmap.** Rejected: a wrap map in the snapshot frame applied by the pipeline
+    (the daemon already composes the repaint bytes; a client-side map duplicates it).
+17. **The mockup departures** in §8.5, one line each.
 
 Spec edits that land with the code (the lead applies them in the owning lane's commit):
 
@@ -1362,11 +1619,11 @@ Spec edits that land with the code (the lead applies them in the owning lane's c
 1. **Drafts of closed tabs.** Proposed: kept, and back when the window is opened again,
    at most 32 drafts. Alternative: deleted with the tab, which is simpler but loses
    text.
-2. **The phone picker sheet's colour.** Proposed: it follows the theme, so it is dark in
-   dark mode. Alternative: always light, as the mockup and its review chose.
-3. **Installed name.** Proposed: "tether pop-os" per server, which needs the daemon to
-   template the manifest. Alternative: a static "tether": no daemon change, but two
-   installed servers look the same until renamed by hand.
+
+Settled by the tech lead on 2026-10-23, and logged with the decisions: the phone picker
+sheet follows the theme (§8.5), and each server's installed PWA is named
+"tether <host>", with the daemon filling the manifest (§9.1).
+
 
 ## Review disposition
 
@@ -1379,7 +1636,7 @@ Spec edits that land with the code (the lead applies them in the owning lane's c
 | R1 H5 dev can't authenticate | Fixed: token-injecting proxy answers session and origin | §5.11 |
 | R1 H6 lanes not disjoint | Fixed: W0 owns every shared file and installs every dependency; per-file ownership; daemon prerequisites; working-tree rules | §10, §11 |
 | R1 H7, A H1 gestures missing | Fixed: recognizer, selection, copy, P3b, gates | §7.6, §11, §12 |
-| R1 H8 SW navigation | Fixed: cache-first navigation; whole-build precache; old caches kept while used; update before Update | §9.2, §9.3 |
+| R1 H8 SW navigation | Fixed: cache-first navigation; whole-build precache; update before Update. Cache retention superseded by R3 F1 | §9.2, §9.3 |
 | R1 M1 transport | Fixed: `Link` returned at once, synthetic refusal close; `tether.v1` | §5.2, §3.1 |
 | R1 M2, A H2 admission vs rev 4 | Fixed: rev 4 routes and states; device name; Settings; enrolment is per machine | §4 |
 | R1 M3 restore | Fixed: `watching` decides; listing retried; first watch waits for size; only the listing's server is pruned | §6.2 |
@@ -1394,7 +1651,7 @@ Spec edits that land with the code (the lead applies them in the owning lane's c
 | R1 L1 `prompt.ts` dead | Rejected: tap-to-position uses it | §3.1, §7.6 |
 | R1 L2 protocol range | Fixed | §4.1 |
 | R1 L3 harness string check | Fixed: module graph check | §5.11 |
-| R1 L4 two homes for phone Files | Fixed: `#/files` only; back-then-switch ordering | §6.6 |
+| R1 L4 two homes for phone Files | Fixed: `#/files` only. The back-then-switch ordering is gone with R3 F3 | §6.6 |
 | R1 L5 duplicate watch state | Fixed: the reducer emits `cover`/`uncover`; the active tab is covered off Terminal | §6.1 |
 | R1 L6 `TabKey` types | Fixed: derived from `WindowRef` | §6.1 |
 | R1 L7 `pick` can hang | Fixed: synchronous click, `cancel`, `AbortSignal` | §5.7 |
@@ -1402,10 +1659,10 @@ Spec edits that land with the code (the lead applies them in the owning lane's c
 | R1 L9 drag resizes | Fixed: trailing 150 ms | §5.4 |
 | R1 L10 Home with no tabs | Fixed: the socket stays while Home or the picker shows | §6.3 |
 | R1 L11 viewport meta | Fixed: zoom allowed; `interactive-widget` | §5.4 |
-| A M1 multi-window | Fixed: `BroadcastChannel` coordination; revisioned drafts | §9.3, §5.6 |
+| A M1 multi-window | Fixed: revisioned drafts; focused page writes the workspace. The update coordination is superseded by R3 F1 | §9.3, §5.6 |
 | A M2 rotation with keyboard up | Fixed with R1 H1 | §5.4 |
 | A M3 unnamed ios-shell changes | Fixed: the full table | §5.10 |
-| A M4 Files state | Fixed: `files` in the workspace | §6.1, §6.6 |
+| A M4 Files state | Fixed: the Files place survives reloads and destinations. Superseded in mechanism by R3 F3: the navigation stack and `FileBrowser` own it, the saved workspace persists it | §6.1, §6.6 |
 | A M5 plan.md stale | Fixed: spec-edit list | §13 |
 | A M6 release raises keyboard | Fixed with R1 H2 | §6.5 |
 | A L1 screen rules | Fixed: screen-rules list | §6.3 |
@@ -1423,7 +1680,7 @@ Spec edits that land with the code (the lead applies them in the owning lane's c
 | A L13 pasted-image bound | Fixed: first image only; at most four queued | §5.7, §7.5 |
 | R2 N1 phone rows hidden under toolbar and keyboard | Fixed: toolbar's resting slot in flow; pan area feeds `cursorPan`; keyboard detection follows `owned`, not layout | §5.4, §3.1 |
 | R2 N2 precache burst vs shell caps | Fixed: register after `load`, 4 in flight, bounded `503` retry, copy unchanged assets from old caches | §9.2 |
-| R2 N3 cross-version cache behaviour | Fixed: `caches.match` across versions; pages report build hashes; roll call counted by the waiting worker | §9.2, §9.3 |
+| R2 N3 cross-version cache behaviour | `caches.match` across versions kept. Hash reports and the roll call deleted by R3 F1 | §9.2, §9.3 |
 | R2 N4 native draft rules | Fixed: option (a): `draftEdit` to the web, `draftChanged` back; W5's draft bridge waits for P3a | §5.6, §5.10, §11 |
 | R2 N5 owned-input gaps | Fixed: composition row; replacement cancelled and sent as nothing first; Ctrl/Alt+printable from `keydown`; Ctrl+C gate | §7.3, §12 |
 | R2 N6 F6 | Fixed: F6 stays the browser's | §7.2 |
@@ -1435,6 +1692,23 @@ Spec edits that land with the code (the lead applies them in the owning lane's c
 | R2 N12 touch details | Fixed: no zoom over the terminal; callout and selection suppressed | §5.4 |
 | R2 N13 `hello.client.kind` | Fixed | §3.1 |
 | R2 smaller: `EnrolResult`, end of selection | Fixed | §4.3, §5.10 |
+| R3 F1 update roll call; cache cleanup; IndexedDB upgrade | Fixed by deletion: no roll call, no `update`/`ready` messages, no build-hash reports. The tapping page persists, calls `skipWaiting` and reloads; others offer Reload. Activation keeps its own and the replaced cache, learned from `tether-meta` in Cache Storage. Every page handles `versionchange`. New gates for two updates and a schema upgrade | §9.2, §9.3, §5.6, §12, §13 |
+| R3 F2 two listing fetchers; impure `workspace/` | Fixed: `app/listing.ts` is the only fetcher, feeding `sessions/` (`listed`) and the reducer (`listing`) from one reply; forwards renames; retries while restoring. `workspace/sync.ts` deleted | §3.1, §3.2, §6.2, §6.3 |
+| R3 F3 Files position and overlays with two owners | Fixed: history is the navigation stack, written only by the router; `FileBrowser` follows `navigated`; `files` and `overlay` leave `WorkspaceState`; the ordering rule is gone | §6.1, §6.6 |
+| R3 F4 adapter shape | Fixed: admission in `net/admission.ts` and `net/hosts.ts`; one `subscribe` channel (lock in `lifecycle`, `directInput` in `Viewport`, no admission); no `kind`; `enrol` and `removeDevice` moved to `net/hosts.ts`; `updates` and `install` capabilities; named types defined | §4, §5.1–§5.6, §5.9, §9.3 |
+| R3 F5 pre-push checks the working tree | Fixed with option (a): `preflight.sh full --commit <sha>` on a clean export, run by the hook; coders don't commit, the lead pushes one commit at a time | §11 |
+| R3 F6 shared change surfaces | Fixed: `workspace/` shrunk to tabs; per-lane `harness/<lane>/`; `sw/vite-plugin.ts` owned by W4 injects into `index.html`; W2 delivers P3's renderer API and keymap branch; W5 moved to P4 to match the build plan; explicit hand-off protocol for W0 files | §3.1, §3.2, §11 |
+| R3 F7 leaky lint; two DOM focus owners | Fixed: rule 3 in three parts (`no-restricted-globals`, `no-restricted-properties`, `no-restricted-syntax`), each seeded; uploads exempt from rule 1; only `app/focus.ts` focuses; `platform/browser/focus.ts` deleted | §3.3, §5.3, §6.5 |
+| R3 F8 three sizer paths; no width | Fixed: `width` added, `reason` deleted, one formula; adapters differ only in `stableHeight` | §5.4, §3.1 |
+| R3 F9 three lifecycle flushers | Fixed: `app/persist.ts` persist now, called by the controller; `net/hosts.ts` only runs sockets | §5.5, §5.2, §9.3 |
+| R3 F10 "overlay" names two things | Fixed: the primitive is `StatusBand` | §2, §8.2, §6.4 |
+| R3 F11 token rule, CSS scoping, `Sheet` | Fixed: the rule covers colour only, with a preflight grep; CSS modules; `Sheet` is a `Dialog` variant | §8.3, §3.2, §8.2 |
+| R3 F12 budget units, stubs | Fixed: gzipped figure quoted; every file counted; `manualChunks` | §8.4 |
+| R3 F13 native revision check | Fixed: compared in JS before `draftPut` | §5.6 |
+| R3 F14 `effects.ts` hooks | Fixed by deletion: screens call their cores through `useApp()` | §3.2 |
+| Wrap map stays in the daemon (snapshot-wrap review 1) | Applied: the pipeline gets no wrap map; history chunks carry `wraps` for the history view's copy | §3.1, §7.6, §10 |
+| Tech-lead calls, 2026-10-23 | Applied: picker sheet follows the theme; PWA named "tether <host>"; no worktree exception; coders don't commit. Closed-tab drafts stay open for Jimmy | §8.5, §9.1, §11, §14 |
+
 
 ## Sources
 
