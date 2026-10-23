@@ -188,11 +188,6 @@ export class TabDriver {
     return rows;
   }
 
-  /** The host's listing no longer has this tab's window. */
-  windowGone(): void {
-    this.dispatch({ type: "windowClosed" });
-  }
-
   /** The user closed the tab. This ends its watch on the daemon, which caps watches per connection. */
   close(): void {
     this.dispatch({ type: "userClosed" });

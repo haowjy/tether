@@ -13,8 +13,6 @@ export class Persist {
   constructor(
     private readonly storage: PlatformStorage,
     private readonly tabs: () => Pick<SavedWorkspace, "tabs" | "active">,
-    /** What boot loaded; each owner takes its part from here. */
-    readonly saved: SavedWorkspace | null,
   ) {}
 
   /** FileBrowser says where the Files place is. */

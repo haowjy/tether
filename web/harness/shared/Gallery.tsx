@@ -16,7 +16,7 @@ import { Toast } from "../../ui/primitives/Toast";
 import { NavButton } from "../../ui/primitives/NavButton";
 import styles from "./Gallery.module.css";
 
-const ICONS: IconName[] = ["home", "back", "sessions", "folder", "plus", "close", "keyboard", "chevron", "search", "terminal", "file", "refresh", "settings", "upload", "check", "alert", "up", "image", "film", "external"];
+const ICONS: IconName[] = ["home", "back", "sessions", "folder", "plus", "close", "keyboard", "chevron", "search", "terminal", "file", "refresh", "settings", "upload", "check", "alert", "image", "film", "external"];
 
 const PILLS: Pill[] = [
   { id: "a", session: "tether", window: "agent", full: "tether / agent", tone: "live", state: "connected" },
@@ -56,7 +56,6 @@ export function Gallery() {
         <div class={styles.wrap}>
           <IconButton icon="plus" label="Open another session" />
           <IconButton icon="keyboard" label="Show keyboard" current />
-          <IconButton icon="alert" label="Problem" tone="error" />
           <IconButton icon="close" label="Close" disabled />
         </div>
       </Section>

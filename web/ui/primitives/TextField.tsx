@@ -5,17 +5,13 @@ import { Icon } from "./Icon";
 import styles from "./TextField.module.css";
 
 interface FieldProps {
-  /** The visible label, or with `hideLabel` the accessible name alone. */
   label: string;
-  hideLabel?: boolean;
   value: string;
   /** Called with the new text on every edit. */
   onInput: (value: string) => void;
   placeholder?: string;
   name?: string;
   inputMode?: "text" | "numeric" | "url";
-  maxLength?: number;
-  required?: boolean;
   disabled?: boolean;
   hint?: string | undefined;
   /** Shown under the field and announced; also marks the field invalid. */
@@ -26,13 +22,13 @@ interface FieldProps {
 }
 
 /** A labelled single-line field. With SearchField, the only place an `<input>` lives for screens (lint rule 1). */
-export function TextField({ label, hideLabel, value, onInput, hint, error, focusTarget, class: className, ...rest }: FieldProps) {
+export function TextField({ label, value, onInput, hint, error, focusTarget, class: className, ...rest }: FieldProps) {
   const id = useId();
   const focusRef = useFocusRef(focusTarget);
   const note = error ?? hint;
   return (
     <div class={cx(styles.field, className)}>
-      <label for={id} class={hideLabel ? "sr-only" : styles.label}>{label}</label>
+      <label for={id} class={styles.label}>{label}</label>
       <input
         type="text"
         autocapitalize="off"

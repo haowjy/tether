@@ -155,7 +155,7 @@ means kept with its tests; "Revise" names the change.
 | `files/markdown.ts`, `files/code.ts` | **Keep**, moved to `files/render/`, which may use the DOM | They build DOM and run DOMPurify |
 | `files/FilesSheet.tsx`, `Viewers.tsx`, `files.css` | **Delete**. The viewers are rebuilt in `screens/files/` on `files/render/` | Old views |
 | `complete/` (strip, suggester, its test) | **Delete** | The suggestion strip is deferred (client README). Git keeps it |
-| `ui/store.ts`, `ui/format.ts` | **Keep** | Pure |
+| `ui/store.ts` | **Keep** | Pure (`ui/format.ts`, which nothing called, is deleted) |
 | `ui/theme.ts` | **Keep**. Reads the new `--term-*` tokens; takes the scheme from `Viewport.scheme` instead of calling `matchMedia` (lint rule 3) | Token-driven |
 | `ui/hostProblem.ts` | **Revise**: copy per admission state (§4.2), worded by how the host admits this client (as a tailnet node, or by a native token), never by environment name. It also takes the host copy for 4005 | Today's copy names the iPhone |
 | `ui/tokens.css`, `Tappable.tsx`, `Sheet.tsx`, `icons.tsx` | **Delete**. Replaced by `ui/tokens/` and `ui/primitives/` | Hand-rolled, and built for native-owned focus |
@@ -205,7 +205,7 @@ web/
     primitives/      Button, IconButton, Tooltip, TextField, SearchField, Dialog (with a
                      sheet variant), Disclosure, Row, RovingList, TabStrip, Banner, Toast,
                      StatusBand, EmptyState, Spinner, Icon, DraftEditor
-    store.ts, format.ts, theme.ts, hostProblem.ts
+    store.ts, theme.ts, hostProblem.ts
   sw/                the service worker, built as its own entry; vite-plugin.ts
   public/            icons, apple-touch-icon
   harness/           test-mode entry for Playwright; never in a production build.

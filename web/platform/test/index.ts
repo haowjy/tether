@@ -2,6 +2,7 @@
 // import it (lint rule 4). The daemon is faked at two seams, so the real code above runs:
 // HTTP (`fetch`, which answers /auth/*) and the socket (a FakeLink that welcomes and answers
 // listings and watches). Nothing here knows which environment it stands in for.
+import { tabId } from "../tabKey";
 import { FakeLink } from "./host";
 import { UploadScript } from "./uploads";
 import type { AuthInfo } from "../../net/admission";
@@ -245,16 +246,16 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     storage: {
       saveWorkspace: (ws) => { platform.savedWorkspaces.push(ws); },
       drafts: {
-        get: (key: TabKey) => Promise.resolve(platform.drafts.get(JSON.stringify(key)) ?? null),
+        get: (key: TabKey) => Promise.resolve(platform.drafts.get(tabId(key)) ?? null),
         put(record, baseRevision) {
-          const k = JSON.stringify(record.key);
+          const k = tabId(record.key);
           const stored = platform.drafts.get(k);
           if (stored && stored.revision > baseRevision) return Promise.resolve("conflict");
           platform.drafts.set(k, record);
           return Promise.resolve("ok");
         },
         delete: (key) => {
-          platform.drafts.delete(JSON.stringify(key));
+          platform.drafts.delete(tabId(key));
           return Promise.resolve();
         },
         list: () => Promise.resolve([...platform.drafts.values()]),

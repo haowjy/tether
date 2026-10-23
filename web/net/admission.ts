@@ -78,11 +78,6 @@ export function fromClose(code: number): "recheck" | Admission | null {
   return null;
 }
 
-/** A host the daemon would let in as far as we know. */
-export function isAdmitted(admission: Admission): boolean {
-  return admission.kind === "admitted";
-}
-
 /** Whether a later check could change the answer. The rest wait for a fix on the server or a new build. */
 export function isRetryable(admission: Admission): boolean {
   return admission.kind === "deciding" || admission.kind === "unreachable";

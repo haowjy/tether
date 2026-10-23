@@ -82,7 +82,7 @@ export class AppController extends Store<AppView> {
       },
       ...(options.fetchFn && { fetchFn: options.fetchFn }),
     });
-    this.persist = new Persist(platform.storage, () => savedTabs(this.snapshot.workspace), boot.workspace);
+    this.persist = new Persist(platform.storage, () => savedTabs(this.snapshot.workspace));
     this.persist.provideHostName(() => this.hosts.all()[0]?.name ?? null);
     this.listing = new ListingFetcher({
       restoring: () => this.snapshot.workspace.tabs.some((t) => t.restoring),

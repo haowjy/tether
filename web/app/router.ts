@@ -53,7 +53,6 @@ export class Router {
   private stack: Entry[] = [];
   private readonly listeners = new Set<(nav: Navigated) => void>();
   private nextId = Date.now();
-  private readonly off: () => void;
   /** The last Files place any entry held: `go("files")` returns to it. */
   private lastFiles: FilesPlace | null;
 
@@ -67,7 +66,7 @@ export class Router {
     this.stack = [entry];
     this.lastFiles = entry.files;
     port.replace(entry, HASHES[destination]);
-    this.off = port.onPop(() => { this.popped(); });
+    port.onPop(() => { this.popped(); });
   }
 
   get entry(): Entry {
@@ -77,10 +76,6 @@ export class Router {
   subscribe(listener: (nav: Navigated) => void): () => void {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };
-  }
-
-  dispose(): void {
-    this.off();
   }
 
   /** Changing destination pushes an entry. The same destination changes nothing. Files returns to where it was left. */
@@ -132,11 +127,6 @@ export class Router {
   /** Drilling into a Files folder or preview. `FileBrowser` changes only when the resulting `navigated` arrives. */
   pushFiles(place: FilesPlace): void {
     this.push({ destination: "files", overlay: null, files: place, parent: "home" });
-  }
-
-  /** The browser's Back. It never touches tmux. */
-  back(): void {
-    this.port.go(-1);
   }
 
   /**

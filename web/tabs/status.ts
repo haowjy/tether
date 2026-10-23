@@ -12,8 +12,6 @@ export type Tone = "live" | "idle" | "connecting" | "waiting" | "halted" | "gone
 /** How a tab's connection reads on its pill and, when it is on screen, in the status strip. */
 export interface Status {
   tone: Tone;
-  /** Shown on the pill after the name: the countdown, or a word for a halt. */
-  short: string | null;
   /** The strip's headline; null shows no strip. */
   detail: string | null;
   /** The strip's second line. */
@@ -27,19 +25,19 @@ export function describe(state: ConnectionState, downSince: number, retryAt: num
   // Off screen, a tab has no watch: it rests in whichever of these it was in when it left,
   // and a lost host moves it on to `reconnecting`.
   if (!onScreen && (state.kind === "live" || state.kind === "connecting")) {
-    return { tone: "idle", short: null, detail: null, hint: null, action: null };
+    return { tone: "idle", detail: null, hint: null, action: null };
   }
   switch (state.kind) {
     case "live":
-      return { tone: "live", short: null, detail: null, hint: null, action: null };
+      return { tone: "live", detail: null, hint: null, action: null };
     case "connecting": {
       const slow = now - downSince >= SLOW_CONNECT_MS;
-      return { tone: "connecting", short: null, detail: slow ? `Connecting to ${host}…` : null, hint: null, action: null };
+      return { tone: "connecting", detail: slow ? `Connecting to ${host}…` : null, hint: null, action: null };
     }
     case "closed":
       return {
         tone: "gone",
-        short: null,
+       
         detail: state.reason === "serverExited" ? "tmux server exited" : state.reason === "windowClosed" ? "Window closed" : null,
         hint: null,
         action: null,
@@ -53,20 +51,20 @@ export function describe(state: ConnectionState, downSince: number, retryAt: num
     case "unauthorized":
     case "incompatible": {
       const { title, hint } = hostProblem(state.halt, host);
-      return { tone: "halted", short: state.halt === "unauthorized" ? "not enrolled" : "update", detail: title, hint, action: "Retry" };
+      return { tone: "halted", detail: title, hint, action: "Retry" };
     }
     case "detached":
-      return { tone: "waiting", short: "detached", detail: "Detached by another tmux client", hint: null, action: "Reattach" };
+      return { tone: "waiting", detail: "Detached by another tmux client", hint: null, action: "Reattach" };
     case null:
       break;
   }
   const unreachable = now - downSince >= UNREACHABLE_AFTER_MS;
   // A failed watch on a live socket: the daemon's reason, not a network blame.
   const detail = state.message ?? (unreachable ? hostProblem("unreachable", host).title : `Reconnecting to ${host}`);
-  if (retryAt === null) return { tone: "waiting", short: "retry", detail, hint: null, action: "Retry" };
+  if (retryAt === null) return { tone: "waiting", detail, hint: null, action: "Retry" };
   const seconds = Math.max(0, Math.ceil((retryAt - now) / 1000));
   const when = seconds === 0 ? "now" : `${String(seconds)}s`;
-  return { tone: "waiting", short: when, detail, hint: seconds === 0 ? "Retrying now" : `Retrying in ${when}`, action: "Retry now" };
+  return { tone: "waiting", detail, hint: seconds === 0 ? "Retrying now" : `Retrying in ${when}`, action: "Retry now" };
 }
 
 /**
@@ -77,7 +75,7 @@ export function describe(state: ConnectionState, downSince: number, retryAt: num
 export function limitedStatus(message: string | undefined, host: string): Status {
   return {
     tone: "limited",
-    short: "limit",
+   
     detail: message ?? `tether on ${host} is at its session limit`,
     hint: "Close tabs from other sessions, in this or another tether window or the app, to open this one.",
     action: "Retry",

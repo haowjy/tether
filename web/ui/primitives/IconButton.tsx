@@ -12,19 +12,18 @@ export interface IconButtonProps extends Omit<ButtonHTMLAttributes, "icon" | "la
   placement?: "top" | "bottom" | "right";
   /** Pressed state, for toggles such as the rail's current destination (`aria-current`). */
   current?: boolean;
-  tone?: "normal" | "error";
   /** Registers the button with the focus controller under this name. */
   focusTarget?: FocusTarget;
 }
 
-export function IconButton({ icon, label, placement = "bottom", current, tone = "normal", focusTarget, class: className, ...rest }: IconButtonProps) {
+export function IconButton({ icon, label, placement = "bottom", current, focusTarget, class: className, ...rest }: IconButtonProps) {
   const focusRef = useFocusRef(focusTarget);
   return (
     <Tooltip label={label} placement={placement}>
       <button
         type="button"
         {...rest}
-        class={cx(styles.button, tone === "error" && styles.error, className as string | undefined)}
+        class={cx(styles.button, className as string | undefined)}
         aria-label={label}
         aria-current={current ? "page" : undefined}
         ref={focusRef}

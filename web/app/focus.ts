@@ -9,7 +9,7 @@ import type { Destination } from "./router";
 
 export type { FocusTarget };
 
-export type FocusMode = Parameters<InputPlatform["setFocus"]>[0];
+type FocusMode = Parameters<InputPlatform["setFocus"]>[0];
 
 /** The mode native rests in for a screen: `webText` wherever a web field may take the keyboard. */
 export function restingMode(destination: Destination, overlay: boolean, keyboardWasUp: boolean): FocusMode {

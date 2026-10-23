@@ -17,7 +17,6 @@ const PATHS = {
   upload: <path d="M12 15V4M7 9l5-5 5 5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />,
   check: <path d="m5 12 5 5 9-10" />,
   alert: <><path d="M12 4 3 20h18Z" /><path d="M12 10v4M12 17h.01" /></>,
-  up: <path d="M12 19V5M5 12l7-7 7 7" />,
   image: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="1.5" /><path d="m21 16-5-5-9 9" /></>,
   film: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M10 9.5v5l4-2.5z" /></>,
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,

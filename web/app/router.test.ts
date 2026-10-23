@@ -39,26 +39,26 @@ describe("Router", () => {
   });
 
   it("pushes on destination changes and emits navigated each time", () => {
-    const { router, seen } = setup();
+    const { router, seen, h } = setup();
     router.go("terminal");
     router.go("terminal");
     expect(seen.map((n) => n.destination)).toEqual(["terminal"]);
-    router.back();
+    h.port.go(-1);
     expect(seen.map((n) => n.destination)).toEqual(["terminal", "home"]);
   });
 
   it("Back closes the overlay, then the preview, then folders, then leaves the destination", () => {
-    const { router } = setup();
+    const { router, h } = setup();
     router.go("files");
     router.pushFiles({ kind: "dir", path: "/a" });
     router.pushFiles({ kind: "file", path: "/a/b" });
     router.openOverlay({ screen: "files", name: "upload" });
     const order: string[] = [];
     router.subscribe(({ entry }) => order.push(entry.overlay ? "overlay" : (entry.files?.kind ?? entry.destination)));
-    router.back();
-    router.back();
-    router.back();
-    router.back();
+    h.port.go(-1);
+    h.port.go(-1);
+    h.port.go(-1);
+    h.port.go(-1);
     expect(order).toEqual(["file", "dir", "files", "home"]);
     expect(router.entry.files).toBeNull();
   });
@@ -122,8 +122,8 @@ describe("Router", () => {
     router.go("files");
     expect(router.entry.files).toEqual({ kind: "file", path: "/a/b" });
 
-    router.back();
-    router.back();
+    h.port.go(-1);
+    h.port.go(-1);
     router.toParent({ kind: "dir", path: "/a" }); // the previous entry is that folder
     expect(router.entry.files).toEqual({ kind: "dir", path: "/a" });
     expect(h.at).toBe(2);
@@ -137,8 +137,8 @@ describe("Router", () => {
     const { router, h } = setup();
     router.go("files");
     router.openOverlay({ screen: "x", name: "y" });
-    router.back();
-    router.back();
+    h.port.go(-1);
+    h.port.go(-1);
     h.forward();
     expect(router.entry.destination).toBe("files");
   });

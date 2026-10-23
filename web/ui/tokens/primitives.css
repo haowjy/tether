@@ -6,33 +6,24 @@
   --gray-1: oklch(0.96 0.006 262);
   --gray-2: oklch(0.93 0.008 262);
   --gray-3: oklch(0.89 0.01 262);
-  --gray-4: oklch(0.82 0.012 262);
   --gray-5: oklch(0.74 0.014 262);
-  --gray-6: oklch(0.65 0.016 262);
-  --gray-7: oklch(0.55 0.018 262);
   --gray-8: oklch(0.45 0.02 262);
   --gray-9: oklch(0.36 0.022 263);
   --gray-10: oklch(0.29 0.022 264);
   --gray-11: oklch(0.23 0.02 265);
   --gray-12: oklch(0.18 0.016 266);
 
-  --green-3: oklch(0.93 0.05 152);
-  --green-5: oklch(0.82 0.12 152);
   --green-7: oklch(0.46 0.14 152);
   --green-9: oklch(0.78 0.15 152);
 
-  --amber-3: oklch(0.94 0.05 85);
-  --amber-5: oklch(0.85 0.12 82);
   --amber-7: oklch(0.5 0.12 70);
   --amber-9: oklch(0.82 0.13 82);
 
   --red-3: oklch(0.93 0.04 25);
-  --red-5: oklch(0.8 0.1 25);
   --red-7: oklch(0.5 0.19 25);
   --red-9: oklch(0.74 0.16 25);
 
   --blue-3: oklch(0.93 0.04 245);
-  --blue-5: oklch(0.82 0.09 245);
   --blue-7: oklch(0.5 0.15 250);
   --blue-9: oklch(0.78 0.11 240);
 

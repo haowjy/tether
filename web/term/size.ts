@@ -96,10 +96,6 @@ export class TerminalSizer {
     this.recompute();
   }
 
-  dispose(): void {
-    clearTimeout(this.timer);
-  }
-
   private recompute(): void {
     const cell = this.opts.cell();
     if (!this.viewport || !this.chrome || !cell) return;

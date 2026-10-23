@@ -9,7 +9,7 @@ interface BannerProps {
   title: string;
   children?: ComponentChildren;
   /** The one thing to do about it: Retry, Update, Reload. */
-  action?: { label: string; onAction: () => void; busy?: boolean };
+  action?: { label: string; onAction: () => void };
 }
 
 /** A status region for host problems, offline and "Update ready". Never over the terminal. */
@@ -21,7 +21,7 @@ export function Banner({ tone = "info", title, children, action }: BannerProps) 
         <p class={styles.title}>{title}</p>
         {children && <p class={styles.detail}>{children}</p>}
       </div>
-      {action && <Button variant="secondary" onClick={action.onAction} disabledReason={action.busy ? "Working" : undefined}>{action.label}</Button>}
+      {action && <Button variant="secondary" onClick={action.onAction}>{action.label}</Button>}
     </div>
   );
 }

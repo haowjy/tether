@@ -13,4 +13,3 @@
 .button:hover { background: var(--color-bg-hover); color: var(--color-text); }
 .button[aria-current="page"] { background: var(--color-bg-selected); color: var(--color-text); }
 .button:disabled { opacity: 0.5; }
-.error { color: var(--color-status-error); }
