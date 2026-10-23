@@ -1,5 +1,7 @@
 # Snapshot soft-wrap loss — investigation and proposed design
 
+> **Current recommendation (follow-up supersedes the 3.4 policy discussion below):** use `-F` on tmux 3.7b+ and strict paired `-N -T`/`-J` captures on 3.4; preserve physical rows, carry a fail-closed wrap map, and use one lookahead row for history chunks. The detailed evidence and `daemon-core.md` spec text are in the final follow-up section.
+
 ## Findings summary
 
 - Source inspection predicts the failure: snapshot rows are repainted at explicit CUP positions, while xterm selection joins only `isWrapped` rows.
@@ -55,3 +57,59 @@ A packed bitmap costs `ceil(row_count/8)` bytes: 3 B per 24-row grid, 38 B per m
 - Example from the probe: source `abcdefghijklmnopqrstuvwx`, then `HARD-A`, `HARD-B` became rows `abcdefghijkl`, `mnopqrstuvwx`, `HARD-A      `, `HARD-B      ` with `-N`; `-N -J` returned logical lines `abcdefghijklmnopqrstuvwx`, `HARD-A`, `HARD-B` (padding removed). A second fixture confirmed exact-width `EXACT1234567` followed by hard newline remained separate and `WRAP-abcdefghijklmno` joined.
 - History range probe showed `-S`/`-E` ranges address physical tmux rows; `-J` would reduce returned line count, so it cannot replace the existing row count/offset contract alone.
 - A follow-up isolated probe confirmed `-F -L` reports physical row numbers and `W` wrap-forward flags; `-J -L` preserves numbers but joins text directly to following prefixes, so do not parse it as the sole map representation. Official tag source comparison: 3.4 lacks capture `-F`/`-L`; 3.7b implements them and maps W from `GRID_LINE_WRAPPED`. Local runtime confirms 3.8. No 3.4 or 3.7b binary was installed for runtime A/B testing; the version difference is source-level plus 3.8 runtime.
+
+## Follow-up: tmux 3.4 exactness and built-version probes (2026-10-23)
+
+### Exact 3.4 source answer
+
+The supported 3.4 fallback is a *paired separator capture*, not a heuristic based on full rows:
+
+```text
+physical = capture-pane -p -N -T [same pane and exact range]
+logical  = capture-pane -p -J     [same pane and exact range]
+```
+
+Do **not** compare plain `-N` with `-J`: plain `-N` includes empty cells while `-J` implies `-T`, so their byte strings differ even when no soft wrap exists. `-N -T` and `-J` serialize the same cell contents; their relevant difference is the row separators. In tmux 3.4 `capture-pane` visits each selected physical row and omits its newline exactly when its `GRID_LINE_WRAPPED` flag is set (`cmd-capture-pane.c`, source lines 159–178); `-N` suppresses trimming and `-T` suppresses empty-cell output (`cmd-capture-pane.c`, lines 159–167; `tmux.1`, capture-pane section). Thus `-J` is an oracle for the number and positions of hard separators, while the physical capture preserves row indexing. The comparison must be over serialized bytes/cell strings, not byte length divided by pane width.
+
+Alignment rule: compare the two outputs in order, including exact equality before considering a prefix. For each physical row boundary, a newline in the logical capture means hard break; absence means soft wrap. Do not infer from “row looks full.” Repeated equal lines are not ambiguous when aligned as ordered streams. If repeated empty serialized rows put multiple physical separators at the same byte offset and the logical stream cannot uniquely assign the omitted separator(s), mark the affected boundary ambiguous and do not join it. The code must fail closed: ambiguous/mismatched captures produce no wrap bit for that boundary (no wrong join), not a best guess. Capture the *same pane and range* in one atomic tmux command list so pane output cannot race between the pair.
+
+### Edge-case table
+
+| Case | Result / rule |
+|---|---|
+| Trailing spaces in a wrapped row | Exact with `-N -T` + `-J`: a wrapped row's spaces are content and remain internal to the joined stream. Plain `-N` is not equivalent; its extra empty cells create false mismatches. Hard-line trailing empty cells are omitted by `-T` in both captures. |
+| Wide characters / right-edge padding | Exact when aligning serialized content, not assumed one byte/one column. tmux's grid serializer handles wide-cell padding; both modes serialize the same row cells and only differ at separators. Runtime at width 12 confirmed `ABCDEFGHIJ界` then `XYZ` is joined as `ABCDEFGHIJ界XYZ`. |
+| Tabs | Exact in the paired-string model as captured: both captures serialize the same grid content; do not calculate row width from bytes/code points or expand tabs in one side. Probe at width 12 showed the tab preserved as the same serialized tab in both streams, despite cell position differing from byte position. |
+| Empty continuation rows | Detectably ambiguous when adjacent empty physical rows share a byte offset: a newline-count/stream alignment cannot safely assign a specific soft boundary. Mark boundary unknown and do not join. The `-F` path removes this alignment issue on newer tmux. |
+| `-S` / `-E` chunk boundary | Internal boundaries remain exact. The final selected row's wrap-forward bit cannot be observed if its continuation is outside the selected range; request one extra physical row in the paired capture, then discard that row's payload while retaining the final in-range bit. Keep ranges physical-row indexed. At the first edge, the map for the first captured row's outgoing boundary remains observable; if consumers need the preceding row's bit, it belongs to the previous chunk. |
+| Alternate screen | Same paired approach on the selected grid (`-a` for saved screen); `-a` may report no alternate screen, which remains the existing absence case. The wrap bit belongs to whichever grid was captured. |
+
+No other public 3.4 capture format found is more direct: `-F` and `-L` are unavailable. `-R` is a diagnostic grid dump/private format and is not a suitable stable API; `-J` is the public path exposing actual soft-wrap joins. Therefore there is no universally exact inference when the paired streams are genuinely ambiguous; the safe result in those cases is “unknown/no join,” as requested, rather than fabricated certainty.
+
+### Runtime/build evidence
+
+Built official release tarballs from GitHub into `/tmp/tether-wrap-build/prefix` against Homebrew libevent/ncurses. All runs used dedicated servers named `tether-wrap-*` with a fresh temporary `TMUX_TMPDIR`, then killed only that server and removed its temp directory. No existing/default tmux server or session was touched.
+
+- tmux 3.4: `/tmp/tether-wrap-build/prefix/3.4/bin/tmux` (`tmux 3.4`)
+- tmux 3.7b: `/tmp/tether-wrap-build/prefix/3.7b/bin/tmux` (`tmux 3.7b`)
+- installed tmux 3.8: `$(which tmux)` (resolved in this run to `/opt/homebrew/bin/tmux`, `tmux 3.8`)
+
+At width 12, all three built/installed runtimes produced identical physical rows and `-J` logical lines for the synthetic fixtures: a normal wrapped ASCII line followed by hard lines; spaces before an overflow; a CJK-wide glyph at the right edge; and a tab near the edge. For example, physical `ABCDEFGHIJ  ` + `klmnopqrstuv` aligned to joined `ABCDEFGHIJ  klmnopqrstuv`; physical `ABCDEFGHIJ界` + `XYZ` aligned to joined `ABCDEFGHIJ界XYZ`; hard `TAIL` stayed a separate logical line. This also proves why matching must preserve interior spaces and cannot use character/byte counts as cell counts.
+
+`capture-pane -F` failed on the 3.4 binary (unknown option) and succeeded on 3.7b and 3.8, printing the W marker on wrapped grid rows. This agrees with release source: 3.4 option string lacks F; 3.7b+ emits W for `GRID_LINE_WRAPPED`.
+
+**Measurement:** a 30-run median benchmark on the 3.7b binary, 200 physical rows at 80 columns, measured ~4.10 ms per physical `-N` capture and ~4.30 ms for the added `-J` capture (local Mac, process launch/control overhead included). The observed reply sizes were 16,200 bytes physical and 14,200 bytes joined (30,400 bytes total for the pair). The exact additional transfer is content length plus logical separators (usually near another copy of the captured range; less for sparse rows), rather than bitmap cost. This is one extra local tmux capture/command and an additional reply of ~14.2 KB for this fixture; daemon parsing must also compare the two streams. This is a local reference measurement, not a dev-server latency promise. (`-F` is one capture and has only its small row prefix overhead on 3.7b/3.8.)
+
+### Single recommended cross-version design
+
+Use one semantic `wraps_forward` map in the daemon/protocol and preserve the existing physical-row payload. On 3.7b/3.8, get the map directly from `capture-pane -F` row metadata. On 3.4, issue paired `-N -T` and `-J` captures for the exact same physical range, strictly align separators, and leave ambiguous bits unset. For history, include one following row in both captures to resolve the last requested row; slice payload and bitmap back to the requested physical range without changing pagination. Include bitmaps in snapshot charge/history JSON size accounting. Repaint using normal xterm autowrap parsing: CUP at hard boundaries; at a confirmed soft boundary do not CUP, so the preceding full-width row overflows naturally and xterm marks the continuation. Ambiguous 3.4 boundaries must not be replayed as joins. Do not bump the minimum tmux version, parse `-R`, or replace physical-row history with `-J` logical rows.
+
+This is the smallest design that covers deployed 3.4 exactly for unambiguous wraps and remains direct and cheaper on newer tmux. It intentionally trades an extra capture only on the legacy version for no version-specific client format and no guessed joins.
+
+### Proposed `daemon-core.md` spec text
+
+> **Wrap metadata.** Snapshot and history payloads retain physical tmux rows and carry a packed `wraps_forward` map: bit *i* says physical row *i* wraps to the next row. tmux 3.7b and later provide this from `capture-pane -F` (`W`); tmux 3.4 does not, so capture the same range as `-N -T` physical rows and `-J` joined rows and derive boundaries by strict ordered separator alignment. Capture the pair atomically. If alignment is ambiguous or mismatched, leave that bit unset; never guess from row fullness. History captures one lookahead row to determine the final requested row's bit, then returns only the requested physical rows. Account map bytes in the existing snapshot/history limits. Restore soft-wrap boundaries by leaving xterm at the end of the preceding full-width row with autowrap enabled; CUP only at hard boundaries. This reconstructs xterm's public `isWrapped` state without mutating its buffer.
+
+### Probe limits / follow-up
+
+The built-runtime interaction probes confirmed paired capture behavior for representative ASCII, spaces, wide glyph, and tab cases, and option availability. They did not construct a tmux grid containing adjacent empty wrapped continuation rows or an alternate screen left active across the capture; those are specified fail-closed / same-grid cases based on source, not claimed as runtime-observed fixtures. No source or design spec was edited; this work only updates this investigation artifact.

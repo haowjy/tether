@@ -65,8 +65,9 @@ P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, doc
 
 | Lane | Spawn | State |
 |---|---|---|
-| A auth rev 4 | p23 design-lead | running |
-| B limits 72 | p24 design-lead | running |
-| C inventory | p25 explorer | running |
-| E wrap design | p26 investigator | running |
-| F tmux 3.8 | p27 coder | running |
+| A auth rev 4 | p23 died (machine slept); p31 design-lead | running |
+| B limits 72 | p24 done; review p32 | reviewing |
+| C inventory | p25 done (report only: protocol already has create/attachedElsewhere/index) | done |
+| E wrap design | p26: exact on 3.7b+ via capture -F; p33 seeks exact 3.4 map, builds 3.4/3.7b | running |
+| F tmux 3.8 | p27 → 50e5499 | done, unpushed |
+| D client architecture + design system | p34 design-lead | running |
