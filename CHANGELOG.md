@@ -18,6 +18,8 @@ version section on release.
   --commit <sha>` now gates a clean export of exactly that commit, and the pre-push hook uses
   it. The shell build is held to size budgets.
 - Preserve trailing spaces at soft-wrap boundaries when copying scrollback.
+- Keep soft-wrap boundaries in scrollback that contains hyperlinks; one link no longer
+  makes a whole history chunk copy as hard line breaks.
 - Avoid joining scrollback chunks captured across a tmux history change.
 - Repaint soft-wrapped snapshot rows when tmux and xterm disagree on glyph width.
 - Add a startup memory budget (`memory_budget_mib`, default 72 MiB) that scales tmux
