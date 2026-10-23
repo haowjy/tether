@@ -17,7 +17,7 @@ const listing = (server: string, ids: number[]): TmuxListing => ({
 });
 const saved = (ids: number[], active: number): SavedWorkspace => ({
   version: 1,
-  tabs: ids.map((i) => ({ key: key(i), label: `s / w${String(i)}` })),
+  tabs: ids.map((i) => ({ key: key(i), session: "s", window: `w${String(i)}` })),
   active: tabId(key(active)),
   files: null,
   expanded: {},
@@ -53,6 +53,38 @@ describe("opening and closing", () => {
     const r = reduce(s.state, { type: "closed", id: tabId(key(1)) });
     expect(r.effects).toContainEqual({ type: "focus", target: "homeSearch" });
     expect(r.state.active).toBeNull();
+  });
+});
+
+describe("navigation and focus", () => {
+  it("activating a tab off Terminal navigates there, and the arrival focuses it", () => {
+    const s = open(initialWorkspace, 1).state;
+    const r = reduce(s, { type: "activated", id: tabId(key(1)) });
+    expect(r.effects).toContainEqual({ type: "navigate", to: "terminal" });
+    expect(r.effects.some((e) => e.type === "focus")).toBe(false);
+    expect(reduce(s, { type: "navigated", onTerminal: true }).effects).toContainEqual({ type: "focus", target: "terminal" });
+  });
+
+  it("activating a tab already on Terminal only focuses it", () => {
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "a", index: 1 }, { type: "navigated", onTerminal: true }]).state;
+    const r = reduce(s, { type: "activated", id: tabId(key(1)) });
+    expect(r.effects).toEqual([{ type: "focus", target: "terminal" }]);
+  });
+
+  it("closing the last tab on Terminal navigates Home before focusing Home search", () => {
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "a", index: 1 }, { type: "navigated", onTerminal: true }]).state;
+    const r = reduce(s, { type: "closed", id: tabId(key(1)) });
+    expect(r.effects.map((e) => e.type)).toEqual(expect.arrayContaining(["navigate", "focus"]));
+    expect(r.effects.findIndex((e) => e.type === "navigate")).toBeLessThan(r.effects.findIndex((e) => e.type === "focus"));
+    expect(r.effects).toContainEqual({ type: "navigate", to: "home" });
+  });
+
+  it("changes nothing, and so saves nothing, when a rename or a listing says what is known", () => {
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "w1", index: 1 }]).state;
+    const same = (e: WorkspaceEvent): void => { const r = reduce(s, e); expect(r.state).toBe(s); expect(r.effects).toEqual([]); };
+    same({ type: "renamed", hostId: "h1", window: key(1).window, name: "w1" });
+    same({ type: "renamed", hostId: "h1", window: key(9).window, name: "x" });
+    same({ type: "listing", hostId: "h1", listing: listing("main:1-1", [1]) });
   });
 });
 

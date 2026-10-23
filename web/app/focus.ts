@@ -27,10 +27,14 @@ export class FocusController implements FocusPort {
     private readonly viewport: () => Viewport,
   ) {}
 
-  /** An element that can hold focus announces itself on mount; `null` withdraws it. */
-  register(target: FocusTarget, element: HTMLElement | null): void {
-    if (element) this.targets.set(target, element);
-    else this.targets.delete(target);
+  /** An element that can hold focus announces itself on mount. */
+  register(target: FocusTarget, element: HTMLElement): void {
+    this.targets.set(target, element);
+  }
+
+  /** An element withdraws on unmount. Only the registered element may: a replacement can mount before the old one unmounts. */
+  withdraw(target: FocusTarget, element: HTMLElement): void {
+    if (this.targets.get(target) === element) this.targets.delete(target);
   }
 
   /**

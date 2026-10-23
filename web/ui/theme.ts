@@ -51,8 +51,15 @@ export function terminalTheme(): TerminalTheme {
  */
 export function applyViewport(viewport: Viewport): void {
   const root = document.documentElement;
-  root.dataset["scheme"] = viewport.scheme;
-  root.dataset["density"] = viewport.density;
-  root.dataset["layout"] = viewport.layout;
-  for (const side of ["top", "right", "bottom", "left"] as const) root.style.setProperty(`--safe-${side}`, `${String(viewport.safeArea[side])}px`);
+  // Each write invalidates style for the whole page, so only what changed is written.
+  const setData = (name: "scheme" | "density" | "layout", value: string): void => {
+    if (root.dataset[name] !== value) root.dataset[name] = value;
+  };
+  setData("scheme", viewport.scheme);
+  setData("density", viewport.density);
+  setData("layout", viewport.layout);
+  for (const side of ["top", "right", "bottom", "left"] as const) {
+    const value = `${String(viewport.safeArea[side])}px`;
+    if (root.style.getPropertyValue(`--safe-${side}`) !== value) root.style.setProperty(`--safe-${side}`, value);
+  }
 }

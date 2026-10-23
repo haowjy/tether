@@ -112,9 +112,13 @@ export class ListingFetcher {
     }
   }
 
-  /** Entering Home, opening the picker, or a user's Retry. */
+  /**
+   * Entering Home, opening the picker, or a user's Retry: a fresh listing now. A request
+   * already in flight is fresh enough, and one waiting for the socket is sent on `linkUp`.
+   */
   refresh(handle: string): void {
-    this.fetch(handle);
+    const state = this.hosts.get(handle);
+    if (state?.host.ready && !state.inFlight) this.fetch(handle);
   }
 
   private clear(state: HostState): void {

@@ -7,14 +7,16 @@ import { EmptyState } from "../../ui/primitives/EmptyState";
 
 export function Picker() {
   const app = useApp();
-  const { nav, viewport, workspace } = useAppView();
-  const open = nav.entry.overlay?.screen === "picker";
+  const open = useAppView((v) => v.nav.entry.overlay?.screen === "picker");
+  const phone = useAppView((v) => v.viewport.layout === "phone");
+  const touch = useAppView((v) => v.viewport.density === "touch");
+  const noTabs = useAppView((v) => v.workspace.tabs.length === 0);
   return (
     <Dialog
       open={open}
       title="Open session"
-      variant={viewport.layout === "phone" ? "sheet" : "dialog"}
-      returnFocusTo={workspace.tabs.length === 0 ? "plus" : viewport.density === "touch" ? "plus" : "terminal"}
+      variant={phone ? "sheet" : "dialog"}
+      returnFocusTo={noTabs || touch ? "plus" : "terminal"}
       onClose={() => { app.router.closeOverlay(); }}
     >
       <EmptyState icon="sessions" title="Sessions load here">The session list arrives with the picker screen.</EmptyState>

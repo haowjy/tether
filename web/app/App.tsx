@@ -8,7 +8,9 @@ import { useApp } from "./context";
 /** App-wide notices: a schema upgrade waiting on a reload, and a new version waiting on a tap. */
 function AppBanners() {
   const app = useApp();
-  const { storageClosed, update, nav } = useAppView();
+  const storageClosed = useAppView((v) => v.storageClosed);
+  const update = useAppView((v) => v.update);
+  const destination = useAppView((v) => v.nav.destination);
   return (
     <>
       {storageClosed && (
@@ -17,7 +19,7 @@ function AppBanners() {
         </Banner>
       )}
       {/* "Update ready" shows on Home and Files, never over the terminal. */}
-      {update === "ready" && nav.destination !== "terminal" && (
+      {update === "ready" && destination !== "terminal" && (
         <Banner title="Update ready" action={{ label: "Update", onAction: () => { app.applyUpdate(); } }} />
       )}
     </>
@@ -26,7 +28,7 @@ function AppBanners() {
 
 function Notices() {
   const app = useApp();
-  const { notice } = useAppView();
+  const notice = useAppView((v) => v.notice);
   return <Toast message={notice} onDismiss={() => { app.dismissNotice(); }} />;
 }
 

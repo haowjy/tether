@@ -46,6 +46,8 @@ export type WorkspaceEffect =
   | { type: "cover"; id: string }
   | { type: "uncover"; id: string }
   | { type: "save" }
+  /** Go to a destination through the router. It runs before the focus effects, and the focus lands on the screen it opens. */
+  | { type: "navigate"; to: "home" | "terminal" }
   /** Move focus on the user's behalf (desktop): to the terminal, or to Home's search. */
   | { type: "focus"; target: "terminal" | "homeSearch" }
   | { type: "notice"; text: string };
@@ -60,11 +62,6 @@ export function shownTab(state: WorkspaceState): string | null {
 /** `<endpoint>:<pid>-<start>`: the same endpoint with another run is a restarted tmux. */
 function endpointOf(server: string): string {
   return server.slice(0, Math.max(0, server.lastIndexOf(":")));
-}
-
-function splitLabel(label: string): { session: string; window: string } {
-  const at = label.lastIndexOf(" / ");
-  return at < 0 ? { session: label, window: "" } : { session: label.slice(0, at), window: label.slice(at + 3) };
 }
 
 function plural(n: number): string {
@@ -84,13 +81,18 @@ function without(state: WorkspaceState, ids: Set<string>): WorkspaceState {
   return { ...state, tabs, active };
 }
 
-function step(state: WorkspaceState, event: WorkspaceEvent): { state: WorkspaceState; notices: string[]; focus?: "terminal" | "homeSearch" } {
+/** Showing the active tab: go to Terminal if not there. Arriving there focuses it (`navigated`); already there, focus it now. */
+function showActive(before: WorkspaceState): { navigate?: "terminal"; focus?: "terminal" } {
+  return before.onTerminal ? { focus: "terminal" } : { navigate: "terminal" };
+}
+
+function step(state: WorkspaceState, event: WorkspaceEvent): { state: WorkspaceState; notices: string[]; navigate?: "home" | "terminal"; focus?: "terminal" | "homeSearch" } {
   const none = { state, notices: [] as string[] };
   switch (event.type) {
     case "restored": {
       const saved = event.saved;
       if (!saved) return none;
-      const tabs = saved.tabs.map(({ key, label }): Tab => ({ id: tabId(key), key, ...splitLabel(label), index: null, restoring: true }));
+      const tabs = saved.tabs.map(({ key, session, window }): Tab => ({ id: tabId(key), key, session, window, index: null, restoring: true }));
       const active = tabs.some((t) => t.id === saved.active) ? saved.active : (tabs[0]?.id ?? null);
       return { state: { ...state, tabs, active }, notices: [] };
     }
@@ -104,19 +106,19 @@ function step(state: WorkspaceState, event: WorkspaceEvent): { state: WorkspaceS
       const id = tabId(event.key);
       const open = state.tabs.find((t) => t.id === id);
       // Opening a window that already has a tab activates that tab.
-      if (open) return { state: { ...state, active: id }, notices: [], focus: "terminal" };
+      if (open) return { state: { ...state, active: id }, notices: [], ...showActive(state) };
       const tab: Tab = { id, key: event.key, session: event.session, window: event.window, index: event.index, restoring: false };
-      return { state: { ...state, tabs: [...state.tabs, tab], active: id }, notices: [], focus: "terminal" };
+      return { state: { ...state, tabs: [...state.tabs, tab], active: id }, notices: [], ...showActive(state) };
     }
     case "activated":
-      return state.tabs.some((t) => t.id === event.id) && state.active !== event.id
-        ? { state: { ...state, active: event.id }, notices: [], focus: "terminal" }
-        : none;
+      if (!state.tabs.some((t) => t.id === event.id)) return none;
+      return { state: state.active === event.id ? state : { ...state, active: event.id }, notices: [], ...showActive(state) };
     case "closed": {
       if (!state.tabs.some((t) => t.id === event.id)) return none;
       const next = without(state, new Set([event.id]));
       // Closing the last tab returns Home, and on desktop focuses Home search.
-      return { state: next, notices: [], ...(next.tabs.length === 0 && { focus: "homeSearch" as const }) };
+      if (next.tabs.length > 0) return { state: next, notices: [] };
+      return { state: next, notices: [], ...(state.onTerminal && { navigate: "home" as const }), focus: "homeSearch" as const };
     }
     case "windowClosed":
       return state.tabs.some((t) => t.id === event.id) ? { state: without(state, new Set([event.id])), notices: [] } : none;
@@ -131,10 +133,14 @@ function step(state: WorkspaceState, event: WorkspaceEvent): { state: WorkspaceS
     }
     case "renamed": {
       const id = tabId({ host: event.hostId, window: event.window });
-      return { state: { ...state, tabs: state.tabs.map((t) => (t.id === id ? { ...t, window: event.name } : t)) }, notices: [] };
+      const tab = state.tabs.find((t) => t.id === id);
+      if (!tab || tab.window === event.name) return none;
+      return { state: { ...state, tabs: state.tabs.map((t) => (t === tab ? { ...t, window: event.name } : t)) }, notices: [] };
     }
     case "navigated":
-      return state.onTerminal === event.onTerminal ? none : { state: { ...state, onTerminal: event.onTerminal }, notices: [] };
+      if (state.onTerminal === event.onTerminal) return none;
+      // Arriving at Terminal (the rail, Back, a deep link) puts desktop focus in it.
+      return { state: { ...state, onTerminal: event.onTerminal }, notices: [], ...(event.onTerminal && { focus: "terminal" as const }) };
     case "listing": {
       // A null listing (no tmux server) names no server, so it decides nothing.
       const { listing } = event;
@@ -151,8 +157,11 @@ function step(state: WorkspaceState, event: WorkspaceEvent): { state: WorkspaceS
           gone.add(tab.id);
           return tab;
         }
+        if (tab.session === found.session && tab.window === found.name && tab.index === found.index && !tab.restoring) return tab;
         return { ...tab, session: found.session, window: found.name, index: found.index, restoring: false };
       });
+      // A listing that changes nothing keeps the state, so nothing saves or re-renders.
+      if (gone.size === 0 && tabs.every((t, i) => t === state.tabs[i])) return none;
       const next = without({ ...state, tabs }, gone);
       const notices = gone.size ? [`${plural(gone.size)} closed: their windows are gone`] : [];
       return { state: next, notices };
@@ -181,6 +190,7 @@ export function reduce(state: WorkspaceState, event: WorkspaceEvent): Reduced {
     if (after !== null) effects.push({ type: "uncover", id: after });
   }
   if (next.tabs !== state.tabs || next.active !== state.active) effects.push({ type: "save" });
+  if (result.navigate) effects.push({ type: "navigate", to: result.navigate });
   if (result.focus === "terminal" && next.active !== null) effects.push({ type: "focus", target: "terminal" });
   if (result.focus === "homeSearch") effects.push({ type: "focus", target: "homeSearch" });
   for (const text of result.notices) effects.push({ type: "notice", text });
@@ -190,7 +200,7 @@ export function reduce(state: WorkspaceState, event: WorkspaceEvent): Reduced {
 /** The saved form of the tabs, for persist now. */
 export function savedTabs(state: WorkspaceState): Pick<SavedWorkspace, "tabs" | "active"> {
   return {
-    tabs: state.tabs.map((t) => ({ key: t.key, label: `${t.session} / ${t.window}` })),
+    tabs: state.tabs.map((t) => ({ key: t.key, session: t.session, window: t.window })),
     active: state.active,
   };
 }

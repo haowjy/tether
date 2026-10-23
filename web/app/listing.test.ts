@@ -75,11 +75,25 @@ describe("ListingFetcher", () => {
     const t = setup();
     t.fetcher.setWanted("h1", true);
     t.link().welcome();
-    t.fetcher.refresh("h1");
+    t.link().say({ type: "sessionsChanged" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(t.lists()).toBe(1);
+    t.answer(null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.lists()).toBe(2);
+  });
+
+  it("refreshes once however many triggers arrive: not while one is in flight or the socket is down", async () => {
+    const t = setup();
+    t.fetcher.setWanted("h1", true);
+    t.fetcher.refresh("h1"); // the socket is not up: linkUp will list
+    t.link().welcome();
+    expect(t.lists()).toBe(1);
     t.fetcher.refresh("h1");
     expect(t.lists()).toBe(1);
     t.answer(null);
     await vi.advanceTimersByTimeAsync(0);
+    t.fetcher.refresh("h1");
     expect(t.lists()).toBe(2);
   });
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 /** A controller's state for the views: a snapshot replaced on every change, and who to tell. */
 export class Store<T extends object> {
@@ -15,21 +15,33 @@ export class Store<T extends object> {
     return () => { this.listeners.delete(listener); };
   }
 
+  /** Replaces what changed; a patch that changes nothing tells no one. */
   protected update(patch: Partial<T>): void {
+    const changed = (Object.keys(patch) as (keyof T)[]).some((key) => !Object.is(patch[key], this.state[key]));
+    if (!changed) return;
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener();
   }
 }
 
-/** Renders again whenever `store` changes. */
-export function useStore<T extends object>(store: Store<T>): T {
+/**
+ * Renders again when what `select` picks from `store` changes by `equal` (identity by
+ * default), not on every change: a view takes the slice it draws.
+ */
+export function useStore<T extends object, S>(store: Store<T>, select: (state: T) => S, equal: (a: S, b: S) => boolean = Object.is): S {
   const [, rerender] = useState(0);
-  const rendered = store.snapshot;
+  const selected = select(store.snapshot);
+  const latest = useRef({ selected, select, equal });
+  latest.current = { selected, select, equal };
   useEffect(() => {
-    const off = store.subscribe(() => { rerender((n) => n + 1); });
+    const check = (): void => {
+      const { selected: rendered, select: pick, equal: same } = latest.current;
+      if (!same(rendered, pick(store.snapshot))) rerender((n) => n + 1);
+    };
+    const off = store.subscribe(check);
     // A change between this render and the subscription (a fetch that settled first) would be missed.
-    if (store.snapshot !== rendered) rerender((n) => n + 1);
+    check();
     return off;
   }, [store]);
-  return rendered;
+  return selected;
 }

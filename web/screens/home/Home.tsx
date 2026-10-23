@@ -1,7 +1,6 @@
 // Stub: W1 owns screens/home/. It holds the Home routes' frame so the shell, the router and
 // the primitives are exercised end to end; W1 replaces the body with open tabs, the sessions
 // list, search, creation and the listing states (client-architecture.md §6.3).
-import { useEffect } from "preact/hooks";
 import { useApp, useAppView } from "../../app/context";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { Row } from "../../ui/primitives/Row";
@@ -12,19 +11,15 @@ import styles from "./Home.module.css";
 
 export function Home({ pane }: { pane: "sessions" | "files" }) {
   const app = useApp();
-  const { hosts, workspace, viewport } = useAppView();
+  const hosts = useAppView((v) => v.hosts);
+  const workspace = useAppView((v) => v.workspace);
+  const phone = useAppView((v) => v.viewport.layout === "phone");
   const host = hosts[0];
   const hostName = host?.name ?? "the server";
-  const phone = viewport.layout === "phone";
   const kind = host?.admission.kind;
   // The host's label carries its connection colour, never a dot.
   const tone = kind === "admitted" ? "live" : kind === "unreachable" || kind === "deciding" || kind === undefined ? "reconnecting" : "error";
   const labels = tabLabels(workspace.tabs, (id) => hosts.find((h) => h.hostId === id)?.name ?? id);
-
-  // Entering Home asks the one fetcher for a fresh listing.
-  useEffect(() => {
-    for (const h of hosts) if (h.admission.kind === "admitted") app.listing.refresh(h.entry.handle);
-  }, [hosts.map((h) => h.admission.kind).join()]);
 
   return (
     <div class={styles.home}>
@@ -49,10 +44,7 @@ export function Home({ pane }: { pane: "sessions" | "files" }) {
                         icon="terminal"
                         label={`${l.session} / ${l.window}`}
                         selected={l.id === workspace.active}
-                        onClick={() => {
-                          app.dispatch({ type: "activated", id: l.id });
-                          app.router.go("terminal");
-                        }}
+                        onClick={() => { app.dispatch({ type: "activated", id: l.id }); }}
                       />
                     ))}
                   </RovingList>

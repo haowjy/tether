@@ -742,8 +742,8 @@ Consequences:
 `workspace/` is a pure reducer over the open tabs and nothing else. Events go in:
 `opened`, `closed`, `activated`, `listing`, `windowClosed`, `serverExited`, `renamed`,
 `navigated`, `restored`, `watching`. State and effects come out: `cover`, `uncover`,
-`save`, `focus`, `notice`. The controller in `app/` runs the effects against
-`TabDriver`, the focus controller and persist now. `TabDriver` keeps owning its own
+`save`, `navigate`, `focus`, `notice`. The controller in `app/` runs the effects against
+`TabDriver`, the router, the focus controller and persist now. `TabDriver` keeps owning its own
 watch and its connection states, `limited` included; the workspace only says which tab
 is on screen.
 
@@ -767,7 +767,7 @@ owner when it saves, and hands each owner its part at boot:
 ```ts
 interface SavedWorkspace {
   version: 1;
-  tabs: { key: TabKey; label: string }[];   // the last label, so restored pills have names
+  tabs: { key: TabKey; session: string; window: string }[];   // the last names, so restored pills have them
   active: string | null;
   files: { hostId: string; place: FilesPlace } | null;   // FileBrowser's place
   expanded: Record<string, string[]>;       // sessions/ expansion, by hostId
@@ -790,8 +790,23 @@ A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
   Terminal for Home or Files covers it, which ends its watch and returns tmux its size.
   Returning uncovers it and repaints from a fresh snapshot.
 - **Closing** follows the contract. Closing the active tab activates its right
-  neighbour, else its left. Closing the last tab returns Home, and on desktop focuses
-  Home search.
+  neighbour, else its left. Closing the last tab returns Home (a `navigate` effect), and
+  on desktop focuses Home search.
+- **Navigation and focus.** A change that moves a tab and the screen together has one
+  owner, the reducer:
+  - `opened` and `activated` emit `navigate: terminal` unless the page is already on
+    Terminal; closing the last tab from Terminal emits `navigate: home`.
+  - The controller runs `navigate` through the router, which emits `navigated` at once,
+    so `onTerminal`, `cover` and `uncover` follow before any `focus` effect runs.
+  - Arriving at Terminal with an active tab (`navigated`: a tab tap, the rail, Back, a
+    deep link) emits `focus: terminal`; `opened` and `activated` emit it themselves only
+    when already there.
+  - The controller runs `focus` effects after the render the change queued (a microtask
+    after the store update): the target may be on a screen that has not mounted or is
+    still hidden. On touch they do nothing, as before.
+- **Unchanged is unchanged.** A rename, a listing or any event that changes no tab
+  returns the same state object, so nothing saves and no view re-renders. Views read
+  the store with `useAppView(select)` and re-render only when their slice changes.
 
 ### 6.2 Restore after reload
 

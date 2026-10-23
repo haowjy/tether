@@ -26,9 +26,9 @@ export const LISTING: TmuxListing = {
 export const SAVED: SavedWorkspace = {
   version: 1,
   tabs: [
-    { key: key(1), label: "tether / agent" },
-    { key: key(3), label: "notes / shell" },
-    { key: key(99), label: "gone / window" },
+    { key: key(1), session: "tether", window: "agent" },
+    { key: key(3), session: "notes", window: "shell" },
+    { key: key(99), session: "gone", window: "window" },
   ],
   active: "h-pop/main:1-1/1",
   files: null,

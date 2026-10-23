@@ -54,6 +54,7 @@ export class AppController extends Store<AppView> {
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastUpdateCheck = 0;
   private readonly listed = new Set<string>();
+  private onHomeOrPicker = false;
 
   static async start(platform: Platform, options: StartOptions = {}): Promise<AppController> {
     const boot = await platform.boot();
@@ -156,9 +157,15 @@ export class AppController extends Store<AppView> {
       case "notice":
         this.notify(effect.text);
         break;
+      case "navigate":
+        // The router emits `navigated` at once, so the reducer sees the destination before the focus effects below.
+        this.router.go(effect.to);
+        break;
       case "focus":
+        // The element may be on a screen this change is about to render (the terminal is hidden
+        // until then, Home's search not mounted): focus after the render the change queued.
         // Desktop only: a touch screen never focuses programmatically outside the tap that asked.
-        this.focus.focusTarget(effect.target === "terminal" ? "terminal" : "homeSearch");
+        queueMicrotask(() => { this.focus.focusTarget(effect.target); });
         break;
     }
   }
@@ -187,14 +194,19 @@ export class AppController extends Store<AppView> {
     this.dispatch({ type: "hostsKnown", ids, complete: hosts.length > 0 && ids.length === hosts.length });
   }
 
-  /** A host stays joined while Home or the picker is on screen, a tab on it exists, or one is restoring. */
+  /** A host stays joined while Home or the picker is on screen, a tab on it exists, or one is restoring. This is the one place that asks for a listing on entering Home or the picker. */
   private syncListing(): void {
     const { nav, workspace } = this.snapshot;
     const homeOrPicker = nav.destination === "home" || nav.entry.overlay?.screen === "picker";
+    const entered = homeOrPicker && !this.onHomeOrPicker;
+    this.onHomeOrPicker = homeOrPicker;
     for (const client of this.hosts.all()) {
       const { handle } = client.entry;
+      const admitted = client.admission.kind === "admitted";
       const hasTab = client.hostId !== null && workspace.tabs.some((t) => t.key.host === client.hostId);
-      this.listing.setWanted(handle, client.admission.kind === "admitted" && (homeOrPicker || hasTab));
+      this.listing.setWanted(handle, admitted && (homeOrPicker || hasTab));
+      // Entering Home or the picker lists afresh. The fetcher sends once however many triggers meet.
+      if (entered && admitted) this.listing.refresh(handle);
     }
   }
 

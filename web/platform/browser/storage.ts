@@ -60,6 +60,7 @@ export function createBrowserStorage(): BrowserStorage {
   let closed = false;
   let persistAsked = false;
   let pending: SavedWorkspace | null = null;
+  let flushQueued = false;
   let emitEvent: (event: PlatformEvent) => void = () => undefined;
   const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(CHANNEL) : null;
 
@@ -139,7 +140,14 @@ export function createBrowserStorage(): BrowserStorage {
     saveWorkspace(ws) {
       pending = ws;
       // Only the page in use writes; one that gains focus writes once more.
-      if (document.hasFocus()) void flushWorkspace();
+      // One transaction per tick however many changes land in it: the latest wins.
+      if (document.hasFocus() && !flushQueued) {
+        flushQueued = true;
+        queueMicrotask(() => {
+          flushQueued = false;
+          void flushWorkspace();
+        });
+      }
     },
     drafts,
     async clearLocalData() {

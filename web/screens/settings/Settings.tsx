@@ -5,9 +5,9 @@ import { EmptyState } from "../../ui/primitives/EmptyState";
 
 export function Settings() {
   const app = useApp();
-  const { nav } = useAppView();
+  const open = useAppView((v) => v.nav.entry.overlay?.screen === "settings");
   return (
-    <Dialog open={nav.entry.overlay?.screen === "settings"} title="Settings" onClose={() => { app.router.closeOverlay(); }}>
+    <Dialog open={open} title="Settings" onClose={() => { app.router.closeOverlay(); }}>
       <EmptyState icon="settings" title="Settings">Device and local data settings arrive with the Settings screen.</EmptyState>
     </Dialog>
   );

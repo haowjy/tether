@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes } from "preact";
 import { cx } from "../cx";
-import { useFocus, type FocusTarget } from "../focus";
+import { useFocusRef, type FocusTarget } from "../focus";
 import { Icon, type IconName } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import styles from "./IconButton.module.css";
@@ -18,7 +18,7 @@ export interface IconButtonProps extends Omit<ButtonHTMLAttributes, "icon" | "la
 }
 
 export function IconButton({ icon, label, placement = "bottom", current, tone = "normal", focusTarget, class: className, ...rest }: IconButtonProps) {
-  const focus = useFocus();
+  const focusRef = useFocusRef(focusTarget);
   return (
     <Tooltip label={label} placement={placement}>
       <button
@@ -27,7 +27,7 @@ export function IconButton({ icon, label, placement = "bottom", current, tone = 
         class={cx(styles.button, tone === "error" && styles.error, className as string | undefined)}
         aria-label={label}
         aria-current={current ? "page" : undefined}
-        ref={(el: HTMLButtonElement | null) => { if (focusTarget) focus.register(focusTarget, el); }}
+        ref={focusRef}
       >
         <Icon name={icon} size={20} />
       </button>

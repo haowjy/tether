@@ -26,7 +26,7 @@ export function useApp(): AppController {
   return app;
 }
 
-/** The app's view state (viewport, workspace, navigation, hosts), re-rendering on change. */
-export function useAppView(): AppView {
-  return useStore(useApp());
+/** A slice of the app's view state (viewport, workspace, navigation, hosts), re-rendering only when that slice changes. */
+export function useAppView<S>(select: (view: AppView) => S, equal?: (a: S, b: S) => boolean): S {
+  return useStore(useApp(), select, equal);
 }

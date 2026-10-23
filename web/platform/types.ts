@@ -55,8 +55,8 @@ export type FilesPlace = { kind: "roots" } | { kind: "dir"; path: string } | { k
 /** What persists across a reload. `app/persist.ts` assembles it from each owner. */
 export interface SavedWorkspace {
   version: 1;
-  /** The last label of each tab, so restored pills have names before the listing. */
-  tabs: { key: TabKey; label: string }[];
+  /** The last names of each tab, so restored pills have them before the listing. */
+  tabs: { key: TabKey; session: string; window: string }[];
   /** The active tab's key string. */
   active: string | null;
   files: { hostId: string; place: FilesPlace } | null;

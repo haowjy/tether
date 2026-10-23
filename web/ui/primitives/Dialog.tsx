@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useId, useRef } from "preact/hooks";
+import { useEffect, useId, useLayoutEffect, useRef } from "preact/hooks";
 import { cx } from "../cx";
 import { useFocus, type FocusTarget } from "../focus";
 import { IconButton } from "./IconButton";
@@ -25,7 +25,9 @@ export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo
   const titleId = useId();
   const focus = useFocus();
 
-  useEffect(() => {
+  // A layout effect: the dialog opens in the commit of the change that asked, not a frame later
+  // (after a paint of the page behind it, and after a tap on its backdrop could land elsewhere).
+  useLayoutEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
     if (open && !dialog.open) focus.openDialog(dialog, initialFocus?.() ?? null);
