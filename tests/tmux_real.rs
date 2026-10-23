@@ -26,7 +26,7 @@ use tether::tmux::{
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::JoinHandle;
 
-use terminal::{look, terminal};
+use terminal::terminal;
 use tmux_server::{SESSION, Server, setup, socket, tmux};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -295,19 +295,20 @@ fn check_restores(snaps: &[Snap], output: &[u8], name: &str) -> usize {
         live += usize::from(!between.is_empty());
         let mut continued = pair[0].restored();
         continued.process(between);
+        let expected = pair[1].restored();
         assert_eq!(
-            look(&continued, pair[0].size),
-            look(&pair[1].restored(), pair[1].size),
+            screen_text(&continued, pair[0].size),
+            screen_text(&expected, pair[1].size),
             "{name}: snapshot {index} plus its output isn't the next snapshot"
         );
     }
     let last = snaps.last().expect("a final snapshot");
-    let last_look = look(&last.restored(), last.size);
+    let last_look = screen_text(&last.restored(), last.size);
     for (index, snap) in snaps.iter().enumerate().step_by(SAMPLE) {
         let mut continued = snap.restored();
         continued.process(&output[snap.offset..]);
         assert_eq!(
-            look(&continued, snap.size),
+            screen_text(&continued, snap.size),
             last_look,
             "{name}: snapshot {index} plus every later byte isn't the final screen"
         );
@@ -315,7 +316,83 @@ fn check_restores(snaps: &[Snap], output: &[u8], name: &str) -> usize {
     live
 }
 
-/// A restore against tmux's own capture of the pane: text, cursor, alternate screen.
+/// Cell text, cursor, (hidden cursor, alternate screen), (application cursor, keypad),
+/// and the mouse protocol.
+type ScreenText = (
+    Vec<String>,
+    (u16, u16),
+    (bool, bool),
+    (bool, bool),
+    (vt100::MouseProtocolMode, vt100::MouseProtocolEncoding),
+);
+
+/// Text, foreground, background, bold, dim, italic, underline, inverse.
+type CellStyle = (
+    String,
+    vt100::Color,
+    vt100::Color,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+);
+
+/// The captured screen and modes. The SGR pen is not part of tmux's snapshot state,
+/// so styling after replaying output across a snapshot boundary is not comparable.
+fn screen_text(term: &vt100::Parser, size: Size) -> ScreenText {
+    let screen = term.screen();
+    let cells = (0..size.rows)
+        .flat_map(|row| (0..size.cols).map(move |col| (row, col)))
+        .map(|(row, col)| {
+            let contents = screen.cell(row, col).expect("cell in bounds").contents();
+            if contents.is_empty() {
+                " ".to_owned()
+            } else {
+                contents.to_owned()
+            }
+        })
+        .collect();
+    (
+        cells,
+        screen.cursor_position(),
+        (screen.hide_cursor(), screen.alternate_screen()),
+        (screen.application_cursor(), screen.application_keypad()),
+        (
+            screen.mouse_protocol_mode(),
+            screen.mouse_protocol_encoding(),
+        ),
+    )
+}
+
+/// Cell styling is still part of each captured snapshot; compare it against tmux at
+/// the same boundary, separately from replay where the unreported pen can matter.
+fn screen_styles(term: &vt100::Parser, size: Size) -> Vec<CellStyle> {
+    let screen = term.screen();
+    (0..size.rows)
+        .flat_map(|row| (0..size.cols).map(move |col| (row, col)))
+        .map(|(row, col)| {
+            let cell = screen.cell(row, col).expect("cell in bounds");
+            let blank = cell.contents().is_empty() || cell.contents() == " ";
+            (
+                cell.contents().to_owned(),
+                if blank {
+                    vt100::Color::Default
+                } else {
+                    cell.fgcolor()
+                },
+                cell.bgcolor(),
+                cell.bold(),
+                cell.dim(),
+                cell.italic(),
+                cell.underline(),
+                cell.inverse(),
+            )
+        })
+        .collect()
+}
+
+/// A restore against tmux's own capture of the pane: text, styling, cursor, alternate screen.
 fn check_against_tmux(server: &Server, snap: &Snap, pane: &str) {
     let restored = snap.restored();
     let screen = restored.screen();
@@ -326,12 +403,32 @@ fn check_against_tmux(server: &Server, snap: &Snap, pane: &str) {
         }
         rows
     };
-    let ours = trimmed(screen.rows(0, snap.size.cols).collect());
     let captured = server
-        .run(&["capture-pane", "-p", "-t", pane])
-        .expect("capture-pane");
-    let tmux = trimmed(captured.lines().map(str::to_owned).collect());
-    assert_eq!(ours, tmux, "the restored screen isn't tmux's");
+        .run(&["capture-pane", "-e", "-p", "-t", pane])
+        .expect("styled capture-pane");
+    let mut tmux_screen = terminal(snap.size);
+    for (row, line) in captured
+        .lines()
+        .enumerate()
+        .take(usize::from(snap.size.rows))
+    {
+        tmux_screen.process(format!("\x1b[{};1H", row + 1).as_bytes());
+        tmux_screen.process(line.trim_end_matches('\r').as_bytes());
+    }
+    let tmux = tmux_screen.screen();
+    let ours = trimmed(screen.rows(0, snap.size.cols).collect());
+    let captured = trimmed(tmux.rows(0, snap.size.cols).collect());
+    let ours_styles = screen_styles(&restored, snap.size);
+    let tmux_styles = screen_styles(&tmux_screen, snap.size);
+    let mismatches: Vec<_> = ours_styles
+        .iter()
+        .zip(&tmux_styles)
+        .enumerate()
+        .filter(|(_, (ours, tmux))| !tmux.0.is_empty() && ours != tmux)
+        .take(12)
+        .collect();
+    assert!(mismatches.is_empty(), "style mismatches: {mismatches:?}");
+    assert_eq!(ours, captured, "the restored screen isn't tmux's");
     let state = server
         .run(&[
             "display-message",

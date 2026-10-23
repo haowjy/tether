@@ -66,9 +66,9 @@ pub struct PaneSnapshot {
 /// continues from here. A fresh terminal has every mode off, so only what is on is
 /// switched on.
 ///
-/// What tmux 3.4 doesn't report is not restored: the current SGR pen, a pending wrap
-/// (a cursor past the last column is clamped), the cursor shape, character sets,
-/// bracketed paste, focus reporting and the title.
+/// State absent from the pane formats and captures is not restored: the current SGR
+/// pen, a pending wrap (a cursor past the last column is clamped), the cursor shape,
+/// character sets, bracketed paste, focus reporting and the title.
 pub fn compose(snapshot: &PaneSnapshot) -> Bytes {
     let state = &snapshot.state;
     let (cols, rows) = (u32::from(state.size.cols), u32::from(state.size.rows));
