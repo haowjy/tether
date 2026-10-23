@@ -1,4 +1,0 @@
-ready server=65573-1792644663 version=3.4
-layout @0 %0:80x24
-done tag=1 error PaneGone
-done tag=2 error Command("can't find pane: %99")

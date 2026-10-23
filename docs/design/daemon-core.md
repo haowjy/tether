@@ -1326,12 +1326,12 @@ a Gap, with a terminal client attached through `script`; splits and layout chang
 window add, rename, kill, move and link; cwd subscriptions; Locate on live, killed and
 moved windows; paste, including a missing file; `send-keys` of `C-b` and of `Escape`
 then a key; history; detach from outside; kill-server. 3.4 is recorded on the dev
-box, 3.7b on the Mac, both committed.
+box, 3.7b on the Mac, both committed (3.7b: `src/tmux/.context/TODO`).
 
 - **`Session`:** each `.out` is replayed whole, in 1-byte chunks and in 4 seeded random
   splits. The lines `Session` writes must equal the recorded `.in`, and its events
-  must not depend on the chunking and must match the `.events` goldens. Targeted tests
-  cover startup order, pausing on the first unwanted output (new panes included), the
+  must not depend on chunking. Targeted tests cover startup order, pausing on the first
+  unwanted output (new panes included), the
   pause at the cap, boundary continuity over 3000 numbered lines, failure causes, torn
   retries, a Gap, notifications and Locate. Unit tests cover what no recording reaches
   cheaply: `TooLarge` with the client surviving, `TmuxTooOld`, and a reply with nothing
@@ -1350,9 +1350,10 @@ box, 3.7b on the Mac, both committed.
   Unicode 11 addon, as `web/term/` does (`reset()`, `resize()`, `write()`), and cells
   and styles, cursor, modes, region, tab stops, the alternate screen and the primary
   behind it must match tmux.
-- **`hub::State` and `Outbox`** (`tests/hub_state.rs`, and a unit test in
-  `outbox.rs`): scripted inputs → effects, against a fake tmux that answers the lines
-  the hub writes. The fake is built on `tmux/fake.rs`, which splits a line into its
+- **`hub::State` and `Outbox`** (`tests/hub_state.rs`, with its fake hub in
+  `tests/support/fake_hub.rs`, and a unit test in `outbox.rs`): scripted inputs → effects,
+  against a fake tmux that answers the lines the hub writes. The fake is built on
+  `tmux/fake.rs`, which splits a line into its
   commands the way tmux's parser does (quotes and escapes removed), decodes
   `display-message` (target and format) and `capture-pane`, expands `#{name}` formats,
   and frames replies (`%begin`/`%end`/`%error`, numbered, none after an error). The
@@ -1408,7 +1409,8 @@ with the replay tests and the recorder in `tests/support/`):
   connection that pushes everything through an `Outbox` and decodes the frames: a watch
   with the cwd report, input echo, and a snapshot on rewatch that shows the echo;
   `move-window` re-homing a watch with a fresh snapshot and output from the new owner,
-  then `kill-window` broadcasting `windowClosed`; `kill-server` sending `serverExited`
+  then `kill-window` broadcasting `windowClosed`; detached and foreground new windows
+  and a new session broadcasting `sessionsChanged`; `kill-server` sending `serverExited`
   to every connection.
 - **Pump:** dropping the line sender closes the client in under 1 s.
 - **One-shots:** the listing detects a terminal client and keeps tab and UTF-8 window
@@ -1418,7 +1420,7 @@ with the replay tests and the recorder in `tests/support/`):
   `NewWindow` naming the wrong instance gives `NoServer` and creates no window. With
   the server stopped (`SIGSTOP`), the listing times out at 2 s and leaves no process.
 - **Locale:** the whole suite also runs with no locale set, where a missing `-u` turns a
-  non-ASCII window name into `_`.
+  non-ASCII window name into `_` (not yet wired: `src/tmux/.context/TODO`).
 
 ## 9. Open risks
 

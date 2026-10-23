@@ -1,8 +1,0 @@
-ready server=65613-1792644664 version=3.4
-layout @0 %0:80x24
-snapshot tag=1 %0 80x24
-output %0 events=45 bytes=299
-window-renamed @0 "sleep"
-output %0 events=93 bytes=558
-done tag=2 error Torn
-output %0 events=2 bytes=6

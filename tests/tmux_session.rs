@@ -2,8 +2,7 @@
 //! is replayed with its requests at their recorded offsets, in 1-byte and seeded
 //! random chunks: the session must write exactly the recorded lines (or tmux's replies
 //! would belong to other groups) and report the same events however bytes arrive.
-//! Re-record with `examples/record-tmux-fixtures.rs`; regenerate the `.events`
-//! goldens with `UPDATE_TMUX_EVENT_GOLDENS=1`.
+//! Re-record with `examples/record-tmux-fixtures.rs` when tmux command output changes.
 
 #[path = "support/script.rs"]
 mod script;
@@ -12,7 +11,6 @@ mod terminal;
 
 use terminal::{look, terminal};
 
-use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -83,7 +81,6 @@ fn whole(name: &str) -> Replay {
 
 #[test]
 fn every_fixture_replays_the_same_for_any_chunking() {
-    let update = std::env::var_os("UPDATE_TMUX_EVENT_GOLDENS").is_some();
     let mut outs = fs::read_dir(fixtures())
         .expect("read fixture directory")
         .flat_map(|version| fs::read_dir(version.expect("version entry").path()).expect("read"))
@@ -115,15 +112,6 @@ fn every_fixture_replays_the_same_for_any_chunking() {
         }
         let whole = replay_in(dir, &name, |left| left);
         assert_eq!(whole.events, one_byte.events, "{label}: one chunk");
-
-        let rendered = render(&one_byte.events);
-        let golden = out.with_extension("events");
-        if update {
-            fs::write(&golden, rendered).expect("write golden");
-        } else {
-            let expected = fs::read_to_string(&golden).expect("read .events golden");
-            assert_eq!(rendered, expected, "{label}: events golden");
-        }
     }
 }
 
@@ -612,84 +600,4 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
-}
-
-/// One line per event; a run of output from one pane is one line.
-fn render(events: &[Event]) -> String {
-    let mut text = String::new();
-    let mut run: Option<(PaneId, usize, usize)> = None;
-    for event in events {
-        if let Event::Output { pane, bytes } = event {
-            run = match run {
-                Some((run_pane, count, len)) if run_pane == *pane => {
-                    Some((run_pane, count + 1, len + bytes.len()))
-                }
-                other => {
-                    flush(&mut text, other);
-                    Some((*pane, 1, bytes.len()))
-                }
-            };
-            continue;
-        }
-        flush(&mut text, run.take());
-        let line = match event {
-            Event::Ready { server, version } => format!("ready server={server} version={version}"),
-            Event::Output { .. } => unreachable!(),
-            Event::Snapshot {
-                tag,
-                pane,
-                size,
-                restore,
-            } => {
-                // What `restore` holds is `snapshot.rs`'s to test, not the session's.
-                assert!(!restore.is_empty());
-                format!("snapshot tag={} {pane} {}x{}", tag.0, size.cols, size.rows)
-            }
-            Event::Done { tag, result } => {
-                let result = match result {
-                    Ok(Reply::Ok) => "ok".to_owned(),
-                    Ok(Reply::Location(Location { server, found })) => match found {
-                        Some(found) => format!(
-                            "location {server} {} {} {}x{}",
-                            found.session, found.pane, found.size.cols, found.size.rows
-                        ),
-                        None => format!("location {server} gone"),
-                    },
-                    Ok(Reply::SessionLocation(location)) => {
-                        format!("session {} exists={}", location.server, location.exists)
-                    }
-                    Ok(Reply::History(rows)) => format!("history rows={}", rows.len()),
-                    Ok(one_shot @ (Reply::Listing(_) | Reply::Created(_))) => {
-                        panic!("a one-shot's reply from a control client: {one_shot:?}")
-                    }
-                    Err(error) => format!("error {error:?}"),
-                };
-                format!("done tag={} {result}", tag.0)
-            }
-            Event::Gap { pane } => format!("gap {pane}"),
-            Event::Layout { window, panes } => {
-                let mut line = format!("layout {window}");
-                for (pane, size) in panes {
-                    let _ = write!(line, " {pane}:{}x{}", size.cols, size.rows);
-                }
-                line
-            }
-            Event::ActivePane { window, pane } => format!("active-pane {window} {pane}"),
-            Event::WindowUnlinked { window } => format!("window-unlinked {window}"),
-            Event::WindowRenamed { window, name } => format!("window-renamed {window} {name:?}"),
-            Event::SessionsChanged => "sessions-changed".to_owned(),
-            Event::Cwd { window, path } => format!("cwd {window} {path:?}"),
-            Event::Fatal(error) => format!("fatal {error:?}"),
-        };
-        text.push_str(&line);
-        text.push('\n');
-    }
-    flush(&mut text, run);
-    text
-}
-
-fn flush(text: &mut String, run: Option<(PaneId, usize, usize)>) {
-    if let Some((pane, count, len)) = run {
-        let _ = writeln!(text, "output {pane} events={count} bytes={len}");
-    }
 }

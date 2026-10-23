@@ -9,17 +9,7 @@ const row = (t: Terminal): string => t.buffer.active.getLine(0)?.translateToStri
 const restore = enc.encode("ABC\x1b[1;1H");
 const snapshot = { cols: 20, rows: 5, restore };
 
-describe("WritePipeline (review p17 #1)", () => {
-  it("naive reset/resize/write keeps queued pre-snapshot modes: XABC", async () => {
-    const t = new Terminal({ cols: 20, rows: 5, allowProposedApi: true });
-    t.write(enc.encode("\x1b[4h")); // old output, still queued
-    t.reset();
-    t.resize(20, 5);
-    t.write(restore);
-    await new Promise<void>((r) => { t.write(enc.encode("X"), r); });
-    expect(row(t)).toBe("XABC");
-  });
-
+describe("WritePipeline", () => {
   it("applies the snapshot only after earlier writes parsed: XBC", async () => {
     const t = new Terminal({ cols: 20, rows: 5, allowProposedApi: true });
     const p = new WritePipeline(t);

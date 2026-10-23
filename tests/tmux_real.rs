@@ -904,22 +904,6 @@ async fn a_moved_window_is_unlinked_and_found_in_its_new_session() {
 }
 
 #[tokio::test]
-async fn a_new_window_notifies_an_attached_control_client() {
-    let Some((_serial, server)) = setup("new-window-notification").await else {
-        return;
-    };
-    let mut client = Client::attach(&server, SessionId(0)).await;
-    client.settle().await;
-
-    server
-        .run(&["new-window", "-d", "-t", tmux_server::SESSION])
-        .expect("new-window");
-    client
-        .wait_for("SessionsChanged", |event| *event == Event::SessionsChanged)
-        .await;
-}
-
-#[tokio::test]
 async fn with_no_server_neither_the_pump_nor_a_one_shot_starts_one() {
     let Some((_serial, server)) = setup("no-server").await else {
         return;

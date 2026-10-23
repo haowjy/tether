@@ -20,9 +20,10 @@ type Op =
  *
  * `Engine.write` is asynchronous: bytes sit in the emulator's queue until parsed. A
  * snapshot's `reset()` would not clear them, so they would parse into the restored
- * screen and could switch on a mode (insert, say) the restore never switches off. So a
- * snapshot runs only once every earlier write's callback has fired, and everything
- * after it waits behind it.
+ * screen and could switch on a mode (insert, say) the restore never switches off. With
+ * queued insert mode, a naive reset/resize/restore/write leaves `XABC` instead of
+ * `XBC`. A snapshot runs only once every earlier write's callback has fired, and
+ * everything after it waits behind it.
  */
 export class WritePipeline {
   private readonly engine: Engine;

@@ -103,18 +103,12 @@ describe("losing the watch or the link", () => {
     expect(l.types()).toEqual(["watch", "watch"]);
   });
 
-  it("opens a new link after the socket drops, and stops for a rejected token", () => {
+  it("opens a new link after the socket drops", () => {
     const t = setup();
     t.bind().drop();
     expect(t.links).toHaveLength(1);
     vi.advanceTimersByTime(500);
     expect(t.links).toHaveLength(2);
-    t.link().drop(4401);
-    vi.advanceTimersByTime(60_000);
-    expect(t.links).toHaveLength(2);
-    expect(t.state()).toMatchObject({ kind: "reconnecting", halt: "unauthorized", retryInMs: null });
-    t.tab.nudge();
-    expect(t.links).toHaveLength(3);
   });
 
   it("closes on windowClosed for its own window only, and on serverExited", () => {

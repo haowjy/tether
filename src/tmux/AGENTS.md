@@ -13,11 +13,12 @@ non-fatal. Never log raw pane output or reply bodies.
 the command text `command.rs` writes, so change the two together.
 
 Tests replay recorded tmux streams and require `Session` to write exactly the recorded
-lines (`.in`), so any change to command text needs the fixtures re-recorded:
-`cargo run --example record-tmux-fixtures -- --out tests/fixtures/tmux/3.4`, then
-`UPDATE_TMUX_EVENT_GOLDENS=1 cargo test --test tmux_session`, and read the diff of the
-`.events` goldens before keeping it. The `snapshot-*` fixtures also feed the `vt100`
-restore tests in `snapshot.rs`, so re-recording them re-checks `compose` too.
+lines (`.in`); the same replays check that events do not depend on chunking, while
+targeted tests assert the important event behavior. Re-record with
+`cargo run --example record-tmux-fixtures -- --out tests/fixtures/tmux/3.4` when
+command output changes. The checked-in fixture set currently contains only tmux 3.4.
+The `snapshot-*` fixtures also feed the `vt100` restore tests in `snapshot.rs`, so
+re-recording them re-checks `compose` too.
 
 `tests/tmux_real.rs` runs `Session` over the real pump, and the one-shots, against
 private tmux servers: the snapshot boundary under floods, torn snapshots, Gaps, and

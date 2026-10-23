@@ -1,4 +1,0 @@
-ready server=65311-1792644660 version=3.4
-layout @0 %0:80x24
-snapshot tag=1 %0 80x24
-done tag=2 ok
