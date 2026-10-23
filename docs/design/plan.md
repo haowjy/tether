@@ -220,9 +220,9 @@ make the existing crashes worse. The MVP gate is meeting this budget, measured o
 box with the debug endpoint (behind auth), which reports RSS, tasks, control clients
 and buffer use.
 
-- **Event-driven only:** control-mode events, no polling timers, no periodic capture,
-  no `tmux ls` loop. With no phone connected, tether holds no control clients and no
-  pane state once the control-client linger has passed.
+- **Event-driven:** control-mode events, no periodic capture, no `tmux ls` loop. With
+  no phone connected, tether holds no control clients and no pane state once the
+  control-client linger has passed.
 - **Nothing held for panes nobody views:** a pane's state exists only while a tab on
   screen shows it, and unviewed panes are paused in tmux.
 - **Everything bounded:** every queue, buffer and cap, and the resulting memory

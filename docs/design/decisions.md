@@ -24,7 +24,7 @@ A later entry that changes an earlier one says so; the earlier one keeps its tex
 
 ## Jimmy's decisions
 
-All 2026-10-21, decided by Jimmy.
+Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Device: iPhone 17 Pro only
 
@@ -122,6 +122,20 @@ All 2026-10-21, decided by Jimmy.
 - **Rejected:** a hub daemon proxying the other hosts (the answer only while the
   client was a web app, where each `*.ts.net` origin needed its own install, cookies
   and passkey); one app per host.
+
+### AGENTS.md states principles; the specs hold the rules
+
+- **What (2026-10-23):** AGENTS.md lists the principles behind tether's constraints,
+  each with its reason: tmux's independence from tether, usable on spotty
+  connections, light on a busy host whose CPU and memory Jimmy caps, private to the
+  tailnet. The concrete limits that follow from them live in the subsystem specs.
+- **Why:** a rule without its reason gets applied where it doesn't serve it. "No
+  polling" serves two principles. For connections, clients never poll the server over
+  the network. For the host, nothing runs while idle and nothing polls tmux. A
+  server-local check that sends nothing over the network, and runs only while a client
+  is connected, serves both.
+- **Rejected:** rules in AGENTS.md, classified or not: they restate the principles
+  without the reasons and drift from the specs.
 
 ## Product and architecture
 

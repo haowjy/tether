@@ -45,13 +45,15 @@ scripts/preflight.sh full     # fmt, clippy -D warnings, test, release build
 cargo run -- --version
 ```
 
-## Design Constraints
+## Principles
 
-- **tmux is the source of truth.** tether attaches; it never starts the tmux
-  server (a server started from tether's systemd unit dies with it).
-- **Resource budget first.** The server is already overloaded: event-driven only,
-  no polling, bounded buffers and queues, nothing held for panes nobody views.
-- **Tailnet only.** Never Tailscale Funnel.
+- **tmux is the source of truth.** tether is a window onto Jimmy's tmux, never its
+  owner: tmux's life never depends on tether's.
+- **Usable on spotty, barely-there connections.** Every byte and round trip on the
+  network costs the user; reconnecting must be cheap.
+- **Light on a busy host.** The dev box runs many processes. tether's CPU and memory
+  stay small, bounded, and capped where Jimmy chooses.
+- **Private.** Reachable only from Jimmy's tailnet.
 - POSIX only (Linux, macOS). tmux doesn't run on Windows.
 
 ## Releases
