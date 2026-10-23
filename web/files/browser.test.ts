@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FileBrowser, within } from "./browser";
-import { FakeFs, type FakeTree } from "./fakes";
+import { FakeFs, type FakeTree } from "../platform/test/fs";
 
 const tree = (): FakeTree => ({
   home: "/home/j",

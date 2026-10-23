@@ -27,8 +27,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [preact(), serviceWorker(), forbidTestModules(), ...(mode === "harness" || mode === "test" ? [] : [devProxy()])],
   build: {
     target: "es2022",
-    // scripts/check-build.mjs reads the manifest to enforce the shell budgets and to keep
-    // platform/test and harness/ out of the module graph.
+    // scripts/checks.mjs build reads the manifest to enforce the shell budgets.
     manifest: true,
     rolldownOptions: {
       output: {

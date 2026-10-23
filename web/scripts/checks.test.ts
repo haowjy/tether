@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUDGETS, budgetBreaches, findColourPrimitiveUses, findCopyViolations } from "./checks.mjs";
+import { BUDGETS, budgetBreaches, findColourLiterals, findColourPrimitiveUses, findCopyViolations } from "./checks.mjs";
 
 describe("copy rule", () => {
   it("fails on a middle dot, a bullet and a dot marker", () => {
@@ -20,6 +20,19 @@ describe("colour tokens", () => {
   it("passes semantic.css, and scales that aren't colour", () => {
     expect(findColourPrimitiveUses("ui/tokens/semantic.css", "--color-bg: var(--gray-12);")).toEqual([]);
     expect(findColourPrimitiveUses("screens/home/Home.module.css", "gap: var(--space-3); color: var(--color-text);")).toEqual([]);
+  });
+});
+
+describe("colour literals", () => {
+  it("fails on a raw colour in component CSS", () => {
+    for (const css of ["color: oklch(0 0 0 / 0.3);", "color: #fff;", "background: rgb(0 0 0);", "color: hsl(0 0% 0%);"]) {
+      expect(findColourLiterals("ui/primitives/Toast.module.css", css)).toHaveLength(1);
+    }
+  });
+  it("passes tokens, the token files and non-colour hashes", () => {
+    expect(findColourLiterals("ui/primitives/Toast.module.css", "box-shadow: 0 8px 24px var(--color-shadow);")).toEqual([]);
+    expect(findColourLiterals("ui/tokens/semantic.css", "--color-shadow: oklch(0 0 0 / 0.3);")).toEqual([]);
+    expect(findColourLiterals("screens/home/Home.module.css", "grid-area: x; .a#b { color: var(--color-text); }")).toEqual([]);
   });
 });
 

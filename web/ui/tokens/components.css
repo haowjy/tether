@@ -5,14 +5,12 @@
   --row-pad-x: var(--space-3);
   --tab-height: 32px;
   --toolbar-height: 44px;
-  --field-height: 36px;
 }
 :root[data-density="touch"] {
   --row-height: 48px;
   --row-pad-x: var(--space-3);
   --tab-height: 44px;
   --toolbar-height: 52px;
-  --field-height: 44px;
 }
 
 :root {
@@ -29,9 +27,7 @@
   /* The phone toast sits above the bottom toolbar, never over its tabs. */
   --toast-offset: 0px;
 
-  --z-toolbar: 10;
   --z-band: 20;
-  --z-dialog: 30;
   --z-toast: 40;
 }
 

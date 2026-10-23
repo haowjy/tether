@@ -9,9 +9,9 @@
 }
 .strip::-webkit-scrollbar { display: none; }
 /* A fade at an overflowing edge says there is more to scroll to. */
-.strip[data-start] { mask-image: linear-gradient(to right, transparent, #000 var(--space-5)); }
-.strip[data-end] { mask-image: linear-gradient(to left, transparent, #000 var(--space-5)); }
-.strip[data-start][data-end] { mask-image: linear-gradient(to right, transparent, #000 var(--space-5), #000 calc(100% - var(--space-5)), transparent); }
+.strip[data-start] { mask-image: linear-gradient(to right, transparent, black var(--space-5)); }
+.strip[data-end] { mask-image: linear-gradient(to left, transparent, black var(--space-5)); }
+.strip[data-start][data-end] { mask-image: linear-gradient(to right, transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent); }
 
 .pill {
   display: flex;

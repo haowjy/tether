@@ -48,6 +48,8 @@ describe("rule 2: only app/focus.ts moves focus", () => {
   it.each([
     ["focus()", "el.focus();"],
     ["blur()", "document.activeElement?.blur();"],
+    ["el['focus']()", "el['focus']();"],
+    ["an autoFocus attribute", "export const a = <div autoFocus />;"],
   ])("fails on %s outside app/focus.ts", async (_name, code) => {
     await failsWith("screens/terminal/Bad.tsx", `declare const el: HTMLElement; ${code}`, "no-restricted-syntax", "app/focus.ts");
     await failsWith("ui/primitives/Bad.tsx", `declare const el: HTMLElement; ${code}`, "no-restricted-syntax", "app/focus.ts");

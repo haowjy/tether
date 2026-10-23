@@ -23,9 +23,10 @@ const rule1 = [
 // Rule 2: only app/focus.ts moves DOM focus.
 const rule2 = [
   {
-    selector: "CallExpression[callee.property.name=/^(focus|blur)$/]",
+    selector: "CallExpression[callee.property.name=/^(focus|blur)$/], CallExpression[callee.computed=true][callee.property.value=/^(focus|blur)$/]",
     message: "Only app/focus.ts calls .focus() or .blur(): register the element with the focus controller (useFocus()).",
   },
+  { selector: "JSXAttribute[name.name=/^(autoFocus|autofocus)$/]", message: "Only app/focus.ts moves focus: autoFocus is banned, register the element with the focus controller (useFocus())." },
 ];
 
 // Rule 3: environment globals appear only in platform/.

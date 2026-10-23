@@ -40,6 +40,16 @@ export function findColourPrimitiveUses(path, text) {
     .flatMap((line, i) => (COLOUR_PRIMITIVE.test(line) ? [`${path} line ${String(i + 1)}: ${line.trim().slice(0, 80)}`] : []));
 }
 
+const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:oklch|oklab|lch|lab|hsl|hsla|rgb|rgba|color)\(/iu;
+
+/** Colour values are tokens: component CSS holds no colour literal, only ui/tokens/ does. */
+export function findColourLiterals(path, text) {
+  if (!path.endsWith(".css") || path.includes("ui/tokens/")) return [];
+  return text
+    .split("\n")
+    .flatMap((line, i) => (COLOUR_LITERAL.test(line) ? [`${path} line ${String(i + 1)}: ${line.trim().slice(0, 80)}`] : []));
+}
+
 /**
  * `files` is `{ path, bytes, gz }` for every emitted file; `manifest` is Vite's manifest.
  * Returns the budget breaches, empty when all hold.
@@ -98,7 +108,7 @@ function checkSource() {
     const isTest = /\.(test|spec)\.tsx?$/u.test(rel) || rel.startsWith("scripts/checks");
     if (isTest) continue; // tests seed violations on purpose
     for (const v of findCopyViolations(text)) problems.push(`${rel}: ${v} (no middle dots or dot markers in copy)`);
-    if (/\.(css|tsx?)$/u.test(rel)) problems.push(...findColourPrimitiveUses(rel, text));
+    if (/\.(css|tsx?)$/u.test(rel)) problems.push(...findColourPrimitiveUses(rel, text), ...findColourLiterals(rel, text));
   }
   return problems;
 }

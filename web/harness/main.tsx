@@ -1,6 +1,6 @@
 // The Playwright and review entry: the real app on the test platform. Open
 // `/harness/index.html?fixture=<name>&layout=phone|desktop&scheme=dark|light&density=touch|compact#/route`.
-// Served by Vite's dev server only; no production build includes it (scripts/check-build.mjs).
+// Served by Vite's dev server only; no production build includes it (the forbidTestModules plugin in vite.config.ts fails the build if one leaks).
 import { render } from "preact";
 import { App } from "../app/App";
 import { AppProvider } from "../app/context";

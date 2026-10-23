@@ -2,7 +2,7 @@
 // import it (lint rule 4). The daemon is faked at two seams, so the real code above runs:
 // HTTP (`fetch`, which answers /auth/*) and the socket (a FakeLink that welcomes and answers
 // listings and watches). Nothing here knows which environment it stands in for.
-import { FakeLink } from "../../net/fakes";
+import { FakeLink } from "./host";
 import type { AuthInfo } from "../../net/admission";
 import type { LinkHandlers } from "../../proto/link";
 import type { ClientMsg, TmuxListing } from "../../proto/generated/messages";

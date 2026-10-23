@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerMsg } from "../proto/generated/messages";
 import type { Snapshot } from "../term";
 import type { ConnectionState } from "./connection";
-import { makeHost, type FakeLink } from "../net/fakes";
+import { makeHost, type FakeLink } from "../platform/test/host";
 import { TabDriver, type TabOptions } from "./driver";
 
 const window1 = { server: "main:1-2", window: 3 };

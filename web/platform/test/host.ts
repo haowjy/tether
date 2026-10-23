@@ -1,9 +1,9 @@
 // Test doubles for the host layer: a socket that records what is sent and lets a test
 // say what the daemon says.
-import type { Frame } from "../proto/frames";
-import type { ClientMsg, ServerMsg } from "../proto/generated/messages";
-import type { LinkClose, LinkHandlers } from "../proto/link";
-import { Host, type Link } from "./host";
+import type { Frame } from "../../proto/frames";
+import type { ClientMsg, ServerMsg } from "../../proto/generated/messages";
+import type { LinkClose, LinkHandlers } from "../../proto/link";
+import { Host, type Link } from "../../net/host";
 
 export class FakeLink implements Link {
   ready = false;

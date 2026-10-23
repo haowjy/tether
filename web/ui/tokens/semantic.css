@@ -9,6 +9,7 @@
   --color-bg-sunken: light-dark(var(--gray-0), oklch(0.15 0.012 266));
   --color-bg-hover: light-dark(var(--gray-2), var(--gray-10));
   --color-bg-selected: light-dark(var(--blue-3), oklch(0.31 0.045 255));
+  --color-shadow: oklch(0 0 0 / 0.3);
   --color-scrim: light-dark(oklch(0.2 0.01 262 / 0.35), oklch(0 0 0 / 0.55));
 
   --color-text: light-dark(var(--gray-12), var(--gray-1));

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeHost } from "../net/fakes";
+import { makeHost } from "../platform/test/host";
 import type { TmuxListing } from "../proto/generated/messages";
 import { ListingFetcher, type ListingEvent } from "./listing";
 

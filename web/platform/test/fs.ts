@@ -1,9 +1,9 @@
 // A file API over an in-memory tree, following fs.md's rules closely enough for the
 // browser model's tests: roots scope the list, the picker is $HOME, dirs sort first, pages
 // of `page` entries. Paths are already canonical.
-import { HttpRefusal } from "../net/http";
-import type { Entry, FsApi, Listing, Roots } from "./api";
-import { within } from "./browser";
+import { HttpRefusal } from "../../net/http";
+import type { Entry, FsApi, Listing, Roots } from "../../files/api";
+import { within } from "../../files/browser";
 
 export interface FakeTree {
   home: string;

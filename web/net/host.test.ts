@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientMsg, ServerMsg, TmuxListing, WindowRef } from "../proto/generated/messages";
 import type { ConnectionState } from "../tabs/connection";
 import { TabDriver, type TabOptions } from "../tabs/driver";
-import { makeHost } from "./fakes";
+import { makeHost } from "../platform/test/host";
 import { RequestError } from "./host";
 
 const server = "main:1-2";
