@@ -7,14 +7,19 @@
 // - It answers `GET /auth/node/session` itself (a token-bearing request there is a 400), and
 //   rewrites `/auth/info.browserOrigin` to the dev server's own origin, so the page and
 //   `net/admission.ts` admit it as they would in production.
-// - It refuses callers that did not come through Serve: Serve writes `Tailscale-User-Login`.
-//   Publish the dev server with `tailscale serve` (browser-auth.md "Next to D1").
+// - It injects a credential, so it refuses foreign origins (HTTP and the `/ws` upgrade alike):
+//   a page on another origin must not borrow the token, the cross-site hijack auth.md rules out.
+//   `Origin` must be the dev server's own origin; an upgrade without one is refused.
+//   Serve's `Tailscale-User-Login` header is only a hint that the dev server was published with
+//   `tailscale serve` (browser-auth.md "Next to D1"): any local caller can forge it.
 //
 // The Enrol and admission-problem screens can't be reached through it: the harness drives them.
 import { request, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Plugin, ProxyOptions } from "vite";
 
-const API_PATHS = ["/ws", "/auth", "/fs", "^/complete$"];
+/** The one list of daemon paths, as Vite proxy keys (a leading `^` makes the key a regex, so `/wsx` is not `/ws`) and as the check's matchers. */
+const API_PATHS = ["/ws", "/auth", "/fs", "/complete"].map((path) => `^${path}(?:[/?]|$)`);
+const API_MATCHERS = API_PATHS.map((key) => new RegExp(key));
 
 /** The daemon's socket when TETHER_SOCKET names it (socketPath wins over host and port), else loopback TCP. */
 function daemonTarget(): { host: string; port: number; socketPath?: string } {
@@ -33,6 +38,19 @@ function viaServe(req: IncomingMessage): boolean {
   return typeof req.headers["tailscale-user-login"] === "string";
 }
 
+/** The origin the browser sees this dev server at, which the daemon's `browserOrigin` is rewritten to. */
+function ownOrigin(req: IncomingMessage): string {
+  return `${String(req.headers["x-forwarded-proto"] ?? "https")}://${req.headers.host ?? "localhost"}`;
+}
+
+/** Whether a page at the dev server's own origin sent this request. Browsers always send `Origin` on an upgrade; a same-origin GET may omit it. */
+function fromOwnOrigin(req: IncomingMessage, upgrade: boolean): boolean {
+  const { origin } = req.headers;
+  if (origin !== undefined) return origin === ownOrigin(req);
+  const site = req.headers["sec-fetch-site"];
+  return !upgrade && (site === undefined || site === "same-origin" || site === "none");
+}
+
 function deny(res: ServerResponse): void {
   res.statusCode = 403;
   res.setHeader("Content-Type", "application/json");
@@ -45,10 +63,16 @@ function authInfo(req: IncomingMessage, res: ServerResponse): void {
     const chunks: Buffer[] = [];
     reply.on("data", (c: Buffer) => chunks.push(c));
     reply.on("end", () => {
-      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
-      const proto = req.headers["x-forwarded-proto"] ?? "https";
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+      } catch {
+        res.statusCode = 502;
+        res.end();
+        return;
+      }
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ ...body, browserOrigin: `${String(proto)}://${req.headers.host ?? "localhost"}`, browserRefused: null }));
+      res.end(JSON.stringify({ ...body, browserOrigin: ownOrigin(req), browserRefused: null }));
     });
   });
   upstream.on("error", () => { res.statusCode = 502; res.end(); });
@@ -62,10 +86,9 @@ export function devProxy(): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const path = req.url?.split("?")[0] ?? "";
-        const api = path === "/ws" || path.startsWith("/auth") || path.startsWith("/fs") || path === "/complete";
-        if (!api) {
+        if (!API_MATCHERS.some((match) => match.test(req.url ?? ""))) {
           next();
-        } else if (!viaServe(req)) {
+        } else if (!viaServe(req) || !fromOwnOrigin(req, false)) {
           deny(res);
         } else if (path === "/auth/info") {
           authInfo(req, res);
@@ -84,7 +107,14 @@ export function devProxy(): Plugin {
             path,
             {
               target: daemonTarget(),
-              ws: path === "/ws",
+              ws: path.startsWith("^/ws"),
+              // Vite runs `bypass` on an upgrade before it proxies it, with no `res`; the Connect
+              // middleware above never sees upgrades. HTTP is checked there.
+              bypass: (req, res) => {
+                if (res || (viaServe(req) && fromOwnOrigin(req, true))) return undefined;
+                req.socket.destroy();
+                return false;
+              },
               configure: (proxy) => {
                 proxy.on("proxyReq", (proxyReq) => {
                   proxyReq.removeHeader("cookie");
