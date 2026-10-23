@@ -125,13 +125,15 @@ impl Server {
         } else {
             script.args(["-qfec", &tmux, "/dev/null"]);
         }
-        let child = script
+        let mut child = script
             .env_remove("TMUX")
+            // tmux won't attach to a missing or `dumb` terminal, which CI runners have.
+            .env("TERM", "xterm-256color")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
-        // Wait until tmux lists the client: a fixed sleep raced slow CI runners.
+        // tmux lists the client once it has attached.
         for _ in 0..100 {
             let modes = self.run(&["list-clients", "-F", "#{client_control_mode}"])?;
             if modes.lines().any(|mode| mode == "0") {
@@ -139,7 +141,9 @@ impl Server {
             }
             thread::sleep(Duration::from_millis(50));
         }
-        Err("the terminal client never attached".into())
+        let status = child.try_wait()?;
+        let _ = child.kill();
+        Err(format!("the terminal client never attached (script exited: {status:?})").into())
     }
 
     /// Types a shell line into a pane, outside the control client.
