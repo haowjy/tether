@@ -29,7 +29,9 @@ Rules the code relies on, which are easy to break:
   `canonicalize` failing doesn't mean the file is absent. The new file keeps the old
   one's mode and lands with `files::Temp::replace_if`, against the stamp it read.
 - Every file written whole goes through `files::Temp` (`src/files.rs`): `config.toml`,
-  an upload's part file (`land`, never replacing), auth's files. `Temp` isn't deleted
+  an upload's part file (`land`, never replacing), auth's files. Linux uploads reject
+  tmpfs/ramfs with `memory_backed` from the opened destination descriptor before the
+  part file exists. `Temp` isn't deleted
   on drop, since a drop may happen on the runtime thread: a part file is discarded on
   the fs lane, and every "has this file changed" check is a `files::Stamp`.
 - `DONTNEED` must cover whole folios: the raw producer drops from the response's first

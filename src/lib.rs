@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod blocking;
+pub mod budget;
 pub mod complete;
 pub mod config;
 pub mod files;

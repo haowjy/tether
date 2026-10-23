@@ -3,10 +3,12 @@
 `src/complete/` answers `POST /complete`: given what is typed at the shell prompt and
 the tab's directory, it returns up to 20 chips, each the literal text that finishes the
 word or line. Four sources feed it: shell history, commands on `PATH`, carapace for
-subcommands, flags and values, and directory listings for paths. Everything is built
-on first use, revalidated with a cheap `stat` per request, and dropped after five
-idle minutes. carapace runs in its own transient systemd scope, outside tether's
-memory limit. `/complete` never touches tmux or the hub.
+subcommands, flags and values, and directory listings for paths. Below an effective
+memory budget of 53 MiB, completion is not constructed, `welcome.daemon.completion` is
+false, and an unexpected `/complete` request returns `200 {"chips":[]}`. Otherwise,
+everything is built on first use, revalidated with a cheap `stat` per request, and
+dropped after five idle minutes. carapace runs in its own transient systemd scope,
+outside tether's memory limit. `/complete` never touches tmux or the hub.
 
 The product side (what the strip shows, how the client reads the command line) is in
 [plan.md](plan.md#suggestion-strip); the scheme handler that carries the request is in
@@ -18,6 +20,7 @@ Decisions and the alternatives rejected are in [decisions.md](decisions.md#compl
 
 | Constant | Value | When hit |
 |---|---|---|
+| completion enabled | effective budget 53 MiB and up; off below | `welcome.daemon.completion: false`; `/complete` returns an empty list without constructing completion |
 | request body | 4 KiB | `413 too_large` |
 | requests in flight | 4 | `503 busy` at once |
 | chips per response | 20; history at most 3 of them | the rest are dropped |

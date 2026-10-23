@@ -36,8 +36,6 @@ use crate::proto::{
 
 /// The subprotocol the daemon answers; the token rides beside it.
 const PROTOCOL: &str = "tether.v1";
-/// Sockets at once, counted from the upgrade, before `hello`.
-pub(super) const MAX_CONNS: usize = 3;
 /// Paste files waiting for tmux, daemon-wide: they sit on tmpfs, in tether's memory.
 pub(super) const PASTE_SLOTS: usize = 4;
 /// Larger inbound messages close the socket with 4009.
@@ -70,7 +68,7 @@ pub(super) async fn upgrade(
     match ctx.conns.clone().try_acquire_owned() {
         Ok(slot) => configure(upgrade).on_upgrade(move |socket| run(socket, ctx, device, slot)),
         Err(_) => {
-            warn!(device = %device.name, "over the connection cap ({MAX_CONNS})");
+            warn!(device = %device.name, "over the connection cap");
             refuse(upgrade, CloseCode::OverCap)
         }
     }
@@ -114,6 +112,7 @@ async fn run(socket: WebSocket, ctx: Arc<Ctx>, device: Device, _slot: OwnedSemap
                     protocol,
                     daemon: DaemonInfo {
                         version: VERSION.to_owned(),
+                        completion: ctx.app.caps.completion,
                     },
                     host: ctx.app.host.clone(),
                 };

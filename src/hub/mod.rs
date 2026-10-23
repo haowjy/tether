@@ -30,8 +30,6 @@ pub use state::{Effect, Input, State};
 
 /// Watches per connection; a watch past it ends at once.
 pub const MAX_WATCHES: usize = 2;
-/// Control clients alive at once, lingering ones closed first to make room.
-pub const MAX_CLIENTS: usize = 3;
 /// How long a control client stays attached once it owns no watched window.
 pub const LINGER: Duration = Duration::from_secs(15);
 /// User requests are refused with `busy` once a control client has this many groups
@@ -213,9 +211,9 @@ impl HubHandle {
 
 /// Starts the hub task. It runs until every `HubHandle` is dropped or one calls
 /// `stop`, then closes its control clients. Must be called inside the tokio runtime.
-pub fn spawn(endpoints: Endpoints) -> (HubHandle, JoinHandle<()>) {
+pub fn spawn(endpoints: Endpoints, max_clients: usize) -> (HubHandle, JoinHandle<()>) {
     let (inbox, receiver) = mpsc::channel(INBOX);
-    let state = State::new(endpoints, std::time::Instant::now());
+    let state = State::new(endpoints, std::time::Instant::now(), max_clients);
     let task = tokio::spawn(run::run(state, receiver, inbox.downgrade()));
     (HubHandle { inbox }, task)
 }

@@ -12,7 +12,7 @@ use super::names::cut;
 use super::state::{
     Client, ClientPhase, Effect, Exit, ExitCheck, Locate, Phase, State, WinKey, Window,
 };
-use super::{CRASH_WINDOW, MAX_CLIENTS, RESPAWN_DELAY};
+use super::{CRASH_WINDOW, RESPAWN_DELAY};
 use crate::proto::{ServerMsg, WatchEndReason};
 use crate::tmux::{
     ClientId, Found, PaneId, Reply, ServerInstance, Session, SessionId, Tag, TmuxError,
@@ -139,8 +139,8 @@ impl State {
             None => match self.spawn_client(key.endpoint, found.session, None) {
                 Some(client) => client,
                 None => {
-                    let message = format!("too many tmux sessions open ({MAX_CLIENTS})");
-                    return self.end_window(key, WatchEndReason::Error, Some(message));
+                    let message = self.session_limit_message();
+                    return self.end_window(key, WatchEndReason::Limit, Some(message));
                 }
             },
         };
@@ -173,8 +173,8 @@ impl State {
                 match self.spawn_client(exit.endpoint, exit.session, respawn) {
                     Some(client) => client,
                     None => {
-                        let message = format!("too many tmux sessions open ({MAX_CLIENTS})");
-                        return self.end_window(key, WatchEndReason::Error, Some(message));
+                        let message = self.session_limit_message();
+                        return self.end_window(key, WatchEndReason::Limit, Some(message));
                     }
                 }
             }
@@ -286,7 +286,7 @@ impl State {
     /// Room under the control-client cap, closing the client that has lingered
     /// longest if needed.
     pub(super) fn make_room(&mut self) -> bool {
-        if self.clients.len() < MAX_CLIENTS {
+        if self.clients.len() < self.max_clients {
             return true;
         }
         let lingering = self
@@ -301,6 +301,33 @@ impl State {
             }
             None => false,
         }
+    }
+
+    /// Names the live session slots using tmux's stable `$N` ids. The control-mode
+    /// client tracks ids, not display names, and this path must not issue a one-shot.
+    pub(super) fn session_limit_message(&self) -> String {
+        let sessions = self
+            .clients
+            .values()
+            .map(|client| {
+                format!(
+                    "{}:{}",
+                    self.endpoints[client.endpoint].name, client.session
+                )
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let noun = if self.max_clients == 1 {
+            "session"
+        } else {
+            "sessions"
+        };
+        cut(format!(
+            "tether allows {} tmux {noun} at a time; open now: {sessions}",
+            self.max_clients
+        ))
     }
 
     /// The hub ends a control client: no session check follows.

@@ -30,6 +30,8 @@ pub enum HttpError {
     NotFound,
     NotADirectory,
     NotAFile,
+    /// Upload target is backed by tmpfs or ramfs.
+    MemoryBacked,
     ConfigReadOnly,
     TooLarge,
     BadRange,

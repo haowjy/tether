@@ -52,7 +52,27 @@ pub fn open_dir(file: &ConfigFile, home: &Path) -> Result<Opened, FsError> {
     let roots = Roots::resolve(&config, home)?;
     let dir = roots.uploads.canonical.as_deref().and_then(Path::to_str);
     let dir = dir.ok_or(FsError::NotADirectory)?;
-    open(&roots.scope(), dir, Want::Dir)
+    let opened = open(&roots.scope(), dir, Want::Dir)?;
+    if memory_backed(&opened.file)? {
+        return Err(FsError::MemoryBacked);
+    }
+    Ok(opened)
+}
+
+/// Upload pages would remain charged to tether while the file lives on tmpfs/ramfs.
+#[cfg(target_os = "linux")]
+fn memory_backed(dir: &File) -> Result<bool, FsError> {
+    const TMPFS_MAGIC: u32 = 0x0102_1994;
+    const RAMFS_MAGIC: u32 = 0x8584_58f6;
+
+    let stats = rustix::fs::fstatfs(dir).map_err(|error| FsError::io(error.into()))?;
+    let kind = stats.f_type as u32;
+    Ok(kind == TMPFS_MAGIC || kind == RAMFS_MAGIC)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn memory_backed(_dir: &File) -> Result<bool, FsError> {
+    Ok(false)
 }
 
 /// Writes `body` into a part file in `dir` and renames it to its final name. `limit` is

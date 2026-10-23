@@ -1,17 +1,18 @@
 #![forbid(unsafe_code)]
 
 use std::error::Error;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use clap::{Parser, Subcommand};
+use socket2::{Domain, Protocol, Socket, Type};
 use tether::auth::identity::{Node, ServeConfig};
 use tether::auth::{Auth, Store};
 use tether::blocking::{BLOCKING_THREADS, Lanes};
 use tether::complete::{self, Environment};
-use tether::config::{self, Config, ConfigFile};
+use tether::config::{self, Config, ConfigError, ConfigFile};
 use tether::fs;
 use tether::http::{self, App};
 use tether::hub::{self, Endpoints};
@@ -27,6 +28,8 @@ type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 
 /// How long shutdown waits for the hub to close its control clients.
 const HUB_WAIT: Duration = Duration::from_secs(2);
+/// TCP newcomers held by the kernel while the bounded HTTP accept loop is full.
+const HTTP_BACKLOG: i32 = 128;
 
 /// Phone-first client for tmux sessions on a dev server.
 #[derive(Parser)]
@@ -82,7 +85,15 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(cause) => {
             eprintln!("tether: {cause}");
-            ExitCode::FAILURE
+            if cause.downcast_ref::<ConfigError>().is_some()
+                || cause
+                    .downcast_ref::<tether::budget::BelowMinimum>()
+                    .is_some()
+            {
+                ExitCode::from(78)
+            } else {
+                ExitCode::FAILURE
+            }
         }
     }
 }
@@ -102,6 +113,7 @@ fn serve(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<(
 }
 
 async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<()> {
+    let budget = tether::budget::resolve(config.memory_budget_mib)?;
     let store = Store::open(config::state_dir()?)?;
     let home = config::home()?;
     let host_id = store.host_id()?;
@@ -139,9 +151,8 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         .unwrap_or_else(|| node.machine_name().to_owned());
     let mut shutdown = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
-        .await
-        .map_err(|cause| format!("listening on 127.0.0.1:{port}: {cause}"))?;
+    let listener =
+        tcp_listener(port).map_err(|cause| format!("listening on 127.0.0.1:{port}: {cause}"))?;
     // Only once the port is ours: a second daemon started by mistake must not delete
     // the running one's pastes.
     let lanes = Lanes::default();
@@ -154,9 +165,12 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
     start_file_api(&config, &home, &lanes).await;
 
     let endpoint = config.endpoint();
-    let (hub, mut hub_task) = hub::spawn(Endpoints {
-        main: endpoint.clone(),
-    });
+    let (hub, mut hub_task) = hub::spawn(
+        Endpoints {
+            main: endpoint.clone(),
+        },
+        budget.caps().control_clients,
+    );
     let hub_stop = hub.clone();
     let app = App {
         auth: Auth::new(store, allow.clone(), lanes.auth.clone()),
@@ -165,6 +179,7 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         paste_dir,
         config: file,
         complete: complete::Settings::new(&config.complete, Environment::current(&home)),
+        caps: budget.caps(),
         home,
         lanes,
     };
@@ -194,6 +209,17 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         Ok(Err(cause)) => Err(format!("the hub ended: {cause}").into()),
         Err(_) => Err("the hub didn't end within 2 s".into()),
     }
+}
+
+/// `TcpListener::bind` uses the platform's maximum backlog; keep the TCP bound at
+/// 128 until browser auth replaces it with the Unix listener.
+fn tcp_listener(port: u16) -> std::io::Result<TcpListener> {
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_reuse_address(true)?;
+    socket.bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, port)).into())?;
+    socket.listen(HTTP_BACKLOG)?;
+    socket.set_nonblocking(true)?;
+    TcpListener::from_std(socket.into())
 }
 
 /// The paste directory, 0700 and emptied: files left by a daemon that died are no

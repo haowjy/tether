@@ -13,6 +13,11 @@ A new type the web uses goes in `declarations()`; the test fails if a message or
 refers to one that is missing. The `/auth/*` bodies (`auth.rs`) have no TypeScript:
 Swift mirrors them, and `ErrorBody`, by hand.
 
+`welcome.daemon.completion` reports the startup tier's completion flag,
+`watchEnded.reason` includes `limit` for a full control-client cap, and `HttpError`
+includes `memory_backed` for tmpfs/ramfs upload refusal. All three are generated to
+TypeScript from the Rust protocol types.
+
 Changing a field's meaning, or removing or renaming a field or message, needs a
 `PROTOCOL_VERSION` bump; optional fields and new message types don't. The binary frames
 are checked against `tests/fixtures/proto/frames.json`, which `web/proto/frames.ts`

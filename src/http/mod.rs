@@ -6,12 +6,9 @@
 //! type. Every accepted socket gets 64 KiB kernel buffers (fs.md "Constants"): each is
 //! the loopback hop from `tailscale serve`, and the unit is charged for its buffers.
 
-use std::future::{Future, IntoFuture as _};
-use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
 use axum::extract::ws::WebSocketUpgrade;
@@ -19,15 +16,12 @@ use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts as _, Reques
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::{get, post};
-use axum::serve::ListenerExt as _;
-use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, watch};
-use tokio::time::{Instant, timeout_at};
-use tracing::{debug, error, warn};
+use tracing::{error, warn};
 
 use crate::auth::{Auth, AuthError};
 use crate::blocking::Lanes;
-use crate::complete::Completer;
+use crate::budget::Caps;
 use crate::config::ConfigFile;
 use crate::fs::Slots;
 use crate::hub::HubHandle;
@@ -38,13 +32,11 @@ mod complete;
 mod enroll;
 mod error;
 mod fs;
+mod server;
 mod ws;
 
-/// How long shutdown waits for requests to finish and sockets to take their 4004
-/// close: a stalled raw response mustn't hold it.
-const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
-/// `SO_SNDBUF` and `SO_RCVBUF` on every accepted socket; Linux doubles them.
-const SOCKET_BUFFER: usize = 64 * 1024;
+pub use server::serve;
+
 /// `POST /auth/enroll` bodies are a code and a device name.
 const ENROLL_BODY: usize = 4 * 1024;
 
@@ -62,6 +54,8 @@ pub struct App {
     pub home: PathBuf,
     /// `[complete]` and what completion reads of the environment.
     pub complete: crate::complete::Settings,
+    /// Startup-selected caps from the effective memory budget.
+    pub caps: Caps,
     /// The runtime's blocking threads: every blocking call runs on one of these.
     pub lanes: Lanes,
 }
@@ -69,13 +63,16 @@ pub struct App {
 /// `App` plus the daemon-wide limits the connections share.
 struct Ctx {
     app: App,
-    /// Sockets from the upgrade (daemon-core.md §6).
+    /// Accepted HTTP connections, including sockets transferred to WebSockets.
+    accepts: Arc<Semaphore>,
+    /// WebSockets from the upgrade (daemon-core.md §6).
     conns: Arc<Semaphore>,
     /// Paste files waiting for tmux, daemon-wide.
     pastes: Arc<Semaphore>,
     /// The file API's lane, scans, raw responses and uploads.
     fs: Slots,
-    complete: Completer,
+    /// Absent when the selected memory tier disables completion.
+    complete: Option<crate::complete::Completer>,
     /// `/complete` requests in flight.
     completing: Arc<Semaphore>,
     /// Becomes true on shutdown: every socket closes with 4004.
@@ -85,67 +82,6 @@ struct Ctx {
 /// The Tailscale login of the request, set by the Tailscale check.
 #[derive(Debug, Clone)]
 struct Login(String);
-
-/// Serves `listener` until `signal` resolves, then closes every socket with 4004 and
-/// waits briefly for requests and sockets to finish.
-pub async fn serve(
-    listener: TcpListener,
-    app: App,
-    signal: impl Future<Output = ()> + Send + 'static,
-) -> io::Result<()> {
-    let (stop, shutdown) = watch::channel(false);
-    let mut stopping = shutdown.clone();
-    let completer = Completer::new(app.complete.clone(), &app.lanes);
-    let fs = Slots::new(app.lanes.fs.clone());
-    let ctx = Arc::new(Ctx {
-        app,
-        conns: Arc::new(Semaphore::new(ws::MAX_CONNS)),
-        pastes: Arc::new(Semaphore::new(ws::PASTE_SLOTS)),
-        fs,
-        complete: completer,
-        completing: Arc::new(Semaphore::new(complete::IN_FLIGHT)),
-        shutdown,
-    });
-    let listener = listener.tap_io(|socket| {
-        if let Err(cause) = small_buffers(socket) {
-            debug!(%cause, "can't size a socket's buffers");
-        }
-    });
-    let service = router(ctx.clone()).into_make_service_with_connect_info::<SocketAddr>();
-    let served = axum::serve(listener, service)
-        .with_graceful_shutdown(async move {
-            signal.await;
-            // Upgraded sockets are no longer the server's: they close on this.
-            let _ = stop.send(true);
-        })
-        .into_future();
-    let mut served = std::pin::pin!(served);
-    let ended = tokio::select! {
-        ended = &mut served => Some(ended),
-        () = ws::stopped(&mut stopping) => None,
-    };
-    let deadline = Instant::now() + SHUTDOWN_WAIT;
-    let ended = match ended {
-        Some(ended) => ended,
-        // Graceful shutdown waits for every response, a stalled one too.
-        None => timeout_at(deadline, served.as_mut())
-            .await
-            .unwrap_or_else(|_| {
-                warn!("requests still open at shutdown: dropped");
-                Ok(())
-            }),
-    };
-    // Each socket holds a connection slot until its task ends.
-    let all = u32::try_from(ws::MAX_CONNS).unwrap_or(u32::MAX);
-    let _ = timeout_at(deadline, ctx.conns.acquire_many(all)).await;
-    ended
-}
-
-fn small_buffers(socket: &TcpStream) -> io::Result<()> {
-    rustix::net::sockopt::set_socket_send_buffer_size(socket, SOCKET_BUFFER)?;
-    rustix::net::sockopt::set_socket_recv_buffer_size(socket, SOCKET_BUFFER)?;
-    Ok(())
-}
 
 fn router(ctx: Arc<Ctx>) -> Router {
     let devices = Router::new()

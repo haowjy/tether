@@ -24,6 +24,7 @@ are ignored.
 ```toml
 port = 7850              # tether listens on 127.0.0.1:7850
 name = "devbox"          # the host's name in the app; default: the MagicDNS name
+memory_budget_mib = 72   # default memory budget; minimum 42; sets the daemon's caps
 
 [tmux]
 program = "tmux"         # an absolute path if the unit's PATH doesn't find it
@@ -119,6 +120,76 @@ which the unit runs. The prebuilt Linux release binaries are static musl and ign
 so under the unit they may keep more memory after the five-minute drop; the effect is
 unmeasured.
 
+## Tune the resource limits
+
+On Linux, the unit caps tether's memory at 72 MiB and CPU at half a core. If you
+already installed an older unit, copy the current `contrib/tether.service` again so it
+gets `MemoryMax=72M`, no `MemoryHigh`, `CPUQuota=50%`,
+`CPUQuotaPeriodSec=10ms`, and `RestartPreventExitStatus=78`:
+
+```bash
+cp contrib/tether.service ~/.config/systemd/user/tether.service
+systemctl --user daemon-reload
+```
+
+The `memory_budget_mib` config value selects the counts at the next restart:
+
+| Effective budget | tmux sessions at once | sockets | completion |
+|---|---:|---:|---|
+| 72 MiB and up (default) | 3 | 3 | on |
+| 64–71 MiB | 2 | 3 | on |
+| 58–63 MiB | 1 | 3 | on |
+| 53–57 MiB | 1 | 2 | on |
+| 42–52 MiB | 1 | 2 | off |
+
+To set 48 MiB, keep the unit limit and config aligned:
+
+```bash
+systemctl --user edit tether
+```
+
+```ini
+[Service]
+MemoryMax=48M
+```
+
+Do not set `MemoryHigh`: below what tether holds at its caps it stalls allocations for
+seconds. Then set `memory_budget_mib = 48` in `config.toml` and restart:
+
+```bash
+systemctl --user restart tether
+journalctl --user -u tether -b | grep 'memory budget'
+```
+
+At startup tether uses the lower of the configured budget and its cgroup v2
+`memory.max`. Lowering `MemoryMax` alone is safe after tether restarts; changing it with
+`systemctl --user set-property` takes effect immediately but does not resize the caps,
+so restart after it too. Raising the limit requires raising both values. Values above
+72 keep the highest tier. Below 42 MiB, tether exits with status 78 instead of
+restarting.
+
+The CPU limit is `CPUQuota=50%`, half of one core, metered every 10 ms. A throttled
+keystroke waits no more than one period. To give tether a quarter core, use an override:
+
+```ini
+[Service]
+CPUQuota=25%
+```
+
+Check the unit and delegated controllers:
+
+```bash
+systemctl --user show tether -p MemoryMax -p MemoryHigh -p CPUQuotaPerSecUSec -p CPUQuotaPeriodUSec
+cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers
+```
+
+Do not set `MemoryHigh`; it should be `infinity` because the unit does not set it. The
+second command must list `cpu` and `memory` for `CPUQuota` and `MemoryMax` to be
+in-force. If they are absent, the user manager has not delegated those cgroup v2
+controllers; on a cgroup v1 or hybrid host, the unit's hard caps are not enforced. On
+macOS there is no cgroup or hard memory/CPU cap; if run there, `memory_budget_mib` only
+sizes the counts.
+
 ## Enrol the phone
 
 ```bash
@@ -148,3 +219,10 @@ app: don't copy it to another machine.
 | `401 auth_required`, or the socket closes with 4401 | the device was removed: enrol it again |
 | `503 auth_unavailable`, or the socket closes with 4503 | `auth.toml` can't be read, usually a typo from a hand edit; the log names the line. Fix the file: the app keeps its token and retries, so nothing needs re-enrolling |
 | the app shows no sessions | no tmux server on the configured socket |
+| tether exits at start with status 78 | configuration is invalid or the effective budget is below 42 MiB; fix the journal's named cause, then start tether again |
+| the journal says "no cgroup memory limit is in force" | the user manager lacks the memory controller or the host uses cgroup v1/hybrid; `MemoryMax` isn't enforced |
+| the journal warns that `MemoryHigh` is below what tether holds at its caps | remove `MemoryHigh` from the unit and restart; don't set a soft limit below the unreclaimable ceiling |
+| a tab says "Session limit" | the message names tmux session IDs holding the control-client slots; close tabs on those sessions, on any device, or raise the budget, then tap to retry |
+| "Too many connections to <host>" | browser tabs and apps on this host fill its socket cap; retry is automatic and a stale connection clears within 25 s |
+| no suggestion strip and startup says completion is off | the effective memory budget is below 53 MiB |
+| an upload fails with `memory_backed` | the destination is on tmpfs or ramfs (often `/tmp`); choose a directory on disk |

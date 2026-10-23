@@ -323,6 +323,9 @@ the cap against `Content-Length` up front, when sent, and against the running co
    Dir)` on it, so a directory that didn't exist when the roots were read still
    counts. An `uploads_dir` that can't be resolved to a directory (neither absolute
    nor `~/`, or not a directory) answers `409 not_a_directory`.
+   On Linux, `fstatfs` on the opened directory descriptor rejects tmpfs and ramfs with
+   `409 memory_backed` before a `.part` file is created. On macOS there is no cgroup
+   memory limit, so this filesystem-type refusal is not applied.
 3. Name the file `YYYYMMDD-HHMMSSZ-xxxx.<ext>`: UTC (no time-zone crate), 4 random
    base32 characters, and the extension of `name`, lowercased, if it is 1 to 8 ASCII
    alphanumerics, else `bin`. Nothing else of `name` is used, so it can't carry a
@@ -371,6 +374,7 @@ rejections.
 | 403 | `denied` | `EACCES` or `EPERM` |
 | 404 | `not_found` | `ENOENT`, `ENOTDIR` while resolving, `ELOOP` at open |
 | 409 | `not_a_directory`, `not_a_file` | the wrong kind for the route; a FIFO, socket or device is `not_a_file`; an upload when `uploads_dir` isn't an absolute or `~/` path or isn't a directory |
+| 409 | `memory_backed` | on Linux, an upload destination directory on tmpfs or ramfs; its pages would remain charged to tether's unit while the file exists |
 | 409 | `config_read_only` | `config.toml` (or its link target) can't be written: `EROFS`, `EACCES`; or `config.toml`, its directory or one above it is a symlink to nothing |
 | 413 | `too_large` | an upload over the cap |
 | 416 | `bad_range` | a range starting past the end |
@@ -405,12 +409,13 @@ raw stream then ends in 2.0 s with exit 0.
 
 That row, and a row for kernel socket buffers that the socket-buffer constant bounds,
 join the daemon's ceiling in
-[daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling). Page cache is
-charged to the unit too. Clean pages are reclaimable, so they don't count toward the
-ceiling, but they push the unit toward `MemoryHigh`, where every task in it is
-throttled; the `DONTNEED` calls above keep the file API's share small. An upload's
-dirty pages are the exception: they can't be reclaimed until written, which is why
-they have a row and why the flush interval is 2 MiB, not larger.
+[daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling). HTTP/1 buffers are
+bounded to 16 KiB each by its accept loop. Page cache is charged to the unit too. Clean
+pages are reclaimable, so they don't count toward the unreclaimable ceiling; at
+`MemoryMax` the kernel reclaims them before it kills. The unit sets no `MemoryHigh`,
+since a lower soft limit would stall allocation. The `DONTNEED` calls above keep the
+file API's share small. An upload's dirty pages can't be reclaimed until written,
+which is why they have a row and why the flush interval is 2 MiB, not larger.
 
 ## Logging
 

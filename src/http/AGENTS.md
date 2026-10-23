@@ -1,8 +1,9 @@
 # http
 
 The daemon's HTTP surface: axum on `127.0.0.1` only, published by `tailscale serve`.
-`mod.rs` builds the router and both auth layers and serves until shutdown; `error.rs`
-holds `Refusal`, every HTTP error's status, body and headers; `enroll.rs` holds
+`mod.rs` builds the router and both auth layers; `server.rs` owns the bounded TCP
+accept loop and hyper HTTP/1 connections through shutdown. `error.rs` holds `Refusal`,
+every HTTP error's status, body and headers; `enroll.rs` holds
 `/auth/info` and `/auth/enroll`; `fs.rs` the thin `/fs/*` handlers over
 [`src/fs/`](../fs/AGENTS.md); `complete.rs` the `/complete` handler over
 [`src/complete/`](../complete/AGENTS.md); `ws.rs` runs one task per WebSocket, which
@@ -30,11 +31,12 @@ Rules the code relies on, which are easy to break:
 - The write future holds no state: the frame and the unflushed charges live in
   `Conn`, so `select!` can drop the future at any await. A write that kept its frame
   inside the future would lose the frame and its charge when dropped.
-- The connection's own limits (sockets, inbound size, paste size and slots, the hello
-  deadline, idle and re-check) are constants at the top of `ws.rs`; their values come
-  from [daemon-core.md §6](../../docs/design/daemon-core.md).
-- Every accepted socket gets 64 KiB `SO_SNDBUF`/`SO_RCVBUF` (`tap_io` in `serve`): the
-  unit is charged for kernel buffers, which RSS doesn't show.
+- The connection's socket cap comes from `App::caps`; inbound size, paste size and
+  slots, the hello deadline, idle and re-check remain constants at the top of `ws.rs`.
+  Their values come from [daemon-core.md §6](../../docs/design/daemon-core.md).
+- `server.rs` takes one of 64 permits before each accept, sets 64 KiB
+  `SO_SNDBUF`/`SO_RCVBUF`, and stores the permit in the I/O wrapper so an upgrade keeps
+  it until the WebSocket closes. Hyper's read/write buffers are 16 KiB.
 - Shutdown is bounded: graceful shutdown waits for every response, a stalled raw one
   too, so `serve` gives up after `SHUTDOWN_WAIT`. A connection left running keeps its
   `Arc<Ctx>`, and with it a `HubHandle`; `main` ends the hub with `HubHandle::stop`

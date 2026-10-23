@@ -22,13 +22,22 @@ Restart=on-failure
 RestartSec=2
 RestartSteps=5
 RestartMaxDelaySec=60
+# 78: tether's configuration is invalid (config.toml, $HOME, or a memory budget below
+# 42 MiB). A restart can't fix it.
+RestartPreventExitStatus=78
 
-MemoryHigh=48M
-MemoryMax=64M
+# MemoryMax is the memory budget: keep it equal to memory_budget_mib in config.toml
+# (default 72). tether reads it at startup and sizes its caps to the lower of the two.
+# Don't add MemoryHigh: below what tether holds at its caps, it stalls allocations.
+MemoryMax=72M
 # glibc raises its mmap threshold after the first large free, so later completion
 # indexes would come from the heap and stay resident after the idle drop. Pinned,
 # every allocation over 128 KiB is its own mapping, returned on free (complete.md).
 Environment=GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072
+# Half a core at most, metered every 10 ms, so a keystroke waits at most one period
+# when tether is throttled. Sustained load is small; only bursts reach the cap.
+CPUQuota=50%
+CPUQuotaPeriodSec=10ms
 CPUWeight=20
 Nice=10
 IOWeight=10

@@ -5,11 +5,11 @@ version section on release.
 
 ## [Unreleased]
 
-- History requests report tmux's true clamped line numbers, stop cleanly above retained
-  history, and detect a changed history range around the capture.
-- Preserve soft wraps across snapshots and scrollback for copy: snapshot restore rebuilds
-  xterm's wrap state in the daemon, and history chunks carry a packed wrap map that the
-  client uses to join wrapped rows.
+- Add a startup memory budget (`memory_budget_mib`, default 72 MiB) that scales tmux
+  session/socket caps and completion, plus a half-core CPU cap. Re-copy
+  `contrib/tether.service` to apply `MemoryMax=72M`, no `MemoryHigh`, the 10 ms CPU
+  quota period and exit-78 restart prevention. Session-limit messages name the tmux
+  session IDs holding the slots; uploads to tmpfs/ramfs are refused.
 
 - Keep Meridian work notes and knowledge base in repo-local paths for cross-machine handoffs.
 
@@ -117,6 +117,11 @@ version section on release.
   aren't on screen: the daemon sends `sessionsChanged` when tmux closes a window no
   tab is watching (once per burst, so killing a session sends one), and the web
   re-lists.
+- History requests report tmux's true clamped line numbers, stop cleanly above retained
+  history, and detect a changed history range around the capture.
+- Preserve soft wraps across snapshots and scrollback for copy: snapshot restore rebuilds
+  xterm's wrap state in the daemon, and history chunks carry a packed wrap map that the
+  client uses to join wrapped rows.
 
 ## [0.0.1] - 2026-10-22
 

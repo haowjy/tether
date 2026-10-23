@@ -25,6 +25,10 @@ Rules the code relies on, which are easy to break:
   invalidated answers `Released`, which frees its slot.
 - Nothing is sent to a control client before `Ready`, and maintenance never gets
   `busy`: reconcile waits for room instead.
+- `State::new` receives the startup-selected control-client cap. If all slots are
+  occupied and none is lingering, the watch ends with `reason: "limit"`; the message
+  lists the sessions by endpoint and tmux `$N` id. This path must not run a one-shot
+  just to render the refusal.
 - `State` owns every lifecycle; `run.rs` only mirrors it. Whatever removes a
   connection or a started control client from `State` emits `DropConn` or
   `CloseClient`, however it ended, or the executor's channel for it leaks.

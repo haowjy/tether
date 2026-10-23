@@ -901,7 +901,8 @@ that left it has already returned the attempts' reservations.) A `Paste` the hub
   one exists, two briefly when switching sessions.
 - **Spawned** when a Locate names a session without one. At the cap (§6) the oldest
   lingering client closes first; with none lingering, the window's watches end with
-  `watchEnded { error }` ("too many sessions") and the window is dropped.
+  `watchEnded { limit }` naming the control-client slots by endpoint and tmux `$N`
+  session ID, and the window is dropped.
 - **`Ready`** requires the endpoint's known server instance, or records it when none
   is known; a different one means the server restarted. A window whose owner is still
   starting waits for it, and if that client exits first, the window locates again.
@@ -1138,7 +1139,8 @@ keeps its token and retries with the usual backoff
 - **The client speaks one version; the daemon holds a range,**
   `MIN_PROTOCOL..=PROTOCOL_VERSION` (both 1 now). `hello { protocol, client: { kind:
   "ios" | "web", build } }`. In range: `welcome { protocol, daemon: { version }, host:
-  { id, name } }`. Out of range: `incompatible { min, max, daemonVersion }`, close
+  { id, name } }`; `daemon.completion` says whether this tier offers suggestions. Out
+  of range: `incompatible { min, max, daemonVersion }`, close
   4001; the app marks that host "update the app" (below `min`) or "update tether on
   <host>" (above `max`). `GET /auth/info` reports the same range.
 - **Bump** for any change an older peer would misread (removed or renamed field or
@@ -1190,7 +1192,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `welcome`, `incompatible` | §5.2 | |
 | `pong` | `t` | |
 | `watching` | `watch, window, session: SessionRef, pane, cwd: string \| null` | bound; re-sent when session, pane or cwd changes. `cwd` is null until tmux reports it |
-| `watchEnded` | `watch, reason: detached \| error, message?` | the only way a watch ends from the daemon's side, apart from closure broadcasts; retryable: a tap sends a new `watch` |
+| `watchEnded` | `watch, reason: detached \| error \| limit, message?` | the only way a watch ends from the daemon's side, apart from closure broadcasts; `limit` names the control-client slots; retryable: a tap sends a new `watch` |
 | `windowClosed` | `window` | the window is gone: close its tabs. Sent only for a window that has a watch: the hub tracks a window only while one is on it (§4.2), so a tab that isn't on screen gets none. Its window's close reaches the web as `sessionsChanged` (below), and the web prunes such tabs against the `sessions` listing that prompts ([plan.md](plan.md#reconnect)) |
 | `sessionClosed` | `session` | the session is gone; tabs close only on `windowClosed`, since windows move |
 | `serverExited` | `server` | closes every tab on that server |
@@ -1249,14 +1251,80 @@ hand-coded on each side with golden byte fixtures in `tests/fixtures/proto/`:
 ## 6. Limits and the memory ceiling
 
 Every daemon constant lives here, except the file API's, which are in
-[fs.md](fs.md#constants), and completion's, in [complete.md](complete.md#constants);
-other documents link to this table.
+[fs.md](fs.md#constants), and completion's, in [complete.md](complete.md#constants).
+Most are fixed. Three scale with `memory_budget_mib`; they are selected once at startup
+from the effective budget. Every memory figure is in MiB (2²⁰ bytes).
+
+### 6.1 The memory budget
+
+`memory_budget_mib` in `config.toml` ([plan.md](plan.md#config)), default 72, is the
+most memory tether's unit may hold that the kernel can't reclaim. At startup `main`
+reads it, then reads cgroup v2 as follows:
+
+1. Find the cgroup2 mount in `/proc/self/mountinfo` (filesystem type `cgroup2`),
+   including its mount root and mount point.
+2. Take the path from the `0::` line of `/proc/self/cgroup`, relative to that mount's
+   root.
+3. Walk from that directory up to the mount point, reading `memory.max` and
+   `memory.high` at each level. The effective unit limit is the lowest `memory.max`
+   that isn't `max`; the warning threshold is the lowest `memory.high` that isn't
+   `max`.
+4. A missing or unreadable limit file means no limit at that level. A missing mount,
+   `0::` line or unparsable file means no cgroup limit at all, with a warning naming
+   the file. Never refuse to start because `/proc` or `/sys` looks odd.
+5. Floor `memory.max` to whole MiB.
+
+The **effective budget** is the lower of `memory_budget_mib` and the unit limit. With no
+cgroup v2 limit, it is the configured budget. Linux under systemd warns if no cgroup
+limit is found, since this is how cgroup v1, hybrid hosts and hosts without memory
+controller delegation silently leave `MemoryMax` unenforced. A standalone run and
+macOS do not warn; macOS has no cgroup and no hard memory cap, so the budget only sizes
+the counts.
+
+- Below 42 MiB, startup logs the effective/config/unit values and exits 78. Every
+  `ConfigError` also exits 78; a restart cannot fix invalid configuration.
+- If the unit limit is below the configured budget, a warning names both and the unit
+  limit governs. If it is above the configured budget, info says the config value
+  governs. A `memory.high` below the effective budget less 4 MiB warns that it must be
+  removed: reclaim cannot keep the unit below that soft limit at its caps.
+- The startup info line names the effective budget, tier, control-client cap, socket
+  cap and completion state. The budget is read once. `systemctl --user set-property`
+  changes the cgroup immediately but the selected caps only change after restart.
+  `memory_budget_mib` is not written by the Settings sheet.
+
+The effective budget picks one tier; the boundaries intentionally remain round values.
+Each tier's unreclaimable ceiling plus 4 MiB of headroom fits the lowest budget in its
+range. Above 72 nothing more opens.
+
+| Effective budget, MiB | Control clients | Connections (sockets) | Completion |
+|---|---:|---:|---|
+| 72 and up (default) | 3 | 3 | on |
+| 64–71 | 2 | 3 | on |
+| 58–63 | 1 | 3 | on |
+| 53–57 | 1 | 2 | on |
+| 42–52 | 1 | 2 | off |
+
+Only these three user-visible counts scale. Per-message and per-frame bounds remain
+protocol/security limits. Credit and capture reservation must still hold the largest
+snapshot. Small slots (capture 2, paste 4, raw responses 2), one-shots, scans and uploads
+(1 each), and watches per connection (2) stay fixed; together they cost under 6 MiB.
+Blocking lanes and `TasksMax` bound threads, while deadlines and coalescing bound time.
+Completion's constants stay unchanged when it is on; below 53 the service is not
+constructed, `welcome.daemon.completion` is false and a stray `/complete` returns
+`200 {"chips":[]}` without building suggestions. The tier table is in
+`src/budget.rs`; `Caps` has only the three fields above and hub/socket/completion limits
+take their values at construction.
+
+### 6.2 Limits
 
 | Limit | Value | When hit |
 |---|---|---|
-| connections, from the upgrade | 3 | close 4005 |
+| connections, from the upgrade | tier table: 3 by default; browser tabs, the PWA and native all count | close 4005 |
+| accepted connections, the HTTP backstop | 64, upgraded sockets included (§6.4) | stop accepting; the TCP listen backlog holds 128 newcomers |
+| hyper buffer per connection | 16 KiB, read and write each | a larger request head: 431 |
+| header-read and idle timeout | 100 s | connection closed |
 | watches per connection | 2 | `watchEnded { error }` |
-| control clients | 3, lingering ones closed first | `watchEnded { error }` |
+| control clients | tier table: 3 by default, for every tmux server tether attaches to (a scratch server's included, when scratch shells land); lingering ones closed first | `watchEnded { limit }` naming sessions holding the slots |
 | control-client linger | 15 s | |
 | groups in flight per control client | 32; user requests below 24 | user: `busy`; maintenance waits |
 | capture slots (snapshot, history) | 2 daemon-wide | history: `busy`; snapshot waits |
@@ -1279,8 +1347,8 @@ other documents link to this table.
 | crash respawn | after 1 s; a second crash in 60 s ends the watches | |
 | inbound WebSocket message | 512 KiB | close 4009 |
 | input / paste per message | 4 KiB / 256 KiB | `error { inputTooLarge }` |
-| paste slots (files awaiting tmux) | 4 daemon-wide | `error { busy }`, before writing |
-| completion: carapace, history, PATH, paths | [complete.md](complete.md#constants) | |
+| paste slots (files awaiting tmux) | 4, daemon-wide | `error { busy }`, before writing |
+| completion: carapace, history, PATH, paths | [complete.md](complete.md#constants); off below 53 MiB | off: `welcome.daemon.completion` is `false`; `/complete` returns `200 {"chips":[]}` |
 | history per request | 200 rows | clamped |
 | `hello` deadline | 10 s | close 4003 |
 | ping / idle timeout | every 10 s / 25 s silent | close 4000; the 10 s timer also re-checks auth (removed: 4401; unreadable file: 4503) |
@@ -1288,33 +1356,114 @@ other documents link to this table.
 | `pause-after` | 3 s | `Gap` → snapshot |
 | scratch sessions | 2 | `error { tooManySessions }` |
 
-**Memory ceiling**, with every item at its cap at once. Nothing grows with time.
+A control-client cap refusal is `watchEnded { reason: "limit", message }`. Its message
+names the cap and the tmux session IDs holding it; for example, `tether allows 1 tmux
+session at a time; open now: main:$2`. The control client stores IDs, not display names,
+and does not run a one-shot just to render the refusal. A lingering client doesn't hold
+a slot, since the next watch closes it. After tabs showing the named sessions close, a
+retry succeeds. `busy` remains the short-lived refusal; the socket cap keeps close code
+4005.
 
-| Item | Bound | MB |
-|---|---|---|
-| daemon: code, runtime, tasks | budget target | 5 |
-| control clients | 3 × 5.3 MB measured | 16 |
-| one-shot `tmux` | 1 × 4.9 MB measured | 5 |
-| completion: indexes, caches, a carapace launch, and the kernel slab its scans leave (carapace itself runs in its own scope) | [complete.md](complete.md#memory-cpu-and-threads) | 14 |
-| tmux chunks, pump → hub | 128 × 16 KiB | 2 |
-| reply bodies | large ones only in the 2 capture slots × 1 MiB | 2 |
-| payloads hub → socket: channel, outbox, frame being written | 3 connections × (2 MiB credit + 64 KiB overdraft) | 6.5 |
-| WebSocket writer's copy of the frame being written | 3 × 1 MiB | 3 |
-| inbound messages | 3 × (512 KiB + decoded copy) | 3 |
-| paste files on tmpfs | 4 slots × 256 KiB | 1 |
-| file API: a scan, raw responses, an upload (2 MiB of dirty pages between flushes included) | [fs.md](fs.md#limits-and-the-memory-ceiling) | 5 |
-| kernel socket buffers, charged to the unit | 2 × 128 KiB (`SO_SNDBUF`, `SO_RCVBUF`, [fs.md](fs.md#constants)) per socket with data queued: the 3 WebSockets, 2 raw responses, 1 upload, and a couple of JSON replies (the fs waiter cap keeps the rest idle) | 2 |
-| **ceiling** | | **~65** |
+### 6.3 The memory ceiling
 
-That is at the unit's `MemoryMax` ([plan.md](plan.md#resource-budget)), about 1 MB
-over it, and above its `MemoryHigh` of 48 MB, where systemd starts throttling the
-unit's tasks. The 2.4 MB of dentry and inode slab inside the completion row is
-reclaimable, so the kernel shrinks it before the unit would be killed. The
-[budget measurement](plan.md#resource-budget) checks the ceiling, reading
-the unit's `memory.peak` (which counts kernel buffers and page cache), not RSS. If it
-doesn't fit, lower the control-client cap first. The normal case, one control client
-and one watch, is about 11 MB, plus up to 14 MB of completion state while Jimmy types
-and for five minutes after (the slab is the part the idle drop doesn't free).
+With every in-scope item at its cap at once, in MiB. Nothing grows with time. Measured
+rows (control client, one-shot, completion, slab) were recorded in MB and are taken here
+as MiB, which overstates them by 5%. The static shell and whois rows are browser-auth
+work and are excluded from these ceilings; they are not in this listener.
+
+| Item | Bound | Per cap | Default |
+|---|---|---:|---:|
+| daemon: code, runtime, tasks | budget target | | 5 |
+| one-shot `tmux` | 1 × 4.9 measured | | 4.9 |
+| tmux chunks, pump → hub | 128 × 16 KiB | | 2 |
+| file API, fixed part: a scan, an upload (2 MiB of dirty pages between flushes included), a listing page | [fs.md](fs.md#limits-and-the-memory-ceiling), with 16 KiB hyper buffers | | 3.5 |
+| HTTP connections not upgraded | (64 permits − sockets) × (16 KiB read + 16 KiB write buffer + ~4 KiB state) | | 2.1 |
+| kernel socket buffers, fixed part: an upload and a couple of JSON replies | 3 × 256 KiB | | 0.75 |
+| reply bodies, in the capture slots | 2 × 1 MiB | | 2 |
+| paste files on tmpfs (`shmem`) | 4 × 256 KiB | | 1 |
+| raw responses: a 64 KiB chunk and its channel, kernel buffers | 2 × 0.5 | | 1 |
+| control clients | 5.3 measured each | 5.3 | 15.9 |
+| sockets: payloads hub → socket (2 MiB credit + 64 KiB overdraft), the writer's copy of a frame (1 MiB), an inbound message and its decoded copy (1 MiB), kernel buffers (256 KiB) | each | 4.31 | 12.9 |
+| completion, on: indexes, caches, a carapace launch | [complete.md](complete.md#memory-cpu-and-threads), less the slab | | 11.3 |
+| **unreclaimable ceiling** | | | **62.4** |
+| completion's dentry and inode slab (reclaimable) | measured | | 2.4 |
+| **ceiling** | | | **64.8** |
+
+By tier, the in-scope unreclaimable ceiling is 62.4 (72 and up), 57.1 (64–71), 51.8
+(58–63), 47.6 (53–57) and 36.3 (42–52). Each plus 4 MiB headroom fits the lowest
+budget in its range.
+
+**What has to fit.** The rule is held on the unreclaimable ceiling: it plus headroom
+must fit the effective budget, which is never above `MemoryMax`. The reclaimable rows
+can take the unit to `MemoryMax`, where the kernel reclaims clean file pages and
+reclaimable slab synchronously before it kills. The unit sets no `MemoryHigh`: below the
+unreclaimable ceiling, a soft limit can't be met by reclaim and instead sleeps every
+allocating task.
+
+One write could leave unreclaimable memory outside the rows: an upload to tmpfs or
+ramfs (`/tmp` on many distributions, `/dev/shm`, `$XDG_RUNTIME_DIR`), whose pages stay
+charged to the unit for as long as the file exists. The file API refuses these uploads
+with `409 memory_backed` ([fs.md](fs.md#errors)). Paste files are the one deliberate
+tmpfs write, bounded by their row.
+
+The [budget measurement](plan.md#resource-budget) checks each tier at its bottom: under
+load at every cap, sample `memory.stat` every 100 ms; the largest `anon + shmem +
+file_dirty + file_writeback + kernel + sock − slab_reclaimable`, divided by 2²⁰, must
+not exceed the computed unreclaimable ceiling, and `memory.events` must show no
+`oom_kill`. Record `memory.peak` beside it. On kernels before 5.18, replace
+`kernel − slab_reclaimable` with `kernel_stack + pagetables + percpu +
+slab_unreclaimable`. The tier claim is for the glibc build the unit runs
+(`%h/.cargo/bin/tether`); the musl release binaries are unmeasured.
+
+The normal case, one control client and one watch, is about 11 MiB, plus up to 14 MiB
+of completion state while typing and for five minutes after (the slab is the part the
+idle drop doesn't free).
+
+### 6.4 HTTP connections
+
+Each route caps its own concurrency and, when its waiters are full, answers at once:
+`503 busy` with `Retry-After: 1`, or close 4005 for a socket. Waiters are bounded by
+count, never a timer, except on the auth lane, whose waiters give up after its 10 s
+wait. A connection cap sits behind them as a backstop, sized above their sum so normal
+bursts and native reconnects do not queue behind a browser page load.
+
+| Route | Served at once | Waiting | When full |
+|---|---|---|---|
+| `/ws` | tier table: 3 sockets by default | — | close 4005 |
+| file API | 1 scan, 2 raw, 1 upload | 8 on the fs lane | `503 busy` at once |
+| `/complete` | 4 | — | `503 busy` at once |
+| auth routes, and each device route's credential read | the auth lane's 2 threads | a handful; a read takes milliseconds | `503 busy` after the lane's 10 s wait |
+
+The backstop is **64 accepted connections**, upgraded WebSockets included. Before browser
+auth replaces the loopback listener, TCP's listen backlog holds 128 newcomers; the
+backstop is above the current route caps and their waiters.
+
+**The accept loop.** `http::serve` owns its accept loop instead of calling `axum::serve`.
+A listener wrapper alone would not set hyper's buffer size: axum 0.8.9 builds each
+connection with hyper's defaults and no hook. The loop:
+
+- takes one of the **64 connection permits before each accept**. With none free it stops
+  accepting, and the kernel listen backlog holds newcomers. A permit lives in the
+  connection's I/O wrapper, which hyper transfers into an upgraded WebSocket, and is
+  freed only when that socket closes;
+- sizes each socket's kernel buffers with `small_buffers` before serving it;
+- inserts `ConnectInfo<SocketAddr>` into the request extensions on the current loopback
+  TCP listener; the later Unix-socket peer class is not part of this change;
+- serves HTTP/1.1 with hyper's `http1::Builder`, a Tokio timer, **16 KiB max buffers**
+  (read and write; an oversized request head gets 431), a **100 s header-read timeout**
+  and upgrade support for `/ws`.
+
+The header-read timeout also closes idle keep-alive connections, since hyper arms it for
+each request head. It is above tailscaled's 90 s idle timeout, so tailscaled closes
+first. The bounded accept permits also bound how many slow header reads can be held at
+once.
+
+**Shutdown.** Each HTTP connection task runs the upgradeable connection future against
+a shutdown watch. On shutdown it calls `graceful_shutdown()` and keeps polling it. The
+loop stops accepting and sets `stop` (every WebSocket closes with 4004, as today). At
+the 2 s deadline it aborts any remaining HTTP tasks; it then waits for the 64 permits
+until that deadline. An upgraded socket holds a permit and a `Ctx`; if it misses the
+deadline, `main` still ends the hub with `HubHandle::stop`.
 
 ## 7. Failure handling
 
@@ -1334,6 +1483,8 @@ How each failure ends; §4.5 has the control-client details.
 | client crashed, killed, wedged (10 s) or `Fatal` | EOF without `%exit`, timer, parser | one respawn; a second within 60 s: `watchEnded { error }` |
 | a Locate or session check fails (not `NoServer`) | its answer, or the one-shot's timeout | `watchEnded { error }` for the window's watches |
 | user requests at the threshold | in-flight count | `error { busy }` |
+| control-client cap full | the budget-tier cap, with no lingering client to close | `watchEnded { limit }` naming sessions holding slots |
+| socket cap full | the upgrade-time socket permit | close 4005; client reconnects with its host backoff |
 | connection socket dies | `FromConn::Closed` | `DropConn`; its watches end; votes and subscriptions clear if no watch remains |
 | connection wedged | control JSON past the overdraft, or its channel full | close 4002; the client reconnects |
 | hub panics | `main` awaits it | exit 1; systemd restarts; clients reconnect and resync |

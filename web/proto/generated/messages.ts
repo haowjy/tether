@@ -100,7 +100,7 @@ export type ClientKind = "ios" | "web";
  */
 export type InputItem = { "text": string } | { "key": string } | { "bytes": Base64 };
 
-export type DaemonInfo = { version: string, };
+export type DaemonInfo = { version: string, completion: boolean, };
 
 export type HostInfo = {
 /**
@@ -108,7 +108,7 @@ export type HostInfo = {
  */
 id: string, name: string, };
 
-export type WatchEndReason = "detached" | "error";
+export type WatchEndReason = "detached" | "error" | "limit";
 
 export type TmuxListing = { server: string, version: string, sessions: Array<SessionListing>, };
 
@@ -147,7 +147,7 @@ export type ErrorBody = { error: HttpError, };
  * Every code an HTTP route answers with. Each has one status (`src/http/error.rs`),
  * except `bad_request` for a body that isn't the route's JSON, which takes axum's.
  */
-export type HttpError = "bad_request" | "auth_required" | "forbidden" | "bad_code" | "outside_roots" | "outside_home" | "denied" | "not_found" | "not_a_directory" | "not_a_file" | "config_read_only" | "too_large" | "bad_range" | "busy" | "auth_unavailable" | "config_unavailable" | "no_space" | "internal";
+export type HttpError = "bad_request" | "auth_required" | "forbidden" | "bad_code" | "outside_roots" | "outside_home" | "denied" | "not_found" | "not_a_directory" | "not_a_file" | "memory_backed" | "config_read_only" | "too_large" | "bad_range" | "busy" | "auth_unavailable" | "config_unavailable" | "no_space" | "internal";
 
 /**
  * `GET /fs/roots` and the answer to every Settings change.

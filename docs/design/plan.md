@@ -75,7 +75,8 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
   LocalAPI unix socket for the login allowlist and the Funnel check, and the macOS
   Tailscale apps (App Store and standalone) don't expose one. The Mac is for recording
   the 3.7b tmux fixtures ([daemon-core.md §8](daemon-core.md#8-testing)) and building
-  the iOS app, not for running the daemon.
+  the iOS app, not for running the daemon. On macOS there is no cgroup or hard memory
+  cap; if run there, the budget only sizes the counts.
 - **Scratch shell:** kept, landing after the core MVP.
 
 ## Architecture
@@ -202,6 +203,7 @@ and the note on `TMUX_TMPDIR` under systemd, are in [running.md](../running.md).
 |---|---|---|
 | `port` | 7850 | the daemon listens on `127.0.0.1:<port>` |
 | `name` | the MagicDNS machine name | the host's name in the app: `/auth/info.name`, `welcome.host.name` |
+| `memory_budget_mib` | 72 | the memory budget in MiB, at least 42; selects the control-client/socket caps and whether completion runs ([daemon-core.md §6.1](daemon-core.md#61-the-memory-budget)); read at startup and keep `MemoryMax` equal to it |
 | `[tmux] program` | `tmux` | the tmux executable; an absolute path if the unit's `PATH` doesn't find it |
 | `[tmux] socket_name` | none | `tmux -L <name>` |
 | `[tmux] socket_path` | none | `tmux -S <path>`; not together with `socket_name` |
@@ -214,19 +216,24 @@ With neither socket key, tether uses tmux's default socket.
 
 ## Resource budget
 
-The dev server is already overloaded and crashes. Targets: daemon idle RSS under
-~5 MB with no phone connected, about 0% CPU when nobody is connected, and no way to
-make the existing crashes worse. The MVP gate is meeting this budget, measured on the
-box with the debug endpoint (behind auth), which reports RSS, tasks, control clients
-and buffer use.
+The dev server is already overloaded and crashes, and more than one user may run tether
+there. Targets: daemon idle RSS under ~5 MB with no phone connected, about 0% CPU when
+nobody is connected, a hard cap on CPU and memory on Linux that the user can tighten,
+and no way to make the existing crashes worse. On macOS the budget only sizes counts;
+there is no cgroup or hard memory/CPU cap.
 
 - **Event-driven:** control-mode events, no periodic capture, no `tmux ls` loop. With
   no phone connected, tether holds no control clients and no pane state once the
   control-client linger has passed.
 - **Nothing held for panes nobody views:** a pane's state exists only while a tab on
   screen shows it, and unviewed panes are paused in tmux.
-- **Everything bounded:** every queue, buffer and cap, and the resulting memory
-  ceiling, is in [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling).
+- **Everything bounded, sized by one setting:** every queue, buffer and cap and the
+  resulting memory ceiling are in [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling).
+  `memory_budget_mib` defaults to 72 MiB and must be at least 42. The lower of it and
+  the cgroup v2 memory limit at startup selects one of five tiers: control clients
+  (tmux sessions), sockets, and completion on/off. A tighter budget refuses another
+  session with a `limit` message naming sessions holding the slots. Below 42 MiB, or
+  on any `ConfigError`, the daemon exits 78 instead of restarting.
 - **Blocking work is isolated:** the 8-thread Tokio blocking pool is split into lanes;
   a hung filesystem operation cannot consume auth threads. All blocking work enters
   through `src/blocking.rs`; Tokio filesystem APIs are disabled. Lane budgets:
@@ -239,14 +246,16 @@ and buffer use.
   | `auth` | 2 | 10 s | uncapped | auth files and paste files |
 
   A caller that exceeds its lane wait receives `busy` or skips that completion source;
-  the permit stays with work that is still running.
-  Uploads stream to disk; listings are paged; previews truncated; scrollback comes in
-  fixed chunks.
-- **Completion is lazy:** the PATH index is built on first use and refreshed when a
-  PATH directory's mtime changes (checked on request); carapace runs per request, one
-  at a time, in its own transient systemd scope, so its 17–44 MB per run never counts
-  against this unit. Everything completion holds is freed after 5 idle minutes. Limits:
-  [complete.md](complete.md#constants).
+  the permit stays with work that is still running. Uploads stream to disk; listings are
+  paged; previews truncated; scrollback comes in fixed chunks.
+- **Completion is lazy:** PATH indexes build on first use; carapace runs one at a time
+  in its own transient systemd scope, so its 17–44 MB per run never counts against this
+  unit. Completion state is freed after 5 idle minutes. It is not constructed below a
+  53 MiB effective budget; `welcome.daemon.completion` tells clients whether to ask.
+  Limits: [complete.md](complete.md#constants).
+- **Memory-backed uploads are refused:** tmpfs/ramfs pages would remain charged to the
+  daemon after the request, outside its budget rows. Disk-backed uploads flush every
+  2 MiB.
 - **No heavy server work:** HEIC conversion happens on the phone; videos stream as-is
   over HTTP Range; no thumbnails, no transcoding, no file watcher.
 - **Crash safety:** tmux is the source of truth. If tether restarts, clients reconnect
@@ -254,19 +263,29 @@ and buffer use.
 
 **systemd user unit** (`contrib/tether.service`): `Type=notify`, `KillMode=mixed`,
 `Restart=on-failure` with a backoff (`RestartSec=2`, `RestartSteps=5`,
-`RestartMaxDelaySec=60`, `StartLimitIntervalSec=0`), `MemoryHigh=48M`, `MemoryMax=64M`,
-`CPUWeight=20`, `Nice=10`, `IOWeight=10`, `IOSchedulingClass=idle`, `TasksMax=32`,
-`OOMScoreAdjust=500` (the kernel kills tether before tmux or the agents), and
+`RestartMaxDelaySec=60`, `StartLimitIntervalSec=0`), `RestartPreventExitStatus=78`,
+`MemoryMax=72M`, `CPUQuota=50%`, `CPUQuotaPeriodSec=10ms`, `CPUWeight=20`, `Nice=10`,
+`IOWeight=10`, `IOSchedulingClass=idle`, `TasksMax=32`, `OOMScoreAdjust=500` (the
+kernel kills tether before tmux or the agents), and
 `Environment=GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072`.
 
-- `KillMode=mixed` sends SIGTERM to tether alone, so it closes its sockets with 4004
-  and its control clients itself. Under the default kill mode, systemd also signals the
+- `KillMode=mixed` sends SIGTERM to tether alone, so it closes sockets with 4004 and its
+  control clients itself. Under the default kill mode, systemd also signals the
   `tmux -C` clients directly, and the hub would report them as detached while the
   sockets close, so a phone could get `watchEnded { detached }` instead of reconnecting.
   SIGKILL after the stop timeout still reaches every process in the cgroup.
-- The restart backoff is there because tailscaled is a system unit that this user unit
-  can't order itself after: at boot tether may start before tailscaled is up and exit,
-  and the backoff keeps it retrying instead of hitting the start limit.
+- Exit 78 (`EX_CONFIG`) means config could not be read or parsed, contradicts itself,
+  `$HOME` is missing, or the effective budget is below 42 MiB. A restart cannot fix
+  those failures. The backoff stays for a Tailscale service that is not up at boot.
+- `MemoryMax=72M` matches the default. The daemon reads the cgroup v2 limit at startup
+  and uses it if lower than `memory_budget_mib`; lowering the unit limit and restarting
+  is safe, raising it needs both settings. There is no `MemoryHigh`: the unreclaimable
+  ceiling plus 4 MiB fits every tier, and reclaimable page cache is reclaimed at
+  `MemoryMax`. A lower `MemoryHigh` would stall allocation instead of making caps safe.
+- `CPUQuota=50%` holds the whole unit to half of one core. The quota is per cgroup and
+  spent across CPUs. A throttled keystroke can wait at most one 10 ms period, within one
+  60 Hz frame; the 50% quota stretches bursts by up to double. `CPUWeight` and `Nice`
+  still make tether yield under contention.
 - `GLIBC_TUNABLES` pins glibc's mmap threshold at 128 KiB. glibc raises that threshold
   after the first large free, so completion's indexes would land in the heap and stay
   resident after its idle drop; pinned, each is its own mapping and goes back to the
@@ -274,13 +293,18 @@ and buffer use.
   It affects only the glibc build, the one `cargo install` makes and the unit runs. The
   Linux release binaries are static musl, which ignore it; musl's behaviour is
   unmeasured.
-- `TasksMax` counts threads and processes in the cgroup. tokio's blocking pool
-  defaults to 512 threads, so `max_blocking_threads` is 8. The total, with control
-  clients and a one-shot, stays under 32. A carapace run (a Go binary starts several
-  threads) counts only as `systemd-run` until it moves into its own scope.
+- `TasksMax` counts threads and processes in the cgroup. The runtime thread, 8 blocking
+  threads, up to 3 control clients, a one-shot and a `systemd-run` stay below 32. A
+  carapace run (a Go binary starts several threads) counts only as `systemd-run` until
+  it moves into its own scope.
 - `MemoryMax` covers the daemon, its control clients and one-shots. tmux, the scratch
   server and carapace run outside the unit: carapace in a transient scope with its own
-  limits ([complete.md](complete.md#where-carapace-runs-its-own-scope)).
+  limits ([complete.md](complete.md#where-carapace-runs-its-own-scope)). The unit's
+  hard limits require cgroup v2 memory and CPU controller delegation; the daemon warns
+  under systemd when no memory limit is enforced.
+- Measure budget tiers on the dev box under load as described in
+  [daemon-core.md §6.3](daemon-core.md#63-the-memory-ceiling); the Mac is not a proxy
+  for the Linux unit.
 
 ## Layout
 

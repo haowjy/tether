@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime};
 
 use tether::auth::{Auth, Store};
 use tether::blocking::Lanes;
+use tether::budget::DEFAULT_CAPS;
 use tether::complete;
 use tether::config::ConfigFile;
 use tether::http::{self, App};
@@ -72,7 +73,7 @@ pub async fn start(name: &str) -> Daemon {
         program: PathBuf::from("tmux"),
         socket: Socket::Name(format!("tether-http-test-{}", std::process::id())),
     };
-    let (hub, _task) = hub::spawn(Endpoints { main: endpoint });
+    let (hub, _task) = hub::spawn(Endpoints { main: endpoint }, DEFAULT_CAPS.control_clients);
     let lanes = Lanes::default();
     let app = App {
         auth: Auth::new(store.clone(), vec![LOGIN.to_owned()], lanes.auth.clone()),
@@ -91,6 +92,7 @@ pub async fn start(name: &str) -> Daemon {
                 ..Default::default()
             },
         ),
+        caps: DEFAULT_CAPS,
         home: home.clone(),
         lanes,
     };

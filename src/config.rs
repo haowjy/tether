@@ -12,6 +12,7 @@ use thiserror::Error;
 use crate::tmux::{Endpoint, Socket};
 
 pub const DEFAULT_PORT: u16 = 7850;
+pub const DEFAULT_MEMORY_BUDGET_MIB: u64 = 72;
 const DEFAULT_UPLOADS: &str = "~/tether-uploads";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -21,6 +22,8 @@ pub struct Config {
     pub port: u16,
     /// The host's name in the app; default: the machine's MagicDNS name.
     pub name: Option<String>,
+    /// The daemon's memory budget, in MiB; daemon-core.md §6 derives its caps from it.
+    pub memory_budget_mib: u64,
     pub tmux: Tmux,
     /// The file API's roots, absolute or `~/`, as written (fs.md "Roots").
     pub roots: Vec<String>,
@@ -58,6 +61,7 @@ impl Default for Config {
         Self {
             port: DEFAULT_PORT,
             name: None,
+            memory_budget_mib: DEFAULT_MEMORY_BUDGET_MIB,
             tmux: Tmux::default(),
             roots: Vec::new(),
             uploads_dir: DEFAULT_UPLOADS.to_owned(),

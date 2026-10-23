@@ -13,7 +13,7 @@ use axum::{Json, Router};
 
 use super::{Ctx, Refusal};
 use crate::proto::HttpError;
-use crate::proto::complete::CompleteRequest;
+use crate::proto::complete::{CompleteRequest, Completion};
 
 /// Larger bodies get `413`.
 const BODY: usize = 4 * 1024;
@@ -31,6 +31,9 @@ async fn complete(
     State(ctx): State<Arc<Ctx>>,
     body: Result<Json<CompleteRequest>, JsonRejection>,
 ) -> Response {
+    let Some(completer) = ctx.complete.as_ref() else {
+        return Json(Completion { chips: Vec::new() }).into_response();
+    };
     let request = match body {
         Ok(Json(request)) => request,
         Err(rejection) => return Refusal::from(rejection).into_response(),
@@ -45,5 +48,5 @@ async fn complete(
     let Ok(_permit) = ctx.completing.clone().try_acquire_owned() else {
         return Refusal::from(HttpError::Busy).into_response();
     };
-    Json(ctx.complete.complete(request).await).into_response()
+    Json(completer.complete(request).await).into_response()
 }

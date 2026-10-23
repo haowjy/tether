@@ -78,6 +78,8 @@ pub enum Effect {
 
 pub struct State {
     pub(super) endpoints: Vec<EndpointState>,
+    /// The budget tier's control-client cap.
+    pub(super) max_clients: usize,
     pub(super) clients: BTreeMap<ClientId, Client>,
     pub(super) windows: BTreeMap<WinKey, Window>,
     pub(super) conns: BTreeMap<ConnId, Conn>,
@@ -298,13 +300,14 @@ pub(super) struct ExitCheck {
 }
 
 impl State {
-    pub fn new(endpoints: Endpoints, now: Instant) -> Self {
+    pub fn new(endpoints: Endpoints, now: Instant, max_clients: usize) -> Self {
         Self {
             endpoints: vec![EndpointState {
                 name: "main",
                 endpoint: endpoints.main,
                 live: None,
             }],
+            max_clients,
             clients: BTreeMap::new(),
             windows: BTreeMap::new(),
             conns: BTreeMap::new(),

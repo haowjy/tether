@@ -5,6 +5,8 @@
 //   connecting --bound--> live --linkLost/watchEnded--> reconnecting --retry/nudge/linkUp--> connecting
 //   any state ------------- windowClosed / serverExited / userClosed ----------------> closed
 
+import type { WatchEndReason } from "../proto/generated/messages";
+
 export type Halt = "incompatible" | "unauthorized" | "detached";
 
 export type ConnectionState =
@@ -19,7 +21,7 @@ export type ConnectionEvent =
   | { type: "bound" } // `watching` arrived
   | { type: "linkLost"; retryInMs: number | null; halt?: Halt } // socket closed, or never opened
   | { type: "linkUp" } // the host's socket is welcomed again
-  | { type: "watchEnded"; reason: "detached" | "error"; jitter: number }
+  | { type: "watchEnded"; reason: WatchEndReason; jitter: number }
   | { type: "retry" } // the backoff timer fired
   | { type: "nudge" } // became visible, came online, or the pill was tapped
   | { type: "rewatch" } // the tab returned to the screen: a new `watch`, a fresh snapshot

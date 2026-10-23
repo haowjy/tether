@@ -42,6 +42,8 @@ pub enum FsError {
     NotADirectory,
     #[error("not a file")]
     NotAFile,
+    #[error("can't upload to a memory-backed filesystem")]
+    MemoryBacked,
     #[error("config.toml can't be written: {0}")]
     ConfigReadOnly(io::Error),
     #[error("too large")]

@@ -21,7 +21,7 @@ class FakeSocket {
 
 const welcome: ServerMsg = {
   type: "welcome",
-  data: { protocol: 1, daemon: { version: "0.1" }, host: { id: "h", name: "devbox" } },
+  data: { protocol: 1, daemon: { version: "0.1", completion: true }, host: { id: "h", name: "devbox" } },
 };
 
 function setup() {

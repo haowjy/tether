@@ -2413,6 +2413,65 @@ the p61 review. The product calls behind it are Jimmy's
   current until reviewed replacements are specified. No public exposure is authorized
   by this roadmap, and no network/service configuration changes accompany it.
 
+## Resource limits
+
+### One memory budget sizes daemon caps, checked against the unit
+
+- **Decided:** 2026-10-23, Jimmy (hard CPU cap, one memory setting in `config.toml`,
+  OOM never the result, tuning documented in running.md; default 72 keeps 3 tmux
+  sessions at once), design (the tier table, startup-only selection and refusal paths).
+- **What:** `memory_budget_mib` (default 72, minimum 42) sets the counts at startup.
+  The daemon uses the lower of that and the cgroup v2 `memory.max`, floored to MiB.
+  The round tier boundaries stay 72, 64, 58, 53 and 42; the tier selects three caps:
+  control clients, sockets and completion on/off. The default gives 3 clients, 3 sockets
+  and completion; the current in-scope unreclaimable ceiling is 62.4 MiB. The browser-
+  auth whois and shell rows (1.2 MiB) are not part of this TCP-listener change. Linux
+  uploads to tmpfs or ramfs are refused as `409 memory_backed`. The 64-permit HTTP
+  accept loop uses today's loopback TCP listener, 16 KiB hyper buffers and the 128
+  connection backlog. Completion-off is `welcome.daemon.completion: false`; a stray
+  `/complete` gets `200 {"chips":[]}` without constructing completion. The control
+  client cap ends a watch with `reason: "limit"`; its message names the holding tmux
+  session IDs. Every `ConfigError` and a budget below 42 exits 78. The systemd unit has
+  `MemoryMax=72M`, no `MemoryHigh`, `CPUQuota=50%`, `CPUQuotaPeriodSec=10ms` and
+  `RestartPreventExitStatus=78`. Read the cgroup and select caps at startup only. On
+  macOS, where there is no cgroup, the budget only sizes counts.
+- **Why:** the shared dev box is overloaded, and one setting is all a user should have
+  to choose; tether knows its own costs. Reading the unit's cgroup makes a lower
+  `MemoryMax` safe after a restart, so the config and unit cannot drift into an OOM kill.
+  Tiers keep each configuration measurable; scaling only session, socket and completion
+  counts makes refusals explainable. The default preserves three sessions because the
+  unit bounds tether, not tmux and its processes. A memory-backed upload could leave
+  unreclaimable shmem after the request, outside the ceiling. The TCP accept bound is
+  required because otherwise unupgraded HTTP connections and hyper buffers are
+  unbounded. `MemoryHigh` below the unreclaimable ceiling stalls allocations instead
+  of making the budget safe. A 10 ms quota period bounds a throttled keystroke by one
+  period.
+- **Rejected:** documentation only (one missed edit and caps outgrow `MemoryMax`); using
+  only the unit limit (no budget in development); a computed solver over every cap
+  (unmeasured combinations); budgets above 72 raising caps; starting below 42 (caps
+  would reach OOM); `MemoryHigh` at three quarters or budget minus 4 MiB (stall cliff or
+  second number to keep aligned); halving capture, paste, raw and completion limits
+  (more budget-dependent caps and ranking changes); completion before the third socket
+  (no strip at 46–57); live resizing (policy for caps already in use); HTTP
+  `503 limit` for completion off (fixed startup state needs no client suppression); a
+  browser-auth Unix socket, peer class, whois rows and shell server in this change
+  (they depend on browser auth); a user-visible session display name (the hub stores
+  tmux session IDs, not display names, and a separate one-shot just to name a refusal
+  adds work to a capped path).
+
+### The unit caps CPU at half a core, metered every 10 ms
+
+- **Decided:** 2026-10-23, Jimmy (hard cap), design (the value).
+- **What:** `CPUQuota=50%`, `CPUQuotaPeriodSec=10ms`, beside existing `CPUWeight=20`
+  and `Nice=10`.
+- **Why:** `CPUWeight` and `Nice` yield under contention but cap nothing. Sustained load
+  is small (an output flood measured 2% of a core for the daemon process), so half a
+  core binds on bursts. The quota is per cgroup and spent across CPUs; when several
+  threads drain it at once, the unit waits out the rest of the period. A throttled
+  keystroke therefore waits at most one period, 10 ms.
+- **Rejected:** 100% (doesn't bound the blocking pool and tmux clients either); 25%
+  (bursts take 4× longer for a saving that matters with several users, who can tune it);
+  a 20 ms or default 100 ms period (a throttled keystroke can wait past one 60 Hz frame).
 
 ## History range labels and soft-wrap restoration
 

@@ -2,8 +2,10 @@
 
 `POST /complete`'s core ([complete.md](../../docs/design/complete.md)): what the
 suggestion strip offers for the text before the cursor. It knows nothing of axum and
-never touches tmux or the hub; `http/complete.rs` parses the body, checks `cwd`'s shape,
-takes one of 4 in-flight permits and calls `Completer::complete`, which never fails.
+never touches tmux or the hub. When the startup budget tier enables completion,
+`http/server.rs` constructs its `Completer` and `http/complete.rs` parses the body,
+checks `cwd`'s shape, takes one of 4 in-flight permits and calls it. When disabled,
+the completer is not constructed and the route returns an empty completion.
 
 - `context.rs`: the shell lexer, `context(before, after) -> Query`, and `literal`, the
   escaping the lexer reads back (pure).

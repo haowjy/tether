@@ -324,6 +324,7 @@ impl ServerMsg {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct DaemonInfo {
     pub version: String,
+    pub completion: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -339,6 +340,8 @@ pub enum WatchEndReason {
     /// Another tmux client detached tether's control client.
     Detached,
     Error,
+    /// The memory tier's control-client cap is full.
+    Limit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

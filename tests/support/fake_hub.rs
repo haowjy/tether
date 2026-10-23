@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use serde_json::{Value, json};
 use tether::blocking::Lanes;
+use tether::budget::DEFAULT_CAPS;
 use tether::hub::{ConnId, Effect, Endpoints, FromConn, Input, PasteFile, State, ToConn};
 use tether::proto::{self, ClientMsg, WindowRef};
 use tether::tmux::fake::{self, Capture, Command};
@@ -76,13 +77,17 @@ pub(super) struct Hub {
 impl Hub {
     /// Session `$0` holds window `@0` (pane `%0`, 80×24).
     pub(super) fn new() -> Self {
+        Self::new_with_max_clients(DEFAULT_CAPS.control_clients)
+    }
+
+    pub(super) fn new_with_max_clients(max_clients: usize) -> Self {
         let endpoint = Endpoint {
             program: PathBuf::from("tmux"),
             socket: Socket::Name("fake".into()),
         };
         let now = Instant::now();
         let mut hub = Self {
-            state: State::new(Endpoints { main: endpoint }, now),
+            state: State::new(Endpoints { main: endpoint }, now, max_clients),
             now,
             alive: true,
             sessions: BTreeSet::from([0]),

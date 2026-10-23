@@ -13,6 +13,7 @@ use fake_hub::{
     size, snapshot, vote,
 };
 use serde_json::json;
+use tether::budget;
 use tether::hub::{
     CAPTURE_RESERVATION, CREDIT, FromConn, Input, LINGER, OVERDRAFT, SNAPSHOT_SPACING,
     USER_IN_FLIGHT,
@@ -650,8 +651,9 @@ fn daemon_limits_end_or_refuse_what_is_over_them() {
     assert_eq!(kinds(&ended), ["watchEnded"]);
     assert_eq!(
         ended[0]["data"]["message"],
-        "too many tmux sessions open (3)"
+        "tether allows 3 tmux sessions at a time; open now: main:$0, main:$1, main:$2"
     );
+    assert_eq!(ended[0]["data"]["reason"], "limit");
     // Once one lingers, it makes room.
     hub.send(b, json!({"type": "unwatch", "data": {"watch": 1}}));
     hub.settle();
@@ -667,6 +669,28 @@ fn daemon_limits_end_or_refuse_what_is_over_them() {
     assert_eq!(
         refused.last().map(|value| value["data"]["code"].clone()),
         Some(json!("inputTooLarge"))
+    );
+}
+
+#[test]
+fn low_budget_limit_names_the_sessions_holding_the_slot() {
+    let cap = budget::resolve(58).expect("58 MiB is a valid tier").caps();
+    assert_eq!(cap.control_clients, 1);
+
+    let mut hub = Hub::new_with_max_clients(cap.control_clients);
+    hub.add_window(1, 1, 1);
+    hub.add_window(2, 2, 2);
+    let conn = hub.connect();
+    hub.open(conn, 1, 1);
+    hub.take_json(conn);
+
+    hub.open(conn, 2, 2);
+    let ended = hub.take_json(conn);
+    assert_eq!(kinds(&ended), ["watchEnded"]);
+    assert_eq!(ended[0]["data"]["reason"], "limit");
+    assert_eq!(
+        ended[0]["data"]["message"],
+        "tether allows 1 tmux session at a time; open now: main:$1"
     );
 }
 

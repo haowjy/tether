@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use serde_json::{Value, json};
+use tether::budget::DEFAULT_CAPS;
 use tether::hub::{self, ConnId, Endpoints, FromConn, HubHandle, Next, Outbox, ToConn};
 use tether::proto::frames::{self, Frame as Binary};
 use tether::proto::{ClientMsg, Size};
@@ -200,9 +201,12 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
 }
 
 fn start(server: &Server) -> HubHandle {
-    let (hub, _task) = hub::spawn(Endpoints {
-        main: server.endpoint(),
-    });
+    let (hub, _task) = hub::spawn(
+        Endpoints {
+            main: server.endpoint(),
+        },
+        DEFAULT_CAPS.control_clients,
+    );
     hub
 }
 
