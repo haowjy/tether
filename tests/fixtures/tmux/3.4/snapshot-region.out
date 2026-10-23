@@ -1,26 +1,81 @@
-%begin 1792644661 271 0
-%end 1792644661 271 0
+%begin 1792746496 272 0
+%end 1792746496 272 0
 %session-changed $0 fixture
-%begin 1792644661 276 1
-3.4	65352	1792644661	80	24
-%end 1792644661 276 1
-%begin 1792644661 277 1
-%end 1792644661 277 1
+%begin 1792746496 277 1
+3.4	42732	1792746496	80	24
+%end 1792746496 277 1
+%begin 1792746496 278 1
+%end 1792746496 278 1
 %layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
-%extended-output %0 0 : sh /tmp/tether-fixture-65004-6.sh
+%extended-output %0 0 : s
+%extended-output %0 0 : h /t
+%extended-output %0 0 : mp/
+%extended-output %0 0 : te
+%extended-output %0 0 : t
+%extended-output %0 0 : h
+%extended-output %0 0 : er-me
+%extended-output %0 0 : r
+%extended-output %0 0 : id
+%extended-output %0 0 : ia
+%extended-output %0 0 : n-
+%extended-output %0 0 : 5
+%extended-output %0 0 : 0
+%extended-output %0 0 : 1
+%extended-output %0 0 : /
+%extended-output %0 0 : te
+%extended-output %0 0 : t
+%extended-output %0 0 : h
+%extended-output %0 0 : er
+%extended-output %0 0 : -
+%extended-output %0 0 : f
+%extended-output %0 0 : ix
+%extended-output %0 0 : t
+%extended-output %0 0 : ur
+%extended-output %0 0 : e
+%extended-output %0 0 : -
+%extended-output %0 0 : 4
+%extended-output %0 0 : 24
+%extended-output %0 0 : 8
+%extended-output %0 0 : 8
+%extended-output %0 0 : -
+%extended-output %0 0 : 6.
+%extended-output %0 0 : sh
 %extended-output %0 0 : \015\012
-%extended-output %0 0 : \033[2J\033[Hline 01\015\015\012line 02\015\015\012line 03\015\015\012line 04\015\015\012line 05\015\015\012line 06\015\015\012line 07\015\015\012line 08\015\015\012line 09\015\015\012line 10\015\015\012line 11\015\015\012line 12\015\015\012line 13\015\015\012line 14\015\015\012line 15\015\015\012line 16\015\015\012line 17\015\015\012
-%extended-output %0 0 : line 18\015\015\012line 19\015\015\012line 20\015\015\012line 21\015\015\012line 22\015\015\012line 23\015\015\012line 24\033[5;15r\033[?6h\033[?1003h\033[?1006h\033[3;7H\033[1mregion 3;7\033[0m\033[4;1H
-%begin 1792644662 284 1
+%extended-output %0 0 : \033[2J\033[H
+%extended-output %0 0 : line 01\015\015\012
+%extended-output %0 0 : line 02\015\015\012
+%extended-output %0 0 : line 03\015\015\012
+%extended-output %0 0 : line 04\015\015\012
+%extended-output %0 0 : line 05\015\015\012
+%extended-output %0 0 : line 06\015\015\012
+%extended-output %0 0 : line 07\015\015\012
+%extended-output %0 0 : line 08\015\015\012
+%extended-output %0 0 : line 09\015\015\012
+%extended-output %0 0 : line 10\015\015\012
+%extended-output %0 0 : line 11\015\015\012
+%extended-output %0 0 : line 12\015\015\012line 13\015\015\012
+%extended-output %0 0 : line 14\015\015\012
+%extended-output %0 0 : line 15\015\015\012
+%extended-output %0 0 : line 16\015\015\012
+%extended-output %0 0 : line 17\015\015\012
+%extended-output %0 0 : line 18\015\015\012
+%extended-output %0 0 : line 19\015\015\012
+%extended-output %0 0 : line 20\015\015\012
+%extended-output %0 0 : line 21\015\015\012
+%extended-output %0 0 : line 22\015\015\012
+%extended-output %0 0 : line 23\015\015\012
+%extended-output %0 0 : line 24
+%extended-output %0 0 : \033[5;15r\033[?6h\033[?1003h\033[?1006h\033[3;7H\033[1mregion 3;7\033[0m\033[4;1H
+%begin 1792746496 285 1
 %pause %0
-%end 1792644662 284 1
-%begin 1792644662 285 1
+%end 1792746496 285 1
+%begin 1792746496 286 1
 %continue %0
-%end 1792644662 285 1
-%begin 1792644662 286 1
+%end 1792746496 286 1
+%begin 1792746496 287 1
 %0	80	24	0	4294967295	4294967295	0	7	1	0	0	0	1	1	4	14	0	0	1	0	1	8,16,24,32,40,48,56,64,72
-%end 1792644662 286 1
-%begin 1792644662 287 1
+%end 1792746496 287 1
+%begin 1792746496 288 1
 line 01             
 line 02             
 line 03             
@@ -45,23 +100,77 @@ line 21
 line 22             
 line 23             
 line 24             
-%end 1792644662 287 1
-%begin 1792644662 288 1
+%end 1792746496 288 1
+%begin 1792746496 289 1
+line 01
+line 02
+line 03
+line 04
+line 05
+line 06
+line 0[1mregion 3;7
+[0mline 08
+line 09
+line 10
+line 11
+line 12
+line 13
+line 14
+line 15
+line 16
+line 17
+line 18
+line 19
+line 20
+line 21
+line 22
+line 23
+line 24
+%end 1792746496 289 1
+%begin 1792746496 290 1
+line 01
+line 02
+line 03
+line 04
+line 05
+line 06
+line 0[1mregion 3;7
+[0mline 08
+line 09
+line 10
+line 11
+line 12
+line 13
+line 14
+line 15
+line 16
+line 17
+line 18
+line 19
+line 20
+line 21
+line 22
+line 23
+line 24
+%end 1792746496 290 1
+%begin 1792746496 291 1
 
-%end 1792644662 288 1
-%begin 1792644662 289 1
+%end 1792746496 291 1
+%begin 1792746496 292 1
 
-%end 1792644662 289 1
-%begin 1792644662 290 1
+%end 1792746496 292 1
+%begin 1792746496 293 1
 %0	80	24	0	4294967295	4294967295	0	7	1	0	0	0	1	1	4	14	0	0	1	0	1	8,16,24,32,40,48,56,64,72
-%end 1792644662 290 1
-%extended-output %0 0 : \033[1;1H\033[32mrelative top\033[0m\033[11;1Hbottom\015\015\012scrolled\015\015\012\033[38;5;208mtwo\033[0m\015\015\012lines\033[2;4HPART2-DONE
-%begin 1792644662 293 1
-%end 1792644662 293 1
-%begin 1792644662 294 1
+%end 1792746496 293 1
+%window-renamed @0 bash
+%extended-output %0 0 : \033[1;1H\033[32mrelative top\033[0m\033[11;1Hbottom\015\015\012scrolled\015\015\012
+%extended-output %0 0 : \033[38;5;208mtwo\033[0m\015\015\012lines\033[2;4HPART2-DONE
+%begin 1792746496 297 1
+%end 1792746496 297 1
+%begin 1792746496 298 1
 %0	80	24	0	4294967295	4294967295	13	5	1	0	0	0	1	1	4	14	0	0	1	0	1	8,16,24,32,40,48,56,64,72
-%end 1792644662 294 1
-%begin 1792644662 295 1
+%end 1792746496 298 1
+%begin 1792746496 299 1
 line 01             
 line 02             
 line 03             
@@ -86,15 +195,67 @@ line 21
 line 22             
 line 23             
 line 24             
-%end 1792644662 295 1
-%begin 1792644662 296 1
+%end 1792746496 299 1
+%begin 1792746496 300 1
+line 01
+line 02
+line 03
+line 04
+line 08
+linPART2-DONE
+line 10
+line 11
+line 12
+line 13
+line 14
+bottom5
+scrolled
+[38;5;208mtwo
+[39mlines
+line 16
+line 17
+line 18
+line 19
+line 20
+line 21
+line 22
+line 23
+line 24
+%end 1792746496 300 1
+%begin 1792746496 301 1
+line 01
+line 02
+line 03
+line 04
+line 08
+linPART2-DONE
+line 10
+line 11
+line 12
+line 13
+line 14
+bottom5
+scrolled
+[38;5;208mtwo
+[39mlines
+line 16
+line 17
+line 18
+line 19
+line 20
+line 21
+line 22
+line 23
+line 24
+%end 1792746496 301 1
+%begin 1792746496 302 1
 
-%end 1792644662 296 1
-%begin 1792644662 297 1
+%end 1792746496 302 1
+%begin 1792746496 303 1
 
-%end 1792644662 297 1
-%begin 1792644662 298 1
+%end 1792746496 303 1
+%begin 1792746496 304 1
 %0	80	24	0	4294967295	4294967295	13	5	1	0	0	0	1	1	4	14	0	0	1	0	1	8,16,24,32,40,48,56,64,72
-%end 1792644662 298 1
+%end 1792746496 304 1
 %extended-output %0 0 : $ 
 %exit

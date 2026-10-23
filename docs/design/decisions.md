@@ -2414,14 +2414,26 @@ the p61 review. The product calls behind it are Jimmy's
   by this roadmap, and no network/service configuration changes accompany it.
 
 
-## History range labels
+## History range labels and soft-wrap restoration
 
 - **Decided:** 2026-10-23, tech lead.
 - **What:** Bracket each history capture group with `#{history_size} #{pane_height}`;
   replay tmux's range clamp in the tmux core, label returned rows from the true clamped
   start, and return empty above retained history. The before/after pair is the history
-  tear check.
+  tear check. On every supported tmux version, pair `-N -T` physical rows with `-J`
+  joined rows in the same command group; set only unambiguous wrap bits. Snapshot wrap
+  data stays in daemon restore composition, for the active grid only; replay a mapped
+  continuation by enabling xterm autowrap for its first character. History sends a
+  packed wrap bitmap with each chunk, counted before rows in the fit limit, and the
+  client joins wrapped history rows for copy.
 - **Why:** tmux clamps out-of-range history requests, so requested offsets are not the
-  row labels and a range above history otherwise repeats the top row forever.
-- **Rejected:** trusting requested offsets or tmux's clamped payload without recomputing
-  its range, which mislabels rows and can repeat the top row indefinitely.
+  row labels and a range above history otherwise repeats the top row forever. Paired
+  captures avoid a version branch or reliance on newer `-F`; ordinary xterm input is
+  enough to recover `isWrapped` without changing the snapshot wire format. History is
+  independently rendered in the DOM, so it needs its own row metadata.
+- **Rejected:** guessing from row fullness; using `-J` as the history payload, which
+  loses physical row offsets and trailing-cell behavior; parsing the private `-R` dump;
+  `-F`, which is unavailable on the minimum supported tmux; putting a wrap map on the
+  snapshot frame or in the terminal pipeline; mapping the saved primary screen after
+  an alternate-screen resize, where its old width is unavailable; leaving xterm wrap
+  enabled for a whole row, which can scroll when cell widths drift.

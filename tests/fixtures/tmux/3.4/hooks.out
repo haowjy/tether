@@ -1,21 +1,21 @@
-%begin 1792644664 271 0
-%end 1792644664 271 0
+%begin 1792746498 272 0
+%end 1792746498 272 0
 %session-changed $0 fixture
-%begin 1792644664 276 1
-3.4	65613	1792644664	80	24
-%end 1792644664 276 1
-%begin 1792644664 277 1
-%end 1792644664 277 1
+%begin 1792746498 277 1
+3.4	42941	1792746498	80	24
+%end 1792746498 277 1
+%begin 1792746498 278 1
+%end 1792746498 278 1
 %layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
-%begin 1792644664 282 1
-%end 1792644664 282 1
-%begin 1792644664 283 1
+%begin 1792746498 283 1
+%end 1792746498 283 1
+%begin 1792746498 284 1
 %0	80	24	0	4294967295	4294967295	2	0	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
-%end 1792644664 283 1
-%begin 1792644664 284 0
+%end 1792746498 284 1
+%begin 1792746498 285 0
 HOOKED
-%end 1792644664 284 0
-%begin 1792644664 285 1
+%end 1792746498 285 0
+%begin 1792746498 286 1
 $                   
 
 
@@ -40,29 +40,103 @@ $
 
 
 
-%end 1792644664 285 1
-%begin 1792644664 286 1
+%end 1792746498 286 1
+%begin 1792746498 287 1
+$ 
 
-%end 1792644664 286 1
-%begin 1792644664 287 1
 
-%end 1792644664 287 1
-%begin 1792644664 288 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%end 1792746498 287 1
+%begin 1792746498 288 1
+$ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%end 1792746498 288 1
+%begin 1792746498 289 1
+
+%end 1792746498 289 1
+%begin 1792746498 290 1
+
+%end 1792746498 290 1
+%begin 1792746498 291 1
 %0	80	24	0	4294967295	4294967295	2	0	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
-%end 1792644664 288 1
-%begin 1792644664 289 0
+%end 1792746498 291 1
+%begin 1792746498 292 0
 HOOKED
-%end 1792644664 289 0
-%extended-output %0 0 : while :; do echo tick; sleep 0.01; done
+%end 1792746498 292 0
+%extended-output %0 0 : whi
+%extended-output %0 0 : le :
+%extended-output %0 0 : ; d
+%extended-output %0 0 : o
+%extended-output %0 0 :  e
+%extended-output %0 1 : ch
+%extended-output %0 0 : o 
+%extended-output %0 0 : ti
+%extended-output %0 0 : c
+%extended-output %0 0 : k;
+%extended-output %0 0 :  
+%extended-output %0 0 : s
+%extended-output %0 0 : le
+%extended-output %0 0 : e
+%extended-output %0 0 : p
+%extended-output %0 0 :  0
+%extended-output %0 0 : .
+%extended-output %0 0 : 0
+%extended-output %0 0 : 1
+%extended-output %0 0 : ;
+%extended-output %0 0 :  
+%extended-output %0 0 : d
+%extended-output %0 0 : one
 %extended-output %0 0 : \015\012
 %extended-output %0 0 : tick\015\012
-%begin 1792644664 296 1
-%end 1792644664 296 1
-%begin 1792644664 297 1
+%begin 1792746498 299 1
+%end 1792746498 299 1
+%begin 1792746498 300 1
 %0	80	24	0	4294967295	4294967295	0	2	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
-%end 1792644664 297 1
-%begin 1792644664 298 0
-%end 1792644664 298 0
+%end 1792746498 300 1
+%begin 1792746498 301 0
+%end 1792746498 301 0
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
@@ -80,22 +154,8 @@ HOOKED
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%begin 1792644664 299 1
-tick                
-tick                
-tick                
-tick                
-tick                
+%begin 1792746499 302 1
+$ while :; do echo tick; sleep 0.01; done                                       
 tick                
 tick                
 tick                
@@ -115,18 +175,98 @@ tick
 tick                
 tick                
 
-%end 1792644664 299 1
-%begin 1792644664 300 1
 
-%end 1792644664 300 1
-%begin 1792644664 301 1
 
-%end 1792644664 301 1
-%begin 1792644664 302 1
+
+
+%end 1792746499 302 1
+%begin 1792746499 303 1
+$ while :; do echo tick; sleep 0.01; done
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+
+
+
+
+
+%end 1792746499 303 1
+%begin 1792746499 304 1
+$ while :; do echo tick; sleep 0.01; done
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+
+
+
+
+
+%end 1792746499 304 1
+%begin 1792746499 305 1
+
+%end 1792746499 305 1
+%begin 1792746499 306 1
+
+%end 1792746499 306 1
+%begin 1792746499 307 1
+%0	80	24	0	4294967295	4294967295	0	19	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
+%end 1792746499 307 1
+%begin 1792746499 308 0
+%end 1792746499 308 0
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%window-renamed @0 bash
+%extended-output %0 1 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%begin 1792746499 310 1
+%end 1792746499 310 1
+%begin 1792746499 311 1
 %0	80	24	0	4294967295	4294967295	0	23	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
-%end 1792644664 302 1
-%begin 1792644664 303 0
-%end 1792644664 303 0
+%end 1792746499 311 1
+%begin 1792746499 312 0
+%end 1792746499 312 0
+%extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
@@ -143,26 +283,95 @@ tick
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
 %window-renamed @0 sleep
-%extended-output %0 0 : tick\015\012
-%extended-output %0 1 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%begin 1792644664 305 1
-%end 1792644664 305 1
-%begin 1792644664 306 1
+%begin 1792746499 314 1
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+
+%end 1792746499 314 1
+%begin 1792746499 315 1
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+
+%end 1792746499 315 1
+%begin 1792746499 316 1
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+
+%end 1792746499 316 1
+%begin 1792746499 317 1
+
+%end 1792746499 317 1
+%begin 1792746499 318 1
+
+%end 1792746499 318 1
+%begin 1792746499 319 1
 %0	80	24	0	4294967295	4294967295	0	23	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
-%end 1792644664 306 1
-%begin 1792644664 307 0
-%end 1792644664 307 0
-%extended-output %0 0 : tick\015\012
+%end 1792746499 319 1
+%begin 1792746499 320 0
+%end 1792746499 320 0
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
@@ -178,54 +387,20 @@ tick
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%begin 1792644665 308 1
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-
-%end 1792644665 308 1
-%begin 1792644665 309 1
-
-%end 1792644665 309 1
-%begin 1792644665 310 1
-
-%end 1792644665 310 1
-%begin 1792644665 311 1
+%begin 1792746500 321 1
+%end 1792746500 321 1
+%begin 1792746500 322 1
 %0	80	24	0	4294967295	4294967295	0	23	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
-%end 1792644665 311 1
-%begin 1792644665 312 0
-%end 1792644665 312 0
+%end 1792746500 322 1
+%begin 1792746500 323 0
+%end 1792746500 323 0
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 1 : tick\015\012
+%extended-output %0 1 : tick\015\012
+%extended-output %0 0 : tick\015\012
+%extended-output %0 0 : tick\015\012
 %extended-output %0 1 : tick\015\012
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
@@ -234,96 +409,99 @@ tick
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
 %extended-output %0 0 : tick\015\012
-%extended-output %0 1 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 1 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%begin 1792644665 313 1
-%end 1792644665 313 1
-%begin 1792644665 314 1
+%begin 1792746500 324 1
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+tick                
+
+%end 1792746500 324 1
+%begin 1792746500 325 1
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+
+%end 1792746500 325 1
+%begin 1792746500 326 1
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+tick
+
+%end 1792746500 326 1
+%begin 1792746500 327 1
+
+%end 1792746500 327 1
+%begin 1792746500 328 1
+
+%end 1792746500 328 1
+%begin 1792746500 329 1
 %0	80	24	0	4294967295	4294967295	0	23	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
-%end 1792644665 314 1
-%begin 1792644665 315 0
-%end 1792644665 315 0
+%end 1792746500 329 1
+%begin 1792746500 330 0
+%end 1792746500 330 0
+%extended-output %0 1 : tick\015\012
 %extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%extended-output %0 0 : tick\015\012
-%begin 1792644665 316 1
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-tick                
-
-%end 1792644665 316 1
-%begin 1792644665 317 1
-
-%end 1792644665 317 1
-%begin 1792644665 318 1
-
-%end 1792644665 318 1
-%begin 1792644665 319 1
-%0	80	24	0	4294967295	4294967295	0	23	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
-%end 1792644665 319 1
-%begin 1792644665 320 0
-%end 1792644665 320 0
 %extended-output %0 0 : ^C
-%extended-output %0 0 : \015\012$ 
+%extended-output %0 0 : \015\012
+%extended-output %0 0 : $ 
+%window-renamed @0 bash
 %exit

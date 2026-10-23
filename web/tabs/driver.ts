@@ -115,12 +115,28 @@ export class TabDriver {
 
   /**
    * Scrollback rows `start..=end` (tmux line numbers, negative is history), one entry per
-   * row. A chunk may hold fewer rows than asked, so this follows its true start; an empty
-   * chunk can advance to tmux's top before the range ends. Rejects when the watch goes away.
+   * logical line. Wrapped physical rows are joined for copy. A chunk may hold fewer rows
+   * than asked, so this follows its true start; an empty chunk can advance to tmux's top
+   * before the range ends. Rejects when the watch goes away.
    */
   async history(start: number, end: number): Promise<Uint8Array[]> {
     const watch = this.watchId;
     const rows: Uint8Array[] = [];
+    let parts: Uint8Array[] = [];
+    let length = 0;
+    let continues = false;
+    const finishLine = (): void => {
+      if (parts.length === 0) return;
+      const line = new Uint8Array(length);
+      let offset = 0;
+      for (const part of parts) {
+        line.set(part, offset);
+        offset += part.length;
+      }
+      rows.push(line);
+      parts = [];
+      length = 0;
+    };
     for (let next = start; next <= end; ) {
       if (!this.bound || watch === null || this.watchId !== watch) throw new Error("watch ended");
       const from = next;
@@ -128,18 +144,34 @@ export class TabDriver {
         (req) => ({ type: "history", data: { req, watch, start: from, end } }),
         (reply) => (reply.type === "historyChunk" && reply.data.watch === watch ? reply.data : undefined),
       );
-      if (chunk.lines.length === 0) {
-        if (chunk.start <= from) break;
-        next = chunk.start;
-        continue;
+      const lines = chunk.lines.map(decodeBase64);
+      if (lines.length === 0) {
+        if (chunk.start > from) {
+          finishLine();
+          continues = false;
+        }
+      } else {
+        if (chunk.start !== from) {
+          finishLine();
+          continues = false;
+        }
+        const wraps = decodeBase64(chunk.wraps);
+        for (let index = 0; index < lines.length; index++) {
+          const line = lines[index];
+          if (!line) continue;
+          if (parts.length > 0 && !continues) finishLine();
+          parts.push(line);
+          length += line.length;
+          continues = ((wraps[index >> 3] ?? 0) & (1 << (index & 7))) !== 0;
+        }
       }
-      rows.push(...chunk.lines.map(decodeBase64));
       const after = chunk.start + chunk.lines.length;
-      // tmux can move a request up to the oldest retained row; follow it, but never retry
-      // a chunk that made no progress.
+      // tmux can move a request up to the oldest retained row. Follow that true
+      // position, including an empty range above the top, but never retry no progress.
       if (after <= from) break;
       next = after;
     }
+    finishLine();
     return rows;
   }
 

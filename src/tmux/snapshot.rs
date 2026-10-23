@@ -6,6 +6,7 @@ use std::io::Write as _;
 use bytes::Bytes;
 
 use super::parse::decode_octal;
+use super::wrap::{self, WrapMap};
 use super::{PaneId, Size, TmuxError};
 
 /// `<STATE>` for tmux 3.4, tab-separated. Newer versions use the newest entry; add
@@ -51,6 +52,8 @@ pub struct PaneSnapshot {
     pub state: PaneState,
     /// The screen in use (`-e -N`), one entry per row, SGR carried across rows.
     pub active: Vec<Bytes>,
+    /// The active grid's paired capture map; it is consumed only while composing restore.
+    pub(crate) active_wraps: WrapMap,
     /// The bytes tmux's parser holds from an unfinished sequence (`-P -C`, decoded).
     pub pending: Bytes,
     /// The saved primary grid while `alternate_on` (`-a`); meaningless otherwise.
@@ -76,7 +79,7 @@ pub fn compose(snapshot: &PaneSnapshot) -> Bytes {
     // screen is on, and Unicode widths drift) must not wrap and scroll the screen.
     out.extend_from_slice(b"\x1b[?7l");
     if state.alternate_on {
-        paint(&mut out, &snapshot.saved, rows);
+        paint(&mut out, &snapshot.saved, rows, None);
         // `?1049h` saves the pen with the cursor, and the primary's pen is unknown.
         out.extend_from_slice(b"\x1b[0m");
         // `u32::MAX` after `?47h` or `?1047h`, which save no cursor: a corner.
@@ -87,7 +90,12 @@ pub fn compose(snapshot: &PaneSnapshot) -> Bytes {
         );
         out.extend_from_slice(b"\x1b[?1049h");
     }
-    paint(&mut out, &snapshot.active, rows);
+    paint(
+        &mut out,
+        &snapshot.active,
+        rows,
+        Some(&snapshot.active_wraps),
+    );
     out.extend_from_slice(b"\x1b[0m");
 
     out.extend_from_slice(b"\x1b[3g");
@@ -136,11 +144,69 @@ pub fn compose(snapshot: &PaneSnapshot) -> Bytes {
 
 /// Each captured row at its line. `-e` carries the SGR state from row to row, so
 /// nothing resets between them; an empty row has nothing to draw.
-fn paint(out: &mut Vec<u8>, captured: &[Bytes], rows: u32) {
+fn paint(out: &mut Vec<u8>, captured: &[Bytes], rows: u32, wraps: Option<&WrapMap>) {
     for (line, row) in (0..rows).zip(captured).filter(|(_, row)| !row.is_empty()) {
-        cup(out, line, 0);
-        out.extend_from_slice(row);
+        let character = first_character(row);
+        let continuation = line > 0
+            && wraps.is_some_and(|map| map.wraps(line as usize - 1))
+            && character.is_some();
+        if let Some((prefix_end, character_end)) = character.filter(|_| continuation) {
+            out.extend_from_slice(&row[..prefix_end]);
+            out.extend_from_slice(b"\x1b[?7h");
+            out.extend_from_slice(&row[prefix_end..character_end]);
+            out.extend_from_slice(b"\x1b[?7l");
+            out.extend_from_slice(&row[character_end..]);
+        } else {
+            cup(out, line, 0);
+            out.extend_from_slice(row);
+        }
     }
+}
+
+/// The first printable UTF-8 scalar after a row's leading CSI/OSC styling.
+fn first_character(row: &[u8]) -> Option<(usize, usize)> {
+    let mut at = 0;
+    while at < row.len() {
+        match row[at] {
+            0x1b if row.get(at + 1) == Some(&b'[') => {
+                let tail = row.get(at + 2..)?;
+                let final_byte = tail.iter().position(|byte| (0x40..=0x7e).contains(byte))?;
+                at += final_byte + 3;
+            }
+            0x1b if row.get(at + 1) == Some(&b']') => {
+                let tail = row.get(at + 2..)?;
+                let end = tail.iter().enumerate().find_map(|(index, byte)| {
+                    (*byte == 0x07
+                        || tail
+                            .get(index..index + 2)
+                            .is_some_and(|sequence| sequence == b"\x1b\\"))
+                    .then_some(index + if *byte == 0x07 { 1 } else { 2 })
+                })?;
+                at += end + 2;
+            }
+            0x1b => {
+                let tail = row.get(at + 1..)?;
+                let mut end = 0;
+                while tail
+                    .get(end)
+                    .is_some_and(|byte| (0x20..=0x2f).contains(byte))
+                {
+                    end += 1;
+                }
+                at += end + 2;
+            }
+            byte if byte < 0x20 || byte == 0x7f => at += 1,
+            _ => {
+                let width = std::str::from_utf8(&row[at..])
+                    .ok()?
+                    .chars()
+                    .next()?
+                    .len_utf8();
+                return Some((at, at + width));
+            }
+        }
+    }
+    None
 }
 
 /// CUP to a zero-based row and column.
@@ -151,12 +217,22 @@ fn cup(out: &mut Vec<u8>, row: u32, col: u32) {
 /// A reply body, one entry per line, without line ends.
 pub(crate) type Rows = Vec<Bytes>;
 
-/// Replies of a completed snapshot list: continue, state, active, pending, saved, and
-/// the state again. A state that changed between its two reads means a hook changed
-/// the pane mid-list, and the captures may match neither: `Torn`.
+/// Replies of a completed snapshot list: continue, state, active, the active wrap pair,
+/// pending, saved, and the state again. A state that changed between its two reads
+/// means a hook changed the pane mid-list, and the captures may match neither: `Torn`.
 pub(crate) fn from_replies(replies: Vec<Rows>) -> Result<PaneSnapshot, TmuxError> {
-    let Ok([_continue, state, active, pending, saved, state_after]) =
-        <[Rows; 6]>::try_from(replies)
+    let Ok(
+        [
+            _continue,
+            state,
+            active,
+            physical,
+            logical,
+            pending,
+            saved,
+            state_after,
+        ],
+    ) = <[Rows; 8]>::try_from(replies)
     else {
         return Err(TmuxError::BadReply);
     };
@@ -165,9 +241,15 @@ pub(crate) fn from_replies(replies: Vec<Rows>) -> Result<PaneSnapshot, TmuxError
     }
     let state = state.first().and_then(|line| parse_state(line));
     let pending = pending.first().map(|line| decode_octal(line));
+    let active_wraps = if active.len() == physical.len() {
+        wrap::align(&physical, &logical)
+    } else {
+        WrapMap::empty(active.len())
+    };
     Ok(PaneSnapshot {
         state: state.ok_or(TmuxError::BadReply)?,
         active,
+        active_wraps,
         pending: pending.unwrap_or_default(),
         saved,
     })
@@ -255,17 +337,17 @@ mod tests {
                 _ => {}
             }
         }
-        // A list is six replies, the second a state; the sixth is one too, so step
+        // A list is eight replies, the second a state; the eighth is one too, so step
         // past each list found.
         let mut snapshots = Vec::new();
         let mut at = 0;
-        while let Some(list) = replies.get(at..at + 6) {
+        while let Some(list) = replies.get(at..at + 8) {
             if list[1]
                 .first()
                 .is_some_and(|row| parse_state(row).is_some())
             {
                 snapshots.push(from_replies(list.to_vec()).expect("a snapshot list"));
-                at += 6;
+                at += 8;
             } else {
                 at += 1;
             }
@@ -374,6 +456,7 @@ mod tests {
             compose(&PaneSnapshot {
                 state,
                 active: vec![],
+                active_wraps: WrapMap::empty(0),
                 pending: Bytes::new(),
                 saved: vec![],
             })

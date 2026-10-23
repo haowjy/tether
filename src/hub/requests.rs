@@ -17,6 +17,7 @@ use crate::proto::{
     self, Base64, ClientMsg, ErrorCode, ServerMsg, SessionListing, SessionRef, TmuxListing,
     WatchEndReason, WindowListing, WindowRef,
 };
+use crate::tmux::wrap::truncate_packed;
 use crate::tmux::{
     ClientId, InputItem, OneShotCmd, Op, PaneId, Reply, ServerInstance, SessionId, Tag, TmuxError,
     WindowId,
@@ -317,30 +318,37 @@ impl State {
         };
         let start = history.start;
         let rows = history.rows;
+        let wraps = history.wraps;
         // Keep the rows that fit the reservation; the client asks again from there.
-        let chunk = |lines: Vec<Base64>| ServerMsg::HistoryChunk {
+        let chunk = |lines: Vec<Base64>, wraps| ServerMsg::HistoryChunk {
             req,
             watch,
             start,
             lines,
+            wraps: Base64(wraps),
         };
-        let mut size = chunk(Vec::new()).encode().len() as u64;
-        let mut fit = 0;
+        let base = chunk(Vec::new(), bytes::Bytes::new()).encode().len() as u64;
+        let mut lines_size = 0;
+        let mut fit = 0_usize;
         for row in &rows {
             // Base64 in quotes, and a comma after the first.
-            let cost = (row.len() as u64).div_ceil(3) * 4 + 2 + u64::from(fit > 0);
-            if size + cost > CAPTURE_RESERVATION {
+            let row_size = (row.len() as u64).div_ceil(3) * 4 + 2 + u64::from(fit > 0);
+            let next_fit = fit + 1;
+            // `wraps` is a base64 JSON string; reserve the packed bytes for every
+            // candidate prefix before deciding whether its final row fits.
+            let wraps_size = (next_fit.div_ceil(8) as u64).div_ceil(3) * 4;
+            if base + lines_size + row_size + wraps_size > CAPTURE_RESERVATION {
                 break;
             }
-            size += cost;
-            fit += 1;
+            lines_size += row_size;
+            fit = next_fit;
         }
         if fit == 0 && !rows.is_empty() {
             // Not even the first row fits, and an empty chunk would be asked for again.
             return self.refuse_tmux(conn, Some(req), Some(watch), &TmuxError::TooLarge);
         }
         let lines = rows.into_iter().take(fit).map(Base64).collect();
-        self.send(conn, &chunk(lines), None);
+        self.send(conn, &chunk(lines, truncate_packed(&wraps, fit)), None);
     }
 
     pub(super) fn list(&mut self, conn: ConnId, req: u32) {

@@ -34,8 +34,10 @@ semantics as mobile browser; its keyboard-open layout remains to prototype. The 
 spike's extra controls are test instrumentation, not approved product controls.
 
 Layout approval does not settle browser authentication/asset serving, touch gesture
-implementation, or the snapshot/history changes needed for correct copy. Retaining a
-draft after Insert is proposed; closed-tab draft retention remains undecided.
+implementation, or real-device copy behavior. The daemon now restores active-grid wraps
+and history chunks carry their own wrap map, but mobile selection and clipboard behavior
+still need device checks. Retaining a draft after Insert is proposed; closed-tab draft
+retention remains undecided.
 
 ## Connection roadmap
 
@@ -85,7 +87,7 @@ Suggested next implementation brief:
 > Read docs/design/client/README.md and its linked contracts. Prototype the unresolved
 > input and platform boundaries before production implementation. First run the
 > keyboard spike on the Mac/iPhone and prototype touch selection, keyboard-open
-> local drafts, and logical copy across snapshot restoration. Resolve browser
+> local drafts, and logical copy over restored terminal and history rows. Resolve browser
 > auth/asset serving and resize ownership before connecting a browser client.
 > Preserve tmux as source of truth, bounded event-driven resource use, and one
 > native focus controller. Use isolated tmux sessions for probes, never personal
@@ -97,12 +99,14 @@ Suggested next implementation brief:
 - [Isolated tmux 3.4 paste/wrap probe](terminal-interaction-probe.md).
 - [Pinned xterm 6.0.0 source study and headless probe](terminal-selection-source-research.md).
 
-Snapshot repaint currently loses soft-wrap metadata: fix the capture/restore boundary
-before promising newline-correct copy after reconnect/history. Coordinate tap versus
-scroll versus long-press so selection never sends an unintended remote click. Paste
-uses tmux's mode-aware paste route; embedded newlines can execute commands even when
-no extra Enter is appended. Drafts need stable target identity, local save failure
-feedback, and no automatic retry after uncertain delivery.
+L3 now reconstructs active-grid soft wraps in daemon restore bytes and includes a packed
+wrap map in history chunks for logical copy; the terminal pipeline and snapshot frame
+remain unchanged. Verify the result with the headless and real-tmux checks in the
+daemon-core design, then finish the real-device selection and clipboard probes.
+Coordinate tap versus scroll versus long-press so selection never sends an unintended
+remote click. Paste uses tmux's mode-aware paste route; embedded newlines can execute
+commands even when no extra Enter is appended. Drafts need stable target identity, local
+save failure feedback, and no automatic retry after uncertain delivery.
 
 The interaction design contains the full verification matrix: streaming-output
 selection stability, Unicode, multiline/trailing-newline paste, IME/dictation,

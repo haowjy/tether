@@ -270,6 +270,8 @@ pub enum ServerMsg {
         watch: u32,
         start: i32,
         lines: Vec<Base64>,
+        /// Packed bits: line `i` wraps forward into line `i + 1`.
+        wraps: Base64,
     },
     Created {
         req: u32,

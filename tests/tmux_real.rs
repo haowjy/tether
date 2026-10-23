@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use tether::hub::INBOX;
 use tether::tmux::{
@@ -499,6 +500,197 @@ const NUMBERED: &str =
     "stty -echo\ni=0\nwhile [ ! -e $STOP ]; do i=$((i+1)); echo L$i; done\necho FLOW-DONE\n";
 
 #[tokio::test]
+async fn history_ranges_clamp_and_snapshots_restore_soft_wraps() {
+    let Some((_serial, server)) = setup("history-wrap").await else {
+        return;
+    };
+    server
+        .run(&["set-option", "-g", "history-limit", "40"])
+        .expect("set history limit");
+    server
+        .run(&["resize-window", "-t", "@0", "-x", "12", "-y", "3"])
+        .expect("set a narrow pane");
+    let mut client = Client::attach(&server, SessionId(0)).await;
+    client.snapshot(PaneId(0)).await;
+    server
+        .type_line("%0", "stty -echo; printf 'READY\\n'")
+        .expect("disable echo");
+    client.wait_for_output(0, PaneId(0), b"READY\r\n").await;
+    client.settle().await;
+
+    let marker = b"WRAP-ABCDEFGHIJKLMNO";
+    let mut output_start = client.events.len();
+    server
+        .type_line(
+            "%0",
+            "printf 'before\\nWRAP-ABCDEFGHIJKLMNO\\nafter-one\\nafter-two\\nhistory-done\\n'",
+        )
+        .expect("write wrapped history");
+    client
+        .wait_for_output(output_start, PaneId(0), b"history-done\r\n")
+        .await;
+    client.settle().await;
+
+    let bounds = server
+        .run(&[
+            "display-message",
+            "-p",
+            "-t",
+            "%0",
+            "#{history_size} #{pane_height}",
+        ])
+        .expect("read bounds");
+    let [history_size, pane_height] = bounds
+        .split_whitespace()
+        .map(|value| value.parse::<u32>().expect("numeric bounds"))
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("bounds: {bounds:?}");
+    };
+    let top = -(history_size as i32);
+    let history = match client
+        .run(Op::History {
+            pane: PaneId(0),
+            start: -10_000,
+            end: 10,
+        })
+        .await
+    {
+        Event::Done {
+            result: Ok(Reply::History(history)),
+            ..
+        } => history,
+        event => panic!("history capture: {event:?}"),
+    };
+    assert_eq!(history.start, top);
+    assert_eq!(history.rows.len(), (history_size + pane_height) as usize);
+    let joined = history.rows.windows(2).enumerate().find(|(index, pair)| {
+        let mut text = pair[0].to_vec();
+        text.extend_from_slice(&pair[1]);
+        text.windows(marker.len()).any(|part| part == marker)
+            && history
+                .wraps
+                .get(index / 8)
+                .is_some_and(|bits| bits & (1 << (index % 8)) != 0)
+    });
+    assert!(
+        joined.is_some(),
+        "history omitted the wrapped marker or its bit"
+    );
+
+    let empty = match client
+        .run(Op::History {
+            pane: PaneId(0),
+            start: top - 10,
+            end: top - 1,
+        })
+        .await
+    {
+        Event::Done {
+            result: Ok(Reply::History(history)),
+            ..
+        } => history,
+        event => panic!("above-top history capture: {event:?}"),
+    };
+    assert_eq!(empty.start, top);
+    assert!(empty.rows.is_empty());
+
+    output_start = client.events.len();
+    server
+        .type_line("%0", "printf '\\033[2J\\033[HWRAP-ABCDEFGHIJKLMNO\\n'")
+        .expect("write wrapped active screen");
+    client
+        .wait_for_output(output_start, PaneId(0), marker)
+        .await;
+    client.settle().await;
+    let snapshot = match client.snapshot(PaneId(0)).await {
+        Event::Snapshot { size, restore, .. } => (size, restore),
+        event => panic!("snapshot: {event:?}"),
+    };
+    let copied = Command::new("node")
+        .current_dir("web")
+        .args([
+            "--input-type=module",
+            "-e",
+            r#"
+import pkg from '@xterm/headless';
+const { Terminal } = pkg;
+const [encoded, cols, rows] = process.argv.slice(1);
+const terminal = new Terminal({ cols: Number(cols), rows: Number(rows), scrollback: 0, allowProposedApi: true });
+await new Promise((resolve) => terminal.write(Buffer.from(encoded, 'base64'), resolve));
+const buffer = terminal.buffer.active;
+let copied = '';
+let wrapped = false;
+for (let row = 0; row < buffer.length; row++) {
+  const line = buffer.getLine(row);
+  if (!line) continue;
+  wrapped ||= line.isWrapped;
+  copied += line.translateToString(true);
+  if (!buffer.getLine(row + 1)?.isWrapped) copied += '\n';
+}
+terminal.dispose();
+if (!wrapped || !copied.includes('WRAP-ABCDEFGHIJKLMNO')) {
+  console.error(JSON.stringify({ wrapped, copied }));
+  process.exitCode = 1;
+}
+"#,
+            &STANDARD.encode(&snapshot.1),
+            &snapshot.0.cols.to_string(),
+            &snapshot.0.rows.to_string(),
+        ])
+        .output()
+        .expect("run the headless xterm copy check");
+    let diagnostic = String::from_utf8_lossy(&copied.stderr)
+        .lines()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        copied.status.success(),
+        "headless xterm didn't copy the wrapped line ({:?}): {diagnostic}",
+        copied.status
+    );
+
+    let output_start = client.events.len();
+    let flood = Flood::start(&server, TICKS);
+    client
+        .wait_for_output(output_start, PaneId(0), b"L20\r\n")
+        .await;
+    server
+        .run(&[
+            "set-hook",
+            "-g",
+            "after-display-message",
+            "run-shell 'sleep 0.3'",
+        ])
+        .expect("install a waiting hook");
+    assert!(matches!(
+        client
+            .run(Op::History {
+                pane: PaneId(0),
+                start: -10,
+                end: -1,
+            })
+            .await,
+        Event::Done {
+            result: Err(TmuxError::Torn),
+            ..
+        }
+    ));
+    server
+        .run(&["set-hook", "-gu", "after-display-message"])
+        .expect("remove the waiting hook");
+    flood.stop();
+    client
+        .wait_for_output(output_start, PaneId(0), b"FLOW-DONE\r\n")
+        .await;
+}
+
+#[tokio::test]
 async fn numbered_lines_at_full_speed_cross_every_snapshot_boundary_once() {
     let Some((_serial, server)) = setup("lines").await else {
         return;
@@ -971,7 +1163,11 @@ async fn the_listing_names_sessions_windows_and_terminal_clients() {
             .trim(),
     );
     let tab_name = match version {
-        TmuxVersion::Known { major, minor, .. } if (major, minor) < (3, 8) => "tab\there 中",
+        // tmux 3.7b rejects control characters in names; 3.4 remains the version
+        // that exercises a tab inside the listing's tab-delimited window name.
+        TmuxVersion::Known {
+            major: 3, minor: 4, ..
+        } => "tab\there 中",
         _ => "tab here 中",
     };
     server

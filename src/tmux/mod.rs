@@ -20,6 +20,7 @@ pub mod pump;
 mod reply;
 pub mod session;
 pub mod snapshot;
+pub mod wrap;
 
 pub use pump::PumpMsg;
 pub use session::{MAX_IN_FLIGHT, Session, Step};
@@ -395,6 +396,8 @@ pub enum Reply {
 pub struct History {
     pub start: i32,
     pub rows: Vec<Bytes>,
+    /// Packed bits: row `i` wraps into row `i + 1`.
+    pub wraps: Bytes,
 }
 
 /// Every session and its windows, for the session sheet.

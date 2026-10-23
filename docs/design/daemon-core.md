@@ -334,6 +334,8 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 ```text
 display-message -p -t %P '#{history_size} #{pane_height}' ;
 capture-pane -p -e -t %P -S <start> -E <end> ;
+capture-pane -p -e -N -T -t %P -S <start> -E <end+1> ;
+capture-pane -p -e -J -t %P -S <start> -E <end+1> ;
 display-message -p -t %P '#{history_size} #{pane_height}'
 ```
 
@@ -343,7 +345,10 @@ the retained history can still print the top row. The tmux core recomputes the
 intersection with those bounds, drops rows outside it, and returns the first real row
 number with the physical rows. A range above the top is empty. This makes a request
 that starts before retained history resume at the true top instead of labelling its
-first row with the requested number.
+first row with the requested number. The paired captures include one lookahead row so
+the final requested row's wrap bit is known when a continuation is in the next chunk;
+the lookahead is removed from the returned rows and bitmap. A set bit says the row
+continues into the next physical row. Unmatched or ambiguous boundaries stay unset.
 
 ### 3.5 Snapshot
 
@@ -356,7 +361,9 @@ group's first reply is in the captured grid and output after its last reply is n
 
 ```text
 refresh-client -A '%P:continue' ; display-message -p -t %P '<STATE>' ;
-capture-pane -p -e -N -t %P ; capture-pane -p -P -C -t %P ;
+capture-pane -p -e -N -t %P ;
+capture-pane -p -e -N -T -t %P ; capture-pane -p -e -J -t %P ;
+capture-pane -p -P -C -t %P ;
 capture-pane -p -e -N -a -q -t %P ;
 display-message -p -t %P '<STATE>'
 ```
@@ -381,9 +388,18 @@ display-message -p -t %P '<STATE>'
   `alternate_saved_x` and `_y` are 4294967295 until the alternate screen has been
   used, and stay so after `?47h` or `?1047h`, which save no cursor.
 - The replies count against the group reply cap; a larger screen fails `TooLarge`.
+- The active grid keeps its original `-e -N` capture for faithful painting. Two paired
+  captures (`-N -T` physical rows and `-J` logical rows) derive wrap bits on every
+  supported tmux version. They use the same full active-grid range and command list; a
+  boundary is set only when the joined bytes align unambiguously. The pair adds roughly
+  two copies of the active grid to the 1 MiB group reply cap; it is local daemon traffic,
+  not part of a snapshot frame. The saved primary grid behind an alternate screen has
+  no map because its old width is unavailable after resize.
 - The session reads the replies as `PaneSnapshot { state: PaneState, active:
-  Vec<Bytes>, pending: Bytes, saved: Vec<Bytes> }` (`snapshot.rs`, tmux's field
-  names; `pending` already octal-decoded), composes the restore bytes, and emits only
+  Vec<Bytes>, active_wraps: WrapMap, pending: Bytes, saved: Vec<Bytes> }`
+  (`snapshot.rs`, tmux's field names; `pending` already octal-decoded). The active wrap
+  map is consumed only by
+  `compose`, and never crosses the snapshot frame. It emits only
   `Event::Snapshot { tag, pane, size, restore }`; `size` is the state's pane size.
 
 **Boundary:** everything the hub saw for `%P` before the `Snapshot` event is inside
@@ -398,8 +414,15 @@ terminal of `cols × rows`, so the clients carry no restore logic:
 2. If `alternate_on`: the saved primary grid (the `-a` capture), `CSI 0 m`, CUP to
    `alternate_saved` (clamped to the pane, so 4294967295 lands in the bottom-right
    corner), `CSI ?1049h`.
-3. The active grid: line *i* is `CSI i+1;1H` and its captured bytes; an empty row is
-   skipped. `-e` SGR state carries across lines, so nothing resets between them.
+3. The saved primary grid is painted with CUPs and no wrap map. The active grid stays
+   under `CSI ?7l`; hard boundaries use CUP as before. At a mapped soft boundary, do
+   not CUP: emit the continuation row's leading CSI/OSC styling with wrap off, enable
+   `CSI ?7h` for its first printable UTF-8 scalar, then turn wrap off and paint the rest
+   of the row. That single character lets xterm set `isWrapped` on the previous row;
+   wrap stays off for the rest so width drift cannot scroll or shift the screen. Empty
+   rows are skipped. The final painted row's bit is ignored because there is no
+   continuation to paint. `-e` SGR state carries across rows, so nothing resets between
+   them.
 4. `CSI 0 m`; tab stops: `CSI 3 g`, then for each `pane_tabs` column a CUP to that
    column and `ESC H` (which sets a stop at the cursor's column); a scroll region that
    isn't full height: `CSI top+1;bottom+1 r`; `origin_flag`: `CSI ?6h`. Tab stops,
@@ -964,19 +987,17 @@ channel, in the outbox, and in the frame being written all count until then.
   2 MiB and a reservation 1 MiB, so two reservations fit together only while nothing
   else is outstanding to the connection. With output or an earlier snapshot in flight,
   the second watch's snapshot waits for credit to return. That is correct, not a stall.
-- **History is cut to the reservation, and an oversized capture is retried smaller.**
-  `Session` caps a group's replies at 1 MiB raw (§3.3), but the `historyChunk` carries
-  the rows as base64, a third larger, and has to fit the 1 MiB reservation too. There
-  are three cases, by the raw size of the captured rows:
-  - *Up to about 768 KiB:* the whole chunk fits.
-  - *Between there and 1 MiB:* the capture succeeds, and the chunk keeps the leading
-    rows whose encoding fits; the client sees a shorter `historyChunk` and asks again
-    from where it ends.
-  - *Over 1 MiB* (200 heavily styled 500-column rows): the group fails `TooLarge`. The
-    hub reissues the capture with half the rows, and again with half of those, down to
-    one row, so the client again sees a shorter `historyChunk`. A single row that still
-    fails answers `error { tmux }`. The retries keep the request's reservation and
-    capture slot.
+- **History is fit with its bitmap and oversized captures are retried smaller.**
+  `Session` caps a group's replies at 1 MiB raw (§3.3), including the history-bounds
+  records and both extra wrap captures. The `historyChunk` carries rows and a packed
+  wrap map as base64, and has to fit the 1 MiB reservation too. A 200-row bitmap is at
+  most 25 bytes (about 36 base64 characters); the fitting loop counts the packed bitmap
+  for each candidate prefix before admitting its next row, then slices rows and bits
+  together. The extra captures make the tmux reply cap normally bind before the socket
+  reservation: the hub reissues an oversized capture with half the requested rows, and
+  again with half of those, down to one. A single row that still exceeds the group cap
+  ends with `error { tmux }`. The fit limit remains a second guard on encoded JSON and
+  reserved credit.
 - **Waiting snapshots go first.** While a connection has a snapshot waiting for
   credit, output to it fits only above that reservation, so a flooding watch can't
   hold off another watch's catch-up; it starves too, and both snapshot as credit
@@ -1176,7 +1197,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `windowRenamed` | `window, name` | |
 | `sessionsChanged` | | the listing changed: tmux reported a session created, closed or renamed, or a window nobody watches was closed or moved. At most one per input the hub handles, however many changes it brought (§4.5). The web refetches the listing, debounced, which also prunes its tabs ([plan.md](plan.md#reconnect)) |
 | `sessions` | `req, tmux: TmuxListing \| null` | `null` when no tmux server is running. `TmuxListing` is `{ server, version, sessions: [{ id, name, attachedElsewhere, windows: [{ id, index, name, active, activity }] }] }`; `activity` in unix seconds |
-| `historyChunk` | `req, watch, start, lines: [base64]` | `capture-pane -e` bytes per physical row; `start` is the true tmux line number of `lines[0]`. May hold fewer rows than asked (§4.6); the client follows the returned `start`, including an empty range that advanced to the retained-history top |
+| `historyChunk` | `req, watch, start, lines: [base64], wraps: base64` | `capture-pane -e` bytes per physical row; `start` is the true tmux line number of `lines[0]`. Bit `i` of the packed bitmap says row `i` wraps to the next row. May hold fewer rows than asked (§4.6); the client follows the returned `start`, including an empty range that advanced to the retained-history top, and joins wrapped rows for copy |
 | `created` | `req, window, session` | |
 | `error` | `req?, watch?, code, message` | refuses one request; a watch it names stays as it was. `badRequest, noServer, tooManySessions, inputTooLarge, busy, tmux` |
 

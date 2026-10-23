@@ -485,7 +485,8 @@ fn history_and_listings_need_a_capture_slot_and_credit() {
         chunk[0]["data"]["lines"].as_array().map(Vec::len),
         Some(200)
     );
-    // Rows that don't fit the reservation are left for the next request.
+    // Large physical capture groups exceed tmux's raw reply cap and are retried with
+    // fewer rows; their returned JSON still fits the connection reservation.
     hub.row_width = 5000;
     let history =
         json!({"type": "history", "data": {"req": 4, "watch": 1, "start": -199, "end": 0}});
@@ -501,14 +502,16 @@ fn history_and_listings_need_a_capture_slot_and_credit() {
     hub.send(conn, history.clone());
     hub.settle();
     assert!(
+        hub.lines(client).ends_with(&[
+            capture_history(-199, 0),
+            capture_history(-199, -100),
+            capture_history(-199, -150),
+        ]),
+        "{:?}",
         hub.lines(client)
-            .ends_with(&[capture_history(-199, 0), capture_history(-199, -100)])
     );
     let chunk = hub.take_json(conn);
-    assert_eq!(
-        chunk[0]["data"]["lines"].as_array().map(Vec::len),
-        Some(100)
-    );
+    assert_eq!(chunk[0]["data"]["lines"].as_array().map(Vec::len), Some(50));
     // Down to one row, which fails if it still doesn't fit.
     hub.credit(conn, CREDIT as u32);
     hub.row_width = 800_000;

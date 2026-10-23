@@ -64,14 +64,17 @@ pub fn pause(pane: PaneId) -> Group {
 
 /// The atomic snapshot list (§3.5). `continue` goes first. The state is read before
 /// the captures and again after them: a hook run between two commands can change the
-/// pane without printing, and two different reads show it. The alternate capture has
-/// `-q`, so a pane without one doesn't abort the list.
+/// pane without printing, and two different reads show it. The paired active-grid
+/// captures provide wraps; the saved grid stays a visual-only restore. The alternate
+/// capture has `-q`, so a pane without one doesn't abort the list.
 pub fn snapshot(pane: PaneId) -> Group {
     let state = format!("display-message -p -t {pane} '{STATE_FORMAT}'");
     Group::of(&[
         format!("refresh-client -A '{pane}:continue'"),
         state.clone(),
         format!("capture-pane -p -e -N -t {pane}"),
+        format!("capture-pane -p -e -N -T -t {pane}"),
+        format!("capture-pane -p -e -J -t {pane}"),
         format!("capture-pane -p -P -C -t {pane}"),
         format!("capture-pane -p -e -N -a -q -t {pane}"),
         state,
@@ -125,9 +128,12 @@ fn history(pane: PaneId, start: i32, end: i32) -> Result<Group, TmuxError> {
         return Err(TmuxError::BadRequest("history end is before its start"));
     }
     let state = format!("display-message -p -t {pane} '{HISTORY_STATE_FORMAT}'");
+    let wrap_end = end.saturating_add(1);
     Ok(Group::of(&[
         state.clone(),
         format!("capture-pane -p -e -t {pane} -S {start} -E {end}"),
+        format!("capture-pane -p -e -N -T -t {pane} -S {start} -E {wrap_end}"),
+        format!("capture-pane -p -e -J -t {pane} -S {start} -E {wrap_end}"),
         state,
     ]))
 }

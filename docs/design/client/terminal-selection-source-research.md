@@ -2,7 +2,14 @@
 
 Lane: read-only source study for tether UX design. No project edits. No other artifacts. No tmux live probe (separate lane). No port 8444.
 
-**Answer first:** xterm.js 6.0.0 already serializes copy from the *cell buffer* (not the DOM): it joins rows only when `IBufferLine.isWrapped` is true, trims *empty cells* (not written spaces), and treats wide/combining characters as one string cell with width 2/0. It has **no iOS/touch selection path**. Public APIs that can drive a mobile overlay without private fields are `buffer.getLine` / `isWrapped` / `translateToString` / `getCell`, plus `select` / `getSelection` / `getSelectionPosition` / `onSelectionChange`, plus public `.xterm-screen` metrics. They are not enough after a tether snapshot: restore paints **one CUP per visual row with wrap off**, so `isWrapped` is false and copy inserts a newline at every wrap. A DOM overlay copies correctly only if it maps DOM offsets to columns and serializes from that buffer API; one `<div>` per visual row (xterm’s own accessibility tree) will put hard breaks on wraps. Native xterm mouse selection and `Terminal.paste()` are unusable in tether as configured (`disableStdin`, inert textarea, WebGL, `user-select: none`). Paste already bypasses xterm (`paste-buffer -p`).
+**Answer first:** xterm.js 6.0.0 serializes copy from the *cell buffer* (not the DOM): it joins rows only when `IBufferLine.isWrapped` is true, trims *empty cells* (not written spaces), and treats wide/combining characters as one string cell with width 2/0. It has **no iOS/touch selection path**. Public APIs that can drive a mobile overlay without private fields are `buffer.getLine` / `isWrapped` / `translateToString` / `getCell`, plus `select` / `getSelection` / `getSelectionPosition` / `onSelectionChange`, plus public `.xterm-screen` metrics. At the time of this research, tether's restore painted **one CUP per visual row with wrap off**, so `isWrapped` was false and copy inserted a newline at every wrap. L3 now reconstructs mapped active-grid wraps in daemon restore bytes; history chunks carry a separate map for the DOM history view. A DOM overlay still must join logical rows or serialize from that buffer API; one `<div>` per visual row (xterm's own accessibility tree) will put hard breaks on wraps. Native xterm mouse selection and `Terminal.paste()` are unusable in tether as configured (`disableStdin`, inert textarea, WebGL, `user-select: none`). Paste already bypasses xterm (`paste-buffer -p`).
+
+**Implementation update (2026-10-23):** the snapshot-wrap change keeps the map inside the
+daemon, rebuilds xterm's public `isWrapped` state through ordinary restore bytes, and
+does not change the frame or terminal pipeline. The history view joins rows from the
+chunk bitmap. The historical blockers and alternatives below remain useful as the
+reasoning record; blocker 1 is resolved. Headless verification does not replace the
+pending iPhone Safari/WKWebView checks.
 
 ---
 
@@ -257,7 +264,7 @@ Wrap is **disabled** for the whole paint (`\x1b[?7l` at `compose` start), then e
 
 Live `%output` after the snapshot *can* set wrap on new overflow. Anything restored from capture (the whole visible screen, and the saved primary) will look wrapped on screen and copy as separate lines.
 
-Tether already depends on wrap bits for the prompt: `web/term/prompt.ts` `rowsText` returns null if a continuation row is not `isWrapped`, and joins with `translateToString(false, ...)`. After a snapshot, OSC 133 marks are gone (`PromptTracker.reset`); if they later reappear on restored rows, wrap join still fails until live wraps rewrite those lines.
+Tether already depends on wrap bits for the prompt: `web/term/prompt.ts` `rowsText` returns null if a continuation row is not `isWrapped`, and joins with `translateToString(false, ...)`. L3 now reconstructs that wrap state during restore. Prompt extraction can still be unavailable after a snapshot because `PromptTracker.reset` drops the OSC 133 marks; it resumes when the application emits them again, independently of the restored wrap bits.
 
 `TerminalRenderer` (`web/term/index.ts`) exposes no selection/copy API.
 
@@ -290,7 +297,7 @@ unicode.activeVersion without addon === "6"
 
 ## Structural blockers (concrete)
 
-1. **Snapshot destroy wrap metadata.** CUP-per-row + `?7l` cannot reconstruct `isWrapped`. `getSelection()`, word/line select, prompt join, and any overlay that joins on `isWrapped` will hard-break wraps on restored content. This is the copy-correctness blocker. Fixing it is a capture/restore problem, not an xterm mouse problem. (tmux `capture-pane -e` is already documented in `docs/design/research/tmux-control-mode.md` as not preserving wrap-as-state; this lane did not re-read tmux `cmd-capture-pane.c`.)
+1. **Resolved by L3 — snapshot wrap metadata.** CUP-per-row + `?7l` could not reconstruct `isWrapped`. L3 now pairs physical and joined tmux captures, then replays only an unambiguous continuation's first character with autowrap enabled. `getSelection()`, word/line select and prompt joins can use xterm's ordinary `isWrapped` state after restore. The underlying finding remains: capture alone does not restore this state. (tmux `capture-pane -e` is already documented in `docs/design/research/tmux-control-mode.md` as not preserving wrap-as-state; this lane did not re-read tmux `cmd-capture-pane.c`.)
 2. **xterm selection is mouse-only; CSS `user-select: none`; WebGL has no selectable text.** iOS long-press / loupe / Copy menu will not appear on the terminal as shipped. `isIphone` is unused.
 3. **`disableStdin` + inert textarea** kill xterm copy-from-textarea and all `paste()`/`onData` paths. Intentional (native keyboard). Copy/paste must be app-owned.
 4. **Restored tmux mouse modes disable `SelectionService`.** Even desktop xterm selection stops.
@@ -308,14 +315,16 @@ unicode.activeVersion without addon === "6"
 
 **iOS UI:** do not expect xterm’s mouse selection or WebKit selection of the WebGL/DOM renderer. If the product overlay uses WebKit’s selection handles (plan.md), the overlay text nodes must represent *logical* lines (joined wraps) **or** copy must be intercepted (`copy` event) and replaced with `getSelection()` / the buffer walk. Do not assume “same metrics + `user-select: text`” yields the right clipboard. If the overlay is custom handles (not WebKit), still serialize from the buffer API.
 
-**Wrap after snapshot — only real options:**
+**Wrap after snapshot — settled implementation:**
 
-| Option | Notes |
-|---|---|
-| Carry wrap bits from tmux into restore | Needs a tmux-side source (grid wrap flag). `capture-pane -p -e -N` as written does not. Out of this lane. |
-| Heuristic “full row ⇒ wrapped” | Not an API; wrong for exact-width hard lines. |
-| Copy from tmux (`capture-pane -J` / copy-mode) for the selected range | tmux is source of truth; extra latency; selection still needs local coords. |
-| Accept newlines at wraps until live output rewrites those rows | Honest about current restore. |
+Pair `-N -T` physical rows with `-J` joined rows, in one tmux command group on every
+supported version. Set only unambiguous wrap bits. The daemon uses the active-grid map
+while composing restore bytes; history chunks carry a packed map that the history view
+joins. The snapshot frame and terminal pipeline do not carry or consume a map.
+
+Rejected: full-row heuristics (wrong for exact-width hard lines), `-F` (unavailable on
+the minimum tmux), private grid dumps, a snapshot frame field, and accepting hard
+newlines after reconnect as a permanent limitation.
 
 **Paste:** keep tmux `paste-buffer -p`. Do not turn on xterm stdin/paste. Bracketed paste is tmux’s pane mode, not xterm’s.
 
@@ -350,4 +359,4 @@ unicode.activeVersion without addon === "6"
 
 - tmux probe: does any `capture-pane` flag or format expose `GRID_LINE_WRAPPED` per row?
 - Browser/WKWebView: long-press + `user-select: text` overlay vs native first responder (plan.md / ios-shell.md).
-- Whether `History` capture is ever written into xterm scrollback (same wrap hole, and no `-N`).
+- Whether history is ever written into xterm scrollback (the current path joins bytes for the DOM history view); if that changes, preserve the same wrap mapping and trailing-space semantics.

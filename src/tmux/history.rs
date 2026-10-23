@@ -3,6 +3,7 @@
 use bytes::Bytes;
 
 use super::snapshot::Rows;
+use super::wrap::{self, WrapMap};
 use super::{History, TmuxError};
 
 /// The history bounds surrounding one capture group.
@@ -15,7 +16,7 @@ pub(crate) fn from_replies(
     requested_end: i32,
     replies: Vec<Rows>,
 ) -> Result<History, TmuxError> {
-    let Ok([before, rows, after]) = <[Rows; 3]>::try_from(replies) else {
+    let Ok([before, rows, physical, logical, after]) = <[Rows; 5]>::try_from(replies) else {
         return Err(TmuxError::BadReply);
     };
     if before != after {
@@ -33,6 +34,7 @@ pub(crate) fn from_replies(
         return Ok(History {
             start: first,
             rows: Vec::new(),
+            wraps: Bytes::new(),
         });
     }
 
@@ -40,9 +42,17 @@ pub(crate) fn from_replies(
     if rows.len() < count {
         return Err(TmuxError::BadReply);
     }
+    let pair_last = requested_end.saturating_add(1).min(bottom);
+    let pair_count = inclusive_count(first, pair_last);
+    let pair_map = if physical.len() == pair_count {
+        wrap::align(&physical, &logical)
+    } else {
+        WrapMap::empty(pair_count)
+    };
     Ok(History {
         start: first,
         rows: rows.into_iter().take(count).collect(),
+        wraps: pair_map.truncate(count).into_bytes(),
     })
 }
 

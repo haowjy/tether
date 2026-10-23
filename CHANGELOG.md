@@ -7,6 +7,9 @@ version section on release.
 
 - History requests report tmux's true clamped line numbers, stop cleanly above retained
   history, and detect a changed history range around the capture.
+- Preserve soft wraps across snapshots and scrollback for copy: snapshot restore rebuilds
+  xterm's wrap state in the daemon, and history chunks carry a packed wrap map that the
+  client uses to join wrapped rows.
 
 - Keep Meridian work notes and knowledge base in repo-local paths for cross-machine handoffs.
 

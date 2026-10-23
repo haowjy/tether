@@ -133,14 +133,14 @@ describe("history", () => {
     const b64 = (s: string): string => btoa(s);
     const rows = t.tab.history(-400, -1);
     expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 1, watch: 1, start: -400, end: -1 } });
-    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [] } });
+    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [], wraps: b64("") } });
     await Promise.resolve();
     expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 2, watch: 1, start: -4, end: -1 } });
-    l.say({ type: "historyChunk", data: { req: 2, watch: 1, start: -4, lines: [b64("a"), b64("b")] } });
+    l.say({ type: "historyChunk", data: { req: 2, watch: 1, start: -4, lines: [b64("a"), b64("b")], wraps: b64("\x02") } });
     await Promise.resolve();
     expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 3, watch: 1, start: -2, end: -1 } });
-    l.say({ type: "historyChunk", data: { req: 3, watch: 1, start: -2, lines: [b64("c"), b64("d")] } });
-    expect((await rows).map((r) => new TextDecoder().decode(r))).toEqual(["a", "b", "c", "d"]);
+    l.say({ type: "historyChunk", data: { req: 3, watch: 1, start: -2, lines: [b64("c"), b64("d")], wraps: b64("") } });
+    expect((await rows).map((r) => new TextDecoder().decode(r))).toEqual(["a", "bc", "d"]);
   });
 
   it("rejects when the watch ends, without asking for the rest", async () => {
@@ -148,7 +148,7 @@ describe("history", () => {
     const l = t.bind();
     const rows = t.tab.history(-4, -1);
     l.say({ type: "watchEnded", data: { watch: 1, reason: "error" } });
-    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [btoa("a")] } });
+    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [btoa("a")], wraps: btoa("") } });
     await expect(rows).rejects.toThrow("watch ended");
     expect(l.types().filter((type) => type === "history")).toHaveLength(1);
   });

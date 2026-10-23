@@ -57,7 +57,11 @@ cwd: string | null, } }
   | { "type": "windowRenamed", "data": { window: WindowRef, name: string, } }
   | { "type": "sessionsChanged" }
   | { "type": "sessions", "data": { req: number, tmux: TmuxListing | null, } }
-  | { "type": "historyChunk", "data": { req: number, watch: number, start: number, lines: Array<Base64>, } }
+  | { "type": "historyChunk", "data": { req: number, watch: number, start: number, lines: Array<Base64>,
+/**
+ * Packed bits: line `i` wraps forward into line `i + 1`.
+ */
+wraps: Base64, } }
   | { "type": "created", "data": { req: number, window: WindowRef, session: SessionRef, } }
   | { "type": "error", "data": { req?: number, watch?: number, code: ErrorCode, message: string, } };
 

@@ -22,7 +22,7 @@ Use supported xterm selection/text APIs when their underlying wrap metadata is a
 
 New output continues while local selection stays anchored to its snapshot. Snapshot memory exists only while selecting, with a cap; dismiss frees it. This must not create a second always-running terminal emulator or retain unbounded history for inactive panes.
 
-**Enabling issue:** current capture/repaint path loses per-row soft-wrap boundaries. The pinned xterm headless probe confirmed live wrapped text copies as `ABCDEFGHIJKL`, while the same visual cells restored with cursor-per-row painting serialize as `ABCDEFGH\nIJKL`. The isolated tmux probe proves physical capture splits a soft wrap while -J can join it. Joined capture alone isn't a solved selection mapping: it changes line counts and needs atomic alignment with the viewed snapshot/history. Resolve that boundary before promising correct copy after reconnect, tab switch, or history fetch. Full-width rows are not evidence of wrapping; a hard newline can occur at the exact same column.
+**Wrap prerequisite resolved by L3:** the daemon now pairs physical `-N -T` rows with `-J` logical rows in the same command group, then replays only unambiguous continuations into xterm's `isWrapped` state. History chunks carry a separate bitmap and the history driver joins those rows for copy. This fixes the data boundary after reconnect, snapshot, and history fetch; it does not implement the mobile selection UI or prove real-device clipboard behavior. Full-width rows are not evidence of wrapping: a hard newline can occur at the exact same column.
 
 ### Paste uses one path and the receiving app's mode
 
