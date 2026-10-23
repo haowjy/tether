@@ -1,0 +1,1 @@
+.frame { display: flex; height: 100%; flex-direction: column; padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); }
