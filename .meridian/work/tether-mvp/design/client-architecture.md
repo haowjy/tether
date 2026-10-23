@@ -919,7 +919,10 @@ lost:
   the request as `lost`.
 - **4005, the socket cap,** is a host problem, not a tab problem. The host banner says
   "Too many connections to pop-os. Close tether in another browser or the app, then
-  Retry."
+  Retry." `Host` reports a 4005 close through `onCapped(true)` and clears it when a socket
+  is welcomed or nothing is trying; `HostClient.overCap` carries it and `HostBanner` reads
+  it. The socket keeps its normal backoff and the tabs read "Reconnecting"; Retry on the
+  banner reconnects at once.
 - **`busy`** on a listing or a watch retries soon, silently, as today. A paste is never
   retried silently (§7.5).
 

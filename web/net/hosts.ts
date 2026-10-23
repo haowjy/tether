@@ -24,6 +24,8 @@ export interface HostClient {
   /** The host's name for copy ("pop-os"); falls back to the entry's. */
   readonly name: string | null;
   readonly admission: Admission;
+  /** The daemon refused the socket for its connection cap (4005): the host banner says so until a socket is welcomed. */
+  readonly overCap: boolean;
   /** When the current check began, for "Checking access…" after 10 s. */
   readonly checkingSince: number | null;
   /** The one WebSocket all its tabs share. */
@@ -168,6 +170,7 @@ export class HostRegistry {
       open: (handlers) => this.opts.transport.openSocket(handle, handlers),
       onRefused: (code) => { this.onRefused(handle, code); },
       onWelcome: (welcome) => { this.learnHostId(handle, welcome.host.id); },
+      onCapped: (capped) => { this.capped(handle, capped); },
       onStuck: this.opts.onStuck,
       ...(this.opts.random && { random: this.opts.random }),
     });
@@ -178,6 +181,7 @@ export class HostRegistry {
         name: entry.name,
         // A token-admitted host is admitted until the transport reports a refusal.
         admission: entry.pageOrigin === null ? { kind: "admitted" } : { kind: "deciding" },
+        overCap: false,
         checkingSince: entry.pageOrigin === null ? null : this.now(),
         socket,
         fs: httpFsApi(this.opts.transport.httpBase(handle), this.fetchFn),
@@ -219,6 +223,11 @@ export class HostRegistry {
   private learnHostId(handle: string, hostId: string): void {
     const slot = this.slots.get(handle);
     if (slot && slot.client.hostId !== hostId) this.patch(slot, { hostId });
+  }
+
+  private capped(handle: string, overCap: boolean): void {
+    const slot = this.slots.get(handle);
+    if (slot) this.patch(slot, { overCap });
   }
 
   private onRefused(handle: string, code: typeof CloseCode.BadToken | typeof CloseCode.AuthUnavailable): void {

@@ -33,6 +33,8 @@ version section on release.
 - Image paste and Files' Insert path follow one rule: a tab still connecting takes the path and
   types it once it is watching (image paste used to refuse it), and a reconnecting, limited or
   closed tab refuses it with one notice.
+- A host at its connection cap (the daemon's close code 4005) shows "Too many connections to
+  pop-os" with Retry on the host banner, as the spec says; tabs used to read only "Reconnecting".
 - Settings: a finished Remove this device or Clear local data closes Settings in Safari too.
 - The session-limit message says "1 tmux session" when the limit is one.
 - Show refused auth row names in device listing, list nodes by stored ID, and send

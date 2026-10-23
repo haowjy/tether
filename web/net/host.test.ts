@@ -183,6 +183,33 @@ describe("reconnect is per host", () => {
   });
 });
 
+describe("the socket cap", () => {
+  it("reports a 4005 close as a host problem until a socket is welcomed, and keeps retrying", () => {
+    const t = setup();
+    const a = t.tab("a", winA);
+    t.link().welcome();
+    t.link().drop(4005);
+    expect(t.events).toEqual(["capped"]);
+    expect(a.state()).toMatchObject({ kind: "reconnecting", halt: null });
+    vi.advanceTimersByTime(500);
+    expect(t.links).toHaveLength(2);
+    t.link().drop(4005);
+    expect(t.events).toEqual(["capped"]); // told once
+    vi.advanceTimersByTime(1000);
+    t.link().welcome();
+    expect(t.events).toEqual(["capped", "uncapped"]);
+  });
+
+  it("is not reported once nothing is trying", () => {
+    const t = setup();
+    t.tab("a", winA);
+    t.link().welcome();
+    t.link().drop(4005);
+    t.host.background();
+    expect(t.events).toEqual(["capped", "uncapped"]);
+  });
+});
+
 describe("lifecycle", () => {
   it("closes the socket on background without counting a loss, and reconnects at once on foreground", () => {
     const t = setup();

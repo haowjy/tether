@@ -51,6 +51,17 @@ test.describe("admission problems", () => {
     await expect(page.getByText("Can't reach")).toBeHidden();
   });
 
+  test("a socket refused for the connection cap says so on the host banner, and Retry connects again", async ({ page }) => {
+    await openFixture(page, "home", desktop);
+    await expect(page.getByRole("heading", { name: "tether" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__harness?.platform.links.length)).toBe(1);
+    await page.evaluate(() => { window.__harness?.platform.links[0]?.drop(4005); });
+    await expect(page.getByText("Too many connections to pop-os")).toBeVisible();
+    await expect(page.getByText("Close tether in another browser or the app, then retry.")).toBeVisible();
+    await page.getByRole("status").filter({ hasText: "Too many connections" }).getByRole("button", { name: "Retry" }).click();
+    await expect(page.getByText("Too many connections to pop-os")).toBeHidden();
+  });
+
   test("an undecided daemon keeps the screen and says Checking access after 10 seconds", async ({ page }) => {
     await page.clock.install();
     await openFixture(page, "deciding", desktop);

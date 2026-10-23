@@ -69,6 +69,8 @@ export interface HostOptions {
   onRefused(code: typeof CloseCode.BadToken | typeof CloseCode.AuthUnavailable): void;
   /** The socket is welcomed: the daemon's identity, for admission to check against its saved id. */
   onWelcome?(welcome: WelcomeMsg): void;
+  /** The daemon refused the socket for its connection cap (4005), or accepted one again: a host problem, not a tab's. */
+  onCapped?(capped: boolean): void;
   /** Two sockets in a row stuck in CONNECTING: reload the web view. */
   onStuck(): void;
   random?: () => number;
@@ -88,6 +90,7 @@ export class Host {
   private readonly watchRoutes = new Map<number, TabPort>();
   private readonly pending = new Map<number, Pending>();
   private status: Status = "idle";
+  private capped = false;
   private link: Link | null = null;
   private attempt = 0;
   private stuck = 0;
@@ -221,7 +224,14 @@ export class Host {
     this.link = null;
     this.status = status;
     this.watchRoutes.clear();
+    this.setCapped(false); // nothing is trying, so nothing is refused
     link?.close();
+  }
+
+  private setCapped(capped: boolean): void {
+    if (this.capped === capped) return;
+    this.capped = capped;
+    this.opts.onCapped?.(capped);
   }
 
   /** No tab and no request needs the socket: nothing is held for a host nobody views. */
@@ -237,6 +247,7 @@ export class Host {
 
   private onWelcome(welcome: WelcomeMsg): void {
     this.opts.onWelcome?.(welcome);
+    this.setCapped(false);
     this.status = "open";
     this.attempt = 0;
     this.stuck = 0;
@@ -247,6 +258,7 @@ export class Host {
   private onClose(close: LinkClose): void {
     this.link = null;
     this.watchRoutes.clear();
+    this.setCapped(close.code === CloseCode.OverCap);
     if (close.code === CloseCode.BadToken || close.code === CloseCode.AuthUnavailable) this.opts.onRefused(close.code);
     const halt =
       close.code === CloseCode.BadToken ? "unauthorized" : close.code === CloseCode.Incompatible ? "incompatible" : undefined;

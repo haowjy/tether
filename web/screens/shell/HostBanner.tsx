@@ -1,7 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { useApp } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
-import { admissionCopy } from "../../ui/hostProblem";
+import { admissionCopy, hostProblem } from "../../ui/hostProblem";
 import { Banner } from "../../ui/primitives/Banner";
 
 /** "Checking access…" appears only after the daemon has been undecided this long. */
@@ -24,6 +24,10 @@ export function HostBanner({ host }: { host: HostClient }) {
   if (admission.kind === "unreachable") {
     const copy = admissionCopy(admission, name, byToken);
     return copy && <Banner tone="warning" title={copy.title} action={{ label: "Retry", onAction: () => { app.hosts.recheck(host.entry.handle); } }}>{copy.hint}</Banner>;
+  }
+  if (admission.kind === "admitted" && host.overCap) {
+    const copy = hostProblem("overCap", name);
+    return <Banner tone="warning" title={copy.title} action={{ label: "Retry", onAction: () => { host.socket.nudge(); } }}>{copy.hint}</Banner>;
   }
   if (admission.kind === "deciding" && host.checkingSince !== null && now - host.checkingSince >= CHECKING_AFTER_MS) {
     return <Banner tone="info" title="Checking access…" />;
