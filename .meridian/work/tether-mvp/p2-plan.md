@@ -40,3 +40,12 @@ FilesScreen. Deferred: input refusal carries no req (L4); fresh install cannot a
 from the app (question for Jimmy). Proposed tests awaiting Jimmy: W1 keyboard walk of Home
 and picker; W2 bufferText (soft wrap, hard break, blank lines, indentation).
 Then G2: per-lane reviewers + structural + browser prober.
+- Jimmy (2026-10-23): add the two proposed tests after integration: Playwright keyboard walk of
+  Home and the picker (e2e/home), and a vitest unit test of term bufferText (soft wrap, hard break
+  at the exact column, blank lines, indentation). Add-root-from-app: explained the roots model,
+  recommended an "Add folder…" on the Files roots list using /fs/roots/add and the $HOME picker;
+  awaiting his answer.
+- Jimmy approved "Add folder…" (2026-10-23): on the Files roots list, a $HOME-scoped folder
+  picker (fs.md picker scope) that calls POST /fs/roots/add; remove from roots too
+  (/fs/roots/remove). Follow-up lane after p95, with the two tests. Log in decisions.md
+  (reverses the §3.1 removal, by Jimmy's call).

@@ -320,7 +320,7 @@ sequenceDiagram
 
 | Daemon answer (auth rev 4 §3.8) | `Admission` | What the client shows |
 |---|---|---|
-| `200 {deviceName}` | `admitted` | the app |
+| `200 {deviceName}` | `admitted { deviceName }` | the app; Settings names the device |
 | `browserOrigin` ≠ the host's `pageOrigin` | `wrongOrigin { origin }` | "Open tether at `<origin>`", with a link. No socket opens |
 | `browserOrigin: null`, `browserRefused: <reason>` | `originRefused { reason }` | why browsers can't use this host (`ambiguous_origin`, `not_https`…), with the `tether` command that fixes it. No retry |
 | `401 not_enrolled {node: {name}}`, or close 4401 then that answer | `notEnrolled { nodeName }` | the Enrol screen (§4.3) |
@@ -420,7 +420,7 @@ type PlatformEvent =
   | { type: "update"; state: UpdateState };                  // §9.3, only with `updates`
 
 interface Updates { check(): Promise<void>; apply(): void }   // §9.3
-type UpdateState = "none" | "ready";
+type UpdateState = "none" | "ready" | "reload";   // reload: another page applied an update (§9.3)
 type HapticKind = "selection" | "rigid";   // tab switch; selection mode starts (ios-shell "Haptics")
 interface SafeArea { top: number; right: number; bottom: number; left: number }
 type Unsubscribe = () => void;
@@ -833,7 +833,9 @@ A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
 ### 6.3 The sessions listing
 
 `sessions/` caches one listing per host and exposes search and expansion as pure
-functions over it. It never fetches.
+functions over it. It never fetches. The controller owns the cache (`app.sessions`) and
+feeds it the fetcher's events, so a save before any screen mounts still writes the
+saved expansion.
 
 - **One fetcher.** `app/listing.ts` joins each host as a `TabPort` and is the only code
   that sends `listSessions`. Each result goes two ways from the same reply: to
@@ -974,7 +976,11 @@ push, replace and `popstate`.
 - **In-app back buttons go to the logical parent.** If the previous entry is that
   parent (recorded in `history.state.parent`), they call `history.back()`. Otherwise,
   after a reload or a deep link, they `replaceState` to the parent, so Back never leaves
-  the app unexpectedly.
+  the app unexpectedly. Inside Files the parent is the enclosing place: `toParent(place)`
+  goes back when the previous entry holds that place, else replaces the top entry.
+- **Files returns to where it was left.** The router remembers the last Files place any
+  entry held, and `go("files")` pushes an entry carrying it, so the rail and Home's
+  Files tab return to the same folder or preview.
 - **Reload** restores the destination from the hash, and the tabs and Files place from
   the saved workspace: the router replaces the first entry with that place. Overlays do
   not survive a reload.
@@ -1312,7 +1318,7 @@ emitted file, stubs included:
 | Terminal font, regular and bold | 2 × 120 KB | JetBrains Mono NL subset to Latin, Latin-1, box drawing, block elements and Powerline |
 | Nerd Font symbols | 150 KB | a fallback file subset to the glyph ranges Jimmy's prompt and tmux status line use. It is listed after the core font in `--font-mono`, loaded after first paint, and the renderer clears its glyph atlas once it arrives |
 | Lazy chunks (markdown, Shiki core, viewers) | loaded on first use | precached by the service worker like everything else (§9.2) |
-| Shiki grammars | an allowlist: shell, JSON, YAML, TOML, Markdown, TS/JS, Python, Rust, Go, Swift, C and diff | each is its own lazy chunk; `manualChunks` keeps Vite from emitting re-export stubs for them |
+| Shiki grammars | an allowlist: shell, JSON, YAML, TOML, Markdown, TS/TSX/JS, Python, Rust, Go, Swift, C and diff | each is its own lazy chunk; `manualChunks` keeps Vite from emitting re-export stubs for them |
 | Whole embedded shell | ≤ 1.5 MiB gz, ≤ 64 files | half the daemon's cap, so growth stays visible |
 
 W0 measures the subsets and commits the font files together with the script that made
@@ -1405,12 +1411,13 @@ capability and the `update` event.
    conditional GET of `/sw.js`. No timer.
 2. **Install.** A new worker installs the complete new shell, then waits. Nothing
    reloads.
-3. **Offer.** An `update: ready` event makes Home show "Update ready" in a Banner,
-   never over the terminal, with an Update button.
+3. **Offer.** An `update: ready` event makes Home and Files show "Update ready" in a
+   Banner, never over the terminal, with an Update button.
 4. **Update.** The controller runs persist now, then `updates.apply()` tells the
    waiting worker to `skipWaiting`, and the tapping page reloads on
-   `controllerchange`. Every other page also sees `controllerchange`: it shows "Reload
-   to finish updating" and keeps working on the previous build, whose cache the new
+   `controllerchange`. Every other page also sees `controllerchange`: it raises `update: reload`, which
+   shows "Reload to finish updating" (a banner of its own, separate from the schema
+   upgrade's) and keeps working on the previous build, whose cache the new
    worker kept. Activation doesn't touch another page's drafts, IME composition or
    database connection, so nothing is asked of those pages and no message passes
    between builds. No `clients.claim`, and no reload without a tap in that page. If the
@@ -1427,7 +1434,8 @@ capability and the `update` event.
 
 An offline launch opens Home from the cached shell, with the saved workspace:
 
-- The host banner says "Can't reach pop-os".
+- The host banner says "Can't reach pop-os". The name is the last one saved with the
+  workspace (`SavedWorkspace.hostName`), since `/auth/info` cannot answer.
 - Open tabs show as reconnecting.
 - The listing shows its offline state.
 - Each tab's draft can be opened and edited, with Insert disabled.
