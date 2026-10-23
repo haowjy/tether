@@ -83,18 +83,31 @@ describe("ListingFetcher", () => {
     expect(t.lists()).toBe(2);
   });
 
-  it("refreshes once however many triggers arrive: not while one is in flight or the socket is down", async () => {
+  it("refresh mid-flight lists exactly once more after the current one, never two at once", async () => {
     const t = setup();
     t.fetcher.setWanted("h1", true);
     t.fetcher.refresh("h1"); // the socket is not up: linkUp will list
     t.link().welcome();
     expect(t.lists()).toBe(1);
     t.fetcher.refresh("h1");
-    expect(t.lists()).toBe(1);
-    t.answer(null);
-    await vi.advanceTimersByTimeAsync(0);
     t.fetcher.refresh("h1");
+    expect(t.lists()).toBe(1);
+    t.answer(listing("a", [1]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.lists()).toBe(2); // started after the refresh, so it can see what the first missed
+    t.answer(listing("a", [1, 2]));
+    await vi.advanceTimersByTimeAsync(0);
     expect(t.lists()).toBe(2);
+    t.fetcher.refresh("h1");
+    expect(t.lists()).toBe(3);
+  });
+
+  it("setWanted reports a listing only when it started one", () => {
+    const t = setup();
+    expect(t.fetcher.setWanted("h1", true)).toBe(false); // socket not up
+    t.link().welcome();
+    t.fetcher.setWanted("h1", false);
+    expect(t.fetcher.setWanted("h1", true)).toBe(true);
   });
 
   it("retries a failed listing with the host's backoff while a tab is restoring, and reports it", async () => {

@@ -94,11 +94,12 @@ export class ListingFetcher {
   /**
    * Home or the picker is on screen, a tab exists, or a tab is restoring: the host stays
    * joined (the socket stays up, so hints keep arriving). When nothing wants it, the host is
-   * left after 30 s.
+   * left after 30 s. Returns whether it started a listing (the host became wanted while ready),
+   * so a caller about to `refresh` knows one has just begun.
    */
-  setWanted(handle: string, wanted: boolean): void {
+  setWanted(handle: string, wanted: boolean): boolean {
     const state = this.hosts.get(handle);
-    if (!state || state.wanted === wanted) return;
+    if (!state || state.wanted === wanted) return false;
     state.wanted = wanted;
     clearTimeout(state.linger);
     if (wanted) {
@@ -106,7 +107,10 @@ export class ListingFetcher {
         state.joined = true;
         state.host.join(state.port);
       }
-      if (state.host.ready) this.fetch(handle);
+      if (state.host.ready) {
+        this.fetch(handle);
+        return true;
+      }
     } else {
       state.linger = setTimeout(() => {
         if (state.joined) state.host.leave(state.port);
@@ -114,15 +118,17 @@ export class ListingFetcher {
         this.clear(state);
       }, LINGER_MS);
     }
+    return false;
   }
 
   /**
-   * Entering Home, opening the picker, or a user's Retry: a fresh listing now. A request
-   * already in flight is fresh enough, and one waiting for the socket is sent on `linkUp`.
+   * Entering Home, opening the picker, a user's Retry, or waiting for a new session to
+   * appear: a listing that starts now. One already in flight may have started before the
+   * change the caller is waiting on, so it queues exactly one more after it. A request
+   * waiting for the socket is sent on `linkUp`.
    */
   refresh(handle: string): void {
-    const state = this.hosts.get(handle);
-    if (state?.host.ready && !state.inFlight) this.fetch(handle);
+    if (this.hosts.get(handle)?.host.ready) this.fetch(handle);
   }
 
   private clear(state: HostState): void {

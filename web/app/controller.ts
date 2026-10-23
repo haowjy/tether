@@ -224,9 +224,9 @@ export class AppController extends Store<AppView> {
       const { handle } = client.entry;
       const admitted = client.admission.kind === "admitted";
       const hasTab = client.hostId !== null && workspace.tabs.some((t) => t.key.host === client.hostId);
-      this.listing.setWanted(handle, admitted && (homeOrPicker || hasTab));
-      // Entering Home or the picker lists afresh. The fetcher sends once however many triggers meet.
-      if (entered && admitted) this.listing.refresh(handle);
+      const listed = this.listing.setWanted(handle, admitted && (homeOrPicker || hasTab));
+      // Entering Home or the picker lists afresh, unless joining the host just started a listing.
+      if (entered && admitted && !listed) this.listing.refresh(handle);
     }
   }
 
