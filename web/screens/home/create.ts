@@ -7,8 +7,7 @@ import type { HostClient } from "../../net/hosts";
 import type { SessionRef, WindowRef } from "../../proto/generated/messages";
 import { newSessionMsg, newWindowMsg, type CreationFields } from "../../sessions/creation";
 import { findWindow } from "../../sessions/groups";
-import { openWindow } from "./openWindow";
-import { closeOverlayThen } from "./overlay";
+import { openWindow } from "../sessions/openWindow";
 
 const LISTING_WAIT_MS = 5_000;
 
@@ -71,6 +70,6 @@ export async function createAndOpen(app: AppController, host: HostClient, target
   const hit = await listingWith(app, host, created.window);
   const listing = app.sessions.snapshot.hosts[host.entry.handle]?.listing;
   if (!hit || !listing) return { error: "Created, but it hasn't appeared in the list yet. Close this to see the list." };
-  closeOverlayThen(app, () => { openWindow(app, host, listing, hit.session, hit.window); });
+  app.router.closeOverlay(() => { openWindow(app, host, listing, hit.session, hit.window); });
   return { ok: true };
 }

@@ -10,9 +10,9 @@ import { FilesScreen } from "../files/FilesScreen";
 import { CreateDialog, type CreateParams } from "./CreateDialog";
 import { HomeNav } from "./HomeNav";
 import { OpenTabs } from "./OpenTabs";
-import { SessionList } from "./SessionList";
-import { openWindow } from "./openWindow";
-import { retryListing, toggleExpanded, useSessions } from "./useSessions";
+import { SessionList } from "../sessions/SessionList";
+import { openWindow } from "../sessions/openWindow";
+import { retryListing, toggleExpanded, useSessions } from "../sessions/useSessions";
 import styles from "./Home.module.css";
 
 /** Hosts whose sessions can be listed or are about to be; the others show a banner or the Enrol screen instead. */

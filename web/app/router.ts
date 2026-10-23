@@ -95,9 +95,24 @@ export class Router {
     this.push({ ...entry, overlay, parent: entry.parent });
   }
 
-  /** Back closes the top overlay first. After a reload there is nothing to go back to, so the entry is replaced. */
-  closeOverlay(): void {
-    if (this.entry.overlay === null) return;
+  /**
+   * Back closes the top overlay first. After a reload there is nothing to go back to, so the
+   * entry is replaced. `then` runs once the overlay is closed: closing is `history.back()`,
+   * which lands on a later `popstate`, so an action that navigates must wait, or its entry
+   * is pushed before the pop and the pop undoes it (§6.6). With no overlay open it runs at once.
+   */
+  closeOverlay(then?: () => void): void {
+    if (this.entry.overlay === null) {
+      then?.();
+      return;
+    }
+    if (then) {
+      const off = this.subscribe(({ entry }) => {
+        if (entry.overlay !== null) return;
+        off();
+        then();
+      });
+    }
     this.closeOverlays(1);
   }
 

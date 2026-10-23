@@ -3,7 +3,7 @@
 import type { ComponentChildren } from "preact";
 import type { HostSessions } from "../../sessions/cache";
 import { LISTING } from "../shared";
-import { SessionList } from "../../screens/home/SessionList";
+import { SessionList } from "../../screens/sessions/SessionList";
 
 const NO_OP = (): void => undefined;
 const fresh = { failure: null, updating: false } as const;

@@ -73,6 +73,15 @@ describe("Router", () => {
     expect(h.at).toBe(1);
   });
 
+  it("runs what follows a close after the overlay is gone, or at once when none is open", () => {
+    const { router } = setup();
+    const ran: (string | null)[] = [];
+    router.closeOverlay(() => ran.push("none open"));
+    router.openOverlay({ screen: "picker", name: "open" });
+    router.closeOverlay(() => ran.push(router.entry.overlay?.name ?? null));
+    expect(ran).toEqual(["none open", null]);
+  });
+
   it("closing every overlay is one history step, however many are stacked", () => {
     const { router, h } = setup();
     router.openOverlay({ screen: "settings", name: "open" });

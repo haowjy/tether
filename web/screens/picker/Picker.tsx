@@ -7,10 +7,9 @@ import { useApp, useAppView } from "../../app/context";
 import { tabId } from "../../platform/tabKey";
 import { Dialog } from "../../ui/primitives/Dialog";
 import { SearchField } from "../../ui/primitives/TextField";
-import { SessionList } from "../home/SessionList";
-import { closeOverlayThen } from "../home/overlay";
-import { openWindow } from "../home/openWindow";
-import { retryListing, toggleExpanded, useSessions } from "../home/useSessions";
+import { SessionList } from "../sessions/SessionList";
+import { openWindow } from "../sessions/openWindow";
+import { retryListing, toggleExpanded, useSessions } from "../sessions/useSessions";
 import styles from "./Picker.module.css";
 
 const LISTABLE = new Set(["admitted", "deciding", "unreachable"]);
@@ -47,7 +46,7 @@ function PickerBody() {
               return h.hostId !== null && listing != null && open.has(tabId({ host: h.hostId, window: { server: listing.server, window: w.id } }));
             }}
             onToggle={(key) => { if (h.hostId !== null) toggleExpanded(app, h.hostId, key); }}
-            onOpen={(listing, session, window) => { closeOverlayThen(app, () => { openWindow(app, h, listing, session, window); }); }}
+            onOpen={(listing, session, window) => { app.router.closeOverlay(() => { openWindow(app, h, listing, session, window); }); }}
             onRetry={() => { if (h.admission.kind === "unreachable") app.hosts.recheck(handle); else retryListing(app, handle); }}
           />
         );
