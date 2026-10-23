@@ -65,3 +65,14 @@ Then G2: per-lane reviewers + structural + browser prober.
 - p98 probe: mostly pass; DEFECT attachedElsewhere warning missing on Home (both browsers, 3.4 and
   3.7b; p95 had reported it passing). WebKit vim/less flaky under load.
 - Next: one G2 fix lane for p96+p97+p98 after p99; then thermo lane on P2; then push.
+- G2 fix lane p100 launched + investigator p101 for flaky complete test; p99 landed 3cb3da5 9927fec e4961ef 23bbd2e; df4a98b drafts decision.
+- 15:39 G2 fixes landed (p100 2b24386..f5c8869; p101 61adf1f). Lead read unwatch/sanitizer/503 diffs. Thermo review of web/ at f5c8869 launched. Pending Jimmy: Tab-out-of-terminal option; Docker Serve gates.
+- Jimmy: Tab-out-of-terminal = dedicated chord (moves focus to the tab strip; named in Settings/help). Lead: pick a Ctrl+Shift chord no default Chrome/Firefox/Safari shortcut takes (terminals can't encode Ctrl+Shift+letter distinctly, so shells lose nothing); log in decisions.md and browser-behaviors.md. Build with the thermo fix lane.
+- p102 thermo (f5c8869): request changes. H1 tab drivers owned twice + 3 insert-eligibility rules (3rd round on that seam -> apply its move: Terminals sole owner), H2 Files harness stand-in (hid a hostName bug), M1 overlay plumbing x6, M2 Home/picker duplicate + updating state in screens, M3 closeOverlayThen in Home, M4 4005 banner never built, lows. Fix lane p103 (+ exit chord). Then a round-2 thermo on the moved code, then push.
+- p103 landed 7925e74..ea13079 (Ctrl+Shift+F chord). Round-2 thermo launched at ea13079.
+
+## Round-2 thermo review (p104, at ea13079)
+Approve with notes. H1, M1–M4, L1–L3 fixed. Open: H2 save half untested; M-a native covering (ios-shell row 495 vs
+§6.1, no bridge signal); L-a chords on e.key; L-b axe animation.finished AbortError flake; L-c decisions cites memory.
+Chord verified first-hand in Chrome, Firefox (source) and Safari; Windows Pinyin IME uses Ctrl+Shift+F while active.
+p105 folds all five in; the lead reads the diffs (no third review round).
