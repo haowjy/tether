@@ -113,13 +113,13 @@ fn gzip(bytes: &[u8]) -> Vec<u8> {
         .stdout(Stdio::piped())
         .spawn()
         .expect("gzip is available on POSIX build hosts");
-    child
-        .stdin
-        .take()
-        .expect("gzip stdin")
-        .write_all(bytes)
-        .expect("write gzip input");
-    let output = child.wait_with_output().expect("finish gzip");
+    // gzip writes while it reads: feeding it from this thread alone deadlocks once an
+    // incompressible asset (a font, a PNG) fills both pipes before anyone drains stdout.
+    let mut stdin = child.stdin.take().expect("gzip stdin");
+    let output = std::thread::scope(|scope| {
+        scope.spawn(move || stdin.write_all(bytes).expect("write gzip input"));
+        child.wait_with_output().expect("finish gzip")
+    });
     assert!(output.status.success(), "gzip failed for an embedded asset");
     output.stdout
 }
