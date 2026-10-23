@@ -1,4 +1,4 @@
-import type { InputEvent } from "../native/bridge";
+import type { InputEvent } from "../platform/types";
 import type { ClientMsg, InputItem } from "../proto/generated/messages";
 
 /** The daemon refuses an `input` message over this many bytes (daemon-core.md §6). */

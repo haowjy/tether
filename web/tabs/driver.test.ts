@@ -103,6 +103,26 @@ describe("losing the watch or the link", () => {
     expect(l.types()).toEqual(["watch", "watch"]);
   });
 
+  it("keeps a tab the daemon refused for its session limit, with the daemon's message, and asks again on a growing backoff", () => {
+    const t = setup();
+    const l = t.bind();
+    l.say({ type: "watchEnded", data: { watch: 1, reason: "limit", message: "tether on pop-os allows 3 tmux sessions at a time; open now: a, b, c" } });
+    expect(t.state()).toMatchObject({ kind: "limited", message: "tether on pop-os allows 3 tmux sessions at a time; open now: a, b, c" });
+    vi.advanceTimersByTime(500);
+    expect(l.types()).toEqual(["watch", "watch"]);
+    l.say({ type: "watchEnded", data: { watch: 2, reason: "limit" } });
+    vi.advanceTimersByTime(999);
+    expect(l.types()).toEqual(["watch", "watch"]);
+    vi.advanceTimersByTime(1);
+    expect(l.types()).toEqual(["watch", "watch", "watch"]);
+    // Retry asks at once and keeps the count, so the next refusal waits longer still.
+    l.say({ type: "watchEnded", data: { watch: 3, reason: "limit" } });
+    t.tab.nudge();
+    expect(l.types()).toEqual(["watch", "watch", "watch", "watch"]);
+    l.say(t.watching(4));
+    expect(t.state().kind).toBe("live");
+  });
+
   it("opens a new link after the socket drops", () => {
     const t = setup();
     t.bind().drop();

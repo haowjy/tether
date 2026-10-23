@@ -44,6 +44,8 @@ export function describe(state: ConnectionState, downSince: number, retryAt: num
         hint: null,
         action: null,
       };
+    case "limited":
+      return limitedStatus(state.message, host);
     case "reconnecting":
       break;
   }

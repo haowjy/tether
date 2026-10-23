@@ -3,7 +3,7 @@ import type { Frame } from "../proto/frames";
 import type { Host, TabPort } from "../net/host";
 import type { TerminalRenderer } from "../term";
 import { initialState, reduce, type ConnectionEvent, type ConnectionState } from "./connection";
-import type { InputEvent } from "../native/bridge";
+import type { InputEvent } from "../platform/types";
 import { shellQuote, toMessages } from "./input";
 import { sameWindow } from "../proto/window";
 
@@ -218,6 +218,10 @@ export class TabDriver {
         // With the socket down, the host is the one retrying; this timer is for a failed watch.
         if (next.retryInMs !== null && this.opts.host.ready) this.retryTimer = setTimeout(() => { this.dispatch({ type: "retry" }); }, next.retryInMs);
         break;
+      case "limited":
+        this.watchId = null;
+        this.retryTimer = setTimeout(() => { this.dispatch({ type: "retry" }); }, next.retryInMs);
+        break;
       case "closed":
         this.watchId = null;
         this.opts.host.leave(this.port);
@@ -247,7 +251,7 @@ export class TabDriver {
       case "watchEnded":
         if (msg.data.watch !== this.watchId) break;
         this.watchId = null;
-        this.dispatch({ type: "watchEnded", reason: msg.data.reason, jitter: this.jitter() });
+        this.dispatch({ type: "watchEnded", reason: msg.data.reason, ...(msg.data.message !== undefined && { message: msg.data.message }), jitter: this.jitter() });
         break;
       case "windowClosed":
         if (sameWindow(msg.data.window, this.opts.window)) this.dispatch({ type: "windowClosed" });

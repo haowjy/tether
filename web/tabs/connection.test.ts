@@ -68,6 +68,22 @@ describe("tab connection", () => {
     expect(reduce(live, { type: "watchEnded", reason: "error", jitter: 0.5 })).toMatchObject({ retryInMs: 500 });
   });
 
+  it("a refused watch (limit) climbs the backoff: each refusal waits longer, and Retry keeps the count", () => {
+    const refused = { type: "watchEnded", reason: "limit", message: "tether on pop-os allows 3 tmux sessions at a time", jitter: 0.5 } as const;
+    let s = run([refused]);
+    expect(s).toEqual({ kind: "limited", attempt: 1, retryInMs: 500, message: refused.message });
+    s = run([{ type: "retry" }, refused], s);
+    expect(s).toMatchObject({ kind: "limited", attempt: 2, retryInMs: 1000 });
+    s = run([{ type: "nudge" }, refused], s);
+    expect(s).toMatchObject({ kind: "limited", attempt: 3, retryInMs: 2000 });
+  });
+
+  it("a lost socket supersedes a refusal, and a limited tab never closes by itself", () => {
+    const limited = run([{ type: "watchEnded", reason: "limit", jitter: 0.5 }]);
+    expect(reduce(limited, lostMid)).toMatchObject({ kind: "reconnecting", halt: null });
+    expect(reduce(limited, { type: "windowClosed" })).toEqual({ kind: "closed", reason: "windowClosed" });
+  });
+
   it("a returning tab rewatches from live only", () => {
     expect(run([{ type: "bound" }, { type: "rewatch" }])).toEqual({ kind: "connecting", attempt: 0 });
     const rec = run([lostMid]);
