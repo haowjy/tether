@@ -691,7 +691,7 @@ fn low_budget_limit_names_the_sessions_holding_the_slot() {
     assert_eq!(ended[0]["data"]["reason"], "limit");
     assert_eq!(
         ended[0]["data"]["message"],
-        "tether on devbox allows 1 tmux sessions at a time; open now: work"
+        "tether on devbox allows 1 tmux session at a time; open now: work"
     );
 }
 

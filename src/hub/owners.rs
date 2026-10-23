@@ -332,8 +332,13 @@ impl State {
             .into_iter()
             .collect::<Vec<_>>()
             .join(", ");
+        let noun = if self.max_clients == 1 {
+            "session"
+        } else {
+            "sessions"
+        };
         cut(format!(
-            "tether on {} allows {} tmux sessions at a time; open now: {sessions}",
+            "tether on {} allows {} tmux {noun} at a time; open now: {sessions}",
             self.host_name, self.max_clients
         ))
     }

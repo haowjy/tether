@@ -5,6 +5,7 @@ version section on release.
 
 ## [Unreleased]
 
+- The session-limit message says "1 tmux session" when the limit is one.
 - Show refused auth row names in device listing, list nodes by stored ID, and send
   the native welcome and manifest without waiting for a tailnet refresh.
 - Use pnpm 10.23.0 to install, build and check the web client.
