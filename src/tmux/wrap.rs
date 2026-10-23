@@ -97,10 +97,6 @@ pub(crate) fn align(physical: &[Bytes], logical: &[Bytes]) -> WrapMap {
 /// The end of an ESC sequence at `at`, including its introducer and terminator.
 /// OSC accepts BEL or ST; CSI and other ESC sequences use their final-byte ranges.
 pub(crate) fn escape_end(row: &[u8], at: usize) -> Option<usize> {
-    if row.get(at) != Some(&0x1b) {
-        return None;
-    }
-
     let introducer = *row.get(at + 1)?;
     if introducer == b'[' {
         let tail = row.get(at + 2..)?;
