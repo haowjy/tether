@@ -226,7 +226,7 @@ impl Store {
         let token_hash = token::hash(&token);
         self.update(|file| {
             redeem(file, code, now)?;
-            let name = add_native(&mut file.devices, device_name, &token_hash, by, now);
+            let name = add_native(file, device_name, &token_hash, by, now);
             Ok(Added { name, token })
         })?
     }
@@ -251,14 +251,7 @@ impl Store {
                 return Ok(device.name.clone());
             }
             redeem(file, code, now)?;
-            Ok(add_node(
-                &mut file.devices,
-                device_name,
-                node_id,
-                login,
-                by,
-                now,
-            ))
+            Ok(add_node(file, device_name, node_id, login, by, now))
         })?
     }
 
@@ -266,8 +259,7 @@ impl Store {
     pub fn add_device(&self, name: &str, now: SystemTime) -> Result<Added, StoreError> {
         let token = token::generate()?;
         let token_hash = token::hash(&token);
-        let name =
-            self.update(|file| add_native(&mut file.devices, name, &token_hash, "cli", now))?;
+        let name = self.update(|file| add_native(file, name, &token_hash, "cli", now))?;
         Ok(Added { name, token })
     }
 
@@ -345,10 +337,16 @@ fn redeem(file: &mut AuthFile, code: &str, now: SystemTime) -> Result<(), Enroll
     Ok(())
 }
 
-/// Picks a device name shared by both device kinds.
-fn unique_name(devices: &[Device], name: &str) -> String {
+/// Picks a name not used by an admitted or refused row.
+fn unique_name(file: &AuthFile, name: &str) -> String {
     let base = clean_name(name);
-    let taken = |candidate: &str| devices.iter().any(|device| device.name == candidate);
+    let taken = |candidate: &str| {
+        file.devices.iter().any(|device| device.name == candidate)
+            || file
+                .refused_devices
+                .iter()
+                .any(|row| row.get("name").and_then(toml::Value::as_str) == Some(candidate))
+    };
     let mut candidate = base.clone();
     let mut suffix = 2;
     while taken(&candidate) {
@@ -359,14 +357,14 @@ fn unique_name(devices: &[Device], name: &str) -> String {
 }
 
 fn add_native(
-    devices: &mut Vec<Device>,
+    file: &mut AuthFile,
     name: &str,
     token_hash: &Hash,
     by: &str,
     now: SystemTime,
 ) -> String {
-    let name = unique_name(devices, name);
-    devices.push(Device {
+    let name = unique_name(file, name);
+    file.devices.push(Device {
         name: name.clone(),
         kind: DeviceKind::Native,
         token_sha256: Some(token::hex(token_hash)),
@@ -379,15 +377,15 @@ fn add_native(
 }
 
 fn add_node(
-    devices: &mut Vec<Device>,
+    file: &mut AuthFile,
     name: &str,
     node_id: &str,
     login: &str,
     by: &str,
     now: SystemTime,
 ) -> String {
-    let name = unique_name(devices, name);
-    devices.push(Device {
+    let name = unique_name(file, name);
+    file.devices.push(Device {
         name: name.clone(),
         kind: DeviceKind::Node,
         token_sha256: None,
@@ -648,11 +646,16 @@ mod tests {
         assert_eq!(devices[0].name, "old");
         assert_eq!(devices[0].kind, DeviceKind::Native);
 
+        let added = store
+            .add_device("future", SystemTime::now())
+            .expect("add device");
+        assert_eq!(added.name, "future-2");
+
         store
             .set_pending(Duration::from_secs(600), SystemTime::now())
             .expect("write a pending code");
         let rows = device_rows(&store);
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         let future = rows
             .iter()
             .find(|row| row.get("name").and_then(toml::Value::as_str) == Some("future"))
@@ -675,6 +678,15 @@ mod tests {
             store
                 .remove_device("future")
                 .expect("remove the refused row by name")
+        );
+        assert_eq!(
+            store.read().expect("typed row remains").devices[0].name,
+            "future-2"
+        );
+        assert!(
+            store
+                .remove_device("future-2")
+                .expect("remove added device")
         );
         assert!(device_rows(&store).is_empty());
     }

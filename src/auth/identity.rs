@@ -1,7 +1,7 @@
 //! Tailscale LocalAPI and request identity. LocalAPI answers are bounded and reused;
 //! whois is deliberately not cached between requests.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
@@ -87,7 +87,6 @@ pub struct TailnetStateCell {
 struct CellState {
     value: Option<(Instant, TailnetState)>,
     in_flight: bool,
-    failed: bool,
     retrying: bool,
     retry_delay: Duration,
 }
@@ -102,7 +101,6 @@ impl TailnetStateCell {
             state: Arc::new(Mutex::new(CellState {
                 value: None,
                 in_flight: false,
-                failed: false,
                 retrying: false,
                 retry_delay: Duration::from_secs(2),
             })),
@@ -140,7 +138,7 @@ impl TailnetStateCell {
                 if age <= STATE_MAX_AGE {
                     return Ok(value.clone());
                 }
-                if state.retrying || state.failed {
+                if state.retrying {
                     return if age <= STATE_MAX_HOLD {
                         Ok(value.clone())
                     } else {
@@ -149,7 +147,7 @@ impl TailnetStateCell {
                 }
             }
             if state.in_flight {
-                if state.failed {
+                if state.retrying {
                     return Err(LocalApiError::Unavailable);
                 }
                 drop(state);
@@ -216,13 +214,11 @@ impl TailnetStateCell {
             match &result {
                 Ok(value) => {
                     state.value = Some((Instant::now(), value.clone()));
-                    state.failed = false;
                     state.retrying = false;
                     state.retry_delay = Duration::from_secs(2);
                     Completion::Succeeded
                 }
                 Err(_) => {
-                    state.failed = true;
                     let start_retry = !state.retrying;
                     state.retrying = true;
                     if !start_retry {
@@ -434,21 +430,6 @@ impl LocalApi {
                 LocalApiError::Http("whois worker stopped without a result".to_owned())
             })?;
         }
-    }
-
-    /// Stable IDs currently present in `/status`'s peer map for `tether device list`.
-    pub async fn known_nodes(&self) -> Result<HashSet<String>, LocalApiError> {
-        let socket = self.socket_path()?;
-        let bytes = self.cell.get(&socket, "/localapi/v0/status").await?;
-        let status: serde_json::Value = parse_json("/localapi/v0/status", &bytes)?;
-        Ok(status
-            .get("Peer")
-            .and_then(serde_json::Value::as_object)
-            .into_iter()
-            .flat_map(|peers| peers.values())
-            .filter_map(|peer| peer.get("StableID").and_then(serde_json::Value::as_str))
-            .map(str::to_owned)
-            .collect())
     }
 
     fn run_whois(&self, address: IpAddr, flight: Arc<WhoisFlight>) {

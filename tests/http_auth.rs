@@ -683,6 +683,8 @@ async fn whois_shares_same_address_flights_and_bounds_distinct_waiters() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     let overflow = lookup(121).await.expect("overflow request completed");
     assert_eq!(overflow.status, 503, "the seventeenth address is busy");
+    assert_eq!(overflow.json()["error"].as_str(), Some("busy"));
+    assert_eq!(overflow.header("retry-after"), Some("1"));
     assert_eq!(
         daemon
             .fake

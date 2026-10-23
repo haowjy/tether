@@ -15,7 +15,8 @@ Rules the code relies on, which are easy to break:
   lands through `files::Temp::replace` (temp file, fsync, rename, directory fsync), and
   writes nothing when nothing changed. A file that doesn't parse is never overwritten;
   unknown row fields refuse that row alone, and the refused TOML row is preserved
-  unchanged by later writes. `remove_device` can remove one by its `name`.
+  unchanged by later writes. Name allocation checks both typed and refused rows;
+  `remove_device` can remove one by its `name`.
 - Checks re-read `auth.toml`, so `tether device remove` reaches a running daemon with
   no IPC and closes a live socket at its next 10 s check. Don't add a device cache.
 - Only native token hashes are stored. Browser nodes store the stable node ID and

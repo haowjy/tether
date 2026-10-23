@@ -1,6 +1,6 @@
 //! One WebSocket connection (daemon-core.md §4.6–4.7, §5.2, §6; auth.md "Carrying the
-//! token"): the handshake, the timer that enforces the idle timeout and re-checks the
-//! device, pastes written to files, the `dir` check on new windows and sessions, and
+//! token"): the handshake, the idle timeout, background device re-checks, pastes
+//! written to files, the `dir` check on new windows and sessions, and
 //! the hub's `ToConn` moved through an `Outbox` onto the socket, every charge returned
 //! as `FromConn::Credit`.
 //!
@@ -42,7 +42,7 @@ pub(super) const PASTE_SLOTS: usize = 4;
 const MAX_INBOUND: usize = 512 * 1024;
 const MAX_PASTE: usize = 256 * 1024;
 const HELLO_DEADLINE: Duration = Duration::from_secs(10);
-/// The timer that re-checks the device...
+/// The interval between background device re-checks.
 const RECHECK: Duration = Duration::from_secs(10);
 /// ...and closes a socket the client has been silent on for this long.
 const IDLE: Duration = Duration::from_secs(25);
@@ -380,7 +380,7 @@ impl Conn<'_> {
         self.hub(FromConn::Paste { watch, file }).await
     }
 
-    /// The timer: closes a silent socket, and re-checks the device every `RECHECK`.
+    /// The timer closes a socket the client has left silent.
     /// Returns when it next fires.
     async fn tick(&mut self) -> Result<Instant, End> {
         let now = Instant::now();

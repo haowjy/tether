@@ -282,8 +282,6 @@ fn device(command: DeviceCommand) -> Result<()> {
     match command {
         DeviceCommand::List => {
             let devices = store.read()?.devices;
-            let api = LocalApi::system();
-            let known = runtime()?.block_on(api.known_nodes()).ok();
             if devices.is_empty() {
                 println!("No devices. `tether enroll` prints a code for the app's Add host.");
             }
@@ -297,13 +295,7 @@ fn device(command: DeviceCommand) -> Result<()> {
                     DeviceKind::Native => "native".to_owned(),
                     DeviceKind::Node => {
                         let id = device.node_id.as_deref().unwrap_or("?");
-                        match &known {
-                            Some(known) if known.contains(id) => {
-                                format!("node {id} (known by tailscaled)")
-                            }
-                            Some(_) => format!("node {id} (not currently known)"),
-                            None => format!("node {id} (status unavailable)"),
-                        }
+                        format!("node {id}")
                     }
                 };
                 println!(

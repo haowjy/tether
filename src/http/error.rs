@@ -135,7 +135,8 @@ impl From<&AuthError> for HttpError {
             AuthError::NodeRefused(_) => Self::NodeRefused,
             AuthError::NotEnrolled { .. } => Self::NotEnrolled,
             AuthError::IdentityUnavailable(_) => Self::IdentityUnavailable,
-            AuthError::Store(_) | AuthError::Busy => Self::AuthUnavailable,
+            AuthError::Store(_) => Self::AuthUnavailable,
+            AuthError::Busy => Self::Busy,
         }
     }
 }

@@ -170,10 +170,8 @@ impl Auth {
 
     pub async fn machine_name(&self, fallback: &str) -> String {
         self.state
-            .get()
+            .last_known()
             .await
-            .ok()
-            .or(self.state.last_known().await)
             .map(|state| state.machine_name().to_owned())
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| fallback.to_owned())
