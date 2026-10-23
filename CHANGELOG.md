@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- Keep Meridian work notes and knowledge base in repo-local paths for cross-machine handoffs.
+
 - Record Tailscale-first, public-HTTPS follow-up and multi-server settings roadmap.
 
 - Document browser deployment research and required phone PWA installation, offline drafts, and update behavior.

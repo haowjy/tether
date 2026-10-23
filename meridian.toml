@@ -1,5 +1,5 @@
 # Meridian configuration.
-# All values shown are built-in defaults. Uncomment to override.
+# Commented values show built-in defaults; active sections override them.
 # Environment variables (MERIDIAN_*) take precedence over file values.
 
 # -- Execution defaults -----------------------------------------------------
@@ -85,12 +85,15 @@ agent = "tech-lead"
 # [work.artifacts]
 # sync = "project"
 
-# -- Context source examples -------------------------------------------------
-# [context.work]
-# source = "git"
-# remote = "https://example.com/work.git"
-# path = ".meridian/work"
-# archive = ".meridian/archive/work"
+# -- Repository-local context (tracked with this checkout) -------------------
+[context.work]
+source = "local"
+path = ".meridian/work"
+archive = ".meridian/archive/work"
+
+[context.kb]
+source = "local"
+path = ".meridian/kb"
 
 # -- Workspace root examples -------------------------------------------------
 # Named workspace entries live in meridian.toml / meridian.local.toml.

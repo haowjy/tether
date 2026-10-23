@@ -1,0 +1,8 @@
+# Machine-local work attachment and task-directory metadata.
+**/__status.json
+# Raw evidence, credentials and runtime output must not enter git.
+**/scratch/
+**/local/
+**/*.log
+**/*.har
+**/.env
