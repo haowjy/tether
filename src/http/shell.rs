@@ -18,6 +18,7 @@ use tokio::sync::OwnedSemaphorePermit;
 
 use super::server::{ShellStall, ShellStallGuard};
 use super::{Ctx, Refusal};
+use crate::auth::CanonicalOrigin;
 use crate::proto::HttpError;
 
 #[derive(Clone, Copy)]
@@ -83,6 +84,13 @@ async fn asset(State(ctx): State<Arc<Ctx>>, request: Request) -> Response {
         request.uri().path()
     };
     let stall = request.extensions().get::<Arc<ShellStall>>().cloned();
+    // The page's CSP names the socket's origin, and the service worker caches `/` for the life
+    // of the build. While the origin can't be read, a copy served with `'self'` alone would
+    // freeze that into the cache, so the worker's precache gets a `503` it retries.
+    let origin = ctx.app.auth.cached_browser_origin().await;
+    if path == "/index.html" && origin.is_none() && ctx.app.auth.serves_origin() {
+        return Refusal::from(HttpError::Busy).into_response();
+    }
     let is_manifest = path == "/manifest.webmanifest";
     let (raw, gzip, etag) = if is_manifest {
         let host = ctx.app.auth.machine_name(&ctx.app.host.name).await;
@@ -116,7 +124,7 @@ async fn asset(State(ctx): State<Arc<Ctx>>, request: Request) -> Response {
     };
     response = response
         .header(header::CONTENT_TYPE, mime(path))
-        .header(header::CONTENT_SECURITY_POLICY, csp(&ctx).await)
+        .header(header::CONTENT_SECURITY_POLICY, csp(origin.as_ref()))
         .header(header::REFERRER_POLICY, "no-referrer")
         .header(header::VARY, "Accept-Encoding")
         .header("cross-origin-opener-policy", "same-origin")
@@ -235,14 +243,11 @@ fn mime(path: &str) -> &'static str {
     }
 }
 
-async fn csp(ctx: &Ctx) -> String {
-    let connect = ctx
-        .app
-        .auth
-        .cached_browser_origin()
-        .await
-        .map(|origin| format!("'self' wss://{}", origin.authority))
-        .unwrap_or_else(|| "'self'".to_owned());
+fn csp(origin: Option<&CanonicalOrigin>) -> String {
+    let connect = origin.map_or_else(
+        || "'self'".to_owned(),
+        |origin| format!("'self' wss://{}", origin.authority),
+    );
     format!(
         "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src {connect}; manifest-src 'self'; worker-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     )

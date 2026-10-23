@@ -509,7 +509,7 @@ node_refused` (with `reason`: `tagged`, `login_mismatch`, `shared`, `routes`,
 manifest-src 'self'; worker-src 'self'; frame-src 'none'; frame-ancestors 'none';
 object-src 'none'; base-uri 'none'; form-action 'none'`, plus `nosniff`,
 `Referrer-Policy: no-referrer` and `Cross-Origin-Opener-Policy: same-origin`. With
-no canonical origin, `connect-src` is `'self'` alone. Hashed assets get
+no canonical origin, `connect-src` is `'self'` alone; but when the daemon sits behind Tailscale serve and cannot read the origin right now, `/` answers `503` with `Retry-After`, so the service worker's precache never freezes a `'self'`-only copy for the life of a build. Hashed assets get
 `Cache-Control: public, max-age=31536000, immutable`; `/`, `/sw.js` and the
 manifest get `no-cache` and an `ETag` (the content hash), and answer
 `If-None-Match` with 304. The service worker answers only shell paths and never

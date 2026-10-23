@@ -191,6 +191,11 @@ impl Auth {
         Ok(origin.map_err(|refusal| refusal.message))
     }
 
+    /// Whether this daemon sits behind Tailscale serve, so the browser's origin is knowable.
+    pub fn serves_origin(&self) -> bool {
+        self.serve_socket.is_some()
+    }
+
     pub async fn cached_browser_origin(&self) -> Option<CanonicalOrigin> {
         let state = self
             .state
