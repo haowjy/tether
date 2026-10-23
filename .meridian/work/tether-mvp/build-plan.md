@@ -65,12 +65,12 @@ P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, doc
 
 | Lane | Spawn | State |
 |---|---|---|
-| A auth | rev 4 p31; review p42 (3H: Host via XFH, sole Serve handler checked on use, flock); rev 5 p48 | revising |
-| B limits 72 | rev 2 p45 (all findings applied) → implementing L1 p47 | building |
+| A auth | rev 5 p48 (read-when-used rule, serve.sock/local.sock, flock, TS ≥ 1.100); review p53 | reviewing |
+| B limits 72 | built p47; preflight green combined; split p50; code review p51 | reviewing |
 | C inventory | p25 done (report only: protocol already has create/attachedElsewhere/index) | done |
-| E wrap | review p44 → map stays in daemon, pair on every version (no -F branch), history clamp fix first; implementing L3 p46 | building |
+| E wrap | built p46 (green on 3.4/3.7b/3.8); split p50; code review p52 | reviewing |
 | F tmux 3.8 | p27 → 50e5499 | done, unpushed |
-| D client architecture | rev 3 p34; review p43 (2H: PWA update flow, duplicate listing fetch); rev 4 p49 | revising |
+| D client architecture | rev 4 p49 committed. Round limit reached (3 reviews): no 4th review round; review 3 judged the design sound, rev 4 mostly deletes. W0's structural review checks rev 4 against code | settled |
 
 ## Tech-lead calls (2026-10-23 night)
 
