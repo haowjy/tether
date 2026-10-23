@@ -13,17 +13,14 @@ function AppBanners() {
   const destination = useAppView((v) => v.nav.destination);
   return (
     <>
-      {storageClosed && destination !== "terminal" && (
+      {(storageClosed || update === "reload") && destination !== "terminal" && (
         <Banner tone="warning" title="Reload to finish updating" action={{ label: "Reload", onAction: () => { app.platform.restart("update"); } }}>
-          Changes since then are kept in memory and won't survive a reload.
+          {storageClosed ? "Changes since then are kept in memory and won't survive a reload." : undefined}
         </Banner>
       )}
       {/* These banners show on Home and Files, never over the terminal: in flow they would shrink the stable box and resize tmux. */}
       {update === "ready" && destination !== "terminal" && (
         <Banner title="Update ready" action={{ label: "Update", onAction: () => { app.applyUpdate(); } }} />
-      )}
-      {update === "reload" && destination !== "terminal" && (
-        <Banner tone="warning" title="Reload to finish updating" action={{ label: "Reload", onAction: () => { app.platform.restart("update"); } }} />
       )}
     </>
   );
