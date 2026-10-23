@@ -25,10 +25,6 @@ h1, h2, h3, p { margin: 0; }
   outline-offset: 2px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
-}
-
 /* Text for assistive technology only. */
 .sr-only {
   position: absolute;

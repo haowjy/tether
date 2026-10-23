@@ -63,3 +63,14 @@
   --duration-3: 320ms;
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+
+/* Reduced motion shortens what the components declare. It must not set a duration on every
+   element: `transition-property` defaults to `all`, so a 1ms duration made every colour change
+   (the scheme applied after load) a transition that axe could catch half-way, as black text. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-1: 1ms;
+    --duration-2: 1ms;
+    --duration-3: 1ms;
+  }
+}

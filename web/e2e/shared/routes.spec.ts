@@ -1,5 +1,5 @@
 import { test } from "@playwright/test";
-import { expectAccessible, label, openFixture, SCENARIOS, shot } from "./harness";
+import { expectAccessible, expectNoHorizontalScroll, label, openFixture, SCENARIOS, shot } from "./harness";
 
 // Every route and every admission screen, in every layout, theme and density: renders with
 // no console errors, passes axe (contrast included), and is photographed for the evidence.
@@ -24,6 +24,7 @@ for (const scenario of SCENARIOS) {
         const opened = await openFixture(page, screen.fixture, scenario, screen.hash);
         await page.locator(screen.ready).first().waitFor();
         await expectAccessible(page);
+        await expectNoHorizontalScroll(page);
         opened.expectNoConsoleErrors();
         await shot(page, screen.name, scenario, testInfo.project.name);
       });

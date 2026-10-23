@@ -2,7 +2,10 @@
   position: relative;
   display: inline-flex;
 }
+/* Not displayed until shown: a hidden tooltip still counts toward the page's scrollable
+   overflow, and one centred under a control at the screen's edge widened the phone page. */
 .tip {
+  display: none;
   position: absolute;
   z-index: var(--z-toast);
   padding: var(--space-1) var(--space-2);
@@ -22,11 +25,17 @@
 .tip[data-placement="right"] { left: calc(100% + var(--space-1)); top: 50%; translate: 0 -50%; }
 .root:hover .tip,
 .root:focus-within .tip {
+  display: block;
   opacity: 1;
   visibility: visible;
+  @starting-style {
+    opacity: 0;
+    visibility: hidden;
+  }
 }
-.root[data-dismissed] .tip { opacity: 0; visibility: hidden; }
+.root[data-dismissed] .tip { display: none; }
 /* Touch has no hover to reveal it: the control's name is its label. */
 @media (hover: none) {
-  .tip { display: none; }
+  .root:hover .tip,
+  .root:focus-within .tip { display: none; }
 }

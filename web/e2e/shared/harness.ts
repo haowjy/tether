@@ -45,6 +45,12 @@ export async function expectAccessible(page: Page): Promise<void> {
   expect(results.violations.map((v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(" ")).join("; ")})`)).toEqual([]);
 }
 
+/** The page never scrolls sideways: a hidden element (a tooltip) can still widen it. */
+export async function expectNoHorizontalScroll(page: Page): Promise<void> {
+  const widths = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+  expect(widths.scroll).toBeLessThanOrEqual(widths.client);
+}
+
 /** Saves a screenshot when W0_EVIDENCE names a directory: Chromium only, in the pointer's natural density. */
 export async function shot(page: Page, name: string, scenario: Scenario, project: string): Promise<void> {
   const dir = process.env["W0_EVIDENCE"];
