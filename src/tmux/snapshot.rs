@@ -164,48 +164,25 @@ fn paint(out: &mut Vec<u8>, captured: &[Bytes], rows: u32, wraps: Option<&WrapMa
     }
 }
 
-/// The first printable UTF-8 scalar after a row's leading CSI/OSC styling.
+/// The first printable UTF-8 scalar after a row's leading styling and controls.
 fn first_character(row: &[u8]) -> Option<(usize, usize)> {
     let mut at = 0;
     while at < row.len() {
-        match row[at] {
-            0x1b if row.get(at + 1) == Some(&b'[') => {
-                let tail = row.get(at + 2..)?;
-                let final_byte = tail.iter().position(|byte| (0x40..=0x7e).contains(byte))?;
-                at += final_byte + 3;
-            }
-            0x1b if row.get(at + 1) == Some(&b']') => {
-                let tail = row.get(at + 2..)?;
-                let end = tail.iter().enumerate().find_map(|(index, byte)| {
-                    (*byte == 0x07
-                        || tail
-                            .get(index..index + 2)
-                            .is_some_and(|sequence| sequence == b"\x1b\\"))
-                    .then_some(index + if *byte == 0x07 { 1 } else { 2 })
-                })?;
-                at += end + 2;
-            }
-            0x1b => {
-                let tail = row.get(at + 1..)?;
-                let mut end = 0;
-                while tail
-                    .get(end)
-                    .is_some_and(|byte| (0x20..=0x2f).contains(byte))
-                {
-                    end += 1;
-                }
-                at += end + 2;
-            }
-            byte if byte < 0x20 || byte == 0x7f => at += 1,
-            _ => {
-                let width = std::str::from_utf8(&row[at..])
-                    .ok()?
-                    .chars()
-                    .next()?
-                    .len_utf8();
-                return Some((at, at + width));
-            }
+        if row[at] == 0x1b {
+            at = wrap::escape_end(row, at)?;
+            continue;
         }
+        if row[at] < 0x20 || row[at] == 0x7f {
+            at += 1;
+            continue;
+        }
+
+        let width = std::str::from_utf8(&row[at..])
+            .ok()?
+            .chars()
+            .next()?
+            .len_utf8();
+        return Some((at, at + width));
     }
     None
 }

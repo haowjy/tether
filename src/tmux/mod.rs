@@ -399,7 +399,15 @@ pub struct History {
     pub history_size: u32,
     pub rows: Vec<Bytes>,
     /// Packed bits: row `i` wraps into row `i + 1`.
-    pub wraps: Bytes,
+    pub wraps: wrap::WrapMap,
+}
+
+impl History {
+    /// Keep the wrap map aligned with the physical rows retained for this response.
+    pub(crate) fn truncate(&mut self, rows: usize) {
+        self.rows.truncate(rows);
+        self.wraps.truncate(self.rows.len());
+    }
 }
 
 /// Every session and its windows, for the session sheet.

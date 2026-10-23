@@ -17,7 +17,6 @@ use crate::proto::{
     self, Base64, ClientMsg, ErrorCode, ServerMsg, SessionListing, SessionRef, TmuxListing,
     WatchEndReason, WindowListing, WindowRef,
 };
-use crate::tmux::wrap::truncate_packed;
 use crate::tmux::{
     ClientId, InputItem, OneShotCmd, Op, PaneId, Reply, ServerInstance, SessionId, Tag, TmuxError,
     WindowId,
@@ -311,15 +310,13 @@ impl State {
             return self.capture_history(conn, req, watch, start, start + half - 1);
         }
         self.unreserve(conn, CAPTURE_RESERVATION);
-        let history = match result {
+        let mut history = match result {
             Ok(Reply::History(history)) => history,
             Err(error) => return self.refuse_tmux(conn, Some(req), Some(watch), &error),
             Ok(_) => return self.refuse_tmux(conn, Some(req), Some(watch), &TmuxError::BadReply),
         };
         let start = history.start;
         let history_size = history.history_size;
-        let rows = history.rows;
-        let wraps = history.wraps;
         // Keep the rows that fit the reservation; the client asks again from there.
         let chunk = |lines: Vec<Base64>, wraps| ServerMsg::HistoryChunk {
             req,
@@ -332,7 +329,7 @@ impl State {
         let base = chunk(Vec::new(), bytes::Bytes::new()).encode().len() as u64;
         let mut lines_size = 0;
         let mut fit = 0_usize;
-        for row in &rows {
+        for row in &history.rows {
             // Base64 in quotes, and a comma after the first.
             let row_size = (row.len() as u64).div_ceil(3) * 4 + 2 + u64::from(fit > 0);
             let next_fit = fit + 1;
@@ -345,12 +342,13 @@ impl State {
             lines_size += row_size;
             fit = next_fit;
         }
-        if fit == 0 && !rows.is_empty() {
+        if fit == 0 && !history.rows.is_empty() {
             // Not even the first row fits, and an empty chunk would be asked for again.
             return self.refuse_tmux(conn, Some(req), Some(watch), &TmuxError::TooLarge);
         }
-        let lines = rows.into_iter().take(fit).map(Base64).collect();
-        self.send(conn, &chunk(lines, truncate_packed(&wraps, fit)), None);
+        history.truncate(fit);
+        let lines = history.rows.into_iter().map(Base64).collect();
+        self.send(conn, &chunk(lines, history.wraps.into_bytes()), None);
     }
 
     pub(super) fn list(&mut self, conn: ConnId, req: u32) {

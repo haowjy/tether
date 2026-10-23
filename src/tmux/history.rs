@@ -22,10 +22,6 @@ pub(crate) fn from_replies(
     if before != after {
         return Err(TmuxError::Torn);
     }
-    if requested_end < requested_start {
-        return Err(TmuxError::BadRequest("history end is before its start"));
-    }
-
     let (history_size, pane_height) = before.first().and_then(bounds).ok_or(TmuxError::BadReply)?;
     let first = requested_start.max(history_top(history_size));
     let bottom = pane_bottom(pane_height);
@@ -35,7 +31,7 @@ pub(crate) fn from_replies(
             start: first,
             history_size,
             rows: Vec::new(),
-            wraps: Bytes::new(),
+            wraps: WrapMap::empty(0),
         });
     }
 
@@ -50,12 +46,14 @@ pub(crate) fn from_replies(
     } else {
         WrapMap::empty(pair_count)
     };
-    Ok(History {
+    let mut history = History {
         start: first,
         history_size,
-        rows: rows.into_iter().take(count).collect(),
-        wraps: pair_map.truncate(count).into_bytes(),
-    })
+        rows: rows.into_iter().take(pair_count).collect(),
+        wraps: pair_map,
+    };
+    history.truncate(count);
+    Ok(history)
 }
 
 fn bounds(row: &Bytes) -> Option<(u32, u32)> {

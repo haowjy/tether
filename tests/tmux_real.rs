@@ -621,12 +621,11 @@ async fn history_ranges_clamp_and_snapshots_restore_soft_wraps() {
     client.wait_for_output(0, PaneId(0), b"READY\r\n").await;
     client.settle().await;
 
-    let marker = b"WRAP-ABCDEFGHIJKLMNO";
     let mut output_start = client.events.len();
     server
         .type_line(
             "%0",
-            "printf 'before\\nWRAP-ABCDEFGHIJKLMNO\\nafter-one\\nafter-two\\nhistory-done\\n'",
+            "printf 'before\\n\\033]8;;https://example.test\\033\\\\WRAP-ABCDEFGHIJKLMNO\\033]8;;\\033\\\\\\nafter-one\\nafter-two\\nhistory-done\\n'",
         )
         .expect("write wrapped history");
     client
@@ -667,14 +666,21 @@ async fn history_ranges_clamp_and_snapshots_restore_soft_wraps() {
     };
     assert_eq!(history.start, top);
     assert_eq!(history.rows.len(), (history_size + pane_height) as usize);
+    assert!(
+        history.rows.iter().any(|row| {
+            row.windows(b"\x1b]8;;https://example.test".len())
+                .any(|bytes| bytes == b"\x1b]8;;https://example.test")
+        }),
+        "history omitted the hyperlink escape"
+    );
+    let first = b"WRAP-ABCDEFG";
+    let continuation = b"HIJKLMNO";
     let joined = history.rows.windows(2).enumerate().find(|(index, pair)| {
-        let mut text = pair[0].to_vec();
-        text.extend_from_slice(&pair[1]);
-        text.windows(marker.len()).any(|part| part == marker)
-            && history
-                .wraps
-                .get(index / 8)
-                .is_some_and(|bits| bits & (1 << (index % 8)) != 0)
+        pair[0].windows(first.len()).any(|part| part == first)
+            && pair[1]
+                .windows(continuation.len())
+                .any(|part| part == continuation)
+            && history.wraps.wraps(*index)
     });
     assert!(
         joined.is_some(),
@@ -698,6 +704,7 @@ async fn history_ranges_clamp_and_snapshots_restore_soft_wraps() {
     assert_eq!(empty.start, top);
     assert!(empty.rows.is_empty());
 
+    let marker = b"WRAP-ABCDEFGHIJKLMNO";
     output_start = client.events.len();
     server
         .type_line("%0", "printf '\\033[2J\\033[HWRAP-ABCDEFGHIJKLMNO\\n'")

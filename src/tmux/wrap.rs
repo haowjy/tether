@@ -4,8 +4,8 @@ use bytes::Bytes;
 
 /// Packed row-wrap bits, least-significant bit first. Bit `i` means physical row `i`
 /// continues into row `i + 1`.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct WrapMap {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrapMap {
     rows: usize,
     bits: Vec<u8>,
 }
@@ -18,7 +18,7 @@ impl WrapMap {
         }
     }
 
-    pub(crate) fn wraps(&self, row: usize) -> bool {
+    pub fn wraps(&self, row: usize) -> bool {
         row < self.rows && self.bits[row / 8] & (1 << (row % 8)) != 0
     }
 
@@ -28,15 +28,14 @@ impl WrapMap {
         }
     }
 
-    pub(crate) fn truncate(&self, rows: usize) -> Self {
-        let rows = rows.min(self.rows);
-        let mut bits = self.bits[..rows.div_ceil(8)].to_vec();
-        if let Some(last) = bits.last_mut()
-            && rows % 8 != 0
+    pub(crate) fn truncate(&mut self, rows: usize) {
+        self.rows = rows.min(self.rows);
+        self.bits.truncate(self.rows.div_ceil(8));
+        if let Some(last) = self.bits.last_mut()
+            && self.rows % 8 != 0
         {
-            *last &= (1 << (rows % 8)) - 1;
+            *last &= (1 << (self.rows % 8)) - 1;
         }
-        Self { rows, bits }
     }
 
     pub(crate) fn into_bytes(self) -> Bytes {
@@ -44,80 +43,92 @@ impl WrapMap {
     }
 }
 
-/// Keeps the bitmap in step with a history response shortened to `rows` lines.
-pub(crate) fn truncate_packed(bits: &[u8], rows: usize) -> Bytes {
-    let length = rows.div_ceil(8);
-    let mut prefix = bits[..length.min(bits.len())].to_vec();
-    prefix.resize(length, 0);
-    if let Some(last) = prefix.last_mut()
-        && rows % 8 != 0
-    {
-        *last &= (1 << (rows % 8)) - 1;
-    }
-    Bytes::from(prefix)
-}
-
 /// Aligns the `-N -T` physical rows with the `-J` logical rows. `capture-pane -e`
-/// adds SGR styling to the physical payload, which is ignored for alignment. Only a
+/// adds terminal styling to the physical payload, which is ignored for alignment. Only a
 /// physical boundary strictly inside one logical row is a soft wrap. Empty or
 /// repeated boundaries remain unset when their position is ambiguous.
 pub(crate) fn align(physical: &[Bytes], logical: &[Bytes]) -> WrapMap {
     let mut map = WrapMap::empty(physical.len());
     let total = physical.iter().map(|row| row.len()).sum();
     let mut flat = Vec::with_capacity(total);
-    let mut physical_ends = Vec::with_capacity(physical.len() + 1);
-    physical_ends.push(0);
+    let mut row_lengths = Vec::with_capacity(physical.len());
     for row in physical {
-        append_without_sgr(&mut flat, row);
-        physical_ends.push(flat.len());
+        let start = flat.len();
+        let mut at = 0;
+        while at < row.len() {
+            if row[at] == 0x1b
+                && let Some(end) = escape_end(row, at)
+            {
+                at = end;
+                continue;
+            }
+            flat.push(row[at]);
+            at += 1;
+        }
+        row_lengths.push(flat.len() - start);
     }
 
     let mut joined = Vec::with_capacity(flat.len());
-    let mut logical_ends = Vec::with_capacity(logical.len());
     for row in logical {
         joined.extend_from_slice(row);
-        logical_ends.push(joined.len());
     }
     if flat != joined {
         return map;
     }
 
-    for row in 0..physical.len().saturating_sub(1) {
-        let offset = physical_ends[row + 1];
-        let left = physical_ends.partition_point(|at| *at < offset);
-        let right = physical_ends.partition_point(|at| *at <= offset);
-        if right - left != 1 || logical_ends.binary_search(&offset).is_ok() {
-            continue;
+    let mut ends = logical.iter().scan(0, |offset, row| {
+        *offset += row.len();
+        Some(*offset)
+    });
+    let mut next_end = ends.next();
+    let mut offset = 0;
+    for (row, pair) in row_lengths.windows(2).enumerate() {
+        offset += pair[0];
+        while next_end.is_some_and(|end| end < offset) {
+            next_end = ends.next();
         }
-        let line = logical_ends.partition_point(|end| *end <= offset);
-        let line_start = line
-            .checked_sub(1)
-            .map_or(0, |previous| logical_ends[previous]);
-        if logical_ends
-            .get(line)
-            .is_some_and(|end| line_start < offset && offset < *end)
-        {
+        if pair[0] > 0 && pair[1] > 0 && next_end != Some(offset) {
             map.set(row);
         }
     }
     map
 }
 
-/// `capture-pane -e` emits SGR sequences around styled cells. Those bytes belong in
-/// the history payload but not in the cell-text comparison against `-J`.
-fn append_without_sgr(out: &mut Vec<u8>, row: &[u8]) {
-    let mut at = 0;
-    while at < row.len() {
-        if row[at..].starts_with(b"\x1b[") {
-            let tail = &row[at + 2..];
-            if let Some(end) = tail.iter().position(|byte| (0x40..=0x7e).contains(byte)) {
-                if tail[end] == b'm' {
-                    at += end + 3;
-                    continue;
-                }
-            }
-        }
-        out.push(row[at]);
-        at += 1;
+/// The end of an ESC sequence at `at`, including its introducer and terminator.
+/// OSC accepts BEL or ST; CSI and other ESC sequences use their final-byte ranges.
+pub(crate) fn escape_end(row: &[u8], at: usize) -> Option<usize> {
+    if row.get(at) != Some(&0x1b) {
+        return None;
     }
+
+    let introducer = *row.get(at + 1)?;
+    if introducer == b'[' {
+        let tail = row.get(at + 2..)?;
+        return tail
+            .iter()
+            .position(|byte| (0x40..=0x7e).contains(byte))
+            .map(|end| at + end + 3);
+    }
+    if introducer == b']' {
+        let tail = row.get(at + 2..)?;
+        let end = tail.iter().enumerate().find_map(|(index, byte)| {
+            (*byte == 0x07
+                || tail
+                    .get(index..index + 2)
+                    .is_some_and(|sequence| sequence == b"\x1b\\"))
+            .then_some(index + if *byte == 0x07 { 1 } else { 2 })
+        })?;
+        return Some(at + end + 2);
+    }
+
+    let mut end = at + 1;
+    while row
+        .get(end)
+        .is_some_and(|byte| (0x20..=0x2f).contains(byte))
+    {
+        end += 1;
+    }
+    row.get(end)
+        .is_some_and(|byte| (0x30..=0x7e).contains(byte))
+        .then_some(end + 1)
 }
