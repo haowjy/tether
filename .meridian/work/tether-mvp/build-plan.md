@@ -65,10 +65,10 @@ P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, doc
 
 | Lane | Spawn | State |
 |---|---|---|
-| A auth | rev 5 p48 (read-when-used rule, serve.sock/local.sock, flock, TS ≥ 1.100); review p53 | reviewing |
-| B limits 72 | built p47; preflight green combined; split p50; code review p51 | reviewing |
+| A auth | L2 47b4d93. Reviews p79+p80 agree: High idle-503 (cell refuses after 30 s idle instead of waiting), Med refused auth.toml rows deleted on write, Med error codes not in HttpError, Med decisions/CHANGELOG/running.md gaps, lows. Fixes p85 (--from p64; also owns the slots+waiters unification). Linux/iOS gates G1–G12 open | done: d1d4bc8 + round-2 notes 5697904 3b67044 (p87 approved with notes, lead read the fixes). Open: deployment gates G1–G12 (Linux box, iPhone, PWA) |
+| B limits 72 | ce9ca40 + fixes. Thermo p81: H1 ceiling test misses 2 rows 47b4d93 added to §6.3; delete Budget; cost table as data; delete self-copy tier test. Fixes p86 | done: 0369577 0df6196 0794c14 (p88 approved) |
 | C inventory | p25 done (report only: protocol already has create/attachedElsewhere/index) | done |
-| E wrap | built p46 (green on 3.4/3.7b/3.8); split p50; code review p52 | reviewing |
+| E wrap | ... + b608a02 (TUI contract) + 02bbe98 (numbered gap was the test rejecting \r\r\n from the pty; p82 proved tmux sent every line; 6/6 on 3.8). Thermo p81: M1 OSC 8 hyperlink kills a chunk's wrap bits; one escape scanner; History owns truncate; spec capture blocks stale. Fixes p86 | done: a959283 884e1c0 bc42fe1 (p88 approved; 16/16 on 3.4/3.7b/3.8) |
 | F tmux 3.8 | p27 → 50e5499 | done, unpushed |
 | D client architecture | rev 4 p49 committed. Round limit reached (3 reviews): no 4th review round; review 3 judged the design sound, rev 4 mostly deletes. W0's structural review checks rev 4 against code | settled |
 
@@ -87,3 +87,14 @@ P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, doc
 - Limits: tier boundaries stay round (72/64/58/53/42).
 - Lanes in one checkout: coders don't commit; the lead commits each change by pathspec
   after review and preflights a clean export of the commit (client-arch review F5).
+| W0 web skeleton + design system | commits + review fixes 395ed9e..b5086ab + docs fold ebdf564 | done |
+- Preflight --commit trap (2026-10-23, fixed 244db07, 5ef777d): the fixed export path +
+  shared target let Cargo's mtime freshness pass off the previous export's build as the
+  current commit's (archive mtimes are commit times). Exports now extract with `tar -m`;
+  build.rs embeds from OUT_DIR. Per-commit preflights run before 244db07 on the new layout
+  are void; re-run of 395ed9e..5ef777d: all 8 pass.
+- pnpm, not npm (Jimmy, 2026-10-23): p84 builds the switch as a patch in an export; apply after the pf2 preflight re-run and p83 docs fold land; fold design-doc npm mentions then. Deletes check-install.mjs (export does pnpm install --frozen-lockfile).
+- AGENTS.md now carries the pnpm rule (uncommitted, in the working tree with p83's edits): commit it with the pnpm patch.
+- pnpm switch landed 362e4fb (p84 patch; full preflight --commit green; checkout node_modules reinstalled with pnpm). p85/p86 were briefed before it: their web commands should be pnpm.
+- device list /status fetch: removed in 5697904.
+- 2026-10-23 ~10:40: gate G1 (daemon lanes A, B, E) closed on the Mac; all reviewed, nothing pushed (awaiting Jimmy). Next: P2 web lanes W1–W4 on the W0 skeleton. Pending Jimmy: proposed permanent tests (focus after tab change, one listSessions, align table tests); push.

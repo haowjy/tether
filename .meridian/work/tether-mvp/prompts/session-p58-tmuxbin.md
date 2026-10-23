@@ -1,0 +1,1 @@
+Read prior spawn p58 transcript (user says p58 report's prior runs selected tmux binaries). Find how tmux binaries/versions were discovered/selected and any paths, commands, tool details relevant to current requested runs on 3.4, 3.7b, 3.8. Also inspect p57/p59 reports if useful. Read-only; report sources and concise findings.

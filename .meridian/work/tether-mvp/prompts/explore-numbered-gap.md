@@ -1,0 +1,1 @@
+Investigate the numbered-line loss report in clean HEAD source. Read tests/tmux_real.rs collector near check_numbered_once and relevant pump/parser/session/hub output path. Determine possible drop semantics, point to file:line, identify candidate layer boundaries and hypotheses. Read-only; do not modify source or touch primary checkout state. Report concise evidence.
