@@ -114,7 +114,7 @@ fn serve(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<(
 }
 
 async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<()> {
-    let budget = tether::budget::resolve(config.memory_budget_mib)?;
+    let tier = tether::budget::resolve(config.memory_budget_mib)?;
     let runtime_dir = config::runtime_dir()?;
     let runtime = tether::runtime::Runtime::open(runtime_dir)?;
     let serve_path = runtime.serve_path.clone();
@@ -136,7 +136,7 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         Endpoints {
             main: endpoint.clone(),
         },
-        budget.caps().control_clients,
+        tier.caps.control_clients,
         name.clone(),
     );
     let hub_stop = hub.clone();
@@ -154,7 +154,7 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         paste_dir,
         config: file,
         complete: complete::Settings::new(&config.complete, Environment::current(&home)),
-        caps: budget.caps(),
+        caps: tier.caps,
         home,
         lanes,
     };

@@ -7,47 +7,9 @@ use std::fmt;
 use tracing::{info, warn};
 
 const MIB: u64 = 1 << 20;
-#[cfg(test)]
-const KIB: u64 = 1 << 10;
-#[cfg(test)]
-const HEADROOM_KIB: u64 = 4 * KIB;
 pub const MINIMUM_MIB: u64 = 42;
 /// Fixed HTTP accept backstop, included in the ceiling and used by `http::server`.
 pub const ACCEPTED_CONNECTIONS: usize = 64;
-
-#[cfg(test)]
-struct MemoryCostTable {
-    daemon: u64,
-    one_shot: u64,
-    tmux_chunks: u64,
-    file_api: u64,
-    http_connection: u64,
-    kernel_socket_buffers: u64,
-    capture_replies: u64,
-    paste_files: u64,
-    raw_responses: u64,
-    control_client: u64,
-    socket: u64,
-    completion: u64,
-}
-
-/// MiB estimates from daemon-core §6.3, rounded up to KiB; HTTP state is 36 KiB per
-/// accepted connection which is not upgraded to a socket.
-#[cfg(test)]
-const COSTS_KIB: MemoryCostTable = MemoryCostTable {
-    daemon: 5 * KIB,
-    one_shot: 5_018, // 4.9 MiB
-    tmux_chunks: 2 * KIB,
-    file_api: 3_584, // 3.5 MiB
-    http_connection: 36,
-    kernel_socket_buffers: 3 * 256,
-    capture_replies: 2 * MIB / KIB,
-    paste_files: MIB / KIB,
-    raw_responses: MIB / KIB,
-    control_client: 5_428, // 5.3 MiB
-    socket: 4_414,         // 4.31 MiB
-    completion: 11_572,    // 11.3 MiB
-};
 
 /// The only memory-dependent daemon caps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,43 +77,6 @@ pub const TIERS: [Tier; 5] = [
 
 pub const DEFAULT_CAPS: Caps = TIERS[0].caps;
 
-#[cfg(test)]
-fn ceiling_kib(caps: Caps) -> u64 {
-    let fixed = COSTS_KIB.daemon
-        + COSTS_KIB.one_shot
-        + COSTS_KIB.tmux_chunks
-        + COSTS_KIB.file_api
-        + COSTS_KIB.kernel_socket_buffers
-        + COSTS_KIB.capture_replies
-        + COSTS_KIB.paste_files
-        + COSTS_KIB.raw_responses;
-    let unupgraded = u64::try_from(ACCEPTED_CONNECTIONS - caps.sockets)
-        .expect("accepted connection count fits in KiB arithmetic")
-        * COSTS_KIB.http_connection;
-    let control_clients = caps.control_clients as u64 * COSTS_KIB.control_client;
-    let sockets = caps.sockets as u64 * COSTS_KIB.socket;
-    let completion = if caps.completion {
-        COSTS_KIB.completion
-    } else {
-        0
-    };
-    fixed + unupgraded + control_clients + sockets + completion
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Budget {
-    pub configured_mib: u64,
-    pub unit_limit_mib: Option<u64>,
-    pub effective_mib: u64,
-    pub tier: &'static Tier,
-}
-
-impl Budget {
-    pub fn caps(self) -> Caps {
-        self.tier.caps
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BelowMinimum {
     pub effective_mib: u64,
@@ -175,7 +100,7 @@ impl fmt::Display for BelowMinimum {
 impl Error for BelowMinimum {}
 
 /// Reads cgroup v2, selects the lower budget and logs the chosen caps.
-pub fn resolve(configured_mib: u64) -> Result<Budget, BelowMinimum> {
+pub fn resolve(configured_mib: u64) -> Result<&'static Tier, BelowMinimum> {
     let cgroup = read_cgroup();
     let unit_limit_mib = cgroup
         .as_ref()
@@ -193,13 +118,6 @@ pub fn resolve(configured_mib: u64) -> Result<Budget, BelowMinimum> {
         .iter()
         .find(|tier| effective_mib >= tier.minimum_mib)
         .expect("the minimum budget has a tier");
-    let budget = Budget {
-        configured_mib,
-        unit_limit_mib,
-        effective_mib,
-        tier,
-    };
-
     match unit_limit_mib {
         Some(limit) if limit < configured_mib => {
             warn!(
@@ -241,7 +159,7 @@ pub fn resolve(configured_mib: u64) -> Result<Budget, BelowMinimum> {
         completion = tier.caps.completion,
         "memory budget and caps"
     );
-    Ok(budget)
+    Ok(tier)
 }
 
 #[derive(Debug, Default)]
@@ -406,55 +324,99 @@ fn parse_cgroup_limit(text: &str) -> Option<Option<u64>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Caps, DEFAULT_CAPS, HEADROOM_KIB, KIB, MINIMUM_MIB, TIERS, ceiling_kib};
+    use super::{ACCEPTED_CONNECTIONS, MIB, TIERS, Tier};
+
+    const KIB: u64 = 1 << 10;
+    const HEADROOM_KIB: u64 = 4 * KIB;
+    // Table rows are rounded separately to tenths of a MiB; cost entries round up to KiB.
+    const PUBLISHED_ROUNDING_KIB: u64 = 150;
+    const FIXED_KIB: [(&str, u64); 10] = [
+        ("daemon", 5 * KIB),
+        ("one-shot tmux", 5_018),
+        ("tmux chunks", 2 * KIB),
+        ("file API", 3_584),
+        ("kernel socket buffers", 3 * 256),
+        ("capture replies", 2 * MIB / KIB),
+        ("paste files", MIB / KIB),
+        ("raw responses", MIB / KIB),
+        ("shell slots: kernel buffers", MIB / KIB),
+        ("LocalAPI answers and parse", 308), // 0.3 MiB, rounded up to KiB.
+    ];
+    const PER_CAP_KIB: [(&str, u64); 4] = [
+        ("unupgraded HTTP connection", 36),
+        ("control client", 5_428),
+        ("socket", 4_414),
+        ("completion", 11_572),
+    ];
+    const SPEC_CEILINGS_TENTHS_MIB: [u64; 5] = [636, 583, 530, 488, 375];
+
+    fn ceiling_kib(tier: &Tier) -> u64 {
+        let fixed = FIXED_KIB.iter().map(|(_, kib)| kib).sum::<u64>();
+        let [
+            (_, http_connection),
+            (_, control_client),
+            (_, socket),
+            (_, completion),
+        ] = PER_CAP_KIB;
+        let unupgraded = (ACCEPTED_CONNECTIONS - tier.caps.sockets) as u64 * http_connection;
+        fixed
+            + unupgraded
+            + tier.caps.control_clients as u64 * control_client
+            + tier.caps.sockets as u64 * socket
+            + u64::from(tier.caps.completion) * completion
+    }
+
+    fn published_ceilings_tenths_mib() -> [u64; 5] {
+        let paragraph = include_str!("../docs/design/daemon-core.md")
+            .split("By tier, the unreclaimable ceiling is ")
+            .nth(1)
+            .and_then(|rest| rest.split(". Each plus").next())
+            .expect("daemon-core.md publishes per-tier ceilings");
+        let mut outside_ranges = String::new();
+        let mut in_range = false;
+        for character in paragraph.chars() {
+            match character {
+                '(' => in_range = true,
+                ')' => in_range = false,
+                _ if !in_range => outside_ranges.push(character),
+                _ => {}
+            }
+        }
+        let values = outside_ranges
+            .split(|character: char| !(character.is_ascii_digit() || character == '.'))
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                let (whole, tenths) = part.split_once('.').expect("ceiling uses one decimal");
+                whole.parse::<u64>().expect("whole MiB") * 10
+                    + tenths.parse::<u64>().expect("tenths of MiB")
+            })
+            .collect::<Vec<_>>();
+        values
+            .try_into()
+            .expect("daemon-core.md publishes five tier ceilings")
+    }
 
     #[test]
-    fn tiers_keep_the_round_boundaries_and_caps() {
-        let rows = [
-            (72, DEFAULT_CAPS),
-            (
-                64,
-                Caps {
-                    control_clients: 2,
-                    sockets: 3,
-                    completion: true,
-                },
-            ),
-            (
-                58,
-                Caps {
-                    control_clients: 1,
-                    sockets: 3,
-                    completion: true,
-                },
-            ),
-            (
-                53,
-                Caps {
-                    control_clients: 1,
-                    sockets: 2,
-                    completion: true,
-                },
-            ),
-            (
-                42,
-                Caps {
-                    control_clients: 1,
-                    sockets: 2,
-                    completion: false,
-                },
-            ),
-        ];
-        assert_eq!(TIERS.map(|tier| (tier.minimum_mib, tier.caps)), rows);
-        assert_eq!(MINIMUM_MIB, 42);
-        assert_eq!(DEFAULT_CAPS, rows[0].1);
+    fn published_tier_ceilings_match_the_spec() {
+        let published = published_ceilings_tenths_mib();
+        assert_eq!(published, SPEC_CEILINGS_TENTHS_MIB);
+        for (tier, published_tenths_mib) in TIERS.iter().zip(published) {
+            let computed_tenths_kib = ceiling_kib(tier) * 10;
+            let published_tenths_kib = published_tenths_mib * KIB;
+            assert!(
+                computed_tenths_kib.abs_diff(published_tenths_kib) <= PUBLISHED_ROUNDING_KIB * 10,
+                "{} ceiling differs from its published value by more than {} KiB",
+                tier.label,
+                PUBLISHED_ROUNDING_KIB
+            );
+        }
     }
 
     #[test]
     fn each_tier_ceiling_plus_headroom_fits_only_its_range() {
         for (index, tier) in TIERS.iter().enumerate() {
             let budget_kib = tier.minimum_mib * KIB;
-            let ceiling = ceiling_kib(tier.caps);
+            let ceiling = ceiling_kib(tier);
             assert!(
                 ceiling + HEADROOM_KIB <= budget_kib,
                 "{} ceiling {ceiling} KiB plus headroom exceeds {} MiB",
@@ -463,7 +425,7 @@ mod tests {
             );
 
             if let Some(higher) = index.checked_sub(1).map(|higher| &TIERS[higher]) {
-                let higher_ceiling = ceiling_kib(higher.caps);
+                let higher_ceiling = ceiling_kib(higher);
                 assert!(
                     higher_ceiling + HEADROOM_KIB > budget_kib,
                     "{} caps unexpectedly fit in the {} MiB tier",
