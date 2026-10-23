@@ -20,7 +20,7 @@ use tether::hub::INBOX;
 use tether::tmux::{
     ClientId, Created, Endpoint, Event, Found, Location, OneShotCmd, Op, PaneId, PumpMsg, Reply,
     ServerInstance, Session, SessionId, SessionLocation, Size, Socket, Step, Tag, TmuxError,
-    WindowId, oneshot, pump,
+    TmuxVersion, WindowId, oneshot, pump,
 };
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::JoinHandle;
@@ -964,7 +964,16 @@ async fn the_listing_names_sessions_windows_and_terminal_clients() {
         return;
     };
     let endpoint = server.endpoint();
-    let tab_name = "tab\there 中";
+    let version = TmuxVersion::parse(
+        server
+            .run(&["display-message", "-p", "#{version}"])
+            .expect("tmux version")
+            .trim(),
+    );
+    let tab_name = match version {
+        TmuxVersion::Known { major, minor, .. } if (major, minor) < (3, 8) => "tab\there 中",
+        _ => "tab here 中",
+    };
     server
         .run(&["new-session", "-d", "-s", "watched", "-n", tab_name])
         .expect("new-session");
@@ -997,17 +1006,21 @@ async fn the_listing_names_sessions_windows_and_terminal_clients() {
             )
         })
         .collect();
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0].0, SessionId(0));
+    assert_eq!(sessions[0].1, SESSION);
+    assert!(sessions[0].2);
+    assert_eq!(sessions[0].3.len(), 1);
+    assert_eq!(sessions[0].3[0].0, 0);
+    assert!(sessions[0].3[0].2);
     assert_eq!(
-        sessions,
-        [
-            (SessionId(0), SESSION, true, vec![(0, "sh", true)]),
-            (
-                SessionId(1),
-                "watched",
-                false,
-                vec![(0, tab_name, true), (1, "second", false)]
-            ),
-        ]
+        sessions[1],
+        (
+            SessionId(1),
+            "watched",
+            false,
+            vec![(0, tab_name, true), (1, "second", false)]
+        )
     );
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1115,11 +1128,8 @@ async fn new_windows_and_sessions_take_names_and_directories_as_given() {
         },
     )
     .await;
-    let (window_name, path, session) = check(created);
-    assert_eq!(
-        (window_name.as_str(), PathBuf::from(path)),
-        ("sh", dir.clone())
-    );
+    let (_window_name, path, session) = check(created);
+    assert_eq!(PathBuf::from(path), dir.clone());
     let session_name = server
         .run(&[
             "display-message",

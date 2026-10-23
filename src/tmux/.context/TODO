@@ -6,6 +6,3 @@
   only 3.4 exists.
 - Run the real-tmux suites with no locale set (LANG/LC_ALL unset) in CI, as
   daemon-core.md §8 requires, to catch a missing `-u` turning non-ASCII names into `_`.
-- tmux 3.8 (Homebrew's current) rejects a tab in a window name and names a new
-  session's window `tmux` instead of `sh`; two `tests/tmux_real.rs` cases fail there.
-  Supported versions are 3.4 and 3.7b; decide whether 3.8 joins them.
