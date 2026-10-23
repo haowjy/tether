@@ -15,6 +15,8 @@ test.describe("routes and history", () => {
     await page.getByRole("button", { name: "Terminal" }).click();
     expect(await hash(page)).toBe("#/terminal");
     await page.keyboard.press("Escape"); // with no tab, Terminal opened the picker
+    // Closing it is a history.back() that lands on a later popstate: Back before then undoes the wrong entry.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     await page.goBack();
     expect(await hash(page)).toBe("#/files");
     await page.goBack();
