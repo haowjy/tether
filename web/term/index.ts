@@ -1,11 +1,22 @@
 // The renderer boundary: nothing outside term/ imports xterm.js, so ghostty-web could
 // replace it (plan.md "Layout").
 import type { Snapshot } from "./pipeline";
+import type { RowRange } from "./buffer";
 import type { CellSize } from "./size";
+import type { InputSink } from "./xterm-input";
 import { createXtermRenderer } from "./xterm";
 
-export type { CellSize, Snapshot };
+export type { CellSize, InputSink, RowRange, Snapshot };
 export { createXtermRenderer };
+
+/** xterm's mouse tracking mode: `none` until the application asks for reports (seeded by the snapshot). */
+export type MouseMode = "none" | "x10" | "vt200" | "drag" | "any";
+
+/** A cell in the visible screen, zero-based from its top-left. */
+export interface CellPosition {
+  col: number;
+  row: number;
+}
 
 type Ansi = "black" | "red" | "green" | "yellow" | "blue" | "magenta" | "cyan" | "white";
 type ThemeKey = "background" | "foreground" | "cursor" | "cursorAccent" | "selectionBackground" | Ansi | `bright${Capitalize<Ansi>}`;
@@ -49,4 +60,22 @@ export interface TerminalRenderer {
   scrollToBottom(): void;
   /** Calls `listener` whenever the {@link PromptLine} changes. */
   onPromptLine(listener: (line: PromptLine | null) => void): void;
+  /** A density change: the cell, and so tmux's size, follow it. */
+  setFont(fontFamily: string, fontSize: number): void;
+  /** A fallback font arrived after first paint: drop the glyph atlas so its glyphs draw. */
+  refreshGlyphs(): void;
+  /** Points desktop direct input (xterm's own textarea, under the key-handler contract) at a sink, or turns stdin off with `null`. */
+  setInput(sink: InputSink | null): void;
+  /** xterm's input element, which the focus controller holds while desktop direct input is live; null before it exists. */
+  inputElement(): HTMLElement | null;
+  /** The selection's logical text: soft wraps joined, as xterm marks them. Empty with no selection. */
+  selectionText(): string;
+  /** The rows' logical text, joined by `isWrapped` and not by length (P3b's selection and copy). */
+  bufferText(rows: RowRange): string;
+  /** Whether the application asked for mouse reports. */
+  mouseMode(): MouseMode;
+  /** The cell under a client point, from measured cell metrics and the screen's position, pan included; null outside the screen. */
+  cellAt(x: number, y: number): CellPosition | null;
+  /** What remains visible of the terminal, in CSS pixels, for the cursor pan; null follows the container (the default). */
+  setPanArea(px: number | null): void;
 }

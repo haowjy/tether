@@ -4,9 +4,11 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import type { CellSize, RendererOptions, TerminalRenderer } from ".";
+import { bufferText } from "./buffer";
 import { WritePipeline, type Snapshot } from "./pipeline";
 import { PromptTracker } from "./prompt";
 import { cursorPan } from "./size";
+import { createDesktopInput } from "./xterm-input";
 
 /** Context losses tolerated before settling on the DOM renderer. */
 const MAX_WEBGL_RECREATIONS = 3;
@@ -17,8 +19,8 @@ const MAX_WEBGL_RECREATIONS = 3;
  * the Terminal and survives the renderer.
  */
 export function createXtermRenderer(container: HTMLElement, options: RendererOptions): TerminalRenderer {
-  // Native owns the keyboard: xterm's input never fires, and its helper textarea must
-  // never take focus (ios-shell.md "Keyboard").
+  // Stdin is off until a source is chosen: with native or tether's owned input, xterm's helper
+  // textarea must never take focus (ios-shell.md "Keyboard"). `setInput` turns it on for desktop.
   const term = new Terminal({
     allowProposedApi: true, // unicode11 needs it
     disableStdin: true,
@@ -32,11 +34,8 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
   // A tapped URL leaves the app through native, never `window.open` (ios-shell.md "Web content security").
   term.loadAddon(new WebLinksAddon((_event, url) => { options.openLink(url); }));
   term.open(container);
-  const helper = term.textarea;
-  if (helper) {
-    helper.tabIndex = -1;
-    helper.inert = true;
-  }
+  const setDesktopInput = createDesktopInput(term);
+  setDesktopInput(null);
 
   let recreations = 0;
   let webgl: WebglAddon | undefined;
@@ -86,15 +85,17 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     return width > 0 && height > 0 ? { width: width / term.cols, height: height / term.rows } : null;
   };
 
-  // The keyboard shortens the container but never tmux: the terminal keeps its rows and
-  // slides so the cursor row stays in view. The slide follows the container's resize
-  // with the keyboard's motion; a cursor move jumps, as text does.
+  // The keyboard shortens what is visible but never tmux: the terminal keeps its rows and
+  // slides so the cursor row stays in view. The pan area is what remains visible of the
+  // terminal (the screen sets it); the browser's container never shrinks for the keyboard.
+  // The slide follows a resize with the keyboard's motion; a cursor move jumps, as text does.
   let panned = 0;
+  let panArea: number | null = null;
   const pan = (animate: boolean): void => {
     const element = term.element;
     const cell = cellSize();
     if (!element || !cell) return;
-    const next = cursorPan(term.buffer.active.cursorY, term.rows, cell.height, container.clientHeight);
+    const next = cursorPan(term.buffer.active.cursorY, term.rows, cell.height, panArea ?? container.clientHeight);
     if (next === panned) return;
     panned = next;
     element.style.transition = animate ? "" : "none";
@@ -113,5 +114,29 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     onScrolledUp: (listener) => { scrollListeners.push(listener); },
     scrollToBottom: () => { term.scrollToBottom(); },
     onPromptLine: (listener) => { prompt.onLine(listener); },
+    setFont: (fontFamily, fontSize) => {
+      term.options.fontFamily = fontFamily;
+      term.options.fontSize = fontSize;
+    },
+    refreshGlyphs: () => { webgl?.clearTextureAtlas(); },
+    setInput: setDesktopInput,
+    inputElement: () => term.textarea ?? null,
+    selectionText: () => term.getSelection(),
+    bufferText: (rows) => bufferText(term.buffer.active, rows),
+    mouseMode: () => term.modes.mouseTrackingMode,
+    cellAt: (x, y) => {
+      const screen = term.element?.querySelector(".xterm-screen");
+      const cell = cellSize();
+      if (!screen || !cell) return null;
+      // The rectangle includes the pan's translation, so a panned terminal still maps right.
+      const rect = screen.getBoundingClientRect();
+      const col = Math.floor((x - rect.left) / cell.width);
+      const row = Math.floor((y - rect.top) / cell.height);
+      return col < 0 || row < 0 || col >= term.cols || row >= term.rows ? null : { col, row };
+    },
+    setPanArea: (px) => {
+      panArea = px;
+      pan(true);
+    },
   };
 }
