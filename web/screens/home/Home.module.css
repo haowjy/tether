@@ -1,0 +1,32 @@
+.home { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-gutter);
+  border-bottom: 1px solid var(--color-border);
+}
+.brand { font-size: var(--text-heading); font-weight: var(--weight-bold); }
+.host { font-size: var(--text-small); color: var(--color-status-live); }
+.host[data-tone="reconnecting"] { color: var(--color-status-reconnecting); }
+.host[data-tone="error"] { color: var(--color-status-error); }
+.body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-gutter); }
+/* A centred column, `min(720px, 100% - 2 * gutter)`: still no sidebar. */
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: min(720px, 100%);
+  margin: 0 auto;
+}
+.heading { margin-bottom: var(--space-2); font-size: var(--text-small); font-weight: var(--weight-bold); color: var(--color-text-muted); }
+.list { display: flex; flex-direction: column; gap: var(--space-1); }
+
+.nav {
+  display: flex;
+  flex: none;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+  padding-bottom: var(--safe-bottom);
+}

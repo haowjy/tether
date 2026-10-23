@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p sw",
     "lint": "eslint .",
     "test": "vitest run --configLoader runner",
+    "e2e": "playwright test",
     "check": "npm run typecheck && eslint . && vitest run --configLoader runner && vite build --configLoader runner"
   },
   "dependencies": {
@@ -21,6 +22,8 @@
     "shiki": "4.5.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.54.2",
     "@preact/preset-vite": "2.10.6",
     "@types/node": "24.19.2",
     "@xterm/headless": "6.0.0",
@@ -29,5 +32,8 @@
     "typescript-eslint": "8.72.0",
     "vite": "8.3.5",
     "vitest": "5.0.5"
+  },
+  "overrides": {
+    "playwright-core": "1.54.2"
   }
 }

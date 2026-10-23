@@ -1,0 +1,30 @@
+.shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  padding-top: var(--safe-top);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+.column {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.screen {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.waiting {
+  display: grid;
+  place-items: center;
+  flex: 1;
+}
+.banners { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-gutter) 0; }
+.banners:empty { display: none; }

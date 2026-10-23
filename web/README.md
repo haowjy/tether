@@ -1,66 +1,58 @@
-# tether web UI
+# tether web client
 
-Preact + xterm.js, hosted by the iOS app's web view. `npm --prefix web run check` runs
-typecheck, lint, tests and the build.
+One Preact app for the desktop browser, the phone browser or installed PWA, and the native
+iPhone app's web view. The design is
+[client-architecture.md](../.meridian/work/tether-mvp/design/client-architecture.md); behaviour
+comes from the [interaction contract](../docs/design/client/browser-behaviors.md) and the
+[mockup](../docs/design/client/mockups/index.html). [AGENTS.md](AGENTS.md) has what a lane
+needs to know before editing.
 
-## Desktop dev mode
+```bash
+npm --prefix web ci
+npm --prefix web run check     # typecheck, lint, source checks, unit tests, build, budgets
+npm --prefix web run e2e       # Playwright (Chromium and WebKit) on the harness
+npm --prefix web exec playwright install chromium webkit   # once
+```
 
-Drives the real UI in a desktop browser against a daemon on this box. The dev server
-proxies `/ws`, `/auth/*`, `/fs/*` and `/complete` to the daemon and adds the owner's
-`Tailscale-User-Login` (dev server only, never in a build; the daemon still wants a
-loopback peer). On `/fs/*` and `/complete` it also adds `Authorization: Bearer` with the
-dev token, as native's scheme handler does in the app: the shim keeps the token in a
-`tether_dev_token` cookie scoped to those paths, which the proxy turns into the header and
-strips.
+## The harness
 
-A dev shim (`dev/`, loaded only under `import.meta.env.DEV`) stands in for native: it
-keeps a device token, gives its one host the page's own origin as `baseURL`, reports a
-fixed viewport, turns keys typed in its textarea into bridge `input` events, answers
-`prompt` with `window.prompt`, and saves the tabs and the one on screen in localStorage.
-When `[⌨]` asks for focus it does what native does: shortens the page's web view by the
-keyboard's height, draws a grey block where the keyboard and accessory would be, and
-sends a `keyboard` viewport, so the terminal pans without resizing tmux. Clicking the grey
-block hides it again, as the key row's hide key does. The file manager's native calls
-have stand-ins too: `pickMedia` opens a file chooser and posts the file to `/fs/upload`,
-reporting it in `upload` messages (so the path is typed into the tab); `playVideo` and
-`openURL` open a browser tab. The viewport defaults to
-an iPhone in portrait (393×852, safe area 59/0/34/0, keyboard 424); set it from the query
-string, e.g. landscape: `?w=852&h=393&safe=0,59,21,59&kb=244` (safe area is top, right,
-bottom, left; `kb` is the keyboard plus accessory height).
+`/harness/index.html?fixture=<name>&layout=phone|desktop&scheme=dark|light&density=touch|compact#/route`
+runs the real app on the in-memory `test` platform, with a fake daemon behind `/auth/*` and the
+socket. Fixtures live in `harness/<lane>/`; `gallery` shows every primitive in every state. Start
+it with `npm --prefix web run dev -- --mode harness`. Playwright starts it itself. It is never in
+a production build: the build fails if its module graph holds `platform/test/` or `harness/`.
 
-1. Run a daemon. To keep clear of your own tmux, point it at a private server:
+## Developing against a real daemon
 
-   ```toml
-   # /tmp/tether-dev/config.toml
-   port = 17850
-   [tmux]
-   socket_name = "tether-dev"
-   ```
+The browser adapter has no dev mode. `vite.dev-proxy.ts` is the only dev-only code: Vite's dev
+server proxies `/ws`, `/auth`, `/fs` and `/complete` to the daemon as a local peer, presenting a
+native token that never reaches page code, answers `/auth/node/session` itself and rewrites
+`/auth/info.browserOrigin` to the dev server's origin. It refuses callers that did not come
+through Tailscale Serve.
+
+1. Run a daemon against a private tmux, never your own sessions:
 
    ```bash
    tmux -L tether-dev new-session -d -s dev
-   XDG_STATE_HOME=/tmp/tether-dev/state cargo run -- --config /tmp/tether-dev/config.toml serve
-   XDG_STATE_HOME=/tmp/tether-dev/state cargo run -- --config /tmp/tether-dev/config.toml device add dev
+   cargo run -- --config /tmp/tether-dev/config.toml serve
+   cargo run -- --config /tmp/tether-dev/config.toml device add dev   # prints the token
    ```
 
-   The daemon reads your login from tailscaled but changes nothing there; no `tailscale serve`.
-2. Start the dev server: `TETHER_PORT=17850 npm --prefix web run dev`. It finds the login
-   from `tailscale status --json`; set `TETHER_DEV_LOGIN` to override it.
-3. Open `http://localhost:5173/#token=<token from device add>`. The token is kept in
-   localStorage, so later loads need no hash; without one the page asks for it. A 4401
-   from the daemon forgets it.
-4. `+` lists the windows on the daemon's tmux; tap one to open a tab. Click the dev textarea
-   and type. Tabs, and which one is on screen, persist in localStorage. `prefers-color-scheme` picks dark or light.
-5. Files: Home's Files row, or `[⊞]` while the keyboard shows. Add a root under Folders
-   (the gear); `roots` in the config above works too.
-6. Suggestions: in the pane, source `contrib/shell/tether.bash` (its OSC 133 marks are how
-   the web reads the command line) and press Enter for a fresh prompt; a snapshot (opening
-   or switching tabs) carries no marks. The strip shows under the tab bar while the keyboard
-   is up. Set `[complete] path` (and `carapace`, if it isn't on that `PATH`) in the config
-   for command and flag chips.
+2. `TETHER_DEV_TOKEN=<token> TETHER_PORT=17850 npm --prefix web run dev` (`TETHER_SOCKET=<path>`
+   instead of `TETHER_PORT` once the daemon listens on `local.sock`).
+3. Publish the dev server with `tailscale serve` and open that address. Enrol and the admission
+   problems can't be reached this way; the harness drives them.
 
-Drive the page from a script with `window.__tether.receive([...])` to send the messages
-native would (`lifecycle`, `network`, `viewport`, `lock`).
+Phone layouts are checked in a real phone browser or the iOS Simulator: there is no fake keyboard.
 
-Clean up: stop the dev server and the daemon, `tmux -L tether-dev kill-server`, remove
-`/tmp/tether-dev`.
+## Fonts
+
+`assets/fonts/` holds subsets of JetBrains Mono NL Nerd Font (OFL.txt). `scripts/subset-fonts.py`
+makes them (its header says how); the build needs no Python.
+
+## Budgets
+
+`scripts/checks.mjs build` enforces §8.4 on the gzipped output: initial JS 190 KB, initial CSS
+15 KB, terminal fonts 120 KB each, symbols 150 KB, the whole shell 1.5 MiB in at most 64 files
+(every emitted file counts, 44-byte stubs included). A budget is raised only with its
+measurement in the commit.
