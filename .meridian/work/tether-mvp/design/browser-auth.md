@@ -1,531 +1,507 @@
 # Browser and PWA authentication, first phase (draft for approval)
 
-Status: draft, revision 3, 2026-10-23. Nothing here is built. It specifies Option A
-(an enrolled, revocable `HttpOnly` browser device cookie) so that Option C (passkey
-unlock) adds to it without rework. Revision 3 answers the second security review in
-[browser-auth-review-2.md](browser-auth-review-2.md), on top of the first
-([browser-auth-review-1.md](browser-auth-review-1.md)). Each finding is either fixed
-or accepted, and the [Review disposition](#review-disposition) table at the end
-says which. Sections 3–5 are the text to land in the specs once Jimmy has answered
-§2. Where an answer changes the text, the text says so.
+Status: draft, revision 4, 2026-10-23. Nothing here is built. Sections 3–5 are the
+text to land in the specs once §2 is answered. Where an answer changes the text, the
+text says so. The [Review disposition](#review-disposition) table at the end records
+what became of every review finding, and what this revision replaced.
 
 ## 1. Summary
 
-A browser or installed PWA enrols the way the phone app does: Jimmy runs `tether
-enroll` on the server and types the code into tether's first screen. The daemon then
-sets a `__Host-tether` cookie (`Secure; HttpOnly; SameSite=Strict; Path=/`) holding a
-new **browser credential**. It is a second kind of device in `auth.toml`, listed and
-revoked with `tether device`, and it expires 30 days after enrolment. Browser
-credentials and native tokens are not interchangeable: a cookie value sent as a
-bearer token is unknown, and so is the reverse.
+**A browser or installed PWA is admitted as an enrolled tailnet node: no cookie, no
+token, no secret in the browser at all.** Every request a browser makes reaches the
+daemon through `tailscale serve`, which writes the requesting node's tailnet address
+into `X-Forwarded-For`. The daemon resolves that address with tailscaled's LocalAPI
+`/localapi/v0/whois` and admits the request when the node's stable ID is an
+**enrolled node** in `auth.toml`. Jimmy enrols a node the way he enrols the phone app:
+he runs `tether enroll` on the server and types the code into tether's first screen.
+The node then appears in `tether device list` and is revoked with `tether device
+remove`. The native iOS app is unchanged: a device token behind Face ID.
 
-Because a cookie is ambient, tether now has to check where a request came from,
-which the native scheme never needed. A cookie-authenticated request must come from
-tether's one canonical origin. Every such request needs an exact `Host`. WebSockets
-and mutations also need an exact `Origin`. `GET` and `HEAD` need `Sec-Fetch-Site:
-same-origin`. Native requests keep today's rules unchanged.
+```mermaid
+sequenceDiagram
+  participant B as Browser on an enrolled node
+  participant S as tailscaled (Serve)
+  participant D as tether daemon
+  participant L as LocalAPI
+  B->>S: HTTPS request (no credential)
+  S->>D: over tether's Unix socket, with X-Forwarded-For = the node's tailnet IP
+  D->>D: peer is tailscaled? Origin, Host, Sec-Fetch-Site exact?
+  D->>L: whois(IP)
+  L-->>D: node: stable ID, owner login, tags, routes
+  D->>D: node rules, then stable ID in auth.toml?
+  D-->>B: served, or refused
+```
 
-Before enrolment the daemon serves only the page shell: HTML, scripts, manifest,
-icons and the service worker. Those files are built into the binary, gzipped, and
-served under per-route caps that refuse at once when full, behind a connection cap
-that normal use never reaches. Another HTTPS service published under tether's
-hostname receives the cookie too; decision D2 chooses what the daemon does about it.
+A node holds nothing a sibling server could copy and replay. Any HTTPS server on the
+same hostname receives a cookie (cookies ignore ports), so a cookie scheme has to hunt
+for such servers and revoke when it finds one. Node identity needs none of that.
 
-The accepted risk: anyone holding Jimmy's unlocked laptop or phone can use the
-browser client, with no Face ID step, until the credential is revoked or expires. C
-later adds a passkey check at one function, `auth::admit`, backed by an in-memory
-unlock window.
+Three things carry the weight instead, and each is specified as a required control:
 
-### Read before approving: A is sound, under four conditions Jimmy should know about
+- **Proof that a request came through tailscaled.** `X-Forwarded-For` is only as
+  trustworthy as whoever wrote it. The daemon listens on a Unix socket in its own
+  `0700` runtime directory, which tailscaled's Serve proxies to, and checks the
+  connecting process's uid with `SO_PEERCRED`. A process of another Unix user on the
+  dev box can't connect at all, so it can't forge the header or flood the daemon
+  (decision D1).
+- **Exact `Origin`, `Host` and `Sec-Fetch-Site` rules.** Node identity is ambient:
+  every page open in any browser on an enrolled node reaches tether with that node's
+  identity. The rules make sure only tether's own page is admitted.
+- **Node rules.** Tagged nodes, subnet routers, nodes shared in from another
+  tailnet, nodes owned by another login, and the dev box's own node are never
+  admitted, because for each of them "this node" doesn't mean "Jimmy's device".
 
-- **Every machine in the tailnet is the same "site" as tether.** `ts.net` is on the
-  Public Suffix List (checked 2026-10-22, entry `ts.net`, submitted by Tailscale), so
-  the registrable domain is `tailXXXX.ts.net` and `otherbox.tailXXXX.ts.net` is
-  same-site with `devbox.tailXXXX.ts.net`. Within the tailnet, `SameSite=Strict`
-  protects nothing: a page served by any of Jimmy's other machines sends tether's
-  cookie on its requests. The exact `Origin` and fetch-metadata rules below carry
-  that protection. They are mandatory controls, not hardening.
-- **A server on another port of tether's hostname receives the cookie itself.**
-  Cookies are not isolated by port (RFC 6265 §8.5). The Origin rules stop a sibling
-  *page* from using the cookie through the browser. They do nothing about a sibling
-  *server* that the browser sends the cookie to directly: that server can log the
-  cookie and replay it with `curl`, which forges `Origin`, `Host` and `Sec-Fetch-*`
-  freely. The documented spike workflow (plan.md "Running the phone spikes",
-  `--https=8443` on tether's hostname) creates exactly that server. tailscaled can't
-  tell the daemon when the serve config changes, so no option catches every such
-  server. D2 sets out each option's residual risk and workflow cost.
-- **Safari has a history of dropping `SameSite=Strict` `HttpOnly` cookies on
-  WebSocket handshakes** (WebKit bug 232666, closed "configuration changed" with the
-  fix unconfirmed in every case; an Apple forum report against HttpOnly). Probe gate
-  G2 decides between `Strict` and a `Lax` fallback. The `Lax` fallback is safe
-  because the Origin rules, not SameSite, carry the defence.
-- **The memory ceiling no longer fits with three control clients.** Counting every
-  HTTP connection, the kernel buffers of shell responses and the shell's pages
-  takes the ceiling from about 65 MB to about 70 MB. The part the kernel can't
-  reclaim reaches about 64.3 MB, just over `MemoryMax` (64 MB). Two control
-  clients bring it to about 59 MB. D6 asks Jimmy to make that call.
+### Read before approving
 
-## 2. Decisions that need Jimmy
+- **Enrolling a node trusts everything on it.** Every browser profile, the PWA, every
+  app, and every OS user account on that machine reach tether as the node. That is
+  wider than a cookie, which only one browser profile held. On the iPhone it means
+  Safari and the PWA reach a host with no Face ID step once the phone's node is
+  enrolled; the native app's Face ID lock then guards only the native app. If Jimmy
+  wants Face ID to stay the gate on the phone, he enrols only his laptop's node and
+  uses the native app on the phone (D2).
+- **A new Tailscale node needs a new enrolment.** A Tailscale logout, a reinstall or
+  a reset makes a new node with a new stable ID. The old row stops matching and the
+  device re-enrols with a code. Stable IDs are never reused, so an old row can't be
+  inherited by anything.
+- **Publishing tether changes once.** `tailscale serve` must proxy to tether's Unix
+  socket (`unix:/run/user/<uid>/tether/http.sock`), which needs Tailscale 1.94 or
+  later on the dev box (D1).
+- **Several Unix users on one box each run their own tether, and none can borrow
+  another's enrolments.** Each daemon reads only its own `auth.toml`, admits only
+  through its own socket, and refuses the box's own node, so another user's processes
+  can't reach it as an enrolled device.
+
+### Vocabulary
+
+| Term | Meaning |
+|---|---|
+| **node** | a Tailscale node: one machine or phone on the tailnet, as tailscaled's netmap knows it |
+| **stable ID** | the node's `StableID` (`n…CNTRL`): fixed for the node's life and never reused after it is deleted |
+| **enrolled node** | a device of kind `node` in `auth.toml`: a stable ID, the login that owned the node at enrolment, and a name |
+| **native device** | a device of kind `native`: the iOS app's token, as today |
+| **node lane** / **native lane** | how a request is judged: by its node (it presents no credential) or by its token (it presents one) |
+| **canonical origin** | the one `https://` origin that tether's own Serve publication answers on, derived from the serve config |
+| **tailscaled peer** | a connection to tether's socket whose process uid is tailscaled's |
+| **browser client** | the web UI running in a browser or PWA (not in the iOS app) |
+
+"Browser device", "browser credential" and the `__Host-tether` cookie no longer
+exist. The UI says "this device" for an enrolled node, because a node is a machine,
+not a browser.
+
+## 2. Decisions
+
+Jimmy delegated auth to the tech lead. The tech lead chose node identity over a
+cookie, and owns D4 and everything under "Settled". D1–D3 change Jimmy's workflow or
+the risk he carries, so they need his yes.
 
 | # | Question | Recommended answer | Alternatives |
 |---|---|---|---|
-| D1 | Browser credential lifetime | **30 days from enrolment, absolute.** Nothing renews it in A. The UI warns from 3 days out. While the credential still works, re-enrolling takes a minute: run `tether enroll` in a tether terminal, in that same browser, and type the code. **Cost to accept knowingly:** once it has expired, a phone-only user needs another shell on the server (the native app, or SSH) to get a code. C will renew it after a passkey check | No expiry, as native has (native has Face ID to bound the unlocked-device threat; a browser has nothing else). 90 days (a weak bound on a copied cookie). Sliding idle expiry (needs a write to `auth.toml` on the check path, which is read-only today) |
-| D2 | Another HTTPS server under tether's hostname (a **sibling**, defined in [D2 in detail](#d2-in-detail)) | **(a) Revoke on detection, with D5 = yes, and spikes moved to plain HTTP (G13).** The deciding question is in D2 in detail: if Jimmy keeps other HTTPS services on the dev box's own name, choose (b) instead | (b) a dedicated hostname for tether; (c) a warning only. Costs of all three in D2 in detail |
-| D3 | Logout and local drafts | **Logout revokes the credential and keeps the drafts on that browser.** A separate "Clear local data" action deletes them. The logout sheet says which one it does | Logout always clears drafts: it loses unsent text whenever the reason for logging out is "re-enrol" |
-| D4 | One pending code for both kinds | **Yes.** `tether enroll` prints one code. Native redeems it with `POST /auth/enroll`, a browser with `POST /auth/browser/enroll`. Both share the pending code, its 5-try counter and its expiry | `tether enroll --browser`: a second CLI mode for no security gain, since one code works for one device either way |
-| D5 | Under D2(a): also re-read the serve config on the live browser socket's 10 s re-check? | **Settled: yes** (decisions.md, "AGENTS.md states principles; the specs hold the rules"). It sends nothing over the network and adds no timer: at most one loopback LocalAPI read every 10 s, only while a browser socket is open | — |
-| D6 | The third control client, now that the ceiling is redone ([D6 in detail](#d6-in-detail)) | **Drop to 2 control clients when the browser shell lands.** With 3, the memory the kernel can't reclaim reaches about 64.3 MB at caps, against `MemoryMax` of 64 MB. With 2 it is about 59 MB. Raise it back if the budget measurement shows room | Keep 3 and let G12 and the budget measurement decide (daemon-core §6's existing rule). Shrink the new HTTP rows instead (a 48-connection backstop, or 8 KiB hyper buffers): each saves at most about 1 MB and gives up the headroom that review N3 asked for |
+| D1 | How the daemon proves a request came through tailscaled | **Listen on a Unix socket, `$XDG_RUNTIME_DIR/tether/http.sock`, in a `0700` directory, and publish with `tailscale serve --bg --https=443 unix:/run/user/<uid>/tether/http.sock`.** Only tailscaled (root) and Jimmy's own processes can connect. `SO_PEERCRED` on each accepted connection says which: the node lane admits only tailscaled peers. **Cost:** Tailscale 1.94 or later on the dev box; the serve command changes once; the dev proxy and tests connect to the socket instead of a port | (b) Keep `127.0.0.1:<port>` and look up each accepted connection's owner uid with a netlink `sock_diag` query. Works on any Tailscale version, but every local user can still connect, so any of them can fill the 64 connection permits; it is Linux-only code with no macOS counterpart. (c) Keep today's loopback trust: any local process can forge `X-Forwarded-For` with an enrolled node's address (they are listed by `tailscale status`) and get a shell as Jimmy. Ruled out by requirement 3 |
+| D2 | What an enrolled node admits | **Everything on that node: accept it.** Enrol the laptop's node. Enrol the phone's node only if Safari and the PWA on the phone are wanted, knowing they bypass Face ID for that host. Refuse the dev box's own node always | Enrol no phone node, and use only the native app on the phone: Face ID stays the gate there. (Per-browser credentials would need the cookie this design removes) |
+| D3 | What "log out" means | **"Remove this device":** a button in Settings that deletes this node's enrolment, after a confirmation that says every browser and the PWA on this machine lose access. Local drafts stay; "Clear local data" is a separate action | No logout in the client, only `tether device remove` on the server. A per-browser "log out" that only hides the UI: it protects nothing, because the node is still admitted |
+| D4 | One pending code for both kinds | **Settled: yes.** `tether enroll` prints one code; native redeems it at `POST /auth/enroll`, a node at `POST /auth/node/enroll`. Both share the pending code, its 5-try counter and its expiry | `tether enroll --node`: a second CLI mode for no security gain |
+
+### D1 in detail
+
+`X-Forwarded-For` decides who a node-lane request is, so the daemon must know that
+tailscaled wrote it. Serve overwrites `X-Forwarded-For` with the source address of
+the tailnet connection, and its reverse proxy (Go's `httputil.ReverseProxy` in
+`Rewrite` mode) drops any inbound `X-Forwarded-*` before that. So the header is
+trustworthy exactly when the connection to tether is tailscaled's own.
+
+| | (a) Unix socket | (b) loopback TCP + `sock_diag` |
+|---|---|---|
+| Who can connect | root and Jimmy (directory `0700`) | every local user |
+| How a tailscaled peer is recognised | `SO_PEERCRED` uid equals tailscaled's uid, which the daemon reads with `SO_PEERCRED` on its own LocalAPI connection | a netlink `INET_DIAG` query for the accepted connection's 4-tuple returns the client socket's uid; same comparison |
+| Another user floods the permits | impossible | possible: denial of service |
+| Needs | Tailscale ≥ 1.94 (first release with `unix:` proxy targets) | any Tailscale; a netlink client |
+| macOS, if the daemon ever runs there | `getpeereid` does the same | no equivalent |
+
+Native-lane requests are unaffected by the uid: a dev proxy running as Jimmy still
+connects and presents a native token, as today.
 
 ### D2 in detail
 
-**What counts as a sibling.** It is anything else that tailscaled terminates TLS for
-under tether's hostname, because only TLS on that name makes a browser send the
-`Secure` cookie:
-
-- an HTTPS `Web` entry on another port of tether's hostname;
-- another handler or mount path inside tether's own `Web` entry;
-- a `TCP` entry with `TCPForward` **and** `TerminateTLS`, on another port;
-- the same in a foreground config, or in a Tailscale Service that shares the name.
-
-These are **not** siblings: a plain-HTTP `Web` entry (`--http`), because the browser
-never sends a `Secure` cookie over HTTP; and a `TCPForward` without `TerminateTLS`
-(`--tcp`, such as SSH or a database). A raw TCP forward only sees the cookie if its
-backend presents a valid certificate for tether's hostname, and getting one needs
-tailscaled operator rights, which only Jimmy has. A plain-HTTP page can still toss a
-duplicate cookie, and the ambiguity rule (§3.7) keeps that to denial of service.
-
-**Who could use a leaked cookie.** A sibling's copy matters only when something less
-trusted than Jimmy's own shell can read it: a backend running as another user or in
-a container, a backend on another machine, or logs that leave the box. Anything that
-runs as Jimmy on the server is out of scope already, since it can drive tmux
-directly. Replaying the copy then needs a device logged in to the tailnet as Jimmy,
-or a process on the dev box that can reach the daemon's loopback port.
-
-**Why no option is airtight.** tailscaled can't notify the daemon of a serve-config
-change: the IPN bus's `Notify` carries no serve config (review 2, upstream
-`ipn/backend.go`). The daemon only sees the serve config when it reads it.
-
-| | (a) Revoke on detection | (b) A dedicated hostname | (c) A warning only |
-|---|---|---|---|
-| What the daemon does | Deletes every browser device in one write when it sees a sibling, and refuses browsers while it stays | Serves browsers only on a name nothing else is published on; detection as in (a) stays as a backstop | Logs the sibling, and `tether enroll` prints it; browsers are admitted as before |
-| **Residual risk** | With D5: a sibling that is published and removed while no tether browser tab is connected, and before the next browser boot, goes unseen, and any cookie it received stays valid for up to 30 days. Without D5, the same holds for any sibling that comes and goes between two browser boots or socket upgrades, even with tether open in another tab | None from siblings while nothing else is published on tether's name. If something is, the backstop behaves as (a) | Any cookie a sibling receives stays valid for up to 30 days after the sibling is gone |
-| **Workflow cost** | Publishing any HTTPS service on the dev box's own name revokes every browser profile, so each re-enrols with a code (about a minute each), and browsers stay refused until it is removed | A one-time tailnet-admin setup, a new URL in every browser, and no browser client until G9 passes. The setup is a Tailscale Service, or a second node name, which means a second `tailscaled` on the overloaded box | None |
-| **Where spikes go** | Spikes 3–8 run inside the app: the app fetches the dev server's assets natively, and the page's origin stays `tether-app://ui` (ios-shell.md "Dev mode"). So they can publish on plain HTTP (`--http=8080`) at no cost to secure-context APIs. The traffic stays inside WireGuard. The cost is a Debug-only ATS exception for the dev host, and HMR over `ws:` or reloading (G13, unverified). If G13 fails, publish from the Mac's own tailnet name, or accept one revocation per spike session. Most spikes run before browsers ship anyway (plan.md: "The spikes come first") | Unchanged: `--https=8443` on the dev box's name | Unchanged |
-| Build cost | Sibling detection, the revocation write and its race guard (§3.5), plus D5's refresh | (a)'s backstop, plus deriving the canonical origin from a Service | Sibling detection and a log line |
-
-**Recommendation: (a), with D5.** A leaked cookie is a shell as Jimmy, and once
-plain-HTTP and raw TCP entries are no longer siblings, (a) costs something only when
-an HTTPS service is published on the dev box's own name. The spikes can avoid that.
-(b) is cleaner but blocked on G9 and on tailnet setup, and it can be adopted later
-without changing the rest of this spec: the canonical origin simply becomes the
-dedicated name. **The question that would change this:** if Jimmy keeps other HTTPS
-services on the dev box's name as a standing state, (a) means no browsers for as
-long as they run. Then choose (b), or (c) if every such service is his own code
-running as him.
-
-**D5's cost.** Settled as consistent with tether's principles: it sends nothing over
-the network and does no work while idle. D5 adds no timer: each browser socket already wakes every 10 s to re-check
-its credential, and that re-check reads `auth.toml` on the auth lane every time
-(`Auth::recheck`, `src/auth/mod.rs`). D5 makes the same wake-up also refresh browser
-state, reusing any result younger than 10 s. So the cost is at most one loopback
-`GET /localapi/v0/serve-config` per 10 s for the whole daemon, only while a browser
-socket is open, and none when only native or nobody is connected. What it buys: a
-sibling that is up for 10 s or more while tether is open in any browser tab, which
-is the review's own scenario, is now seen.
-
-### D6 in detail
-
-| Ceiling at every cap (daemon-core §6, rows redone in §5) | 3 control clients | 2 control clients |
-|---|---|---|
-| everything, reclaimable included (what `memory.peak` can reach) | ~69.8 MB | ~64.5 MB |
-| reclaimable: the shell's clean file pages (≤ 3.1 MB) and the completion slab (2.4 MB) | 5.5 MB | 5.5 MB |
-| **what the kernel can't reclaim, which must fit `MemoryMax` (64 MB)** | **~64.3 MB** | **~59.0 MB** |
-
-Both columns are above `MemoryHigh` (48 MB) at caps, where systemd throttles the
-unit. That was true before. Before this change, HTTP connections were unbounded and
-uncounted, so the old ceiling of ~65 MB was optimistic. What dropping a client costs
-the product: windows from at most two tmux sessions can be watched at once (a control
-client is attached to one tmux session), so watching a third gets `watchEnded {
-error }` after lingering clients are closed.
-
-### Next to D2: a separate dev-only hole (review L5)
-
-`web/vite.config.ts` proxies to
-the daemon and injects a fixed `Tailscale-User-Login` header on every request, for
-any caller that reaches the Vite port. Any tailnet peer that reaches a published
-spike therefore passes the login allowlist as Jimmy. It still needs a device token,
-which the proxy also injects from `tether.dev.token`. This predates the draft and
-matters only if the tailnet is ever shared, or if a spike is published while its
-proxy holds a real token. Fix, outside this spec: the proxy forwards the incoming
-`Tailscale-User-Login` (Serve adds it to the spike's requests too) instead of
-inventing one, and refuses requests that lack it. Tracked as a follow-up in the work
-item, not a ship gate.
+What a node-lane request proves is "a process on node X, owned by login Y, sent this
+through a browser page on tether's origin", and the origin part holds only for
+browsers. A process on an enrolled node that isn't a browser (`curl`, a container
+routed through the host, another OS user's shell) can send any headers it likes, so
+the origin rules don't stop it. Requirement 6 accepts the unlocked-device risk; this
+is the same risk widened from "someone at the unlocked device" to "anything running
+on it". It is accepted on the grounds that the laptop and phone are Jimmy's own, and
+the guard against everything *else* on the tailnet (other machines, other users,
+pages on other origins) is unchanged.
 
 ### Settled without Jimmy
 
-The brief or the threat model already settles these: browser
-credentials have native's full power (the WebSocket is the shell, so there is no
-narrower scope worth having); the native scheme is unchanged; and no credential ever
-appears in a URL, in JSON, or in JS storage.
+- An enrolled node has native's full power: the WebSocket is the shell, so a
+  narrower scope buys nothing in this phase.
+- The native scheme is unchanged, and native requests never consult node identity.
+- tether authenticates with no cookie, ever, again: the daemon sets none and ignores
+  any it receives.
+- Identity is resolved per request, never cached between requests (§3.5).
+- The node rules in §3.5, and the origin rules in §3.7.
+
+### Next to D1: a separate dev-only hole (review L5)
+
+`web/vite.config.ts` proxies to the daemon and injects a fixed `Tailscale-User-Login`
+header and a native token from `tether.dev.token`, for any caller that reaches the
+Vite port. A published spike therefore lets any tailnet peer that reaches it act as
+Jimmy. This predates the draft and is dev-only. Fix, outside this spec: the proxy
+forwards the incoming `Tailscale-User-Login` instead of inventing one, and refuses
+requests without it. Tracked as a follow-up, not a ship gate.
 
 ## 3. Proposed text for `auth.md`
 
-The text below is written as the current rule, in auth.md's voice, for the
-recommended answers in §2 (D2 (a), D5 yes, D6 two control clients). A note in
-brackets says what changes under another answer. It replaces
-the summary paragraph, "Threat model", "Constants" (adds rows), "Carrying the token"
-→ "No `Origin` check", "State on disk", "CLI" and "Endpoints". It also adds the new
-sections "Browser credentials", "Canonical origin", "Browser admission" and
-"Logout". The Face ID, Keychain and recovery sections stay as written; they describe
-native.
+Written as the current rule, in auth.md's voice, for the recommended answers. It
+replaces the summary paragraph, "Threat model", "Tailscale identity", "Carrying the
+token" → "No `Origin` check", "State on disk", "CLI" and "Endpoints". It adds
+"Tailscaled peers", "Node identity", "Canonical origin", "Browser admission",
+"Lanes", "Live sockets", "Removing a device" and "Seams". The Face ID, Keychain and
+recovery sections stay as written; they describe native.
 
 ### 3.1 Replacement for the opening paragraph
 
-> Three checks guard every host. The daemon accepts only requests that `tailscale
-> serve` tags with Jimmy's Tailscale login. Each client holds a random **device
-> credential** per host, issued once at enrolment against a one-time code that
-> `tether enroll` prints on the server. There are two kinds. The iOS app holds a
-> **native token**, kept in the Keychain behind Face ID and sent as a bearer token
-> or a WebSocket subprotocol. A desktop browser, the phone's browser and an installed
-> PWA each hold a **browser credential**, kept in an `HttpOnly` cookie that script
-> can't read and that the daemon accepts only from tether's canonical origin. The
-> device credential is the only credential: no session tokens, no signatures. Only
-> browsers use a cookie, and only cookies get an origin check.
+> Every request reaches the daemon through `tailscale serve`, and must carry an
+> allowlisted Tailscale login. Past that, a request is admitted on one of two
+> **lanes**. The iOS app presents a **device token**, issued at enrolment, kept in the
+> Keychain behind Face ID and sent as a bearer token or a WebSocket subprotocol. A
+> browser or PWA presents nothing: it is admitted as an **enrolled node**, because
+> the tailnet node it runs on, which the daemon learns from tailscaled, is in
+> `auth.toml`. Both kinds of device are enrolled with the same one-time code from
+> `tether enroll` and revoked with `tether device remove`. tether never authenticates
+> with a cookie.
 
 ### 3.2 Threat model (replaces the section)
 
-> One user, a tailnet with only his own devices, tailnet-only hosts. The daemon is
-> remote code execution for whoever holds a credential, so the checks guard against:
+> One user, a tailnet with only his own devices, tailnet-only hosts. The dev box may
+> have other Unix users, each running their own tether. The daemon is remote code
+> execution for whoever passes it, so the checks guard against:
 >
-> - another tailnet user reaching the port, if the tailnet is ever shared (the login
->   allowlist);
-> - his other tailnet devices, or anything running on them (the device credential);
-> - **pages on any other origin making a browser use its cookie**: other sites, other
->   machines in the tailnet (all of them are one "site", because `ts.net` is a public
->   suffix), other ports on the same machine (the
->   [browser admission](#browser-admission) rules);
-> - **another HTTPS server under tether's hostname receiving the cookie**, which a
->   browser sends to every port of a host (revocation on detection,
->   [Canonical origin](#canonical-origin));
-> - **script reading a browser credential** (`HttpOnly`), and a copied cookie used
->   as a native token or the reverse (credential kinds);
+> - another tailnet user reaching the daemon, if the tailnet is ever shared (the login
+>   allowlist, and the node's owner);
+> - his other tailnet devices, or anything running on them, unless he enrolled them
+>   (the device token; the enrolled-node list);
+> - **pages on any other origin using an enrolled node's identity through the
+>   browser**: other sites, pages served by other machines in the tailnet (all one
+>   "site", since `ts.net` is a public suffix), other ports on the dev box, another
+>   user's tether ([Browser admission](#browser-admission));
+> - **another Unix user on the dev box** forging Tailscale headers, flooding the
+>   daemon, or reaching it from the box's own node (the socket directory, the
+>   tailscaled-peer check, the self-node rule);
+> - machines that only *look* like a tailnet node: devices behind a subnet router,
+>   tagged servers, nodes shared in from another tailnet, Funnel traffic from the
+>   internet ([Node identity](#node-identity));
 > - someone holding the phone unlocked, or who adds a face to it, **for the native
 >   app only** (the Face ID lock, `.biometryCurrentSet`);
-> - a process on the server that forges Tailscale headers to enrol itself (the
->   enrolment code, readable only from a shell as Jimmy);
-> - anything that passes the Tailscale check exhausting the daemon's memory through
->   the HTTP surface, the pre-enrolment shell included (the per-route caps, the
->   connection backstop and the buffer limits in
+> - a process on the server that forges headers to enrol itself (the enrolment code,
+>   readable only from a shell as Jimmy);
+> - anything that passes the Tailscale check exhausting memory through HTTP (the
+>   per-route caps, the connection backstop and the buffer limits in
 >   [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)). Such a
->   client can still deny service: by holding every connection, or by filling the
->   kernel receive buffers of connections the daemon isn't reading (up to 128 KiB
->   each, which can push the unit to `MemoryMax`). That is accepted, since only
->   Jimmy's own devices pass the check, and any other process able to reach the
->   loopback port is local to the box.
+>   client can still deny service, by holding every connection; only tailscaled and
+>   Jimmy's own processes can connect.
 >
-> **Accepted for browsers:**
+> **Accepted:**
 >
-> - Anyone holding Jimmy's unlocked laptop or phone can use the browser client, with
->   no further check, until the credential is revoked or expires (30 days). A browser
->   has no equivalent of the Keychain's Face ID gate. A lock screen drawn by the page
->   would not protect a cookie the browser sends anyway, so the client draws none.
-> - A sibling the daemon never sees keeps any cookie it received valid for up to
->   30 days. A sibling is seen only when the daemon reads the serve config: at
->   startup, at a browser's boot, enrolment or socket upgrade, and every 10 s while
->   a browser socket is open. So a sibling published and removed while no browser
->   tab is connected, before the next browser boot, goes unseen.
-> - An HTTP response already streaming when its credential is revoked or expires
->   runs to its end (see [Logout](#logout)).
+> - **An enrolled node is trusted whole.** Every browser profile, app and OS account
+>   on it reaches the daemon as that node, with no further check, until `tether
+>   device remove`. On a phone whose node is enrolled, Safari and the PWA reach the
+>   host without Face ID.
+> - Anyone holding Jimmy's unlocked laptop or phone can use the browser client. A lock
+>   screen drawn by the page would protect nothing the node isn't already sending.
+> - An HTTP response already streaming when its device is removed runs to its end
+>   ([Live sockets](#live-sockets-and-revocation)).
+> - Removing a node in the Tailscale admin console takes effect in tether only once
+>   tailscaled on the dev box learns of it, with no documented bound. `tether device
+>   remove` takes effect at once, and is the revocation tether relies on.
 >
-> Out of scope: processes on the server that already run as Jimmy (they can drive
-> tmux directly), a jailbroken phone, malware on a device that can read process
-> memory or the browser's cookie store, browser extensions granted access to
-> `*.ts.net` (they can send requests with the cookie, and some can read it), and
-> script injected into tether's own origin (it can act with the cookie while the page
-> is open; `HttpOnly` only keeps it from taking the credential away). That last risk
-> is kept small by the CSP, DOMPurify, and raw files that never run
+> Out of scope: processes on the server that run as Jimmy, or as root (they can
+> drive tmux directly), a jailbroken phone, malware on an enrolled device, browser
+> extensions granted access to `*.ts.net`, and script injected into tether's own
+> origin. The last is kept small by the CSP, DOMPurify, and raw files that never run
 > ([fs.md](fs.md#get-fsrawpath)).
 >
-> A stolen browser credential works only from a device on the tailnet logged in as
-> Jimmy, for at most its remaining lifetime. That bound holds because every host is
-> tailnet-only. **A browser credential is never honoured on a public origin without
-> passkey unlock**: a public phase must add C before it serves browsers, and must
-> revise this section.
+> The node lane exists only on the tailnet: off it there is no Serve, no
+> `X-Forwarded-For` from tailscaled and no whois. **A public origin admits browsers
+> only with a portable credential (passkeys, [Seams](#seams)), and must revise this
+> section first.**
 
 ### 3.3 Constants (rows added)
 
 | Constant | Value |
 |---|---|
-| browser credential | `tetherb_` + 43 characters: base64url, no padding, of 32 random bytes |
-| browser cookie | `__Host-tether=<credential>; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=<seconds left>`, no `Domain` |
-| browser credential lifetime | 30 days from enrolment, absolute |
-| expiry warning in the client | from 3 days before `expiresAt` |
+| tether's socket | `$XDG_RUNTIME_DIR/tether/http.sock`; the directory `0700`, the socket `0600` |
+| whois calls in flight | 2 daemon-wide; up to 16 waiting, the 17th `503 busy` |
+| whois timeout; response limit | 2 s (the LocalAPI timeout); 64 KiB (a real answer is 1.5–2.5 KB) |
+| live-socket identity re-check | the existing 10 s re-check; 3 consecutive whois failures close with 4503 |
 | minimum browsers | Safari and iOS 16.4, Chrome 76, Firefox 90: the first versions that send `Sec-Fetch-Site` |
+| minimum Tailscale on the server | 1.94 (`unix:` proxy targets) |
 
-### 3.4 Browser credentials (new section, after "The device token")
+### 3.4 Tailscale identity and tailscaled peers (replaces "Tailscale identity")
 
-> - **Same entropy, same hashing, a different kind.** A browser credential is 32
->   random bytes with the prefix `tetherb_`. The daemon stores only its `sha256` in
->   the device's `token_sha256`, beside `kind = "browser"`. The check never trusts
->   the prefix: it looks for the hash **only among devices of the kind the transport
->   implies**. A cookie is matched only against browser devices; `Authorization`
->   and the `tether.auth.` subprotocol are matched only against native devices. The
->   scan is still constant time over the whole list, with the kind folded into the
->   comparison mask. A copied cookie sent as a bearer token is therefore "unknown",
->   so it cannot skip the origin rules, and a native token in a cookie is "unknown"
->   too.
-> - **It expires.** Each browser device has `expires_at`, set at enrolment to
->   enrolment + 30 days. From then on every check refuses it as unknown (401, 4401).
->   A live socket closes at its next re-check. The cookie's `Max-Age` matches, so the
->   browser drops it too, but the daemon's `expires_at` is what decides.
->   `expires_at` is stored, not derived from `enrolled_at`, so a later renewal
->   rewrites one field. When `expires_at` is present on any device it bounds that
->   device; native devices have none.
-> - **Never visible to script.** The credential exists in daemon memory only while
->   one `Set-Cookie` response is built. It is never in JSON, a URL, a log line,
->   `localStorage` or IndexedDB. The browser client never handles it; it learns its
->   state from `GET /auth/browser/session`.
-> - **One credential per browser profile.** Safari, the installed PWA and each
->   desktop browser keep separate cookie jars, so each enrols separately, appears
->   separately in `tether device list` and is revoked separately. The first-launch
->   screen says so.
+> The daemon listens only on its Unix socket. At startup it creates
+> `$XDG_RUNTIME_DIR/tether/` with mode `0700` (refusing to start if the directory
+> exists with other permissions or another owner), removes a stale socket, and binds.
+> Only root and Jimmy can connect. tailscaled runs as root and reaches the socket
+> through `tailscale serve`'s `unix:` proxy target.
+> `$XDG_RUNTIME_DIR` is `/run/user/<uid>`, which systemd keeps while the user
+> unit runs under lingering, as the daemon's unit already requires.
+>
+> **Which process connected.** On every accepted connection the daemon reads
+> `SO_PEERCRED` once. A connection whose uid is tailscaled's is a **tailscaled
+> peer**. The daemon learns tailscaled's uid from `SO_PEERCRED` on its own LocalAPI
+> connection, at startup and again whenever it reconnects to LocalAPI. A connection
+> from any other uid (Jimmy's dev proxy, a test, Playwright) is a local peer: it may
+> use the native lane, never the node lane. If tailscaled itself runs as Jimmy (a
+> userspace-networking setup), Jimmy's processes count as tailscaled peers, which
+> changes nothing, since processes running as Jimmy are out of scope.
+>
+> **The Tailscale check, on every route, before anything else:**
+>
+> - `Tailscale-Funnel-Request` is absent. Serve sets it on Funnel traffic and strips
+>   a spoofed copy. The daemon also refuses to start with Funnel on its publication;
+>   this catches Funnel turned on later.
+> - `Tailscale-User-Login` is present and in the allowlist (auto-detected from
+>   LocalAPI `/localapi/v0/status`, overridable with `--allow-login`). Serve sets it
+>   for user-owned nodes and strips spoofed copies; it sends none for tagged nodes or
+>   Funnel.
+>
+> A failure is `403 forbidden`. Probed on the dev box on 2026-10-21: `tailscale serve`
+> adds `Tailscale-User-Login` and forwards `Sec-WebSocket-Protocol` and `Origin`
+> unchanged on a WebSocket upgrade.
 
-### 3.5 Enrolment (additions to the section)
+### 3.5 Node identity (new section)
 
-> Steps 1–2 and 5–6 are unchanged and shared by both kinds: one pending code, one
-> wrong-try counter, one atomic write that consumes the code and adds the device. A
-> browser redeems the code at a different route:
+> **Resolving the node.** A node-lane request must come from a tailscaled peer
+> (else `403 forbidden`). It must carry exactly one `X-Forwarded-For` field holding
+> exactly one address, with no comma, and the address must be a Tailscale address
+> (`100.64.0.0/10` or `fd7a:115c:a1e0::/48`). Anything else is `403 forbidden`: Serve
+> always writes one address, so a list means something appended to it. The daemon
+> then calls `GET /localapi/v0/whois?addr=<address>` and takes `Node` and
+> `UserProfile` from the answer.
 >
-> 3b. **In a browser**, the first visit to the canonical origin shows the enrolment
->    screen: the host's name from `GET /auth/info`, a code field, and a device name
->    prefilled from the platform ("Safari on iPhone", "Chrome on Mac") that Jimmy can
->    edit.
+> **Node rules.** The node is admitted only if all hold; otherwise the request is
+> `403 node_refused` with the reason, and the node can't be enrolled either:
 >
-> 4b. The page sends `POST /auth/browser/enroll {code, deviceName}`. The request must
->    pass the [browser admission rules](#browser-admission) for a mutation, except
->    that no credential is needed. Only then does the daemon refresh its
->    [browser state](#canonical-origin), and it refuses with `503
->    browser_unavailable` unless browsers are admitted. On the auth lane,
->    `Store::enroll` runs with `kind = Browser` and `expires_at = now + 30 days`.
->    **Under the store's write lock, it reads browser state again** and writes
->    nothing, answering `503 browser_unavailable`, unless browsers are still
->    admitted. A refresh that finds a sibling sets *revoking* before it queues the
->    revocation write. So an enrolment either lands before the revocation write,
->    which then removes it, or sees *revoking* and writes nothing: no browser device
->    is ever created while a sibling is known. In the same write it also:
->    - **replaces the browser's previous credential**: if the request carries a
->      `__Host-tether` cookie that matches a browser device, that device is removed,
->      so re-enrolling a browser leaves no orphan row;
->    - **drops expired browser devices**, so expired rows don't pile up.
+> | Rule | Why |
+> |---|---|
+> | `Tags` is empty | A tagged node belongs to the tailnet, not a person; Serve sends it no login header, so the Tailscale check refuses it already. The rule keeps the node lane from depending on that |
+> | `UserProfile.LoginName` equals the request's `Tailscale-User-Login` | Both come from the same netmap; disagreement means the two lookups saw different nodes, so neither is trusted |
+> | `Sharer` is zero | A node shared in from another tailnet is someone else's machine, whatever user it shows |
+> | `AllowedIPs` holds only the node's own `Addresses`, apart from the exit-node routes `0.0.0.0/0` and `::/0` | A subnet router masquerades every host on its LAN as itself, so its identity says nothing about which device sent the request. An exit node forwards only outbound traffic, so it can't do that |
+> | the stable ID isn't the daemon's own node (`Self.StableID` from `/status`) | Every local user on the dev box reaches Serve from the box's own node. Admitting it would let any of them in, through the front door |
 >
->    The answer is `200 {deviceName, expiresAt}` with `Set-Cookie` and `Cache-Control:
->    no-store`. The body never carries the credential.
+> Then, on the auth lane, the device lookup: a `node` device whose `node_id` equals
+> the stable ID **and** whose `login` equals the node's login. No match is `401
+> not_enrolled`. `auth::admit` then judges the found device, as for native.
 >
-> **Native enrolment refuses browsers.** `POST /auth/enroll` returns a token in JSON,
-> so it refuses any request carrying `Origin` or `Sec-Fetch-Site` with `403
-> bad_origin`. Every browser tether supports sends `Origin` on a POST; the app's
-> ephemeral `URLSession` sends neither. Script on tether's origin that intercepts a
-> typed code therefore can't trade it for a native token, which no origin rule would
-> ever stop.
+> **Per request, never cached.** tailscaled pools its connections to the daemon and
+> reuses them for requests from different nodes, so identity is resolved per
+> request, never per connection. Results are not kept between requests, because an
+> address can later belong to a different node, and only the current netmap says
+> which. Concurrent lookups of the same address share one call: the result is
+> shared only by requests that arrived while it was in flight. At most 2 calls run at
+> once; up to 16 requests wait, and the 17th gets `503 busy` at once. A whois answer
+> is about 2 KB and costs tailscaled a map lookup, so a request pays well under a
+> millisecond on a loopback socket (G4 measures it on the dev box). The shell routes
+> and `GET /auth/info` never call whois.
+>
+> **Failure.** A whois that fails, times out (2 s), or answers more than 64 KiB is
+> `503 identity_unavailable`: the daemon can't decide, so it fails closed but
+> retryable, never as "not enrolled". A whois that answers "no such peer" is `403
+> node_refused` (`unknown_node`).
+>
+> **Order, and what a flood costs.** For a node-lane request: the tailscaled-peer
+> check, the pure [admission rules](#browser-admission) on headers alone, the
+> `X-Forwarded-For` parse, whois, the node rules, then the auth lane's read of
+> `auth.toml`. A cross-origin request is refused before any LocalAPI call or file
+> read.
 
 ### 3.6 Canonical origin (new section)
 
-> Browsers are admitted from exactly one origin per host, the **canonical origin**:
-> `https://<host>` or `https://<host>:<port>`, lowercase, with no trailing dot or
-> path. The daemon derives it from tailscaled's serve config, the same LocalAPI read
-> as the Funnel check. Request headers (`Host`, `X-Forwarded-*`) never choose it.
+> Browsers are admitted from exactly one origin per daemon, the **canonical origin**:
+> `https://<host>` or `https://<host>:<port>`, lowercase, no trailing dot or path. The
+> daemon derives it from tailscaled's serve config (the same LocalAPI read as the
+> Funnel check): the `Web` entry, in the background config, a foreground config or a
+> Tailscale Service, that puts a proxy to **this daemon's socket path** at mount path
+> `/`. The socket path is per user, so another user's tether never matches it.
 >
-> **Browser state** is the cached result of one serve-config read: the canonical
-> origin, and whether browsers are *admitted*, *refused* (with a reason) or
-> *revoking*. Every other request only reads the cache. tailscaled offers no
-> notification of serve-config changes, so the daemon re-reads it at startup and at
-> four points, **each on the browser lane only, and each after the pure admission
-> checks** (§ Browser admission), so a cross-origin flood causes no LocalAPI call:
+> - Exactly one such publication: it is the canonical origin.
+> - Several: the config key `browser_origin` picks one and must equal one exactly.
+>   Otherwise browsers are refused (`ambiguous_origin`, or `browser_origin_unpublished`
+>   when `browser_origin` names nothing tether publishes at `/`).
+> - Published only under a non-root path: refused (`not_at_root`), since the shell and
+>   the API assume the root.
+> - Published only over plain HTTP: refused (`not_https`). Browsers need a secure
+>   context for the service worker, and Serve marks only TLS requests `https`.
 >
-> 1. `POST /auth/browser/enroll`;
-> 2. a browser-lane `/ws` upgrade, whose admission then uses the refreshed state;
-> 3. `GET /auth/browser/session`, which the shell calls at every boot;
-> 4. each open browser socket's 10 s re-check, reusing any result younger than 10 s,
->    so the daemon makes at most one read per 10 s however many browser sockets are
->    open. [Under D5 = no, this trigger is dropped.]
+> The daemon reads the serve config at startup and on `GET /auth/node/session`, which
+> the shell calls at every boot, reusing a result younger than 10 s, with concurrent
+> reads sharing one call. A publication moved to another port is therefore picked up
+> at the next boot. A read that fails keeps the last result. Request headers (`Host`,
+> `X-Forwarded-Host`) never choose the origin.
 >
-> Native requests and native upgrades never refresh browser state and never consult
-> it. Concurrent refreshes share one LocalAPI call, bounded by its 2 s timeout. A read
-> that fails or times out sets *refused*, so the daemon fails closed: browser sockets
-> close with 4503 at their re-check, and the client retries with its usual backoff.
->
-> **Deriving the canonical origin.** Browsers are admitted only through publications
-> that put tether's proxy handler (`http://127.0.0.1:<port>` or `localhost`) at mount
-> path `/` of a `Web` entry, in the background config, a foreground config, or a
-> Tailscale Service (`Services`). If there is exactly one such publication, it is the
-> canonical origin. If there are several, the config key `browser_origin` picks one,
-> and it must equal one of them exactly. A `browser_origin` that names nothing tether
-> publishes at `/` is *refused* (`browser_origin_unpublished`). Several publications
-> and no `browser_origin` is *refused* (`ambiguous_origin`). So is tether published
-> only under a non-root path (`not_at_root`): the shell, the API and the cookie's
-> `Path=/` all assume the root.
->
-> **Siblings.** A sibling is anything else for which tailscaled terminates TLS under
-> the canonical hostname, since only TLS on that name makes a browser send the
-> `Secure` cookie:
->
-> - another HTTPS `Web` key `<canonical host>:<other port>`;
-> - another handler or mount path inside the canonical `Web` entry itself (the same
->   origin as tether, the worst case);
-> - a `TCP` entry with `TCPForward` **and** `TerminateTLS` on a port other than the
->   canonical one. `TCP` is keyed by port alone, so it applies to the node's
->   hostname; inside a Service it applies to the Service's hostname;
-> - the same, in any foreground config.
->
-> Not siblings: a plain-HTTP `Web` entry, to which the browser never sends the
-> `Secure` cookie, and a `TCPForward` without `TerminateTLS`, whose backend would
-> need a certificate for the canonical hostname, which takes tailscaled operator
-> rights. `TCP` entries carrying only `HTTPS: true` or `HTTP: true` are markers that
-> tailscaled writes for every `Web` port, tether's own included; they are judged
-> through their `Web` entry and otherwise ignored. The parsed `ServeConfig` gains
-> `HTTPS`, `HTTP`, `TerminateTLS`, per-handler mount paths and `Services`.
->
-> **On a sibling, the daemon revokes.** [Under D2 (c), it logs and prints the
-> sibling instead, and the rest of this paragraph doesn't apply.] When a refresh
-> finds a sibling, the state becomes *revoking* first, then the auth lane deletes
-> every browser device in one atomic write and logs the sibling's `host:port` and the number of devices revoked at `warn`.
-> Open browser sockets close with 4401 at their next re-check. Browser credentials
-> and enrolment are refused with `503 browser_unavailable` (reason `sibling`) for as
-> long as the sibling stays. If the write fails, the state stays *revoking* and the
-> write is retried at the next refresh event. Removing the sibling doesn't readmit
-> browsers until a revocation write has succeeded. Native credentials ignore all of
-> this. `tether enroll` and `tether device list` print the reason browsers are
-> refused.
->
-> **Why revoke rather than refuse.** The browser sends the cookie to every port of
-> its host. The admission rules below stop a sibling *page* from using the cookie
-> through the browser. A sibling *server* receives the cookie itself and can replay
-> it with forged headers from any device logged in as Jimmy. Refusing only while the
-> sibling is up would leave that copy valid once it is gone. Revoking makes every
-> copy a *detected* sibling may hold unknown. It does nothing about a sibling the
-> daemon never reads: one published and removed while no browser socket is open,
-> before the next browser boot. That is an accepted risk (§ Threat model). HTTPS
-> servers that fetch their own Tailscale certificate outside `tailscale serve` are
-> invisible to the check. Running one under tether's hostname needs tailscaled
-> operator rights, which belong to Jimmy.
->
-> `GET /auth/info` reports `browserOrigin`: the canonical origin when browsers are
-> admitted, otherwise `null`, with `browserRefused` set to the reason. The shell
-> compares `browserOrigin` with `location.origin` before connecting. On a mismatch it
-> shows "Open tether at `<browserOrigin>`" and opens no socket. A socket would only
-> fail with a status the browser can't see.
+> `GET /auth/info` reports `browserOrigin` (or `null`, with `browserRefused` set to
+> the reason). The shell compares it with `location.origin` before connecting, and on
+> a mismatch shows "Open tether at `<browserOrigin>`" and opens no socket.
 
 ### 3.7 Browser admission (new section, replaces "No `Origin` check")
 
-> Cookies are ambient: the browser attaches them to requests that other pages start.
-> **Credentials are parsed only on the device routes** (`/ws`, `/fs/*`,
-> `/complete`, the debug endpoint) **and on `/auth/browser/*`**. The shell routes,
-> `GET /auth/info` and `POST /auth/enroll` never parse or judge a credential. A
-> bookmark, a cold PWA launch or a link from another app sends `GET /` with the
-> cookie and `Sec-Fetch-Site: none` or `cross-site`, and gets the shell (200).
+> Node identity is ambient: a page on any origin, open in a browser on an enrolled
+> node, can make the browser send requests that arrive with that node's identity.
+> These rules make sure a node-lane request was sent by tether's own page. The
+> browser sets `Origin`, `Host` and `Sec-Fetch-*` itself and no page can change them,
+> so they are trustworthy for browsers. They are no barrier to a non-browser process
+> on an enrolled node, which is accepted ([Threat model](#threat-model)).
 >
-> On those routes, a request on the browser lane (below), and every browser enrolment
-> and logout, must show that tether's own page sent it. These checks are pure, on
-> headers alone, and they run before any browser-state refresh and before the auth
-> lane reads `auth.toml`. A flood of cross-origin requests therefore costs no file
-> read and no LocalAPI call.
+> The rules apply to every node-lane request on the device routes (`/ws`, `/fs/*`,
+> `/complete`, the debug endpoint) and to `/auth/node/*`. They are pure, on headers
+> alone.
 >
-> | Check | Rule | Refusal |
+> | Check | Rule | Why this rule |
 > |---|---|---|
-> | Host | `Host` equals the canonical origin's authority (case-insensitive; a default port may be omitted) | `403 bad_origin` |
-> | Origin, on a WebSocket upgrade and on every method but `GET` and `HEAD` | `Origin` is present and equals the canonical origin, byte for byte after lowercasing. `null`, a missing `Origin`, a suffix or a prefix match all fail; nothing is ever reflected. **This is the required control on upgrades and mutations** | `403 bad_origin` |
-> | Fetch metadata, on a WebSocket upgrade and on every method but `GET` and `HEAD` | if `Sec-Fetch-Site` is present, it equals `same-origin` | `403 bad_origin` |
-> | Fetch metadata, on `GET` and `HEAD` | `Sec-Fetch-Site` is present and equals `same-origin`. It is the required control here, because browsers usually send no `Origin` on a GET | `403 bad_origin` |
-> | Origin, on `GET` and `HEAD` | if present, equals the canonical origin | `403 bad_origin` |
+> | Host | equals the canonical origin's authority (case-insensitive; a default port may be omitted) | Admission compares everything with one origin; a request addressed to another name the same Serve entry answers (a Service name, a second publication) is not from that origin. It also refuses DNS rebinding, in which a foreign page's own host resolves to the dev box, before TLS would |
+> | Origin, on WebSocket upgrades and every method but `GET` and `HEAD` | present and equal to the canonical origin, byte for byte after lowercasing; `null`, missing, prefix and suffix matches all fail | **The required control on upgrades and mutations.** Browsers send `Origin` on every cross-origin upgrade and POST, and a WebSocket has no CORS: without it, any page in a browser on an enrolled node could open the shell (cross-site WebSocket hijacking) or submit a form |
+> | `Sec-Fetch-Site`, on upgrades and mutations | if present, `same-origin` | Defence in depth. Not required, because WebKit added fetch metadata to WebSocket handshakes late, and the exact `Origin` already decides |
+> | `Sec-Fetch-Site`, on `GET` and `HEAD` | present and `same-origin` | **The required control on reads.** Browsers usually send no `Origin` on a GET, so `<img>`, `<video>`, `<script>` or a link from another page would otherwise load `/fs/raw` media, or leak a file's size and dimensions, under the node's identity |
+> | Origin, on `GET` and `HEAD` | if present, equal to the canonical origin | Cheap, and refuses the few cross-origin GETs that do carry it |
 >
-> Each route keeps its own body rule: the JSON routes take `Content-Type:
-> application/json` through axum's `Json` (415 otherwise), logout takes `{}`, and
-> `POST /fs/upload` takes a raw body ([fs.md](fs.md)). The content type is no
-> cross-site defence; the exact `Origin` is.
+> A refusal is `403 bad_origin`; a refused upgrade gets a plain 403 and no socket.
+> Each route keeps its own body rule (JSON routes take `application/json` through
+> axum's `Json`; `POST /fs/upload` takes a raw body); the content type is no
+> cross-site defence, the exact `Origin` is. **No CORS:** the daemon sends no
+> `Access-Control-*` header and answers no preflight. **No anti-CSRF token:** every
+> admitted mutation carries an exact `Origin`, which no page can forge. A browser
+> older than the minimums sends no `Sec-Fetch-Site`, so its GETs are refused; tether
+> doesn't support it.
 >
-> A refused upgrade gets a plain 403 with no socket. A page on the right origin never
-> meets it, because the shell checks `browserOrigin` first (above), and a foreign page
-> should get nothing that looks like a connection. **No CORS:** the daemon sends no
-> `Access-Control-*` header and answers no preflight. Every browser request comes
-> from the same origin. No anti-CSRF token is issued. Every cookie-authenticated
-> mutation carries an exact `Origin`, which every supported browser sends and no page
-> can forge, so a synchronizer token would add state and buy nothing. A browser older
-> than the minimums in Constants omits `Sec-Fetch-Site`, so every GET it makes is
-> refused. Tether doesn't support it.
->
-> **Which credential a request presents.** The daemon joins every `Cookie` header
-> field with `; ` (HTTP/2 may split them) and finds the pairs named `__Host-tether`.
-> Other cookies are ignored. Any `Authorization` header counts as a native credential
-> presented, whatever its scheme: the scheme name matches case-insensitively, so
-> `bearer` is `Bearer`. Then:
+> The shell routes (`/`, `/manifest.webmanifest`, `/sw.js`, `/icons/*`,
+> `/apple-touch-icon.png`, `/favicon.ico`, `/assets/*`) and `GET /auth/info` judge
+> no identity and apply none of these rules: a bookmark, a cold PWA launch or a link
+> from another app sends `Sec-Fetch-Site: none` or `cross-site`, and gets the shell.
+> The shell is the client's code and carries no host data.
+
+### 3.8 Lanes (new section)
+
+> The daemon looks at what the request presents. Any `Authorization` header counts,
+> whatever its scheme (matched case-insensitively), and so does a `tether.auth.`
+> WebSocket subprotocol. `Cookie` is ignored.
 >
 > | Presented | Lane |
 > |---|---|
-> | exactly one `__Host-tether`, no `Authorization` header, no `tether.auth.` subprotocol | browser: the admission rules above, then the browser-kind lookup |
-> | exactly one `Authorization` header, or exactly one `tether.auth.` subprotocol, and no `__Host-tether` | native: today's rules, no origin check. `Bearer <token>` goes to the native-kind lookup. Any other scheme (`Basic`, …), or an empty or missing token, is unknown: `401 auth_required` |
-> | nothing | `401 auth_required` / close 4401 |
-> | a cookie together with any `Authorization` header or a subprotocol token; two `__Host-tether` pairs; two `Authorization` headers; two `tether.auth.` subprotocols; an `Authorization` header together with a subprotocol | **ambiguous: refused** as `401 auth_required` / close 4401. Nothing guesses which credential was meant |
+> | exactly one `Authorization: Bearer <token>`, or exactly one `tether.auth.<token>` subprotocol | native: today's rules, no origin check, no node identity. Another scheme, or an empty token, is `401 auth_required` |
+> | nothing | node: [Node identity](#node-identity) and [Browser admission](#browser-admission) |
+> | two `Authorization` headers, two `tether.auth.` subprotocols, or one of each | ambiguous: `401 auth_required` / close 4401 |
 >
-> **Why ambiguity is refused.** Tether only ever sets one cookie. A second pair can
-> come from browsers with nameless-cookie or cookie-tossing bugs, which let any
-> tailnet host inject one, even over plain HTTP. A sibling HTTPS service on the
-> hostname can do worse: it can set `__Host-tether` itself, which *replaces*
-> tether's cookie rather than adding a second one. That is a forced logout, or a
-> session under a credential the attacker already holds, which gives them nothing
-> new. Either way the impact is denial of service, and refusing keeps it from turning
-> into a guess. The log line records `ambiguous`, the route, the number of
-> `__Host-tether` pairs and `Cookie` fields, and which other credentials were
-> present. It never records their values.
+> A request that presents a token never falls back to the node lane when the token
+> is wrong: it is 401. A native token works from any node; a node lane needs no
+> token. The iOS app always presents its token, so its requests are judged on the
+> native lane even from an enrolled phone node.
 >
-> **Close codes and statuses for browsers** mean what they mean for native.
-> `401` or `4401` means "this credential is gone" (unknown, revoked, expired or
-> ambiguous): the browser client shows the enrolment screen and does not retry.
-> `503` or `4503` (`auth.toml` unreadable, auth lane busy, `browser_unavailable`)
-> means "can't decide now": the client keeps its cookie and retries with the usual
-> backoff. `4005` means over the connection cap. A credential's re-check on a live
-> socket keeps its 10 s timer: it finds the device by kind and hash and applies
-> `admit`, and for a browser socket it also refreshes browser state (§ Canonical
-> origin, trigger 4) and closes with 4401 or 4503 if browsers are no longer
-> admitted. The codes `403 unlock_required` and close 4423 are reserved for C and are
-> not sent in A.
+> **Native enrolment refuses browsers.** `POST /auth/enroll` returns a token in JSON,
+> so it refuses any request carrying `Origin` or `Sec-Fetch-Site` with `403
+> bad_origin`. A browser never needs a portable token, and refusing keeps script on
+> tether's origin that sees a typed code from trading it for one.
 >
-> **`auth::admit(device, now)` is the one policy over a found device**, used by the
-> initial check and every re-check: the device exists, and `now < expires_at` when
-> it has one. A future condition (passkey unlock) is added here and nowhere else.
+> **Statuses and close codes for browsers:**
+>
+> | Answer | Meaning | The browser client |
+> |---|---|---|
+> | `401 not_enrolled`; close 4401 | this node isn't enrolled, or was removed | asks `GET /auth/node/session` why, then shows the enrolment screen |
+> | `403 node_refused` (reason) | this node can never be admitted | a screen naming the reason ("This device is a subnet router"), no retry |
+> | `403 bad_origin` | the page isn't tether's | never seen by tether's page: the shell checks `browserOrigin` first |
+> | `503 identity_unavailable`, `auth_unavailable`, `busy`; close 4503 | the daemon can't decide now | keeps its state and retries with the usual backoff |
+> | close 4005 | over the socket cap | "Too many connections" |
+>
+> A refused node-lane upgrade for identity reasons (not enrolled, node refused,
+> whois failed) completes the upgrade and closes at once with 4401 or 4503, as native
+> does, because a browser WebSocket can't see a refused upgrade's status. The codes
+> `403 unlock_required` and close 4423 are reserved for passkey unlock and are not
+> sent in this phase.
+>
+> **`auth::admit(device, now) -> Grant` is the one policy over a found device**, for
+> both lanes, at the initial check and every re-check. Today it returns `Full` for
+> every device that exists. Conditions added later (an expiry, a scope, a passkey
+> unlock) go here and nowhere else ([Seams](#seams)).
 
-### 3.8 Logout (new section)
+### 3.9 Enrolment (additions to the section)
 
-> `POST /auth/browser/logout {}` passes the browser admission rules. If the cookie
-> matches a browser device, the daemon removes that device in one locked write. It
-> answers `204` with `Set-Cookie: __Host-tether=; Max-Age=0; Secure; HttpOnly;
-> SameSite=Strict; Path=/` in every admitted case: a matching cookie, an unknown
-> cookie, or no cookie at all. Before calling logout, the client closes its own
-> sockets. Any other socket the credential holds, such as another tab or window of
-> the same browser, closes with 4401 at its next re-check (at most 10 s). The
-> re-check is the one revocation path, and logout uses it rather than adding a
-> socket registry.
+> Steps 1–2 and 5–6 are unchanged and shared by both kinds: one pending code, one
+> wrong-try counter, one atomic write that consumes the code and adds the device. A
+> node enrols at its own route:
 >
-> **In-flight HTTP is not cut.** A response already streaming when its credential
-> is revoked or expires runs to its end. In practice that means a `/fs/raw` range.
-> Each response holds one of 2 raw slots and dies after a 30 s stall
-> ([fs.md](fs.md#constants)). Every new request is checked, and a video makes a new
-> `Range` request every few seconds, so playback stops within one range. Cutting
-> streams early would need a registry of responses by credential, which costs more
-> than one range is worth. browser-setup.md asks that logout close live connections.
-> This meets that for sockets and accepts the gap for a response in flight.
+> 3b. **In a browser**, the shell calls `GET /auth/node/session`. For a node that
+>    isn't enrolled it answers `401 {error: "not_enrolled", node: {name}}`, `name`
+>    being the node's MagicDNS machine name, and the shell shows the enrolment screen:
+>    the host's name from `GET /auth/info`, a code field, and the device name,
+>    prefilled with the node's name, which Jimmy can edit. The screen says "This
+>    lets every browser and app on <node> use tether on <host>." A refused node gets
+>    `403 node_refused` and no code field.
 >
+> 4b. The page sends `POST /auth/node/enroll {code, deviceName}`. It passes the
+>    node lane up to the device lookup: tailscaled peer, admission (mutation), whois,
+>    node rules. On the auth lane, `Store::enroll` runs with `kind = Node`, the stable
+>    ID and the node's login, and `enrolled_by` = the login. If the node is already
+>    enrolled, it answers `200` with the existing name and leaves the code unconsumed.
+>    The answer is `200 {deviceName}`, `Cache-Control: no-store`. Nothing secret is
+>    issued: the node is the credential.
+
+### 3.10 Live sockets and revocation (replaces the revocation bullet)
+
+> A node-lane socket records its node's stable ID and address at the upgrade. The
+> connection's existing 10 s re-check then does two things:
+>
+> 1. Reads `auth.toml` and looks up the device by stable ID and login, as for a new
+>    request. Gone: close 4401. File unreadable: close 4503 (as native).
+> 2. Calls whois for the recorded address. A different stable ID, "no such peer", or
+>    a node that now fails a node rule: close 4401. A failed or slow call keeps the
+>    socket and counts a failure; 3 in a row close it with 4503. Any success resets
+>    the count.
+>
+> An upgraded connection carries one client for its whole life, so the identity
+> recorded at the upgrade stays the identity of every message on it; the whois
+> re-check catches the node leaving the tailnet or changing hands. Tolerating two
+> failed calls keeps a briefly slow tailscaled on a busy box from dropping every
+> live socket, which would cost each a reconnect; `tether device remove` still takes
+> effect within 10 s, because step 1 needs no LocalAPI call. The cost is at most one
+> whois per open node-lane socket per 10 s, and none when only native or nobody is
+> connected.
+>
+> **In-flight HTTP is not cut.** A response already streaming when its device is
+> removed runs to its end: in practice a `/fs/raw` range, which holds one of 2 raw
+> slots and dies after a 30 s stall ([fs.md](fs.md#constants)). Every new request is
+> checked, and video makes a new `Range` request every few seconds, so playback
+> stops within one range. Cancelling responses by device would need a registry,
+> which costs more than one range is worth.
+
+### 3.11 Removing a device from the browser (new section)
+
+> Settings has "Remove this device". After a confirmation ("Every browser and app on
+> <node> will lose access to <host>"), the client closes its own sockets and sends
+> `POST /auth/node/remove {}`. It passes the node lane up to the device lookup; if
+> this node is enrolled, the daemon removes it in one locked write. It answers `204`
+> either way, and the shell shows the enrolment screen. Any other socket from the
+> node, in another tab, browser or the PWA, closes with 4401 at its next re-check.
 > Local drafts stay; "Clear local data" is a separate action
 > ([browser-setup.md](client/browser-setup.md#drafts-installation-and-lifecycle)).
+>
+> A browser learns it isn't enrolled only from the daemon: `GET /auth/node/session`
+> at boot, 401 or 4401 afterwards. It stores no enrolment state of its own.
 
-### 3.9 State on disk (row change)
+### 3.12 State on disk (row change)
 
-> `auth.toml`: `[[device]]` with `name`, `kind` (`native` or `browser`; absent means
-> `native`, so files written before browsers parse unchanged), `token_sha256`,
-> `enrolled_at`, `enrolled_by` (the Tailscale login, or `cli`), and `expires_at`
-> (RFC 3339; set on every browser device). Optional `[pending]` with `code_sha256`,
-> `expires_at`, `wrong_tries`. A browser device without a parseable `expires_at` is
-> refused as unknown and logged by name. The file still parses, so no other device is
-> affected. Browser state (§ Canonical origin) is memory only.
+> `auth.toml`: `[[device]]` with `name`, `kind` (`native` or `node`; absent means
+> `native`, so files written before nodes parse unchanged), `enrolled_at`,
+> `enrolled_by` (the Tailscale login, or `cli`), and per kind: `token_sha256` for
+> native; `node_id` (the stable ID) and `login` (the node's owner at enrolment) for
+> node. Optional `[pending]` as today.
+>
+> **A device row with a field the daemon doesn't know is refused, alone**, and logged
+> by name; other rows keep working. A later version may add fields that narrow a
+> device (an expiry, a scope); an older daemon that ignored them would grant that
+> device full power.
 
 ```toml
 [[device]]
@@ -535,50 +511,47 @@ enrolled_at = "2026-10-21T09:12:00Z"
 enrolled_by = "jimmy@github"
 
 [[device]]
-name = "Safari on iPhone"
-kind = "browser"
-token_sha256 = "…"
-enrolled_at = "2026-10-22T08:00:00Z"
+name = "jimmys-macbook-air"
+kind = "node"
+node_id = "nMM5jYAKHC11CNTRL"
+login = "jimmy@github"
+enrolled_at = "2026-10-23T08:00:00Z"
 enrolled_by = "jimmy@github"
-expires_at = "2026-11-21T08:00:00Z"
 ```
 
-### 3.10 CLI (table change)
+### 3.13 CLI (table change)
 
 > | Command | Effect |
 > |---|---|
-> | `tether enroll [--ttl 10m]` | Print a new enrolment code, the host URL for the app, and the browser URL (`browserOrigin`, or the reason browsers are refused, such as the sibling's `host:port`). The code works for either kind |
-> | `tether device list` | Devices with name, kind, enrolled date, `enrolled_by`, and for browsers the expiry (or `expired`); a line for why browsers are refused, if they are |
-> | `tether device remove <name>` | Remove a device of either kind; its credential stops working and its sockets close at the next re-check |
-> | `tether device add <name>` | Add a **native** device and print its token once, for the desktop dev shim or Playwright against a real daemon. It never mints a browser credential |
+> | `tether enroll [--ttl 10m]` | Print a new code, the host URL for the app, and the browser URL (`browserOrigin`, or why browsers are refused). The code works for either kind |
+> | `tether device list` | Devices with name, kind, enrolled date and `enrolled_by`; for nodes, the stable ID and whether tailscaled currently knows a peer with it (from `/status`) |
+> | `tether device remove <name>` | Remove a device of either kind; its requests are refused at once and its sockets close at the next re-check |
+> | `tether device add <name>` | Add a **native** device and print its token once, for the dev shim or Playwright against a real daemon |
 
-### 3.11 Endpoints (replaces the route table)
+### 3.14 Endpoints (replaces the route table)
 
-> Every route sits behind the Tailscale check (403 `forbidden`, before anything else).
-> API paths are reserved before static routing (`/ws`, `/auth/`, `/fs/`,
-> `/complete`, `/debug`): an unknown path under them is a JSON 404 and never falls
-> through to the shell.
+> Every route sits behind the Tailscale check (`403 forbidden`). API paths are
+> reserved before static routing (`/ws`, `/auth/`, `/fs/`, `/complete`, `/debug`): an
+> unknown path under them is a JSON 404, never the shell.
 >
-> | Route | Native token | Browser credential | Request → response |
+> | Route | Native lane | Node lane | Request → response |
 > |---|---|---|---|
-> | shell: `GET`/`HEAD` `/`, `/manifest.webmanifest`, `/sw.js`, `/icons/*`, `/apple-touch-icon.png`, `/favicon.ico`, `/assets/<hashed name>` | never parsed | never parsed: the Tailscale check only | the packaged files, nothing else; no fallback, no directory listing; served under the shell caps ([daemon-core.md](daemon-core.md#static-shell)) |
-> | `GET /auth/info` | never parsed | never parsed | `{hostId, name, daemonVersion, protocol, browserOrigin, browserRefused}` |
+> | shell paths, `GET`/`HEAD` | not judged | not judged | the packaged files, under the shell caps ([daemon-core.md](daemon-core.md#static-shell)) |
+> | `GET /auth/info` | not judged | not judged | `{hostId, name, daemonVersion, protocol, browserOrigin, browserRefused}` |
 > | `POST /auth/enroll` | redeems the code | refused: any `Origin` or `Sec-Fetch-Site` is `403 bad_origin` | `{code, deviceName}` → `{token, deviceName}` |
-> | `POST /auth/browser/enroll` | an `Authorization` header is `400 bad_request` | browser admission (mutation), no credential needed; refreshes browser state | `{code, deviceName}` → `200 {deviceName, expiresAt}` + `Set-Cookie`; 403 `bad_code`; 503 `browser_unavailable`, `busy` |
-> | `GET /auth/browser/session` | `401 auth_required` | browser admission (GET) + valid credential; refreshes browser state | `{deviceName, expiresAt}`; 401; 503 |
-> | `POST /auth/browser/logout` | `401 auth_required` | browser admission (mutation); the credential may be unknown or absent | `{}` → `204` + clearing `Set-Cookie` |
-> | `GET /ws` | subprotocol token, as today | cookie; only `tether.v1` offered; browser admission (upgrade); refreshes browser state | upgrade; bad credential → close 4401; unreadable file, busy or `browser_unavailable` → close 4503; bad origin → plain 403 |
-> | `GET /fs/*` (list, dirs, roots, raw incl. `Range`) | `Authorization: Bearer` | browser admission (GET) | as fs.md |
-> | `POST /fs/*` (roots add/remove, uploads-dir, upload) | `Authorization: Bearer` | browser admission (mutation); each route's own body rule | as fs.md |
-> | `POST /complete` | `Authorization: Bearer` | browser admission (mutation) | as complete.md |
-> | debug endpoint | `Authorization: Bearer` | browser admission for its method | as plan.md |
+> | `POST /auth/node/enroll` | a token is `400 bad_request` | admission (mutation), whois, node rules | `{code, deviceName}` → `200 {deviceName}`; `403 bad_code`, `node_refused`; `503` |
+> | `GET /auth/node/session` | a token is `400 bad_request` | admission (GET), whois, node rules, lookup; refreshes the canonical origin | `200 {deviceName}`; `401 {error, node: {name}}`; `403 node_refused`; `503` |
+> | `POST /auth/node/remove` | a token is `400 bad_request` | admission (mutation), whois, node rules | `{}` → `204` |
+> | `GET /ws` | subprotocol token | only `tether.v1` offered; admission (upgrade), whois, node rules, lookup | upgrade; not enrolled → close 4401; can't decide → 4503; bad origin → plain 403 |
+> | `GET /fs/*` | `Authorization: Bearer` | admission (GET) and the node lane | as fs.md |
+> | `POST /fs/*`, `POST /complete` | `Authorization: Bearer` | admission (mutation) and the node lane | as fs.md, complete.md |
+> | debug endpoint | `Authorization: Bearer` | admission for its method and the node lane | as plan.md |
 >
 > Every non-shell response carries `Cache-Control: no-store`, `X-Content-Type-Options:
-> nosniff` and `Cross-Origin-Resource-Policy: same-origin`. CORP keeps other origins
-> from embedding a response with `<img>` or `<video>` even when the request carries a
-> cookie. New errors: `403 bad_origin` (a browser request that failed admission) and
-> `503 browser_unavailable` (browser state is *refused* or *revoking*; retryable,
-> with the reason logged and shown by `/auth/info`).
+> nosniff` and `Cross-Origin-Resource-Policy: same-origin`, so another origin can't
+> embed one with `<img>` or `<video>`. New errors: `403 bad_origin`, `403
+> node_refused` (with `reason`: `tagged`, `login_mismatch`, `shared`, `routes`,
+> `self`, `unknown_node`), `401 not_enrolled`, `503 identity_unavailable`.
 >
 > **Shell responses** carry `Content-Security-Policy: default-src 'none'; script-src
 > 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src
@@ -588,612 +561,381 @@ expires_at = "2026-11-21T08:00:00Z"
 > `Referrer-Policy: no-referrer` and `Cross-Origin-Opener-Policy: same-origin`.
 > Hashed assets get `Cache-Control: public, max-age=31536000, immutable`; `/`,
 > `/sw.js` and the manifest get `no-cache` and an `ETag` (the content hash), and
-> answer `If-None-Match` with 304. The service worker's fetch handler answers only
-> shell paths. For every other request it doesn't call `respondWith`, so API, file,
-> media and socket traffic never pass through it, and their cookies, `Range` and
-> fetch metadata are the browser's own. The shell carries no host data and no
-> credential, so serving it before enrolment gives away only the client's code.
+> answer `If-None-Match` with 304. The service worker answers only shell paths and
+> never calls `respondWith` for anything else, so API, file, media and socket
+> traffic never pass through it.
 
-### 3.12 Module shape (additions)
+### 3.15 Module shape (additions)
 
-> - `browser.rs` (new, pure): `Origin::canonical`; `BrowserState { origin,
->   status: Admitted | Refused(Reason) | Revoking }` and its derivation from a
->   `ServeConfig`, including sibling detection; `presented(headers) -> Presented {
->   None, Native(Authorization | Subprotocol), Browser(&str), Ambiguous }`;
+> - `node.rs` (new, pure): `forwarded_addr(headers) -> Result<IpAddr, Refused>`;
+>   `node_rules(&Whois, login_header, self_id) -> Result<NodeId, Refusal>`;
+>   `Origin::canonical` and its derivation from a `ServeConfig` and the socket path;
 >   `admission(method, upgrade, headers, &Origin) -> Result<(), Refused>`;
->   `set_cookie(credential, max_age)` and `clear_cookie()`.
-> - `identity.rs`: `ServeConfig` parses `HTTPS`, `HTTP`, `TerminateTLS`, mount paths
->   and `Services`; the browser-state cell holds the last result with its time,
->   coalesces concurrent refreshes, and reuses a result younger than 10 s for
->   socket re-checks. `Store::enroll` reads the cell under the write lock.
-> - `token.rs`: `generate(kind)`; `find(devices, kind, hash)` keeps its
->   constant-time, no-early-exit scan with the kind in the mask.
-> - `store.rs`: `Device.kind` (serde default `Native`), `Device.expires_at:
->   Option<String>`; `enroll(code, name, by, kind, replaces: Option<Hash>, now)`;
->   `remove_by_hash`; `remove_kind(Browser)` for revocation.
-> - `mod.rs`: `check` dispatches on `presented`; `admit(device, now)` is the single
->   post-lookup policy, called by `check` and `recheck`.
-> - `http/mod.rs`: `device_check` runs `browser::admission` for the browser lane
->   before the auth lane; `bad_origin` refusals never complete an upgrade. The
->   `/auth/browser/*` routes sit outside the `devices` router, like `/auth/enroll`,
->   and call the same admission. The shell router sits outside it too, behind the
->   Tailscale check, and never looks at a credential. `http::serve` owns its
->   accept loop; `http/shell.rs` holds the embedded table and the shell slots
->   (daemon-core, "Static shell").
-> - The log never carries `Cookie`, `Set-Cookie`, `Authorization` or
->   `Sec-WebSocket-Protocol` values; refusals log the reason and the path.
+>   `presented(headers) -> Presented { None, Native(Authorization | Subprotocol),
+>   Ambiguous }`.
+> - `identity.rs`: `whois(addr)` with the 64 KiB limit, single-flight by address and
+>   the 2-in-flight cap; `Self.StableID` from `/status`; tailscaled's uid from
+>   `SO_PEERCRED`; `ServeConfig` parses mount paths, `unix:` proxy targets and
+>   `Services`; the canonical-origin cell, refreshed as §3.6 says.
+> - `store.rs`: `Device.kind` (serde default `Native`) and per-kind fields;
+>   `deny_unknown_fields` on the device row, applied row by row so one bad row is
+>   refused alone; `enroll(code, name, by, Kind, now)`; `remove_node(node_id)`.
+> - `mod.rs`: `check` dispatches on `presented`; `admit(device, now) -> Grant` is
+>   the single post-lookup policy, called by `check` and `recheck`.
+> - `http/mod.rs`: the accept loop on the Unix socket inserts the peer's uid class
+>   (`Peer::Tailscaled | Local`) into every request's extensions, replacing
+>   `ConnectInfo<SocketAddr>`. `device_check` runs `admission` for the node lane before
+>   whois. The `/auth/node/*` routes sit outside the `devices` router, like
+>   `/auth/enroll`, and call the same steps.
+> - Dependencies: `hyper` gains `server`; `hyper-util` gains `server`, `http1` and
+>   `service`. `SO_PEERCRED` comes from `tokio::net::UnixStream::peer_cred`.
+> - The log never carries `Authorization` or `Sec-WebSocket-Protocol` values;
+>   refusals log the reason, the path and, for the node lane, the stable ID.
+
+### 3.16 Seams (new section)
+
+> **Public HTTPS (passkeys).** On a public origin no request comes through Serve, so
+> the node lane doesn't exist there: such a connection isn't a tailscaled peer.
+> Browsers then need a portable credential, and `presented` gains a third lane for
+> it. The planned one is a passkey: a device of kind `passkey` holding a WebAuthn
+> credential's public key, registered with the enrolment code; an assertion with
+> user verification opens a short session the public phase specifies, whose RP ID is
+> the public hostname. `auth::admit` judges that device like any other. Nothing of
+> this is built. The same `admit` can later require a passkey unlock for node devices
+> on the tailnet (closing the unlocked-device risk); `403 unlock_required` and close
+> 4423 are reserved for it.
+>
+> **Guest devices.** A guest would be another person's tailnet node, given one
+> session read-only until an expiry. Its row would add `scope` (the session name and
+> `read-only`) and `expires_at`, and `admit` would return a `Grant` narrower than
+> `Full` that the hub enforces on every message. The guest's login is outside the
+> allowlist, so the allowlist would become per device: the owner's login for full
+> devices, the guest's own for a guest row. Nothing of this is built. The rule that
+> refuses unknown row fields means an older daemon never reads a guest row as a full
+> device.
 
 ## 4. `decisions.md` entry
 
-Written for the recommended answers in §2. Under another answer to D2, D5 or D6,
-the sibling and control-client bullets change to match.
-
 ```markdown
-### Browsers authenticate with an HttpOnly device cookie, passkey-ready
+### Browsers are admitted as enrolled tailnet nodes, not by cookie
 
-- **Decided:** 2026-10-22, Jimmy (Option A, built so passkey unlock can be added);
-  details by design (browser auth), revised after security review.
-- **What:** a browser or PWA enrols with the `tether enroll` code and gets a
-  `__Host-tether` cookie (`Secure; HttpOnly; SameSite=Strict; Path=/`) holding a
-  browser credential: a second device kind in `auth.toml`, listed and revoked with
-  `tether device`, expiring 30 days after enrolment. Kinds don't cross: cookies match
-  only browser devices, `Authorization` and subprotocol tokens only native ones.
-  Credentials are parsed only on the device and `/auth/browser/*` routes. There,
-  a cookie request needs an exact `Host`; upgrades and mutations need an exact
-  `Origin` (and `Sec-Fetch-Site: same-origin` if sent); GET and HEAD need
-  `Sec-Fetch-Site: same-origin`. All are checked against one canonical origin
-  derived from the serve config. When the daemon sees another HTTPS service
-  under that hostname (it reads the serve config at a browser's boot, enrolment
-  and upgrade, and every 10 s while a browser socket is open), every browser
-  device is revoked and browsers are refused while it stays. Plain-HTTP entries
-  and raw TCP forwards don't count. Native admission is unchanged. Only the
-  shell, embedded gzipped in the binary, is served before enrolment. Every HTTP
-  route bounds its own concurrency and refuses at once when full, behind a
-  64-connection backstop in an accept loop the daemon owns.
-- **Why:** media `Range` streaming, `<img>`, fetch and the WebSocket all carry a
-  cookie without script handling a secret; reusing the device store keeps one
-  enrolment, revocation and re-check path. `ts.net` is a public suffix, so every
-  machine in the tailnet is same-site: `SameSite` can't separate them and the
-  `Origin` and fetch-metadata checks are required controls. A sibling server
-  receives the cookie itself, so revocation is what makes a detected sibling's
-  copy useless; tailscaled can't announce serve-config changes, so a sibling
-  that lives only while no browser is connected goes unseen, and that is
-  accepted.
-  Jimmy accepts that an unlocked laptop or phone can use the browser client in
-  this phase.
-- **Changes:** "No `Origin` check" and the invariant "tether never authenticates with
-  a cookie" now hold for native credentials only. "The daemon serves no UI" no
-  longer holds. `http::serve` owns its accept loop and bounds connections and
-  hyper's buffers for every client. The third control client goes (2 control
-  clients), to keep the unreclaimable ceiling under `MemoryMax`.
+- **Decided:** 2026-10-23, tech lead (Jimmy delegated auth); D1 (Unix socket), D2
+  (an enrolled node is trusted whole) and D3 ("Remove this device") by Jimmy.
+- **What:** a browser or PWA presents no credential. tether listens on a Unix socket
+  in a `0700` directory, which `tailscale serve` proxies to (`unix:` target,
+  Tailscale ≥ 1.94); `SO_PEERCRED` marks tailscaled's own connections. For those,
+  the daemon takes the one address in `X-Forwarded-For`, which Serve overwrites,
+  resolves it per request with LocalAPI whois, refuses tagged, shared-in,
+  subnet-router, mismatched-login and self nodes, and admits the node when its stable
+  ID and owner login are an enrolled `node` device in `auth.toml`. Enrolment uses the
+  `tether enroll` code; `tether device remove` revokes, and live sockets close at the
+  10 s re-check, which also re-resolves the socket's node. Exact `Host`, `Origin` (on
+  upgrades and mutations) and `Sec-Fetch-Site: same-origin` (on reads) against one
+  canonical origin derived from the serve config. Native admission is unchanged.
+- **Why:** a cookie is a bearer secret that any HTTPS server on the same hostname
+  receives, because cookies ignore ports, and could replay; it forced sibling
+  detection, revocation on detection, plain-HTTP spikes and serve-config polling. A
+  node gives a sibling server nothing to replay. Stable IDs are never reused, Serve
+  strips spoofed identity headers, and whois needs only LocalAPI read access. The
+  socket closes the gap that header trust left once other Unix users share the box.
+- **Changes:** "No `Origin` check" holds for the native lane only. "tether never
+  authenticates with a cookie" stays. "The daemon serves no UI" no longer holds. The
+  daemon binds a Unix socket instead of `127.0.0.1:PORT`, and the Tailscale check
+  gains the Funnel-header refusal.
 - **Rejected:**
-  - B, a token in browser JS storage sent as a bearer or subprotocol: readable by any
-    injected script, and `<video src>` can't add a header, so media needs blob loading
-    or URL tickets.
-  - D, Tailscale identity alone: no per-device enrolment or revocation.
-  - A lifetime of none (native's choice; a browser has no Face ID to bound the
-    unlocked-device case), 90 days (a weak bound on a copied cookie), or sliding idle
-    expiry (writes `auth.toml` on the check path).
-  - A session cookie derived from the credential: minting and refresh for no
-    protection a 30-day credential behind the Origin rules doesn't already give.
-  - An anti-CSRF synchronizer or double-submit token: every mutation carries an
-    exact `Origin`; a token adds state for no further protection.
-  - `SameSite` as the cross-origin defence: same-site covers the whole tailnet.
-  - Requiring `Sec-Fetch-Site` on upgrades and mutations: WebKit added fetch
-    metadata to WebSocket handshakes late, and the exact `Origin` already decides.
-  - Accepting the first of duplicate or mixed credentials: guessing hides an
-    injected or overwritten cookie.
-  - One enrol route with a `kind` field: the native route must refuse browsers so a
-    typed code can't be traded for a JSON token by injected script.
-  - Closing a logged-out credential's sockets at once through a socket registry: the
-    10 s re-check already revokes, and the client closes its own sockets first.
-    Cancelling in-flight raw responses on revocation, for the same reason.
-  - For a sibling on the hostname: refusing only while it is up (a leaked copy works
-    again after `serve off`); a warning only (the same, with no refusal); a dedicated
-    hostname as the plan of record (unknown whether Serve identity works there, G9,
-    and extra tailnet setup). The dedicated hostname stays open if G9 passes.
-  - Serving the shell from a directory on disk: a configurable root, fs-lane reads,
-    and a daemon and shell that can drift apart during an upgrade. Sharing the 2 raw
-    slots with the shell: a cold load or an update would starve the file viewer.
-  - Counting plain-HTTP entries and raw TCP forwards as siblings: neither can
-    receive the `Secure` cookie, and counting them would revoke browsers for every
-    `--tcp` forward on the box.
-  - Watching for serve-config changes: tailscaled's IPN bus carries none, and its
-    state file is root-only. The 10 s re-read rides the socket re-check that
-    already exists.
-  - A connection cap sized to the routes' sum (24): one cold load filled it and
-    queued the native app's reconnect behind it. A `Listener` wrapper for the cap
-    alone: it can't set hyper's buffer size, and at hyper's default (8 KiB +
-    400 KiB per buffer) 61 connections could hold about 25 MB.
-  - Time-bounded waits for the shell (503 after 10 s): a slow link failed the
-    same requests on every retry. Waiters are bounded by count instead.
-  - Serving the shell uncompressed: twice the transfer and twice the pages.
-  - A 10 s idle timeout: it races tailscaled's 90 s idle pool, and a POST sent on
-    a connection the daemon is closing gets a 502.
-  - Raising `MemoryMax` instead of dropping a control client (as in the earlier
-    caps decision).
-```
-
-The C seam, recorded in the same entry or in auth.md "Open risks":
-
-```markdown
-- **Passkey unlock (C) plugs into:**
-  - `auth::admit(device, now)`, one new condition: the device's **unlock window** is
-    open. The unlock window is `unlocked_until`, an in-memory map from a browser
-    device's credential hash to an instant, held by the auth lane, at most one entry
-    per browser device. It is never written to `auth.toml`, so it costs no write on
-    the check path, and a daemon restart locks every browser. A passkey assertion
-    with user verification opens it. User input slides it in memory, to match
-    native's 5-minute lock delay: only the `input` and `paste` messages count.
-    Ping, pong and output never do, or an open tab would never lock. A second short-lived cookie was rejected: it
-    is another secret to protect and needs a signing key, which is more state.
-  - Routes under `/auth/browser/passkey/*`, behind the same browser admission.
-  - `Store::renew`, which rewrites `expires_at`: a renewal of the 30-day credential,
-    separate from the unlock window.
-  - Refusals `403 unlock_required` and close 4423, reserved now. 401 and 4401 keep
-    meaning "credential gone".
-- **RP ID:** the canonical origin's full hostname (`devbox.tailXXXX.ts.net`),
-  stored with each registered passkey. It is never the registrable domain
-  `tailXXXX.ts.net`: that would let a page on any other machine in the tailnet ask
-  for assertions. A hostname change, such as D2's dedicated hostname or the public
-  phase, re-registers passkeys. The public phase serves a new origin, which needs a
-  new browser credential with C anyway (auth.md "Threat model"). That phase may pick
-  a parent domain it owns (`tether.example.com` over per-machine subdomains) as its
-  RP ID, but only if every subdomain is a tether daemon. Settle D2 before C ships,
-  so the tailnet RP ID doesn't move.
-- A provides the kind, the stored `expires_at`, the canonical origin (the WebAuthn
-  origin), and admission rules every new browser route reuses.
+  - An `HttpOnly` device cookie (revision 3 of the design): replayable by any sibling
+    server on the hostname, and detection of siblings can't be complete, since
+    tailscaled announces no serve-config changes.
+  - A token in browser JS storage: readable by injected script, and `<video src>`
+    can't add a header.
+  - Tailscale identity alone (any device of Jimmy's login): no per-device enrolment
+    or revocation.
+  - Tailscale app capabilities or grants as the device list: node-wide, so every
+    Unix user's tether would share one list, and changing it needs the admin console.
+  - Caching whois by address: an address can move to another node; per-request calls
+    are cheap and single-flight covers bursts.
+  - Trusting a loopback TCP peer: any local user could forge `X-Forwarded-For`.
+    Looking up the TCP peer's uid with `sock_diag`: works, but every local user can
+    still connect and fill the permits, and it has no macOS counterpart.
+  - Failing a live socket on the first failed whois re-check: a slow tailscaled would
+    drop every socket; three in a row are tolerated, and removal never needs whois.
+  - Ignoring unknown device-row fields: a later scoped row would be read as full
+    power by an older daemon.
 ```
 
 ## 5. Other spec sections that must change
 
-### plan.md "Security"
+### plan.md
 
-- **Identity**: unchanged.
-- **Device token and Face ID lock** → **Device credentials**: "Two kinds
-  ([auth.md](auth.md)): a native token behind Face ID for the iOS app, and an
-  `HttpOnly` browser cookie for browsers and the PWA, admitted only from the canonical
-  origin. Both are checked on every route but the shell, `/auth/info` and the
-  enrolment routes by one middleware…" (keep the fail-closed sentence).
-- **Web hardening**: replace "No cookies anywhere, so there is no cross-site request
-  to forge" with "The iOS app never sends a cookie. Browsers send one, so every
-  cookie-authenticated request must pass exact Origin, Host and fetch-metadata checks
-  against the canonical origin. A sibling service under tether's hostname revokes
-  every browser credential ([auth.md](auth.md#browser-admission))." Add: the
-  browser shell is served by the daemon under the CSP in auth.md §Endpoints. That
-  replaces "The daemon serves no UI", which ios-shell.md also states.
-- **Resource budget**, "Event-driven only": add "The one timed read is each live
-  socket's existing 10 s re-check, which also refreshes browser state, at most once
-  per 10 s for the daemon, while a browser socket is open (auth.md, D5)."
-  [Dropped under D5 = no.]
-- **Running the phone spikes** [under D2 (a); unchanged under (b) or (c)]: step 2
-  publishes on plain HTTP, `tailscale serve --bg --http=8080 http://127.0.0.1:5173`,
-  and step 3's URL becomes `http://<machine>.<tailnet>.ts.net:8080`. Add why:
-  publishing on HTTPS under tether's hostname revokes every browser credential
-  (auth.md "Canonical origin"), and plain HTTP stays inside WireGuard. HMR uses
-  `protocol: "ws"` and `clientPort: 8080`, or the documented reload fallback.
-  Teardown becomes `tailscale serve --http=8080 off`. If G13 fails, step 2
-  publishes from the Mac's own tailnet name instead.
+- **"Tailnet only"**: "Bind to a Unix socket, `$XDG_RUNTIME_DIR/tether/http.sock`, and
+  publish with `tailscale serve --bg --https=443 unix:/run/user/<uid>/tether/http.sock`
+  (Tailscale 1.94 or later)."
+- **"Identity"**: replace "tether accepts a request only from loopback … closed by the
+  enrolment code" with: every request needs an allowlisted login and no Funnel
+  marker; the node lane needs a tailscaled peer, which other Unix users can't fake
+  because they can't reach the socket ([auth.md](auth.md#tailscale-identity-and-tailscaled-peers)).
+- **"Device token and Face ID lock"** → **"Devices"**: "Two kinds: a token behind
+  Face ID for the iOS app, and an enrolled tailnet node for browsers and the PWA,
+  admitted only from the canonical origin. Both are checked on every route but the
+  shell, `/auth/info` and the enrolment routes…" (keep the fail-closed sentence).
+- **"Web hardening"**: "No cookies anywhere" stays. Replace "so there is no cross-site
+  request to forge" with "but a browser on an enrolled node carries its node's
+  identity on every request, so node-lane requests must pass exact Origin, Host and
+  fetch-metadata checks ([auth.md](auth.md#browser-admission))." Add the shell CSP
+  pointer. Drop "The daemon serves no UI".
+- **"Server platform"**: add "The browser lane also depends on LocalAPI (whois) and on
+  `SO_PEERCRED`. A Mac is a fine *client*: its browsers are judged by whois on the
+  server, and need nothing from the Mac's Tailscale app."
+- **"Running the phone spikes"**: unchanged. Publishing a spike on `--https=8443` is
+  harmless, because nothing tether issues can leak to it.
 
-### daemon-core.md
+### daemon-core.md, and the accept loop that resource-limits.md moves there
 
-- **§5.1 Transport**: "A native client offers `tether.v1, tether.auth.<token>`; a
-  browser offers only `tether.v1` and carries its cookie. The daemon answers
-  `tether.v1` either way."
-- **§5.2**: add `Upgrade --> Rejected: browser request from another origin, HTTP 403`
-  to the diagram. 4401 becomes "bad, unknown, revoked, expired or ambiguous
-  credential"; 4503 adds "browser credentials refused for now (`browser_unavailable`)";
-  4423 is reserved ("unlock required", passkey phase). The browser client sends
-  `hello.client.kind = "web"`, a value that already exists. `ClientKind`
-  (`src/proto/messages.rs`) has no catch-all, so a new `"browser"` value would make
-  an older daemon refuse `hello` with 4003. The credential kind, not `hello`, is what
-  the daemon trusts.
-- **New subsection, "Static shell"** (proposed text). It also sets the bounds for
-  every HTTP route, since the shell is what made them necessary:
+resource-limits.md §3.6 moves "One rule bounds HTTP" and "The accept loop" from this
+draft into daemon-core with the memory budget, and keeps the shell rows marked †.
+Their text there must carry these corrections (see
+[browser-auth-rev4-notes.md](browser-auth-rev4-notes.md) for the line list):
 
-> **One rule bounds HTTP.** Each route caps its own concurrency and, when its
-> waiters are full, answers at once: `503 busy` with `Retry-After: 1`, or 4005 for a
-> socket. Waiters are bounded by count, never by a timer. A connection cap sits
-> behind them as a backstop, sized above their sum so that ordinary bursts never
-> reach it, and the native app's reconnect never queues behind a browser's page
-> load.
->
-> | Route | Served at once | Waiting | When full |
-> |---|---|---|---|
-> | `/ws` | 3 sockets | — | close 4005 |
-> | file API | 1 scan, 2 raw, 1 upload | 8 on the fs lane | `503 busy` at once |
-> | `/complete` | 4 | — | `503 busy` at once |
-> | shell | 4 slots | 16, in arrival order, no deadline | `503 busy` at once |
-> | auth routes, and each device route's credential read | the auth lane's 2 threads | uncapped; a read takes milliseconds | `503 busy` after the lane's 10 s wait |
->
-> Those caps add up to about 40 connections, plus a handful waiting on the auth lane
-> and the idle connections tailscaled
-> keeps pooled to the daemon: at most 2, held for 90 s (Go's default
-> `MaxIdleConnsPerHost`, which Serve doesn't change; `IdleConnTimeout: 90 *
-> time.Second` in its proxy transport). The backstop is **64 connections**, so
-> reaching it means a flood, and a flood only denies service.
->
-> **The accept loop.** `http::serve` owns its accept loop rather than calling
-> `axum::serve`. A `Listener` wrapper could cap connections alone, but the memory
-> bound needs hyper's buffer size, and axum 0.8.9 builds each connection with
-> hyper's defaults and no hook (`serve/mod.rs`). At the default (8 KiB + 400 KiB per
-> buffer), 61 connections could hold about 25 MB. The loop:
->
-> - takes one of the **64 connection permits** before each `accept`. With none
->   free it stops accepting, and the kernel's listen backlog of 32 holds newcomers.
->   The permit lives inside the connection's I/O wrapper, so it moves into an
->   upgraded socket and is freed only when the socket closes. The wrapper forwards
->   `poll_write_vectored` and `is_write_vectored`, so hyper keeps queueing body
->   `Bytes` instead of copying them into its write buffer;
-> - sizes each socket's kernel buffers with `small_buffers`, as today;
-> - serves the connection with hyper's `http1::Builder`. The daemon has only ever
->   spoken HTTP/1.1 (axum's `http1` feature), and tailscaled proxies plain-HTTP
->   backends over HTTP/1.1. The builder gets a tokio timer, **`max_buf_size` of
->   16 KiB** (it bounds the read and the write buffer alike, and a request head that
->   doesn't fit is answered 431), a **100 s header-read timeout**, and
->   `with_upgrades()` for `/ws`;
-> - inserts `ConnectInfo<SocketAddr>`, the accepted peer, into every request's
->   extensions before the router, because the Tailscale check reads it.
->
-> The header-read timeout also closes idle keep-alive connections, since hyper arms
-> it at every request head. 100 s is above tailscaled's 90 s idle timeout, so
-> tailscaled always closes an idle connection first and never sends a request on one
-> the daemon is closing. Go doesn't retry a POST on such a connection, so a shorter
-> timeout would turn a rare enrolment or upload into a 502. A slow sender can only be
-> a process on loopback, because tailscaled forwards complete heads at once, and the
-> permits bound how many such connections there can be.
->
-> **Shutdown.** Each connection is spawned into a `JoinSet` and watched by
-> hyper-util's `GracefulShutdown`. On the signal the loop stops accepting, sets
-> `stop` (every socket closes with 4004, as today), and starts the graceful
-> shutdown. At the 2 s deadline it aborts every connection task still in the
-> `JoinSet`, so a stalled raw response is closed instead of outliving `serve`. It
-> then waits for the upgraded sockets' slots until the same deadline, as today.
-> axum spawns upgraded sockets outside the `JoinSet`, so one that misses the
-> deadline still holds a `Ctx`, and `main` keeps calling `HubHandle::stop`.
->
-> **Packaging.** The release build embeds the shell. `build.rs` reads `web/dist` and
-> Vite's manifest, gzips every text asset (HTML, JS, CSS, the manifest, SVG) at level
-> 9, and generates a static table of path, bytes, content type, encoding and hash. It
-> embeds only the gzip bytes of a text asset; fonts (already woff2) and images are
-> embedded as they are. The build fails if a file is missing or the manifest is
-> stale. It also fails over **3 MiB embedded, 1.5 MiB for one file, or 128 files**.
-> Today's build embeds 2,623,604 bytes in 52 files, 2.1 MB of it the two 1.0 MiB
-> woff2 fonts. Embedded bytes are the binary's read-only pages: the daemon and shell
-> always match, there is no configured root, and nothing reads the disk on the fs
-> lane. Debug builds may read `web/dist` instead.
->
-> **Encoding.** A request whose `Accept-Encoding` allows gzip, or that sends none
-> (RFC 9110 §12.5.3 then allows any coding), gets the gzip bytes with
-> `Content-Encoding: gzip` and `Vary: Accept-Encoding`. One whose `Accept-Encoding`
-> excludes gzip gets `406`. Every supported browser sends gzip, and Serve's proxy
-> passes both headers through untouched (G1). Shell paths ignore `Range` and answer
-> 200 with the whole file.
->
-> **Serving.** A shell response takes one of **4 shell slots**, separate from the fs
-> raw slots, so a cold load or an update can't starve the file viewer. Up to **16
-> requests wait** for a slot, in arrival order and with no deadline; the 17th gets
-> `503 busy` with `Retry-After: 1` at once. A waiter's wait is bounded anyway,
-> because each slot holder is cut by the deadlines below. The body is **64 KiB
-> slices of the embedded bytes**: `Bytes::from_static`, never copied, so a response
-> holds no heap beyond hyper's buffers. Two deadlines bound a slow reader: fs raw's
-> **30 s stall deadline** for the socket to take the next slice, and a **60 s
-> deadline for the whole response**, well above the 13 s a 1.5 MiB file takes at
-> 1 Mbit/s. Either aborts the response and frees its slot.
->
-> A cold load is about 10 requests: 4 served and 6 waiting, so two browser profiles
-> loading at once still fit. The service worker precaches only what opens Home
-> (browser-setup "Offline shell and updates"), about 2.3 MB with both fonts. At
-> 2 Mbit/s that takes about 9 s, and the requests behind it just wait: no request
-> fails for being on a slow link. A burst past 16 waiters gets 503, and a
-> service-worker update that meets it fails as a whole and leaves the old version
-> active, so it degrades into a retry at the next update check.
+- **The listener is the Unix socket** (§3.4 above). The loop reads `SO_PEERCRED` per
+  accepted connection and inserts the peer class instead of `ConnectInfo`.
+  `small_buffers` sets `SO_SNDBUF`/`SO_RCVBUF` on the Unix stream as it does on TCP.
+  The kernel's listen backlog is `somaxconn` (mio passes −1 for Unix listeners on
+  Linux); only tailscaled and Jimmy can queue in it.
+- **Graceful shutdown.** hyper-util's `GracefulShutdown` has no impl for hyper's
+  `http1` upgradeable connection, and the `auto` types that have one pull in h2. So
+  each connection task runs `tokio::select!` between the connection future and a
+  shutdown `watch` receiver; on the signal it calls
+  `UpgradeableConnection::graceful_shutdown()` and keeps polling the connection. That
+  is what axum's own `serve` does. Tasks live in a `JoinSet`; at the 2 s deadline the
+  loop aborts what is left. Upgraded sockets close with 4004 through `stop`, as today.
+- **Waiters.** "Waiters are bounded by count, never by a timer" holds for every route
+  but the auth lane, whose waiters are time-bounded (10 s).
+- **The whois cap** joins the route table: 2 in flight, 16 waiting, the 17th `503
+  busy` at once. The backstop's headroom grows by up to 18 such waiting requests,
+  which still sum (about 60 with the auth lane's handful and tailscaled's 2 idle connections) under 64; G12 records
+  the peak.
 
-- **§6 Limits** (rows added): connection permits 64, the backstop (stop accepting);
-  hyper buffer per connection 16 KiB, read and write each (a larger head is 431);
-  header-read and idle timeout 100 s (connection closed); shell slots 4 and shell
-  waiters 16 (the 17th: `503 busy` at once); shell stall 30 s and response deadline
-  60 s (aborted); shell size 3 MiB embedded, 1.5 MiB per file, 128 files (build
-  fails); browser credential lifetime 30 days (auth.md); browser-state refresh at
-  most once per 10 s while a browser socket is open (auth.md "Canonical origin").
-  Changed under D6: control clients 3 → 2. Note under the connection cap that
-  browser tabs, the PWA and native all count toward the 3 sockets. That cap is not
-  raised here.
-- **§6 Memory ceiling** (rows changed and added):
+**Static shell** keeps revision 3's text (packaging, gzip encoding, 4 slots, 16
+waiters, 64 KiB static slices) with one change:
 
-| Item | Bound | MB |
-|---|---|---|
-| control clients (changed, D6) | 2 × 5.3 MB measured | 11 (was 16) |
-| HTTP connections (new): every accepted connection that isn't upgraded, the file API's and the shell's included | 64 permits − 3 sockets = 61 × (16 KiB read buffer + 16 KiB write buffer + ~4 KiB task and connection state) | 2.2 |
-| file API (changed: hyper's buffers move to the row above) | scan 1.2 + raw 2 × (64 KiB chunk + channel) + upload (64 KiB chunk + 2 MiB of dirty pages) + listing 0.1 | 4 (was 5) |
-| kernel socket buffers (changed) | as before, plus the 4 shell sockets × 256 KiB | 3 (was 2) |
-| embedded shell pages (new; clean, file-backed, reclaimable) | the pages touched, at most the 3 MiB embedded (2.6 MB today) | 3.1 |
-| **ceiling** | | **~64.5 (was ~65); ~59 the kernel can't reclaim** |
+- **No whole-response deadline.** The 30 s stall deadline alone bounds a slow reader:
+  it guarantees about 17 kbit/s per 64 KiB slice. A whole-response deadline of 60 s
+  would fail the 1 MiB fonts on every attempt below about 142 kbit/s, and with them
+  the service worker's precache. The stall deadline is enough, since only tailscaled
+  can hold a slot. G12 records whether the daemon-side transfer time tracks a
+  throttled client or tailscaled's buffering; if it tracks the client, the waiters
+  rise to 32.
 
-  Below the table, replacing the paragraph after it:
+§5.1–5.2: a browser offers only `tether.v1`; 4401 also means "node not enrolled or
+removed"; 4503 also means "identity unavailable"; 4423 is reserved. The browser client
+sends `hello.client.kind = "web"`, an existing value.
 
-  > **What has to fit.** The ceiling counts every item, reclaimable ones included,
-  > as it already did for the completion slab. The rule it is held to is on the
-  > rest: what the kernel can't reclaim must fit `MemoryMax`, because the kernel
-  > drops clean file pages and reclaimable slab before the OOM killer runs. Here
-  > that is the ceiling minus the shell's pages (3.1 MB) and the slab (2.4 MB):
-  > about 59 MB, against 64 MB. With 3 control clients it was about 64.3 MB, with
-  > no margin, so the third went (decisions.md). The shell's warm pages and the slab
-  > still count toward `MemoryHigh` (48 MB), where systemd throttles the unit, so
-  > the throttle comes sooner while they are warm. The
-  > [budget measurement](plan.md#resource-budget) and gate G12 check it. During the
-  > load, sample the unit's `memory.stat` every 100 ms; the largest `anon + kernel
-  > + sock − slab_reclaimable` must be at most 64 MB. Record `memory.peak` beside
-  > it. The normal case is unchanged.
+### resource-limits.md
 
-  [Under D6 = keep 3: the control-client row stays 16, the ceiling is ~69.8 and the
-  unreclaimable part ~64.3 MB, and the paragraph says the budget measurement
-  decides, by the same pass rule, whether the cap drops to 2.]
+- **Memory ceiling, new row:** whois, 2 in flight × (64 KiB body + parse) ≈ 0.2 MB,
+  unreclaimable, fixed across tiers. The 72 tier's unreclaimable ceiling becomes
+  about 64.0 MB against 72 MiB (75.5 MB), still inside the 4 MiB headroom.
+- **Units:** state the ceiling in MiB, or convert `MemoryMax` once (72 MiB is
+  75.5 MB); the rows mix the two today.
+- **Pass rule:** `anon + shmem + file_dirty + file_writeback + kernel + sock −
+  slab_reclaimable` ≤ the row's computed ceiling. The paste files (tmpfs, `shmem`) and
+  the upload's dirty pages are file pages the kernel can't drop, and today's rule
+  leaves them out.
+- **Limits table:** remove "response deadline 60 s" from the shell row; correct the
+  backlog wording.
 
 ### fs.md
 
 - `GET /fs/raw`: `Cache-Control: private, no-cache` → `no-store`; add
-  `Cross-Origin-Resource-Policy: same-origin`. Add one sentence: in a browser, raw
-  responses share the UI's origin. "It sends nothing a browser runs" (text/plain for
-  `html`/`js`/`css`/`xml`, `nosniff`, `sandbox`) is what keeps an uploaded or
-  repository file from running as tether, or registering as its service worker.
-  Changes to the type table are security changes.
-- Video in a browser plays with `<video src>` on the same origin, the cookie riding
-  on its `Range` requests. `Content-Range` and `ETag` are readable without
-  `Access-Control-Expose-Headers` because the request is same-origin. The "daemon
-  sends no CORS headers" sentence stays.
-- "Limits and the memory ceiling": hyper's buffers leave the raw and upload rows.
-  They are 16 KiB each now and counted per connection in daemon-core's "HTTP
-  connections" row. The file API total becomes ~4 MB.
+  `Cross-Origin-Resource-Policy: same-origin`. In a browser, raw responses share the
+  UI's origin, so "It sends nothing a browser runs" (text/plain for script-like
+  types, `nosniff`, `sandbox`) is what keeps a repository file from running as tether
+  or registering as its service worker; changes to the type table are security
+  changes.
+- Video plays with `<video src>` on the same origin; `Content-Range` and `ETag` are
+  readable because the request is same-origin. "No CORS headers" stays.
 - "Shutdown must not wait on a stream": the accept loop now aborts a stalled raw
-  response's connection task at the 2 s deadline (daemon-core "Static shell"), so
-  "axum never force-closes a connection" no longer holds. `main` still calls
-  `HubHandle::stop`, because an upgraded socket that misses the deadline holds a
-  `Ctx`.
-- Errors: add `bad_origin` and `browser_unavailable` to the shared table, and to
-  `HttpError` (generated for TypeScript).
+  response's task at the 2 s deadline. `main` still calls `HubHandle::stop`.
+- Errors: add `bad_origin`, `node_refused`, `not_enrolled` and `identity_unavailable`
+  to the shared table and to `HttpError`.
 
 ### ios-shell.md
 
 - "Where the web UI comes from": "The daemon serves no UI" becomes "The daemon also
-  serves the browser build at its canonical origin ([auth.md](auth.md)); the app
-  never loads it. It bundles its own copy and never registers the service worker."
-- Add an invariant: the app's `URLSession`s keep cookies off, and its web view never
-  loads a host's origin, so no request from the app carries `__Host-tether`. A
-  request that did would be refused as ambiguous (probe G6).
-- "Dev mode": the desktop dev shim and the Vite proxy remain dev-only, using a native
-  token from `tether device add`. They are never a browser deployment, and the
-  release browser build contains neither. [Under D2 (a):] the *Dev server* URL is
-  `http://devbox.tail…ts.net:8080`, and HMR uses `ws:` on 8080.
-- "Info.plist" [under D2 (a)]: "no ATS exceptions" holds for Release only. The
-  Debug configuration adds an `NSExceptionDomains` entry allowing insecure HTTP
-  loads for the dev server's hostname, which G13 confirms is enough for the scheme
-  handler's fetch and for HMR. Release builds carry no exception.
-- The bridge: `Native.kind` gains a browser platform adapter, chosen at boot when no
-  native bridge exists in a production build. It has no `token()` and passes no
-  subprotocol token, `httpOrigin` is `location.origin`, and `hostRejected` shows the
-  enrolment screen.
+  serves the browser build at its canonical origin; the app never loads it. It
+  bundles its own copy and never registers the service worker."
+- The app's requests always present its token, so they stay on the native lane even
+  when the phone's node is enrolled.
+- "Dev mode": unchanged. The Vite proxy connects to the daemon's socket
+  (`socketPath`) and presents a native token; as a local peer it can never use the
+  node lane.
+- The bridge: `Native.kind` gains a browser adapter for production builds with no
+  native bridge: no `token()`, no subprotocol token, `httpOrigin` is
+  `location.origin`, and `hostRejected` shows the enrolment screen.
 
 ### client/browser-setup.md
 
-- "Roadmap and authentication status" and "Browser credential candidate": replace
-  "candidate" with "settled in [auth.md](../auth.md)", and point there for fields,
-  routes and rules.
-- "Required controls": anti-CSRF is satisfied by an exact Origin on mutations and
-  upgrades and `Sec-Fetch-Site: same-origin` on reads (no token), with the reason and
-  the minimum browsers. Host validation is against the canonical origin from the
-  serve config. Add CORP `same-origin` and `no-store` on every API response.
-- "Deployment trap": now enforced by revocation on detection, for HTTPS services
-  and TLS-terminated TCP forwards under tether's hostname. Plain HTTP and raw TCP
-  forwards are harmless. Add the same-site fact (`ts.net` is a public suffix).
-- "Packaging and static delivery": the static bounds this section asks for are set
-  in daemon-core "Static shell". The shell is embedded and gzipped, at most 3 MiB.
-  It has 4 shell slots and 16 waiters, refusing at once beyond them, under a
-  64-connection backstop. Buffers are 16 KiB per connection; deadlines are 30 s for
-  a stall and 60 s for a response; the idle timeout is 100 s. Replace "still require
-  a small build/resource spike" with G12.
-- "Threat-model decision required": resolved, Jimmy accepts reduced protection
-  (no unlock) for the Tailscale phase; passkey unlock is the planned follow-up.
-- Logout: drafts kept; "Clear local data" is separate (D3). Live sockets close within
-  10 s; a response already streaming runs to its end (auth.md "Logout").
+- "Roadmap and authentication status" and "Browser credential candidate": settled in
+  [auth.md](../auth.md) as enrolled nodes; point there.
+- "Required controls": anti-CSRF is an exact Origin on mutations and upgrades and
+  `Sec-Fetch-Site: same-origin` on reads; Host is checked against the canonical
+  origin; CORP and `no-store` on every API response.
+- "Deployment trap": no longer applies. Other services on tether's hostname receive
+  nothing that admits them.
+- "Packaging and static delivery": bounds in daemon-core "Static shell"; replace "a
+  small build/resource spike" with G12.
+- "Threat-model decision required": resolved; an enrolled node is trusted whole,
+  passkey unlock is the follow-up seam.
+- One enrolment per machine, not per browser profile. "Remove this device" replaces
+  logout; drafts kept; "Clear local data" is separate.
 
-### connection-roadmap.md
+### client/connection-roadmap.md
 
-- "Authentication versus reachability": the first-phase trust model is chosen. Link
-  to auth.md and this decision. Passkeys stay the preferred public-phase auth, now
-  with a named seam. Add: browser credentials are never honoured on a public origin
-  without passkey unlock, and the public phase picks its own RP ID (auth.md, C seam).
+- "Authentication versus reachability": the tailnet trust model is chosen (enrolled
+  nodes). The node lane doesn't exist on a public origin; passkeys remain the
+  public-phase plan, plugged in as a third lane judged by `auth::admit`, with the
+  public hostname as RP ID.
+
+### running.md
+
+- The serve command and the Tailscale minimum; removing a stale socket is the
+  daemon's job, so a restart needs nothing manual.
 
 ## 6. Probe gates and acceptance checks
 
 ### Probe gates: check on the real deployment before shipping
 
-None of these was run for this draft. Each names what it decides.
+None of these was run for this draft.
 
 | # | Gate | Decides |
 |---|---|---|
-| G1 | Through `tailscale serve`: on GET, on POST and on the WebSocket upgrade, the daemon receives `Cookie` (including HTTP/2 split cookie fields, and how they arrive), `Origin`, `Host` (exact value, with or without `:443`) and `Sec-Fetch-*` unchanged. `Set-Cookie` comes back to the browser unchanged, including on `204`. **Safari 26 sends WebSocket upgrades over HTTP/2** (extended CONNECT): Serve must turn them into HTTP/1.1 upgrades to the daemon with those headers intact, and the socket must work | Whether the Host and fetch-metadata rules can hold as written. If Serve rewrites `Host`, compare against what Serve sends and record it. If Safari 26's HTTP/2 upgrade fails through Serve, the browser client doesn't ship on it until it works. Also: a `Content-Encoding: gzip` shell response reaches the browser unchanged, and `Accept-Encoding` arrives as the browser sent it. Record how many backend connections one Safari cold load opens through Serve |
-| G2 | Safari on macOS, Safari on iOS, and the installed iOS PWA send the `Strict` `HttpOnly` `__Host-tether` cookie on: the WebSocket handshake after a fresh load, a reload, a tab restored after quitting, history navigation, and a PWA cold launch; on `fetch`; and on `<img>` and `<video>` `Range` requests | `SameSite=Strict`, or the `Lax` fallback (safe because the Origin rules carry the defence) |
-| G3 | Fetch metadata on the same requests: GETs (`fetch`, `<img>`, `<video>` ranges) carry `Sec-Fetch-Site: same-origin`; upgrades and POSTs carry either `same-origin` or nothing. `<video>` loads in Safari especially, since WebKit may load media through AVFoundation | If media GETs omit it: allow a missing header on `GET /fs/raw` only, never a value other than `same-origin`. CORP alone then guards those responses. `SameSite` adds nothing, because the tailnet is one site. Recorded: a sibling page in a browser without CORP could embed raw media |
-| G4 | WebSocket upgrades and POSTs carry `Origin`, serialized exactly as the canonical origin (no `:443`) | Origin rule as written |
-| G5 | On the target iOS release, Safari and the installed PWA keep separate cookie jars; the cookie survives a PWA relaunch and a reboot; Web Inspector shows a 30-day expiry (no 7-day cap on a server-set `HttpOnly` cookie) | The separate-enrolment copy, and D1 holding in practice |
-| G6 | The iOS app's WKWebView WebSocket carries no tether cookie; the app's `URLSession` sends no `Origin` or `Sec-Fetch-*` on `POST /auth/enroll` | The ambiguity rule and the native-enrol refusal don't break native |
-| G7 | Browser-state derivation agrees with `tailscale serve status` for: Web, TCP and foreground entries; the `HTTPS: true` / `HTTP: true` markers tailscaled writes for every Web port (ignored); a `TCPForward` with `TerminateTLS` (sibling) and without it (not a sibling); a plain-HTTP Web entry on another port (not a sibling); a second mount path inside tether's own Web entry (sibling); tether at a non-root path (refused); tether in a Service; the documented `:8443` spike mapping (sibling, revokes) and the `--http=8080` one (not a sibling) | D2's enforcement, and the canonical-origin derivation |
-| G8 | A raw `.svg` and `.html` opened top-level from `/fs/raw` run no script in Safari or Chrome under `CSP: sandbox`; a raw `.js` (`text/plain` + `nosniff`) is refused both as `<script>` and by `serviceWorker.register` | That same-origin raw files can't run as tether |
-| G9 | Only if D2 chooses (b), and then **a ship gate**: Tailscale Services or a second node name still adds `Tailscale-User-Login`, and the Funnel and serve-config checks see it | Whether the dedicated hostname works at all; if it fails, D2 falls back to (a) |
-| G10 | From a page on a sibling tailnet machine, from another port of the same machine, and from a **plain-HTTP page** on a tailnet host (in a staging setup, not production): WebSocket hijack, `fetch` POST, form POST, and `<img>`/`<video>` of `/fs/raw` all fail (403 or blocked by CORP). A cookie set or **overwritten** from a sibling port, and a tossed duplicate from the plain-HTTP page, never admit anything | The cross-origin defence end to end, and L1's impact being denial of service only |
-| G11 | In Safari, iOS Safari, the installed PWA and Chrome, with a valid cookie: a typed URL, a bookmark, a PWA cold launch and a link from another app (`Sec-Fetch-Site: none` or `cross-site`) all load the shell, which then connects | The shell routes never judging credentials (M1) |
-| G12 | On the dev box, under the systemd unit, with every other cap held as in daemon-core §6: two browser profiles cold-loading at once and a service-worker precache, plus 3 sockets, a raw stream and an upload, with some readers throttled to 64 kbit/s; then a flood of 64 connections. Sample `memory.stat` every 100 ms. **Pass:** the largest `anon + kernel + sock − slab_reclaimable` is at most 64 MB; no shell request gets 503 in the two-profile load, however slow its link; with 64 connections held, a 65th waits in the backlog and is served when one closes; the native app reconnects during the two-profile load without waiting; slow readers are cut at 30 s or 60 s; an idle keep-alive connection closes at 100 s, after tailscaled has closed it at 90 s. Record `memory.peak`, the shell pages' share (`file`), and the backend connection count | The memory-ceiling rows, D6, the backstop's headroom, and the idle-timeout ordering (N8) |
-| G13 | Only under D2 (a): a spike published with `tailscale serve --http=8080`, loaded through the Debug app's dev-server switch on a real iPhone. The scheme handler's fetch works with only a Debug `NSExceptionDomains` entry for the dev host; HMR over `ws:` connects from `tether-app://ui`, or the reload fallback works; a keyboard spike behaves as it does over HTTPS | Whether spikes can stay on the dev box under (a). If not, they publish from the Mac's tailnet name, and that cost joins D2's table |
+| G1 | On the dev box: Tailscale version ≥ 1.94; `tailscale serve --https=443 unix:<socket>` proxies HTTP and a WebSocket upgrade to tether's socket in `/run/user/<uid>/tether/` (tailscaled's unit doesn't hide `/run/user`); `SO_PEERCRED` shows tailscaled's uid; another Unix user gets `EACCES` connecting | D1 as written. If the version is older or the unit hides the path, D1 falls back to (b) |
+| G2 | Through Serve, from a laptop, a phone browser and the PWA: the daemon sees exactly one `X-Forwarded-For` address, the node's own tailnet IP, on GET, POST and the upgrade. A request sent with a forged `X-Forwarded-For`, `Tailscale-User-Login` or `Tailscale-Funnel-Request` arrives with only Serve's values. `Origin`, `Host` (with or without `:443`) and `Sec-Fetch-*` arrive unchanged. Safari 26's HTTP/2 WebSocket (extended CONNECT) reaches the daemon as an HTTP/1.1 upgrade with these headers | The node lane's trust in the header, and the Host rule as written |
+| G3 | whois for each test node returns `StableID`, the owner login, `Tags`, `Sharer` and `AllowedIPs` as §3.5 reads them; a subnet router (with and without SNAT), a tagged node and the dev box itself are refused with the right reason; a laptop with `--advertise-exit-node` is admitted | The node rules |
+| G4 | whois latency and tailscaled CPU on the dev box under its usual load: p50 and p99 of 1,000 calls, and of 20 concurrent; response sizes | The per-request, uncached rule. If p99 exceeds 10 ms, revisit a per-request-burst cache |
+| G5 | iOS Safari and the PWA, with Private Relay on: requests to the tailnet name go through the Tailscale VPN and arrive with the phone's address | Phone browsers work at all |
+| G6 | The app's `URLSession` sends no `Origin` or `Sec-Fetch-*` on `POST /auth/enroll` | The native-enrol refusal doesn't break native |
+| G7 | Canonical-origin derivation agrees with `tailscale serve status` for: the `unix:` target, tether in a Service, two publications with and without `browser_origin`, a non-root mount, plain HTTP; another user's tether publication is never matched | §3.6 |
+| G8 | A raw `.svg` and `.html` opened top-level from `/fs/raw` run no script under `CSP: sandbox`; a raw `.js` is refused as `<script>` and by `serviceWorker.register` | Same-origin raw files can't run as tether |
+| G9 | From a page on another tailnet machine, another port of the dev box (a spike, another user's tether), and an internet site, in a browser on an enrolled node: WebSocket hijack, `fetch` POST, form POST and `<img>`/`<video>` of `/fs/raw` all fail (403 or blocked by CORP) | The cross-origin defence end to end |
+| G10 | In Safari, iOS Safari, the PWA and Chrome: a typed URL, a bookmark, a PWA cold launch and a link from another app load the shell, which then connects; `<video>` range requests carry `Sec-Fetch-Site: same-origin` (WebKit may load media through AVFoundation) | The shell routes judge nothing; if media GETs omit the header, allow a missing one on `GET /fs/raw` only, with CORP guarding the response |
+| G11 | `tether device remove` closes a node's live socket within 10 s; stopping tailscaled's LocalAPI for 15 s keeps sockets open, and for 40 s closes them with 4503 | §3.10 |
+| G12 | On the dev box, under the systemd unit at the default budget, every cap held: two browsers cold-loading and a service-worker precache, 3 sockets, a raw stream and an upload, some readers throttled to 64 kbit/s, a burst of node-lane requests filling the whois waiters; then 64 connections. Sample `memory.stat` every 100 ms. **Pass:** the largest `anon + shmem + file_dirty + file_writeback + kernel + sock − slab_reclaimable` is at most the tier's computed ceiling; no shell request gets 503 in the two-browser load; a 65th connection waits and is served when one closes; a native reconnect during the load doesn't wait; a stalled reader is cut at 30 s; an idle keep-alive closes at 100 s, after tailscaled's 90 s. Record `memory.peak`, the backend connection count, and whether daemon-side shell transfer time tracks the throttled client | The ceiling rows, the shell waiters, the backstop's headroom |
 
 ### Acceptance checks (automated in `tests/http_auth.rs` where a socket suffices)
 
-- **Kinds:** a browser credential as `Authorization: Bearer` and as `tether.auth.`
-  is 401/4401; a native token in `__Host-tether` is 401/4401; each works on its own
-  transport.
-- **Presented credentials:** cookie + bearer, cookie + `Authorization: Basic`, cookie
-  + subprotocol, two `__Host-tether` pairs, two cookie header fields each holding
-  one, two `Authorization` headers, two subprotocol tokens, `Authorization` +
-  subprotocol: all refused, none admitted by picking one. `Authorization: Basic …`,
-  `Authorization: Bearer` with an empty token, and a missing scheme are 401 on the
-  native lane; `authorization: bearer <token>` works.
-- **Origin and fetch metadata:** for each browser route, a missing, `null`,
-  other-port, other-host, suffix-extended (`…ts.net.evil`) and scheme-changed Origin
-  on an upgrade or POST is `403 bad_origin`. An exact Origin with no `Sec-Fetch-Site`
-  on an upgrade or POST is admitted; with `same-site`, `cross-site` or `none` it is
-  403. A GET with a missing `Sec-Fetch-Site`, or with `same-site`, `cross-site` or
-  `none`, is 403. A wrong `Host` is 403. A refused upgrade never sees 101. None of
-  these reads `auth.toml` (count auth-lane runs).
-- **Shell never judges credentials:** `GET /` with a valid, an unknown and a
-  duplicated cookie, and `Sec-Fetch-Site: none` or `cross-site`, is 200 and runs
-  no auth lane; `GET /auth/info` with a cookie is 200.
-- **Bodies:** `POST /fs/upload` with a raw body, an exact Origin and a cookie is
-  admitted; a JSON route with `text/plain` is 415.
-- **Enrolment:** a browser enrol body and headers never contain the credential;
-  `Set-Cookie` has exactly the attributes in Constants; a wrong code counts against
-  the shared counter and the fifth deletes it, whichever route took the tries; a
-  right code is consumed for both routes; re-enrolling with a valid cookie removes
-  the old device in the same write; expired browser rows are dropped; `POST
-  /auth/enroll` with `Origin` is 403. **Race:** with the store paused after an
-  enrolment's first refresh saw *admitted*, a refresh that finds a sibling, then
-  the enrolment resumed, leaves no browser device in `auth.toml` and answers `503
-  browser_unavailable`; in the other order, the revocation write removes the new
-  device.
-- **Lifetime:** a browser device past `expires_at` is 401; a live socket closes 4401
-  at the next re-check after expiry; a browser row with a bad `expires_at` is refused
-  alone, and other devices keep working.
-- **Logout:** 204 and a clearing cookie; the device is gone from `auth.toml`; a
-  second socket on the same credential closes 4401 within 10 s; an unknown cookie and
-  no cookie at all both get 204 and clearing.
-- **Browser state:** from fixture serve configs. A sibling HTTPS Web port, a second
-  mount path in tether's entry, or a `TCPForward` with `TerminateTLS` on another
-  port revokes every browser device in one write and gives `503
-  browser_unavailable` / 4503 until it is gone. A plain-HTTP Web port and a
-  `TCPForward` without `TerminateTLS` revoke nothing.
-  Native requests are unaffected throughout. A failed revocation write keeps
-  browsers refused even after the sibling is removed. `HTTPS: true` markers alone
-  admit. An unreadable config, two publications with no `browser_origin`, a
-  `browser_origin` that tether doesn't publish, and tether at a non-root path are
-  all refused, revoke nothing, and set `/auth/info.browserOrigin` to `null` with the
-  reason. Count LocalAPI calls: browser enrolment, a browser upgrade and
-  `/auth/browser/session` each trigger a refresh, after admission; a cross-origin
-  request on those routes, a native upgrade and every other request trigger none.
-  With two browser sockets open for 30 s, the re-checks make at most 3 or 4 reads;
-  with only native sockets, none. A sibling added while a browser socket is open
-  closes that socket with 4401 within 10 s.
-- **Static shell:** shell paths answer before enrolment with the CSP and cache
-  headers above; `If-None-Match` on `/` gives 304; unknown `/fs/…`, `/auth/…` and
-  `/ws…` paths are JSON 404, never HTML; a failed Tailscale check is 403 on shell
-  paths too. With 4 shell responses held, 16 more wait for as long as it takes, and
-  the 17th gets `503 busy` at once; no shell request ever gets 503 for waiting. A
-  reader that stops reading is aborted at 30 s. A text asset comes back gzipped
-  with `Vary: Accept-Encoding`, with or without an `Accept-Encoding` header;
-  `Accept-Encoding: identity` gets 406. A request head over 16 KiB gets 431. A
-  connection that sends no complete head in 100 s is closed. A 65th connection
-  isn't accepted until one closes. The Tailscale check sees the peer address
-  (`ConnectInfo`) on every route. On shutdown, sockets get 4004 and a stalled raw
-  response is closed by the 2 s deadline. The build fails on a missing asset, a
-  stale manifest, or a shell over the size limits.
-- **Headers:** every API response has `no-store`, `nosniff` and CORP; nothing logs
-  a cookie, bearer or subprotocol value (grep the test log for the credential).
-- **Build:** the release browser bundle contains neither `createDevShim`,
-  `tether.dev.token` nor `Tailscale-User-Login`, and boots with no `window.webkit`;
-  the native bundle registers no service worker and boots with no cookie.
-- **Native unchanged:** the existing native suite passes untouched: no Origin check
-  on bearer or subprotocol, 4401 and 4503 meanings, Face ID flow.
+Tests stand in for tailscaled with a fake LocalAPI on a Unix socket and a test hook
+that marks a connection as a tailscaled peer.
+
+- **Peers:** a node-lane request from a local peer is 403; the same with a native
+  token is admitted. The socket directory is `0700`; a directory with other modes or
+  owner stops startup.
+- **Tailscale check:** `Tailscale-Funnel-Request` present is 403 on every route,
+  shell included; a missing or unlisted login is 403.
+- **Forwarded address:** none, two fields, a comma list, a non-Tailscale address: all
+  403 and no whois call.
+- **Node rules:** fixtures for tagged, login mismatch, `Sharer` set, a subnet route,
+  an exit-node route only (admitted), and self: each refused with its reason, at
+  request and at enrolment.
+- **Lookup:** an enrolled stable ID with a different login is 401; a stable ID not
+  enrolled is 401 `not_enrolled` with the node's name on `/auth/node/session`.
+- **Per request:** two requests on one keep-alive connection with different
+  forwarded addresses are judged as their own nodes. Concurrent requests for one
+  address make one whois call; sequential ones make one each. With 2 calls held, 16
+  more wait and the 17th is `503 busy`. A whois timeout is `503
+  identity_unavailable`, never 401; an oversized answer is 503.
+- **Lanes:** a token and nothing else uses the native lane, from a tailscaled peer
+  or a local one; a bad token from an enrolled node is 401, never node-admitted;
+  ambiguous combinations are 401; a `Cookie` header changes nothing.
+- **Origin and fetch metadata:** for each node-lane route, a missing, `null`,
+  other-port, other-host, suffix-extended and scheme-changed Origin on an upgrade or
+  POST is `403 bad_origin`; an exact Origin without `Sec-Fetch-Site` is admitted; with
+  `same-site`, `cross-site` or `none` it is 403. A GET without `Sec-Fetch-Site: same-origin`
+  is 403. A wrong Host is 403. A refused upgrade never sees 101. None of these calls
+  whois or reads `auth.toml`.
+- **Shell:** shell paths and `/auth/info` answer 200 with no whois call, whatever
+  `Sec-Fetch-Site` says.
+- **Enrolment:** a node enrol consumes the shared code; a wrong code counts against
+  the shared counter; an already-enrolled node gets 200 and the code survives;
+  `POST /auth/enroll` with `Origin` is 403; nothing secret appears in any body or
+  header.
+- **Live sockets:** a removed node's socket closes 4401 at the next re-check; a
+  whois answer with a different stable ID closes 4401; two failed whois re-checks
+  keep the socket and the third closes 4503.
+- **Remove this device:** 204; the row is gone; a second socket from the node closes
+  within 10 s; an unenrolled node also gets 204.
+- **State:** a device row with an unknown field is refused alone and logged; other
+  rows work; an old file with no `kind` parses as native.
+- **Static shell, accept loop:** as revision 3 listed them (304 on `If-None-Match`,
+  JSON 404 under API prefixes, the 17th shell waiter, the 30 s stall, gzip and 406,
+  431 over 16 KiB, the 100 s header timeout, the 65th connection), plus shutdown
+  through the per-connection select: sockets get 4004 and a stalled raw response is
+  closed by the 2 s deadline.
+- **Native unchanged:** the existing native suite passes untouched.
 
 ## Sources
 
-- Code read at the current checkout: `src/auth/{mod,token,store,identity}.rs` (single
-  bearer-or-subprotocol `presented`, first match wins; constant-time `find`;
-  `ServeConfig::url_for` and `funnels_to`; the fixture with `{"HTTPS": true}` TCP
-  markers on 443 and 8443; no `HTTPS`, `TerminateTLS` or `Services` parsed),
-  `src/http/{mod,enroll,error,ws,fs}.rs` (`device_check`, 4401/4503 mapping,
-  `MAX_CONNS = 3`, `RECHECK = 10 s`, raw headers `private, no-cache` + `nosniff` +
-  `sandbox`, `upload` taking a raw `Body`, `axum::serve` with no connection cap),
-  `web/proto/link.ts` (subprotocol token), `web/main.tsx` (release boot requires the
-  native bridge), `web/dev/shim.ts` and `web/vite.config.ts` (dev-only
-  cookie-to-bearer proxy with injected login). No debug-endpoint route exists in
-  `src/http/` yet; plan.md names it.
-- Library source: axum 0.8.9 `serve` builds hyper-util's connection builder with no
-  timer, so no header-read timeout applies and nothing caps connections. hyper 1.12
-  `http1::Builder` offers `header_read_timeout` (needs a timer), `max_buf_size`
-  (default 8 KiB + 400 KiB, used by both the read and the write buffer) and
-  `max_header_size`.
-- Build measured (2026-10-23): `web/dist`, 52 files, 5,225,026 bytes raw. Embedded
-  as specified (text assets `gzip -9`, woff2 and images as they are): 2,623,604
-  bytes, the largest file the 1,062,428-byte JetBrains Mono Bold woff2. The two
-  fonts are 2.1 MB of it.
-- Library source, revision 3: hyper 1.12 `proto/h1/io.rs`. `max_buf_size` sets both
-  the read strategy's maximum and the write buffer's (`set_max_buf_size`), must be
-  at least 8 KiB, and a head that overflows it is `Parse::TooLarge`, which
-  `role.rs` answers 431. With vectored I/O, hyper queues body buffers instead of
-  flattening them. `http1::Builder` has `timer`, `header_read_timeout`,
-  `max_buf_size` and `max_headers`. hyper-util 0.1.21 has `server::graceful`.
-  `Cargo.toml` enables only axum's `http1`.
-- Upstream tailscale `ipn/ipnlocal/serve.go` (fetched 2026-10-23): the proxy
-  transport sets `MaxIdleConns: 100`, `MaxIdleConnsPerHost` from a debug envknob
-  (default 0, which is Go's 2), `IdleConnTimeout: 90 * time.Second`, and no
-  `MaxConnsPerHost` or `DisableCompression`. It doesn't touch `Accept-Encoding` or
-  `Content-Encoding`. Plain-HTTP backends get HTTP/1.1, except gRPC, which gets h2c.
-- Code, revision 3: `Auth::recheck` (`src/auth/mod.rs`) reads `auth.toml` on every
-  10 s re-check; `http::serve` (`src/http/mod.rs`) uses `tap_io` for
-  `small_buffers`, `into_make_service_with_connect_info`, a 2 s `SHUTDOWN_WAIT`, and
-  4004 on stop. Client messages that carry user input are `input` and `paste`
-  (`src/proto/messages.rs`).
-- ios-shell.md "Dev mode" (the scheme handler fetches dev-server assets; the origin
-  stays `tether-app://ui`) and "Info.plist" (no ATS exceptions); plan.md "Spikes"
-  ("The spikes come first") and "Resource budget" ("no polling timers"), and the
-  lane table (auth waiters uncapped).
-- Docs: `docs/design/auth.md`, `plan.md` "Security", "Resource budget" and "Running
-  the phone spikes" (the `:8443` mapping), `daemon-core.md` §5.1–5.2 and §6 (the
-  ~65 MB ceiling and the control-client rule), `fs.md` "Constants" and "Limits and the
-  memory ceiling", `ios-shell.md`, `client/browser-setup.md` (the static-load gate),
-  `client/connection-roadmap.md`, `decisions.md` "Auth".
-- [Security review 2](browser-auth-review-2.md): the IPN bus has no serve-config
-  notification; Serve preserves `Host` for TCP backends; hyper's
-  `header_read_timeout` covers idle keep-alive.
-- [Security review 1](browser-auth-review-1.md), and the sources it cites: WebKit
-  bug 237550 (fetch metadata on WebSocket handshakes), the Apple forum thread on
-  Safari 26 WebSockets, WebKit bug 260284, and the report on Serve's `Host` header.
-- [Public Suffix List](https://publicsuffix.org/list/public_suffix_list.dat): `ts.net`
-  and `*.c.ts.net` in Tailscale's private section (fetched 2026-10-22).
-- [RFC 6265 §8.5](https://httpwg.org/specs/rfc6265.html#section-8.5): cookies are not
-  isolated by port.
-- [WebKit bug 232666](https://bugs.webkit.org/show_bug.cgi?id=232666) and
-  [Apple forum thread 104488](https://developer.apple.com/forums/thread/104488):
-  Safari omitting SameSite/HttpOnly cookies on WebSocket handshakes (unconfirmed on
-  current Safari; G2).
-- [OWASP WebSocket Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html):
-  Origin validation for cookie-authenticated sockets.
+- Tailscale source (fetched 2026-10-23): `ipn/ipnlocal/serve.go`
+  `addProxyForwardedHeaders` (sets `X-Forwarded-For` from the Serve context's source
+  address) and `addTailscaleIdentityHeaders` (deletes inbound login, name, profile,
+  Funnel and headers-info; Funnel gets only the marker; tagged nodes get no user
+  headers); the reverse proxy uses `Rewrite`, and both hooks run for `unix:` targets
+  too. `unix:` proxy targets appear first in v1.94.0 (absent in v1.92.3).
+  `ipn/localapi/localapi.go` whois requires `PermitRead`, takes `addr`.
+  `ipn/ipnlocal/local.go` `WhoIs` normalises mapped addresses and looks up the node by
+  address. `tailcfg.Node`: `StableID`, `Sharer`, `AllowedIPs`, `Tags`.
+- [Node identity research](../tailscale-serve-node-identity-research.md): official
+  docs on Serve identity headers, LocalAPI identity, stable IDs never reused, device
+  removal, node key expiry, IPs changing after a re-join.
+- Measured 2026-10-23 on the Mac (Tailscale 1.104.1): `tailscale whois --json` answers
+  of 1,432–2,296 bytes, with the fields above.
+- mio 1.2.4 `sys/unix/uds/listener.rs`: backlog −1 on Linux and Apple (the kernel's
+  maximum). hyper 1.12 `http1.rs`: `UpgradeableConnection::graceful_shutdown`.
+  hyper-util 0.1.21 `graceful.rs`: `GracefulConnection` impls only for `http1`,
+  `http2`, `auto::Connection` and `auto::UpgradeableConnection`. axum 0.8.9
+  `serve/mod.rs`: per-connection `select!` with a shutdown watch.
+- Code at the current checkout: `src/auth/identity.rs` (loopback-peer and login
+  check; the two LocalAPI socket paths), `src/auth/store.rs` (no
+  `deny_unknown_fields`), `src/http/mod.rs` and `src/main.rs` (`TcpListener` on
+  `127.0.0.1`, `ConnectInfo`, `small_buffers`), `Cargo.toml` (hyper `client`, `http1`).
+- Docs: `docs/design/auth.md`, `plan.md` "Security" and "Server platform",
+  `daemon-core.md` §5–6, `fs.md`, `ios-shell.md`, `client/browser-setup.md`,
+  `client/connection-roadmap.md`; [resource-limits.md](resource-limits.md).
+- Reviews: [1](browser-auth-review-1.md), [2](browser-auth-review-2.md),
+  [3](browser-auth-review-3.md). [Public Suffix List](https://publicsuffix.org/list/public_suffix_list.dat)
+  (`ts.net`), [RFC 6265 §8.5](https://httpwg.org/specs/rfc6265.html#section-8.5),
+  [OWASP WebSocket cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html).
 
 ## Review disposition
+
+Revision 4 replaces the cookie credential of revisions 1–3 with enrolled nodes. Rows
+marked *moot* concerned the cookie and have no counterpart.
 
 | Finding | Disposition | Landed in |
 |---|---|---|
 | **Round 1** | | |
-| H1 refusing protects nothing already leaked | **Fixed; reworked in round 2 (N1, N2).** D2 offers (a) revoke on detection, (b) a dedicated hostname with G9 as a ship gate, (c) a warning. It recommends (a). The rationale now separates a sibling page (stopped by admission) from a sibling server (handled by revocation). The between-refreshes gap is accepted | §1, §2 D2, §3.2, §3.6, §4, G7, G9 |
-| H2 static HTTP unbounded | **Fixed; the bounding scheme was redesigned in round 2 (N3–N5, N10).** Shell embedded with build-time size limits; per-route caps behind a connection backstop; 4 shell slots; bounded buffers; stall and response deadlines; ceiling rows, and the third control client as what gives | §5 daemon-core "Static shell" and §6, fs.md, browser-setup; G12; static-shell checks |
-| M1 shell contradicts §3.7 | **Fixed.** Credentials are parsed only on the device and `/auth/browser/*` routes | §3.7, §3.11; G11; "Shell never judges credentials" check |
-| M2 `Sec-Fetch-Site` with no fallback | **Fixed.** Exact Origin is required on upgrades and mutations, with `Sec-Fetch-Site` checked only if present; it is required on GET/HEAD; minimum browsers stated; G3 relies on CORP alone; Safari 26 HTTP/2 added to G1 | §3.3, §3.7, §4; G1, G3 |
-| M3 serve-config rule unbuildable | **Fixed.** Cached browser state with named refresh events; sibling rules ignore `HTTPS: true` markers; new fields parsed; root mount required; `browser_origin` validated | §3.6, §3.12; G7; "Browser state" check |
-| M4 C seam half real | **Fixed.** `unlocked_until`, held in memory, is the unlock state; `403 unlock_required` and 4423 reserved; the RP ID is the full canonical hostname, with the public phase's choice stated | §3.7, §4 C seam, §5 daemon-core, connection-roadmap |
-| M5 body rule false for uploads | **Fixed.** Each route keeps its own body rule; the exact Origin is the defence | §3.7, §3.11; "Bodies" check |
-| L1 duplicate-cookie rationale | **Fixed.** Overwrite and tossing described; impact stated as denial of service; the log records the shape, never values | §3.7; G10 |
-| L2 credential-table gaps | **Fixed.** Any `Authorization` counts as native; schemes match case-insensitively; Basic and empty bearer are unknown; logout with no cookie is 204 | §3.7, §3.8; "Presented credentials", "Logout" checks |
-| L3 tailnet-only bound is phase-limited | **Fixed.** Browser credentials are never honoured on a public origin without C | §3.2, connection-roadmap |
-| L4 revocation doesn't cut in-flight HTTP | **Accepted.** A response in flight runs to its end, bounded by 2 raw slots, the 30 s stall and per-range checks; a response registry costs more than one range | §3.2, §3.8, §4, browser-setup |
-| L5 Vite proxy forges the login header | **Accepted for this spec, follow-up recorded.** Predates the draft and is dev-only; the fix (forward the incoming header) is described next to D2 | §2 |
-| L6 phone-only re-enrol every 30 days | **Fixed.** D1 states the cost, and the in-browser re-enrol path before expiry | §2 D1 |
-| Probe-gate changes | **Fixed.** G1, G3, G7, G9 and G10 changed; G11 (shell navigation) and G12 (measured static load) added | §6 |
+| H1 sibling servers receive the cookie | **Moot:** no cookie. A sibling gets nothing that admits it | §1, §4 |
+| H2 static HTTP unbounded | **Kept.** Embedded shell, per-route caps, backstop, buffers (now in resource-limits / daemon-core) | §5 |
+| M1 shell contradicts admission | **Kept.** Shell and `/auth/info` judge no identity | §3.7, §3.14 |
+| M2 `Sec-Fetch-Site` fallback | **Kept**, each rule now justified | §3.7, G10 |
+| M3 serve-config rule unbuildable | **Reduced** to the canonical-origin derivation; no sibling detection | §3.6, G7 |
+| M4 C seam half real | **Replaced** by the passkey and guest seams at `auth::admit` | §3.16 |
+| M5 body rule false for uploads | **Kept** | §3.7 |
+| L1 duplicate-cookie rationale | **Moot** | — |
+| L2 credential-table gaps | **Kept** for tokens | §3.8 |
+| L3 tailnet-only bound | **Kept:** the node lane doesn't exist off the tailnet | §3.2, §3.16 |
+| L4 in-flight HTTP not cut | **Accepted** as before | §3.10 |
+| L5 Vite proxy forges the login | **Accepted, follow-up** | §2 |
+| L6 phone-only re-enrol every 30 days | **Moot:** no expiry; a new Tailscale node re-enrols | §1 |
 | **Round 2** | | |
-| N1 D2(a)'s protection overstated | **Fixed.** The claim now matches what revocation does: it makes a *detected* sibling's copies unknown. The residual is stated per option in one sentence each. Refreshing on the 10 s re-check is its own decision (D5), with its cost against "no polling" spelled out: at most one loopback read per 10 s, only while a browser socket is open, riding a timer that already reads `auth.toml` | §1, §2 D2 and D5, §3.2, §3.6, §3.7, §4, plan.md "Resource budget" |
-| N2 spike workflow contradicts the (b) rejection | **Fixed.** Plain-HTTP entries and `TCPForward` without `TerminateTLS` are no longer siblings. Each option states its workflow cost and where spikes go. Under (a), spikes publish on `--http` (they run inside the app, so the page keeps its secure origin), with a Debug-only ATS exception; G13 checks it, and the Mac's own name is the fallback. The question that would flip the recommendation to (b) is stated | §2 D2, §3.6, §5 plan.md and ios-shell.md, G7, G13 |
-| N3 accept cap blocks native behind bursts | **Fixed by the redesign.** Per-route caps refuse at once; the connection cap is a 64-connection backstop above their sum (~40, plus the auth lane's handful and tailscaled's ≤ 2 idle). The daemon owns its accept loop, because the memory bound needs `max_buf_size`, which a `Listener` wrapper can't set. `ConnectInfo`, `small_buffers`, graceful shutdown and 4004 are specified | §5 daemon-core "Static shell" and §6, §3.12, §4, G12, static-shell checks |
-| N4 10 s shell wait fails slow links | **Fixed by the redesign.** 16 shell waiters bounded by count, no deadline, the 17th refused at once. The shell is embedded gzipped (2.6 MB, from 5.2 MB) | §5 daemon-core "Static shell", browser-setup, G12, static-shell checks |
-| N5 shell pages left out of the ceiling | **Fixed.** A reclaimable row for the shell's pages, at the 3 MiB build cap. The accounting rule is stated: everything counts, and the part the kernel can't reclaim must fit `MemoryMax`. G12's pass rule is written down from `memory.stat`. The result, ~64.3 MB with 3 control clients and ~59 MB with 2, is decision D6 | §1, §2 D6, §5 daemon-core §6, G12 |
-| N6 enrolment races revocation | **Fixed.** The enrol write re-reads browser state under the store's write lock, and a refresh sets *revoking* before queueing the revocation write, so neither order leaves a browser device behind | §3.5, §3.12, "Enrolment" check |
-| N7 refresh triggers ambiguous | **Fixed.** Every trigger is on the browser lane only and after admission. A browser upgrade admits on the refreshed state, and native never refreshes or consults it | §3.6, §3.7, "Browser state" check |
-| N8 10 s idle close races tailscaled's pool | **Fixed.** The header-read (and idle) timeout is 100 s, above tailscaled's 90 s `IdleConnTimeout`, so tailscaled always closes first. Slow heads can only come from loopback, and the permits bound them | §5 daemon-core "Static shell" and §6, G12 |
-| N9 unlock slides on pings | **Fixed.** Only `input` and `paste` messages slide the unlock window | §4 C seam |
-| N10 connection row assumed a 32 KiB read buffer | **Fixed.** `max_buf_size` is 16 KiB and bounds both buffers, and the row counts both at their maximum for every non-upgraded connection | §5 daemon-core §6 |
+| N1, N2, N6, N7 (sibling residual, spike workflow, enrol/revoke race, refresh triggers) | **Moot** with sibling detection | — |
+| N3, N4, N5, N8, N10 (backstop, waiters, ceiling, idle timeout, buffers) | **Kept**, now in resource-limits | §5 |
+| N9 unlock slides on pings | **Carried** to the passkey seam: only `input` and `paste` count | §3.16 (phase spec) |
+| **Round 3** | | |
+| M1 graceful shutdown doesn't compile | **Fixed:** per-connection `select!` and `UpgradeableConnection::graceful_shutdown`, as axum does | §5 daemon-core |
+| M2 MiB units and missing file pages | **Fixed** in the pass rule and noted for resource-limits | §5 resource-limits, G12 |
+| M3 60 s whole-response deadline | **Fixed:** dropped; G12 records pacing; waiters to 32 if pacing is real | §5 daemon-core, G12 |
+| M4 LocalAPI failure on re-check drops sockets | **Fixed** for whois: 3 consecutive failures; removal never needs LocalAPI; the serve-config re-read keeps its last result | §3.6, §3.10, G11 |
+| Low: backlog, auth-lane waiters, dependencies, slab naming | **Fixed** (backlog now `somaxconn` on the Unix socket) | §3.15, §5 |
+| Low: 3 tabs lock out native with 4005 | **Open risk**, reported | report |
+| D6 (third control client) | **Withdrawn:** resource-limits' default budget of 72 keeps 3 | resource-limits |
