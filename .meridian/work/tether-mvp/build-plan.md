@@ -98,3 +98,5 @@ P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, doc
 - pnpm switch landed 362e4fb (p84 patch; full preflight --commit green; checkout node_modules reinstalled with pnpm). p85/p86 were briefed before it: their web commands should be pnpm.
 - device list /status fetch: removed in 5697904.
 - 2026-10-23 ~10:40: gate G1 (daemon lanes A, B, E) closed on the Mac; all reviewed, nothing pushed (awaiting Jimmy). Next: P2 web lanes W1–W4 on the W0 skeleton. Pending Jimmy: proposed permanent tests (focus after tab change, one listSessions, align table tests); push.
+- P2 started 2026-10-23: see p2-plan.md (W1 p91, W2 p92, W3 p93, W4 p94; tmux build p90). Pushed 71dac85 after Jimmy's OK; hooks installed on this clone.
+- CI green on 9d52100 (Check, real tmux, MSRV) after ec6f848 web toolchain + 9d52100 let-chain fix. f234bbb (MSRV note in AGENTS.md) unpushed.
