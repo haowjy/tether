@@ -74,7 +74,7 @@ for (const version of VERSIONS) {
     });
 
     test("warns that another terminal is attached", async ({ page }) => {
-      const detach = stack.attach("alpha");
+      const detach = await stack.attach("alpha");
       try {
         await page.goto(`${stack.url}/#/`);
         await sessionRow(page, "alpha").click();

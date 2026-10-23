@@ -32,8 +32,8 @@ export interface Stack {
   /** Stops the daemon (tmux keeps running) and starts it again on the same state: a restart under a connected page. */
   stopDaemon(): Promise<void>;
   startDaemon(): Promise<void>;
-  /** A terminal client attached to `session`, as someone's own terminal would be; returns the way to detach. */
-  attach(session: string): () => void;
+  /** A terminal client attached to `session`, as someone's own terminal would be, once tmux lists it; returns the way to detach. */
+  attach(session: string): Promise<() => void>;
   /** Destroys every open `/ws` connection at the front proxy, and says how many: a socket kill. */
   dropSockets(): number;
   stop(): Promise<void>;
@@ -195,9 +195,16 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     tmux,
     stopDaemon,
     startDaemon,
-    attach: (session) => {
+    attach: async (session) => {
       const child = spawn("script", ["-q", "/dev/null", program, "-L", socketName, "attach", "-t", session], { env, stdio: "ignore" });
-      return () => { child.kill(); };
+      const detach = (): void => { child.kill(); };
+      // The client registers a moment after the spawn, and a listing taken before it says nothing is attached.
+      for (let tries = 0; tries < 100; tries++) {
+        if (tmux("list-clients", "-t", session, "-F", "#{client_control_mode}").split("\n").includes("0")) return detach;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      detach();
+      throw new Error(`no terminal client attached to ${session}`);
     },
     dropSockets: () => {
       const count = sockets.size;
