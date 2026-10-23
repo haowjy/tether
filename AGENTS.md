@@ -44,7 +44,11 @@ applies once tether switches to PRs.
 scripts/setup-hooks.sh        # once per clone: pre-push runs full preflight on pushed tips
 scripts/preflight.sh full     # fmt, clippy -D warnings, test, release build
 cargo run -- --version
+pnpm --dir web install       # the web client uses pnpm
 ```
+
+Use **pnpm, never npm**, for anything in `web/`: installs, scripts, `pnpm exec`. The lockfile
+is `web/pnpm-lock.yaml`; don't add a `package-lock.json`.
 
 ## Principles
 

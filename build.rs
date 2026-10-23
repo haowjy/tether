@@ -11,12 +11,12 @@ fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let web = root.join("web");
     track_sources(&web);
-    let status = Command::new("npm")
+    let status = Command::new("pnpm")
         .args(["run", "build"])
         .current_dir(&web)
         .status()
-        .expect("run npm to build the embedded browser shell");
-    assert!(status.success(), "npm run build failed for web/");
+        .expect("run pnpm to build the embedded browser shell");
+    assert!(status.success(), "pnpm run build failed for web/");
 
     let dist = web.join("dist");
     let mut files = Vec::new();
@@ -44,7 +44,7 @@ fn main() {
             raw <= FILE_LIMIT,
             "embedded asset {name} is {raw} bytes (limit {FILE_LIMIT})"
         );
-        // Both copies live in OUT_DIR: web/dist is rewritten by any `npm run build`, which
+        // Both copies live in OUT_DIR: web/dist is rewritten by any `pnpm run build`, which
         // doesn't rerun this script, so the table must not point into it.
         let copied = out.join(format!("asset-{index}.raw"));
         fs::copy(path, &copied).expect("copy asset");

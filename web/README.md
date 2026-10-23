@@ -8,10 +8,10 @@ comes from the [interaction contract](../docs/design/client/browser-behaviors.md
 needs to know before editing.
 
 ```bash
-npm --prefix web ci
-npm --prefix web run check     # typecheck, lint, source checks, unit tests, build, budgets
-npm --prefix web run e2e       # Playwright (Chromium and WebKit) on the harness
-npm --prefix web exec playwright install chromium webkit   # once
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web run check     # typecheck, lint, source checks, unit tests, build, budgets
+pnpm --dir web run e2e       # Playwright (Chromium and WebKit) on the harness
+pnpm --dir web exec playwright install chromium webkit   # once
 ```
 
 ## The harness
@@ -19,7 +19,7 @@ npm --prefix web exec playwright install chromium webkit   # once
 `/harness/index.html?fixture=<name>&layout=phone|desktop&scheme=dark|light&density=touch|compact#/route`
 runs the real app on the in-memory `test` platform, with a fake daemon behind `/auth/*` and the
 socket. Fixtures live in `harness/<lane>/`; `gallery` shows every primitive in every state. Start
-it with `npm --prefix web run dev -- --mode harness`. Playwright starts it itself. It is never in
+it with `pnpm --dir web run dev -- --mode harness`. Playwright starts it itself. It is never in
 a production build: the build fails if its module graph holds `platform/test/` or `harness/`.
 
 ## Developing against a real daemon
@@ -38,7 +38,7 @@ through Tailscale Serve.
    cargo run -- --config /tmp/tether-dev/config.toml device add dev   # prints the token
    ```
 
-2. `TETHER_DEV_TOKEN=<token> TETHER_PORT=17850 npm --prefix web run dev` (`TETHER_SOCKET=<path>`
+2. `TETHER_DEV_TOKEN=<token> TETHER_PORT=17850 pnpm --dir web run dev` (`TETHER_SOCKET=<path>`
    instead of `TETHER_PORT` once the daemon listens on `local.sock`).
 3. Publish the dev server with `tailscale serve` and open that address. Enrol and the admission
    problems can't be reached this way; the harness drives them.

@@ -38,8 +38,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+          cache: true
+          cache_dependency_path: web/pnpm-lock.yaml
 
       - name: Anchor release on current main
         env:

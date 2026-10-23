@@ -1,4 +1,4 @@
-// Build and source checks that `npm run check` runs (client-architecture.md §8.3, §8.4, §8.6):
+// Build and source checks that `pnpm run check` runs (client-architecture.md §8.3, §8.4, §8.6):
 // the shell budgets, the copy rule and the colour-token rule. Pure functions below are tested
 // by scripts/checks.test.ts; `node scripts/checks.mjs source|build` runs them on the tree.
 import { readdirSync, readFileSync, statSync } from "node:fs";

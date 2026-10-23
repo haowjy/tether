@@ -5,8 +5,8 @@
 #
 # With --commit, the gate runs on a clean export of exactly that commit (`git archive`), so
 # another lane's uncommitted file can neither rescue a commit that depends on it nor block
-# one that doesn't. The export links this checkout's web/node_modules (it must match the
-# commit's lockfile) and builds in its own target directory (target/preflight/), so it
+# one that doesn't. The export installs the web dependencies from its lockfile and builds in
+# its own target directory (target/preflight/), so it
 # neither rebuilds nor blocks the checkout's builds. Set TETHER_PREFLIGHT_E2E=1 to add
 # the Playwright suite to `full`.
 set -euo pipefail
@@ -64,9 +64,6 @@ if [[ -n "$COMMIT" ]]; then
   mkdir -p "$EXPORT_DIR"
   printf 'preflight: exporting %s to %s\n' "$SHA" "$EXPORT_DIR" >&2
   git -C "$ROOT_DIR" archive "$SHA" | tar -x -m -C "$EXPORT_DIR"
-  if [[ -d "$ROOT_DIR/web/node_modules" ]]; then
-    ln -s "$ROOT_DIR/web/node_modules" "$EXPORT_DIR/web/node_modules"
-  fi
   export CARGO_TARGET_DIR="$PREFLIGHT_DIR/target"
   TETHER_PREFLIGHT_EXPORT=1 "$EXPORT_DIR/scripts/preflight.sh" "$MODE"
   exit $?
@@ -78,22 +75,23 @@ case "$MODE" in
     run_step cargo fmt --check
     ;;
   full)
+    # build.rs builds the web shell during cargo checks and builds.
+    if [[ -n "${TETHER_PREFLIGHT_EXPORT:-}" ]]; then
+      if ! run_step pnpm --dir web install --frozen-lockfile --offline; then
+        run_step pnpm --dir web install --frozen-lockfile
+      fi
+    elif [[ ! web/node_modules/.pnpm/lock.yaml -nt web/pnpm-lock.yaml ]]; then
+      # Install only when the lockfile is newer than the installed pnpm lock snapshot.
+      run_step pnpm --dir web install --frozen-lockfile
+    fi
     run_step cargo fmt --check
     run_step cargo clippy --all-targets --locked -- -D warnings
     # Also fails while web/proto/generated/ is stale (src/proto/typescript.rs).
     run_step cargo test --locked
     run_step cargo build --release --locked
-    if [[ -n "${TETHER_PREFLIGHT_EXPORT:-}" ]]; then
-      # An export shares the checkout's node_modules, which `npm ci` would rewrite:
-      # verify it matches this commit's lockfile instead.
-      run_step node web/scripts/check-install.mjs web/package-lock.json web/node_modules/.package-lock.json web/package.json
-    elif [[ ! web/node_modules/.package-lock.json -nt web/package-lock.json ]]; then
-      # npm ci only when the lockfile changed since the last install.
-      run_step npm --prefix web ci
-    fi
-    run_step npm --prefix web run check
+    run_step pnpm --dir web run check
     if [[ -n "${TETHER_PREFLIGHT_E2E:-}" ]]; then
-      run_step npm --prefix web run e2e
+      run_step pnpm --dir web run e2e
     fi
     ;;
 esac

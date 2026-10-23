@@ -5,6 +5,7 @@ version section on release.
 
 ## [Unreleased]
 
+- Use pnpm 10.23.0 to install, build and check the web client.
 - Serve the browser/PWA shell from the daemon over private Unix sockets and admit
   browsers as enrolled tailnet nodes. Native device-token auth is unchanged; `tether
   device list/remove` now includes node devices.

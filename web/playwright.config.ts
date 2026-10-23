@@ -13,7 +13,7 @@ export default defineConfig({
   // Reduced motion keeps axe from reading a colour mid-transition.
   use: { baseURL: `http://localhost:${String(PORT)}`, trace: "retain-on-failure", contextOptions: { reducedMotion: "reduce" } },
   webServer: {
-    command: `npx vite --mode harness --port ${String(PORT)} --strictPort --configLoader runner`,
+    command: `pnpm exec vite --mode harness --port ${String(PORT)} --strictPort --configLoader runner`,
     url: `http://localhost:${String(PORT)}/harness/index.html`,
     reuseExistingServer: !process.env["CI"],
     stdout: "ignore",
