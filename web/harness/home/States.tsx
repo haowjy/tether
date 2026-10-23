@@ -32,12 +32,13 @@ function Block({ title, children }: { title: string; children: ComponentChildren
 
 export function States() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "32px", padding: "16px", maxWidth: "720px", margin: "0 auto", overflowY: "auto", height: "100%" }}>
+    <main style={{ display: "flex", flexDirection: "column", gap: "32px", padding: "16px", maxWidth: "720px", margin: "0 auto", overflowY: "auto", height: "100%" }}>
       <h1>Sessions list states</h1>
       {STATES.map((s) => (
         <Block key={s.name} title={s.name}>
           <SessionList
-            hostName="pop-os"
+            // A landmark name must be unique on the page: each list is a different host here.
+            hostName={`pop-os (${s.name.toLowerCase()})`}
             unreachable={s.unreachable ?? false}
             sessions={s.sessions}
             expanded={new Set(s.expanded ?? [])}
@@ -50,6 +51,6 @@ export function States() {
           />
         </Block>
       ))}
-    </div>
+    </main>
   );
 }
