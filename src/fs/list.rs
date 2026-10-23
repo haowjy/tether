@@ -217,13 +217,16 @@ pub fn fold_cmp(a: &[u8], b: &[u8]) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt as _;
     use std::os::unix::fs::symlink;
 
     use super::*;
     use crate::fs::test_tree::Tree;
     use crate::fs::{Want, open};
+
+    const VISIBLE: Filter = Filter {
+        hidden: false,
+        dirs_only: false,
+    };
 
     fn listed(tree: &Tree, filter: Filter, offset: u32) -> Listing {
         let scope = Scope::roots(vec![tree.root().to_owned()]);
@@ -239,7 +242,6 @@ mod tests {
         }
         tree.write("b.md", b"# b");
         tree.write("A.txt", b"abc");
-        tree.write("a.txt", b"x");
         tree.write(".env", b"");
         symlink(tree.path("beta"), tree.path("link-to-dir")).expect("a link");
         symlink(tree.path("missing"), tree.path("broken")).expect("a link");
@@ -247,13 +249,8 @@ mod tests {
             .arg(tree.path("fifo"))
             .status();
         assert!(fifo.expect("mkfifo ran").success());
-        std::fs::write(tree.path("").join(OsStr::from_bytes(b"caf\xe9")), b"").expect("written");
 
-        let visible = Filter {
-            hidden: false,
-            dirs_only: false,
-        };
-        let listing = listed(&tree, visible, 0);
+        let listing = listed(&tree, VISIBLE, 0);
         let names: Vec<(&str, EntryKind, bool)> = listing
             .entries
             .iter()
@@ -267,10 +264,8 @@ mod tests {
                 ("beta", Dir, false),
                 ("link-to-dir", Dir, true),
                 ("A.txt", File, false),
-                ("a.txt", File, false),
                 ("b.md", File, false),
                 ("broken", Broken, true),
-                ("caf\u{fffd}", File, false),
                 ("fifo", Other, false),
             ]
         );
@@ -283,26 +278,25 @@ mod tests {
             entry("b.md").mime.as_deref(),
             Some("text/markdown; charset=utf-8")
         );
-        assert_eq!(entry("caf\u{fffd}").utf8, Some(false));
-        assert_eq!(entry("a.txt").utf8, None);
+        assert_eq!(entry("A.txt").utf8, None);
         assert!(entry("broken").mtime.is_none() && entry("beta").mtime.is_some());
         assert_eq!(
             (listing.total, listing.truncated, listing.parent),
-            (9, false, None)
+            (7, false, None)
         );
 
         let hidden = listed(
             &tree,
             Filter {
                 hidden: true,
-                ..visible
+                ..VISIBLE
             },
             0,
         );
-        assert_eq!(hidden.total, 11);
+        assert_eq!(hidden.total, 9);
         assert_eq!(hidden.entries[0].name, ".hidden-dir");
-        let paged = listed(&tree, visible, 8);
-        assert_eq!((paged.offset, paged.entries.len()), (8, 1));
+        let paged = listed(&tree, VISIBLE, 6);
+        assert_eq!((paged.offset, paged.entries.len()), (6, 1));
 
         let picker = listed(
             &tree,
@@ -320,5 +314,45 @@ mod tests {
                 .iter()
                 .all(|e| e.size.is_none() && e.mtime.is_none())
         );
+    }
+
+    #[test]
+    fn case_ties_break_by_name_bytes() {
+        let mut scan = Scan::default();
+        for name in [b"a.txt".as_slice(), b"A.txt".as_slice()] {
+            let start = scan.names.len() as u32;
+            scan.names.extend_from_slice(name);
+            scan.names.push(0);
+            scan.entries.push(Scanned {
+                start,
+                len: (name.len() + 1) as u32,
+                kind: EntryKind::File,
+                link: false,
+            });
+        }
+
+        scan.sort();
+
+        let names: Vec<&[u8]> = scan.names().map(|(name, _)| name).collect();
+        assert_eq!(names, [b"A.txt".as_slice(), b"a.txt".as_slice()]);
+    }
+
+    /// APFS refuses names that are not UTF-8, so this filesystem case is Linux-only.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn listing_marks_a_name_that_isnt_utf8() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let tree = Tree::new("list-linux");
+        std::fs::write(tree.path("").join(OsStr::from_bytes(b"caf\xe9")), b"").expect("written");
+
+        let listing = listed(&tree, VISIBLE, 0);
+        let invalid = listing
+            .entries
+            .iter()
+            .find(|entry| entry.name == "caf\u{fffd}")
+            .expect("the lossy name");
+        assert_eq!(invalid.utf8, Some(false));
     }
 }

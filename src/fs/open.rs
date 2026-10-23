@@ -193,7 +193,9 @@ pub fn check_shape(path: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use std::ffi::OsStr;
+    #[cfg(target_os = "linux")]
     use std::os::unix::ffi::OsStrExt as _;
     use std::os::unix::fs::symlink;
     use std::time::{Duration, Instant};
@@ -315,6 +317,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_link_to_a_name_that_isnt_utf8_is_a_bad_request() {
         let (tree, scope) = tree();
