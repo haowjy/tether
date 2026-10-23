@@ -1,105 +1,380 @@
-//! Tailscale identity (auth.md "Tailscale identity", plan.md "Security"): the check on
-//! every request, and a small client for tailscaled's LocalAPI, which tells the daemon
-//! whose tailnet node this is (the login allowlist), the machine's MagicDNS name, and
-//! what `tailscale serve` publishes (the Funnel check, the host's URL).
+//! Tailscale LocalAPI and request identity. LocalAPI answers are bounded and reused;
+//! whois is deliberately not cached between requests.
 
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::path::Path;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
+use std::str::FromStr as _;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::{HeaderMap, Request, header};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Empty, Limited};
+use hyper::client::conn::http1::SendRequest;
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use thiserror::Error;
 use tokio::net::UnixStream;
+use tokio::sync::{Mutex, Notify, watch};
+use tokio::time::Instant;
 
-/// Added by `tailscale serve` to every proxied request, WebSocket upgrades included.
 pub const LOGIN_HEADER: &str = "tailscale-user-login";
-
-/// tailscaled's socket on Linux, then the open-source macOS daemon's.
+pub const FUNNEL_HEADER: &str = "tailscale-funnel-request";
 const SOCKETS: [&str; 2] = [
     "/var/run/tailscale/tailscaled.sock",
     "/var/run/tailscaled.socket",
 ];
-const LOCALAPI_TIMEOUT: Duration = Duration::from_secs(2);
-const LOCALAPI_MAX_BODY: usize = 1024 * 1024;
+pub const LOCALAPI_TIMEOUT: Duration = Duration::from_secs(2);
+pub const LOCALAPI_MAX_BODY: usize = 64 * 1024;
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum IdentityError {
-    #[error("the peer {0} isn't loopback")]
-    NotLoopback(SocketAddr),
+    #[error("Funnel requests are refused")]
+    Funnel,
     #[error("no Tailscale-User-Login header: not through tailscale serve")]
     NoLogin,
     #[error("login {0} isn't allowed")]
     NotAllowed(String),
+    #[error("can't read tailnet identity: {0}")]
+    Unavailable(String),
 }
 
-/// The Tailscale check: a loopback peer, and a login in the allowlist. Returns the
-/// login. Any process on the box can forge the header; those already run as Jimmy.
-pub fn check(
-    allow: &[String],
-    peer: SocketAddr,
-    headers: &HeaderMap,
-) -> Result<String, IdentityError> {
-    if !peer.ip().is_loopback() {
-        return Err(IdentityError::NotLoopback(peer));
-    }
-    let login = headers
-        .get(LOGIN_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .ok_or(IdentityError::NoLogin)?;
-    if !allow.iter().any(|allowed| allowed == login) {
-        return Err(IdentityError::NotAllowed(login.to_owned()));
-    }
-    Ok(login.to_owned())
-}
-
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum LocalApiError {
-    #[error("no tailscaled socket at {}", SOCKETS.join(" or "))]
-    NoSocket,
+    #[error("no tailscaled LocalAPI socket at {0}")]
+    NoSocket(String),
     #[error("can't reach tailscaled: {0}")]
-    Io(#[from] std::io::Error),
+    Io(String),
     #[error("tailscaled's LocalAPI: {0}")]
     Http(String),
     #[error("tailscaled didn't answer within {LOCALAPI_TIMEOUT:?}")]
     Timeout,
+    #[error("tailscaled has no node for this address")]
+    NoPeer,
+    #[error("whois queue is full")]
+    Busy,
+    #[error("tailnet identity is unavailable")]
+    Unavailable,
+    #[error("tailscaled's LocalAPI answer exceeds {LOCALAPI_MAX_BODY} bytes")]
+    TooLarge,
     #[error("tailscaled's {path} isn't the expected JSON: {error}")]
-    Json {
-        path: &'static str,
-        error: serde_json::Error,
-    },
-    #[error("tailscaled reports no logged-in user (state {0}); pass --allow-login")]
-    NoUser(String),
+    Json { path: &'static str, error: String },
 }
 
-/// This node, from `GET /localapi/v0/status`.
 #[derive(Debug, Clone)]
-pub struct Node {
-    /// The login of the node's owner: the default allowlist.
-    pub login: Option<String>,
-    /// The MagicDNS name, without the trailing dot.
+pub struct TailnetState {
+    pub self_id: String,
+    pub owner_login: Option<String>,
     pub dns_name: String,
-    backend_state: String,
+    pub backend_state: String,
+    pub serve: ServeConfig,
 }
 
-impl Node {
-    pub async fn read() -> Result<Self, LocalApiError> {
+const STATE_MAX_AGE: Duration = Duration::from_secs(10);
+const STATE_MAX_HOLD: Duration = Duration::from_secs(30);
+
+/// A shared, age-bounded view of the self node and Serve config.
+#[derive(Clone)]
+pub struct TailnetStateCell {
+    api: LocalApi,
+    state: Arc<Mutex<CellState>>,
+    changed: Arc<Notify>,
+}
+
+struct CellState {
+    value: Option<(Instant, TailnetState)>,
+    in_flight: bool,
+    failed: bool,
+    retrying: bool,
+    retry_delay: Duration,
+}
+
+impl TailnetStateCell {
+    pub fn new(api: LocalApi) -> Self {
+        Self {
+            api,
+            state: Arc::new(Mutex::new(CellState {
+                value: None,
+                in_flight: false,
+                failed: false,
+                retrying: false,
+                retry_delay: Duration::from_secs(2),
+            })),
+            changed: Arc::new(Notify::new()),
+        }
+    }
+
+    /// Starts the initial fill without making LocalAPI availability a startup gate.
+    pub fn start(&self) {
+        let cell = self.clone();
+        tokio::spawn(async move {
+            let mut state = cell.state.lock().await;
+            if state.in_flight || state.value.is_some() {
+                return;
+            }
+            state.in_flight = true;
+            drop(state);
+            cell.refresh().await;
+        });
+    }
+
+    pub async fn get(&self) -> Result<TailnetState, LocalApiError> {
+        loop {
+            let notified = self.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let mut state = self.state.lock().await;
+            let now = Instant::now();
+            if state.retrying && state.value.is_none() {
+                return Err(LocalApiError::Unavailable);
+            }
+            if let Some((at, value)) = &state.value {
+                let age = now.duration_since(*at);
+                if age <= STATE_MAX_AGE {
+                    return Ok(value.clone());
+                }
+                if state.retrying || state.failed {
+                    return if age <= STATE_MAX_HOLD {
+                        Ok(value.clone())
+                    } else {
+                        Err(LocalApiError::Unavailable)
+                    };
+                }
+                if age > STATE_MAX_HOLD {
+                    if !state.in_flight {
+                        state.in_flight = true;
+                        let cell = self.clone();
+                        tokio::spawn(async move { cell.refresh().await });
+                    }
+                    return Err(LocalApiError::Unavailable);
+                }
+            }
+            if state.in_flight {
+                if state.failed {
+                    return Err(LocalApiError::Unavailable);
+                }
+                drop(state);
+                notified.await;
+                continue;
+            }
+            state.in_flight = true;
+            drop(state);
+            let cell = self.clone();
+            tokio::spawn(async move { cell.refresh().await });
+            notified.await;
+        }
+    }
+
+    pub async fn peek(&self) -> Option<TailnetState> {
+        self.state
+            .lock()
+            .await
+            .value
+            .as_ref()
+            .filter(|(at, _)| Instant::now().duration_since(*at) <= STATE_MAX_HOLD)
+            .map(|(_, value)| value.clone())
+    }
+
+    async fn refresh(&self) {
+        let result = self.api.tailnet_state().await;
+        let retry = {
+            let mut state = self.state.lock().await;
+            state.in_flight = false;
+            match result {
+                Ok(value) => {
+                    state.value = Some((Instant::now(), value));
+                    state.failed = false;
+                    state.retrying = false;
+                    state.retry_delay = Duration::from_secs(2);
+                    false
+                }
+                Err(_) => {
+                    state.failed = true;
+                    if !state.retrying {
+                        state.retrying = true;
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        };
+        self.changed.notify_waiters();
+        if retry {
+            let cell = self.clone();
+            tokio::spawn(async move { cell.retry().await });
+        }
+    }
+
+    async fn retry(&self) {
+        loop {
+            let delay = {
+                let state = self.state.lock().await;
+                if !state.retrying {
+                    return;
+                }
+                state.retry_delay
+            };
+            tokio::time::sleep(delay).await;
+            {
+                let mut state = self.state.lock().await;
+                if !state.retrying {
+                    return;
+                }
+                state.in_flight = true;
+            }
+            let result = self.api.tailnet_state().await;
+            let success = {
+                let mut state = self.state.lock().await;
+                state.in_flight = false;
+                match result {
+                    Ok(value) => {
+                        state.value = Some((Instant::now(), value));
+                        state.failed = false;
+                        state.retrying = false;
+                        state.retry_delay = Duration::from_secs(2);
+                        true
+                    }
+                    Err(_) => {
+                        state.failed = true;
+                        state.retry_delay = (state.retry_delay * 2).min(Duration::from_secs(30));
+                        false
+                    }
+                }
+            };
+            self.changed.notify_waiters();
+            if success {
+                return;
+            }
+        }
+    }
+}
+
+impl TailnetState {
+    pub fn machine_name(&self) -> &str {
+        self.dns_name.split('.').next().unwrap_or_default()
+    }
+}
+
+/// A parsed whois answer sufficient for the browser node rules.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Whois {
+    #[serde(rename = "Node")]
+    pub node: Option<WhoisNode>,
+    #[serde(rename = "UserProfile")]
+    pub user_profile: Option<UserProfile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WhoisNode {
+    #[serde(rename = "StableID", default)]
+    pub stable_id: String,
+    #[serde(rename = "Tags", default)]
+    pub tags: Vec<String>,
+    #[serde(rename = "Sharer", default)]
+    pub sharer: u64,
+    #[serde(rename = "Addresses", default)]
+    pub addresses: Vec<String>,
+    #[serde(rename = "AllowedIPs", default)]
+    pub allowed_ips: Vec<String>,
+    #[serde(rename = "DNSName", default)]
+    pub dns_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserProfile {
+    #[serde(rename = "LoginName", default)]
+    pub login_name: String,
+}
+
+/// The one LocalAPI owner. A cell client is separate from the two whois connections.
+#[derive(Clone)]
+pub struct LocalApi {
+    socket: Option<PathBuf>,
+    cell: Arc<Client>,
+    whois: Arc<[Client; 2]>,
+    whois_state: Arc<Mutex<WhoisState>>,
+}
+
+struct WhoisState {
+    free_clients: Vec<usize>,
+    waiting: VecDeque<(IpAddr, Arc<WhoisFlight>)>,
+    flights: HashMap<IpAddr, Arc<WhoisFlight>>,
+}
+
+struct WhoisFlight {
+    start: watch::Receiver<Option<usize>>,
+    start_tx: watch::Sender<Option<usize>>,
+    result: watch::Receiver<Option<Result<Whois, LocalApiError>>>,
+    result_tx: watch::Sender<Option<Result<Whois, LocalApiError>>>,
+}
+
+impl WhoisFlight {
+    fn new() -> Arc<Self> {
+        let (start_tx, start) = watch::channel(None);
+        let (result_tx, result) = watch::channel(None);
+        Arc::new(Self {
+            start,
+            start_tx,
+            result,
+            result_tx,
+        })
+    }
+}
+
+impl LocalApi {
+    /// Uses tailscaled's standard socket search order.
+    pub fn system() -> Self {
+        Self::new(None)
+    }
+
+    /// Uses a fixed LocalAPI socket; public so integration tests can run a fake daemon.
+    pub fn at(socket: PathBuf) -> Self {
+        Self::new(Some(socket))
+    }
+
+    fn new(socket: Option<PathBuf>) -> Self {
+        Self {
+            socket,
+            cell: Arc::new(Client::new()),
+            whois: Arc::new([Client::new(), Client::new()]),
+            whois_state: Arc::new(Mutex::new(WhoisState {
+                free_clients: vec![0, 1],
+                waiting: VecDeque::new(),
+                flights: HashMap::new(),
+            })),
+        }
+    }
+
+    fn socket_path(&self) -> Result<PathBuf, LocalApiError> {
+        self.socket.clone().map_or_else(
+            || {
+                SOCKETS
+                    .iter()
+                    .map(PathBuf::from)
+                    .find(|path| path.exists())
+                    .ok_or_else(|| LocalApiError::NoSocket(SOCKETS.join(" or ")))
+            },
+            Ok,
+        )
+    }
+
+    /// The status and serve config are read as one answer for the tailnet-state cell.
+    pub async fn tailnet_state(&self) -> Result<TailnetState, LocalApiError> {
         #[derive(Deserialize)]
         struct Status {
             #[serde(rename = "BackendState", default)]
             backend_state: String,
             #[serde(rename = "Self")]
-            this: Option<Peer>,
+            this: Option<SelfNode>,
             #[serde(rename = "User", default)]
             users: HashMap<String, User>,
         }
         #[derive(Deserialize)]
-        struct Peer {
+        struct SelfNode {
+            #[serde(rename = "StableID", default)]
+            stable_id: String,
             #[serde(rename = "UserID", default)]
             user_id: u64,
             #[serde(rename = "DNSName", default)]
@@ -110,62 +385,320 @@ impl Node {
             #[serde(rename = "LoginName", default)]
             login_name: String,
         }
-        let status: Status = get("/localapi/v0/status?peers=false").await?;
-        let this = status.this;
-        let login = this.as_ref().and_then(|this| {
-            let user = status.users.get(&this.user_id.to_string())?;
-            Some(user.login_name.clone()).filter(|login| !login.is_empty())
-        });
-        Ok(Self {
-            login,
-            dns_name: this.map_or_else(String::new, |this| {
-                this.dns_name.trim_end_matches('.').to_owned()
-            }),
+
+        let socket = self.socket_path()?;
+        let status_bytes = self
+            .cell
+            .get(&socket, "/localapi/v0/status?peers=false")
+            .await?;
+        let serve_bytes = self.cell.get(&socket, "/localapi/v0/serve-config").await?;
+        let status: Status = parse_json("/localapi/v0/status?peers=false", &status_bytes)?;
+        let serve: Option<ServeConfig> = parse_json("/localapi/v0/serve-config", &serve_bytes)?;
+        let this = status
+            .this
+            .filter(|node| !node.stable_id.is_empty())
+            .ok_or(LocalApiError::Unavailable)?;
+        let owner_login = status
+            .users
+            .get(&this.user_id.to_string())
+            .map(|user| user.login_name.clone())
+            .filter(|login| !login.is_empty());
+        Ok(TailnetState {
+            self_id: this.stable_id,
+            owner_login,
+            dns_name: this.dns_name.trim_end_matches('.').to_owned(),
             backend_state: status.backend_state,
+            serve: serve.unwrap_or_default(),
         })
     }
 
-    /// The default allowlist: the node owner's login.
-    pub fn owner(&self) -> Result<String, LocalApiError> {
-        self.login
-            .clone()
-            .ok_or_else(|| LocalApiError::NoUser(self.backend_state.clone()))
+    pub async fn whois(&self, address: IpAddr) -> Result<Whois, LocalApiError> {
+        let (flight, start) = {
+            let mut state = self.whois_state.lock().await;
+            if let Some(flight) = state.flights.get(&address) {
+                (flight.clone(), false)
+            } else {
+                if state.free_clients.is_empty() && state.waiting.len() >= 16 {
+                    return Err(LocalApiError::Busy);
+                }
+                let flight = WhoisFlight::new();
+                state.flights.insert(address, flight.clone());
+                if let Some(index) = state.free_clients.pop() {
+                    let _ = flight.start_tx.send(Some(index));
+                    (flight, true)
+                } else {
+                    state.waiting.push_back((address, flight.clone()));
+                    // The dequeued flight gets its worker only when a client is assigned.
+                    (flight, false)
+                }
+            }
+        };
+        if start {
+            self.run_whois(address, flight.clone());
+        }
+        let mut result = flight.result.clone();
+        loop {
+            if let Some(result) = result.borrow().clone() {
+                return result;
+            }
+            result.changed().await.map_err(|_| {
+                LocalApiError::Http("whois worker stopped without a result".to_owned())
+            })?;
+        }
     }
 
-    /// The MagicDNS machine name: the first label.
-    pub fn machine_name(&self) -> &str {
-        self.dns_name.split('.').next().unwrap_or_default()
+    /// Stable IDs currently present in `/status`'s peer map for `tether device list`.
+    pub async fn known_nodes(&self) -> Result<HashSet<String>, LocalApiError> {
+        let socket = self.socket_path()?;
+        let bytes = self.cell.get(&socket, "/localapi/v0/status").await?;
+        let status: serde_json::Value = parse_json("/localapi/v0/status", &bytes)?;
+        Ok(status
+            .get("Peer")
+            .and_then(serde_json::Value::as_object)
+            .into_iter()
+            .flat_map(|peers| peers.values())
+            .filter_map(|peer| peer.get("StableID").and_then(serde_json::Value::as_str))
+            .map(str::to_owned)
+            .collect())
+    }
+
+    fn run_whois(&self, address: IpAddr, flight: Arc<WhoisFlight>) {
+        let api = self.clone();
+        tokio::spawn(async move {
+            let mut start = flight.start.clone();
+            let index = loop {
+                if let Some(index) = *start.borrow() {
+                    break index;
+                }
+                if start.changed().await.is_err() {
+                    return;
+                }
+            };
+            let path = format!("/localapi/v0/whois?addr={address}");
+            let result = match api.socket_path() {
+                Ok(socket) => api.whois[index]
+                    .get(&socket, &path)
+                    .await
+                    .and_then(|bytes| parse_json("/localapi/v0/whois", &bytes)),
+                Err(error) => Err(error),
+            };
+
+            let next = {
+                let mut state = api.whois_state.lock().await;
+                state.flights.remove(&address);
+                state.free_clients.push(index);
+                if let Some((next_address, next_flight)) = state.waiting.pop_front() {
+                    state.free_clients.pop().map(|next_index| {
+                        let _ = next_flight.start_tx.send(Some(next_index));
+                        (next_address, next_flight)
+                    })
+                } else {
+                    None
+                }
+            };
+            let _ = flight.result_tx.send(Some(result));
+            if let Some((next_address, next_flight)) = next {
+                api.run_whois(next_address, next_flight);
+            }
+        });
     }
 }
 
-/// What `tailscale serve` and `tailscale funnel` publish: `GET /localapi/v0/serve-config`.
-/// Only the parts tether reads; the rest is ignored.
+type RequestSender = SendRequest<Empty<Bytes>>;
+
+struct Client {
+    sender: Mutex<Option<RequestSender>>,
+}
+
+impl Client {
+    fn new() -> Self {
+        Self {
+            sender: Mutex::new(None),
+        }
+    }
+
+    async fn get(&self, socket: &Path, path: &str) -> Result<Bytes, LocalApiError> {
+        tokio::time::timeout(LOCALAPI_TIMEOUT, self.request(socket, path))
+            .await
+            .map_err(|_| LocalApiError::Timeout)?
+    }
+
+    async fn request(&self, socket: &Path, path: &str) -> Result<Bytes, LocalApiError> {
+        let mut current = self.sender.lock().await;
+        if current.is_none() {
+            *current = Some(connect(socket).await?);
+        }
+        let response = match current
+            .as_mut()
+            .expect("connected")
+            .send_request(request(path)?)
+            .await
+        {
+            Ok(response) => response,
+            Err(first) => {
+                *current = None;
+                let mut sender = connect(socket).await?;
+                let response = sender
+                    .send_request(request(path)?)
+                    .await
+                    .map_err(|error| LocalApiError::Http(error.to_string()))?;
+                *current = Some(sender);
+                let _ = first;
+                response
+            }
+        };
+        if response.status() == hyper::StatusCode::NOT_FOUND {
+            return Err(LocalApiError::NoPeer);
+        }
+        if !response.status().is_success() {
+            return Err(LocalApiError::Http(format!(
+                "{path}: {}",
+                response.status()
+            )));
+        }
+        Limited::new(response.into_body(), LOCALAPI_MAX_BODY)
+            .collect()
+            .await
+            .map(|body| body.to_bytes())
+            .map_err(|error| {
+                if error.to_string().contains("length limit") {
+                    LocalApiError::TooLarge
+                } else {
+                    LocalApiError::Http(error.to_string())
+                }
+            })
+    }
+}
+
+async fn connect(socket: &Path) -> Result<RequestSender, LocalApiError> {
+    let stream = UnixStream::connect(socket)
+        .await
+        .map_err(|error| LocalApiError::Io(error.to_string()))?;
+    let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .map_err(|error| LocalApiError::Http(error.to_string()))?;
+    tokio::spawn(connection);
+    Ok(sender)
+}
+
+fn request(path: &str) -> Result<Request<Empty<Bytes>>, LocalApiError> {
+    Request::get(path)
+        .header(header::HOST, "local-tailscaled.sock")
+        .body(Empty::<Bytes>::new())
+        .map_err(|error| LocalApiError::Http(error.to_string()))
+}
+
+fn parse_json<T: serde::de::DeserializeOwned>(
+    path: &'static str,
+    bytes: &[u8],
+) -> Result<T, LocalApiError> {
+    serde_json::from_slice(bytes).map_err(|error| LocalApiError::Json {
+        path,
+        error: error.to_string(),
+    })
+}
+
+/// A login decoded by Serve, checked against either the explicit or default allowlist.
+pub fn check_login(
+    allow: &[String],
+    explicit: bool,
+    state: Option<&TailnetState>,
+    headers: &HeaderMap,
+) -> Result<String, IdentityError> {
+    if headers.contains_key(FUNNEL_HEADER) {
+        return Err(IdentityError::Funnel);
+    }
+    let value = headers
+        .get_all(LOGIN_HEADER)
+        .iter()
+        .next()
+        .filter(|_| headers.get_all(LOGIN_HEADER).iter().count() == 1)
+        .ok_or(IdentityError::NoLogin)?;
+    let login = decode_login(value).ok_or(IdentityError::NoLogin)?;
+    if explicit {
+        if allow.iter().any(|allowed| allowed == &login) {
+            Ok(login)
+        } else {
+            Err(IdentityError::NotAllowed(login))
+        }
+    } else {
+        let allowed = state
+            .and_then(|state| state.owner_login.as_deref())
+            .ok_or_else(|| IdentityError::Unavailable("owner login is unavailable".into()))?;
+        if allowed == login {
+            Ok(login)
+        } else {
+            Err(IdentityError::NotAllowed(login))
+        }
+    }
+}
+
+/// Serve Q-encodes non-ASCII logins as an RFC 2047 encoded word.
+pub fn decode_login(value: &axum::http::HeaderValue) -> Option<String> {
+    let raw = value.to_str().ok()?;
+    let Some(encoded) = raw.strip_prefix("=?") else {
+        return Some(raw.to_owned());
+    };
+    let mut parts = encoded.strip_suffix("?=")?.splitn(3, '?');
+    let charset = parts.next()?;
+    let encoding = parts.next()?;
+    let payload = parts.next()?;
+    if !charset.eq_ignore_ascii_case("utf-8") || !encoding.eq_ignore_ascii_case("q") {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(payload.len());
+    let mut input = payload.bytes();
+    while let Some(byte) = input.next() {
+        match byte {
+            b'_' => bytes.push(b' '),
+            b'=' => {
+                let high = hex(input.next()?)?;
+                let low = hex(input.next()?)?;
+                bytes.push(high * 16 + low);
+            }
+            byte => bytes.push(byte),
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ServeConfig {
-    /// Public port → handler.
     #[serde(rename = "TCP", default)]
     tcp: HashMap<String, TcpHandler>,
-    /// Public `host:port` → HTTP handlers.
     #[serde(rename = "Web", default)]
     web: HashMap<String, WebServer>,
-    /// Public `host:port` → whether Funnel exposes it to the internet.
     #[serde(rename = "AllowFunnel", default)]
     allow_funnel: HashMap<String, bool>,
-    /// `tailscale serve` and `funnel` run in the foreground, by session.
     #[serde(rename = "Foreground", default)]
     foreground: HashMap<String, ServeConfig>,
+    #[serde(rename = "Services", default)]
+    services: HashMap<String, Service>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct TcpHandler {
     #[serde(rename = "TCPForward", default)]
     tcp_forward: String,
+    #[serde(rename = "HTTPS", default)]
+    https: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct WebServer {
     #[serde(rename = "Handlers", default)]
     handlers: HashMap<String, Handler>,
+    #[serde(rename = "HTTPS", default)]
+    https: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -174,149 +707,248 @@ struct Handler {
     proxy: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+struct Service {
+    #[serde(rename = "TCP", default)]
+    tcp: HashMap<String, TcpHandler>,
+    #[serde(rename = "Web", default)]
+    web: HashMap<String, WebServer>,
+    #[serde(rename = "AllowFunnel", default)]
+    allow_funnel: HashMap<String, bool>,
+}
+
 impl ServeConfig {
-    pub async fn read() -> Result<Self, LocalApiError> {
-        // No config at all reads as `null`.
-        let config: Option<Self> = get("/localapi/v0/serve-config").await?;
-        Ok(config.unwrap_or_default())
+    pub async fn read(api: &LocalApi) -> Result<Self, LocalApiError> {
+        let state = api.tailnet_state().await?;
+        Ok(state.serve)
     }
 
-    /// The public `host:port`s that Funnel exposes and that lead to `127.0.0.1:port`.
-    pub fn funnels_to(&self, port: u16) -> Vec<String> {
-        let funnel = |host_port: &str| self.allow_funnel.get(host_port) == Some(&true);
-        let mut found: Vec<String> = self
-            .web
-            .iter()
-            .filter(|(host_port, web)| funnel(host_port) && web.reaches(port))
-            .map(|(host_port, _)| host_port.clone())
-            .collect();
-        for (public, tcp) in &self.tcp {
-            if reaches(&tcp.tcp_forward, port) {
-                let on_port = |host_port: &String| host_port.rsplit(':').next() == Some(public);
-                found.extend(
-                    self.allow_funnel
-                        .keys()
-                        .filter(|hp| on_port(hp) && funnel(hp))
-                        .cloned(),
+    pub fn canonical_origin(
+        &self,
+        wanted: SocketIdentity,
+        serve_socket: &Path,
+    ) -> Result<CanonicalOrigin, OriginRefusal> {
+        if wanted == SocketIdentity::default() {
+            return Err(OriginRefusal::new("tether's serve.sock is not bound"));
+        }
+        let mut references = Vec::new();
+        self.collect_references("serve", wanted, &mut references);
+        if references.len() != 1 {
+            let offender = references
+                .get(1)
+                .or_else(|| references.first())
+                .map_or_else(
+                    || "no Serve entry names serve.sock".to_owned(),
+                    |r| r.label.clone(),
                 );
+            return Err(self.refusal(&offender, serve_socket));
+        }
+        let reference = &references[0];
+        let Some((host_port, mount, web, service_funnel, https)) = &reference.web else {
+            return Err(self.refusal(&reference.label, serve_socket));
+        };
+        if web.handlers.len() != 1 || mount.as_str() != "/" || !https || *service_funnel {
+            return Err(self.refusal(&reference.label, serve_socket));
+        }
+        let (host, port) = parse_host_port(host_port)
+            .ok_or_else(|| self.refusal(&reference.label, serve_socket))?;
+        if host.is_empty() || host.ends_with('.') {
+            return Err(self.refusal(&reference.label, serve_socket));
+        }
+        let host = host.to_ascii_lowercase();
+        let host = if host.contains(':') {
+            format!("[{host}]")
+        } else {
+            host
+        };
+        let authority = if port == 443 {
+            host
+        } else {
+            format!("{host}:{port}")
+        };
+        Ok(CanonicalOrigin {
+            origin: format!("https://{authority}"),
+            authority,
+        })
+    }
+
+    fn refusal(&self, entry: &str, serve_socket: &Path) -> OriginRefusal {
+        if let Some(old) = self.old_default_target() {
+            return OriginRefusal::new(&format!(
+                "{old} still proxies to tether's old 127.0.0.1:7850 listener. Replace it with: sudo tailscale serve --bg --https=443 unix:{}",
+                serve_socket.display()
+            ));
+        }
+        OriginRefusal::new(&format!(
+            "Tailscale Serve entry {entry} is not tether's sole HTTPS handler. Publish tether with: sudo tailscale serve --bg --https=443 unix:{}",
+            serve_socket.display()
+        ))
+    }
+
+    fn old_default_target(&self) -> Option<String> {
+        fn find(config: &ServeConfig) -> Option<String> {
+            for (host_port, web) in &config.web {
+                if web
+                    .handlers
+                    .values()
+                    .any(|handler| handler.proxy == "http://127.0.0.1:7850")
+                {
+                    return Some(host_port.clone());
+                }
+            }
+            for (name, service) in &config.services {
+                for (host_port, web) in &service.web {
+                    if web
+                        .handlers
+                        .values()
+                        .any(|handler| handler.proxy == "http://127.0.0.1:7850")
+                    {
+                        return Some(format!("Service {name} {host_port}"));
+                    }
+                }
+            }
+            config.foreground.iter().find_map(|(name, config)| {
+                find(config).map(|entry| format!("Foreground {name} {entry}"))
+            })
+        }
+        find(self)
+    }
+
+    fn collect_references<'a>(
+        &'a self,
+        scope: &str,
+        wanted: SocketIdentity,
+        out: &mut Vec<SocketRef<'a>>,
+    ) {
+        for (port, handler) in &self.tcp {
+            if same_socket(&handler.tcp_forward, wanted) {
+                out.push(SocketRef {
+                    label: format!("{scope} TCP {port}"),
+                    web: None,
+                });
             }
         }
-        for config in self.foreground.values() {
-            found.extend(config.funnels_to(port));
+        self.collect_web(scope, wanted, out, &self.web, &self.tcp, &self.allow_funnel);
+        for (name, config) in &self.foreground {
+            config.collect_references(&format!("{scope} Foreground {name}"), wanted, out);
         }
-        found.sort();
-        found.dedup();
-        found
+        for (name, service) in &self.services {
+            for (port, handler) in &service.tcp {
+                if same_socket(&handler.tcp_forward, wanted) {
+                    out.push(SocketRef {
+                        label: format!("{scope} Service {name} TCP {port}"),
+                        web: None,
+                    });
+                }
+            }
+            self.collect_web(
+                &format!("{scope} Service {name}"),
+                wanted,
+                out,
+                &service.web,
+                &service.tcp,
+                &service.allow_funnel,
+            );
+        }
     }
 
-    /// The HTTPS URL `tailscale serve` publishes `127.0.0.1:port` at, if any.
-    pub fn url_for(&self, port: u16) -> Option<String> {
-        let mut urls: Vec<String> = self
-            .web
-            .iter()
-            .filter(|(_, web)| web.reaches(port))
-            .map(|(host_port, _)| {
-                let host = host_port.strip_suffix(":443").unwrap_or(host_port);
-                format!("https://{host}")
-            })
-            .chain(
-                self.foreground
-                    .values()
-                    .filter_map(|config| config.url_for(port)),
-            )
-            .collect();
-        urls.sort();
-        urls.into_iter().next()
+    fn collect_web<'a>(
+        &'a self,
+        scope: &str,
+        wanted: SocketIdentity,
+        out: &mut Vec<SocketRef<'a>>,
+        web: &'a HashMap<String, WebServer>,
+        tcp: &'a HashMap<String, TcpHandler>,
+        funnel: &'a HashMap<String, bool>,
+    ) {
+        for (host_port, server) in web {
+            for (mount, handler) in &server.handlers {
+                if !same_socket(&handler.proxy, wanted) {
+                    continue;
+                }
+                let port = parse_host_port(host_port).map(|(_, port)| port);
+                let https = server.https
+                    || port.is_some_and(|port| {
+                        tcp.get(&port.to_string())
+                            .is_some_and(|handler| handler.https)
+                    });
+                out.push(SocketRef {
+                    label: format!("{scope} Web {host_port} {mount}"),
+                    web: Some((
+                        host_port,
+                        mount,
+                        server,
+                        funnel.get(host_port).copied().unwrap_or(false),
+                        https,
+                    )),
+                });
+            }
+        }
     }
 }
 
-impl WebServer {
-    fn reaches(&self, port: u16) -> bool {
-        self.handlers
-            .values()
-            .any(|handler| reaches(&handler.proxy, port))
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalOrigin {
+    pub origin: String,
+    pub authority: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginRefusal {
+    pub message: String,
+}
+
+impl OriginRefusal {
+    fn new(message: &str) -> Self {
+        Self {
+            message: message.to_owned(),
+        }
     }
 }
 
-/// Whether a proxy target (`http://127.0.0.1:7850`, `localhost:7850`, `7850`) is
-/// this daemon's listener.
-fn reaches(target: &str, port: u16) -> bool {
-    let rest = target.split_once("://").map_or(target, |(_, rest)| rest);
-    let authority = rest.split('/').next().unwrap_or(rest);
-    let (host, target_port) = authority
-        .rsplit_once(':')
-        .unwrap_or(("127.0.0.1", authority));
-    matches!(host, "127.0.0.1" | "localhost" | "[::1]") && target_port.parse() == Ok(port)
+struct SocketRef<'a> {
+    label: String,
+    web: Option<(&'a String, &'a String, &'a WebServer, bool, bool)>,
 }
 
-/// One LocalAPI GET over the unix socket.
-async fn get<T: DeserializeOwned>(path: &'static str) -> Result<T, LocalApiError> {
-    let socket = SOCKETS
-        .iter()
-        .find(|socket| Path::new(socket).exists())
-        .ok_or(LocalApiError::NoSocket)?;
-    let body = tokio::time::timeout(LOCALAPI_TIMEOUT, fetch(socket, path))
-        .await
-        .map_err(|_| LocalApiError::Timeout)??;
-    serde_json::from_slice(&body).map_err(|error| LocalApiError::Json { path, error })
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct SocketIdentity {
+    device: u64,
+    inode: u64,
 }
 
-async fn fetch(socket: &str, path: &str) -> Result<Bytes, LocalApiError> {
-    let http = |error: &dyn std::fmt::Display| LocalApiError::Http(error.to_string());
-    let stream = UnixStream::connect(socket).await?;
-    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-        .await
-        .map_err(|error| http(&error))?;
-    // Drives the connection; it ends when `sender` is dropped.
-    tokio::spawn(connection);
-    let request = Request::get(path)
-        .header(header::HOST, "local-tailscaled.sock")
-        .body(Empty::<Bytes>::new())
-        .map_err(|error| http(&error))?;
-    let response = sender
-        .send_request(request)
-        .await
-        .map_err(|error| http(&error))?;
-    if !response.status().is_success() {
-        return Err(LocalApiError::Http(format!(
-            "{path}: {}",
-            response.status()
-        )));
+impl SocketIdentity {
+    pub fn of(path: &Path) -> std::io::Result<Self> {
+        socket_identity(path)
     }
-    let body = Limited::new(response.into_body(), LOCALAPI_MAX_BODY)
-        .collect()
-        .await
-        .map_err(|error| http(&error))?;
-    Ok(body.to_bytes())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn socket_identity(path: &Path) -> std::io::Result<SocketIdentity> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = std::fs::metadata(path)?;
+    Ok(SocketIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
 
-    #[test]
-    fn funnel_is_found_only_where_it_reaches_the_port() {
-        let config: ServeConfig = serde_json::from_str(
-            r#"{
-              "TCP": {"443": {"HTTPS": true}, "8443": {"HTTPS": true}, "2222": {"TCPForward": "127.0.0.1:7850"}},
-              "Web": {
-                "box.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:7850"}}},
-                "box.ts.net:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}
-              },
-              "AllowFunnel": {"box.ts.net:8443": true},
-              "Foreground": {"abc": {"Web": {"box.ts.net:10000": {"Handlers": {"/": {"Proxy": "http://localhost:7850"}}}},
-                                      "AllowFunnel": {"box.ts.net:10000": true}}}
-            }"#,
-        )
-        .expect("a serve config");
-        assert_eq!(config.funnels_to(7850), ["box.ts.net:10000"]);
-        assert_eq!(config.funnels_to(3000), ["box.ts.net:8443"]);
-        assert_eq!(config.url_for(7850).as_deref(), Some("https://box.ts.net"));
-        assert_eq!(config.url_for(9999), None);
-        let tcp: ServeConfig = serde_json::from_str(
-            r#"{"TCP": {"2222": {"TCPForward": "127.0.0.1:7850"}}, "AllowFunnel": {"box.ts.net:2222": true}}"#,
-        )
-        .expect("a serve config");
-        assert_eq!(tcp.funnels_to(7850), ["box.ts.net:2222"]);
+fn same_socket(target: &str, wanted: SocketIdentity) -> bool {
+    let Some(path) = target.strip_prefix("unix:") else {
+        return false;
+    };
+    socket_identity(Path::new(path)).is_ok_and(|identity| identity == wanted)
+}
+
+fn parse_host_port(host_port: &str) -> Option<(String, u16)> {
+    let authority = axum::http::uri::Authority::from_str(host_port).ok()?;
+    let port = authority.port_u16()?;
+    if port == 0 {
+        return None;
     }
+    let host = authority.host();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    Some((host.to_owned(), port))
 }

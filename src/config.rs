@@ -11,15 +11,12 @@ use thiserror::Error;
 
 use crate::tmux::{Endpoint, Socket};
 
-pub const DEFAULT_PORT: u16 = 7850;
 pub const DEFAULT_MEMORY_BUDGET_MIB: u64 = 72;
 const DEFAULT_UPLOADS: &str = "~/tether-uploads";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// The daemon listens on `127.0.0.1:port`; `tailscale serve` proxies to it.
-    pub port: u16,
     /// The host's name in the app; default: the machine's MagicDNS name.
     pub name: Option<String>,
     /// The daemon's memory budget, in MiB; daemon-core.md §6 derives its caps from it.
@@ -59,7 +56,6 @@ pub struct Tmux {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            port: DEFAULT_PORT,
             name: None,
             memory_budget_mib: DEFAULT_MEMORY_BUDGET_MIB,
             tmux: Tmux::default(),
@@ -177,13 +173,91 @@ pub fn home() -> Result<PathBuf, ConfigError> {
         .ok_or(ConfigError::NoHomeDir)
 }
 
-/// Where paste files wait for tmux: `$XDG_RUNTIME_DIR/tether` (tmpfs), or a per-user
-/// directory under the temp dir where there is no runtime dir (macOS).
-pub fn runtime_dir() -> PathBuf {
-    match env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from) {
-        Some(dir) if dir.is_absolute() => dir.join("tether"),
-        _ => env::temp_dir().join(format!("tether-{}", rustix::process::getuid().as_raw())),
+/// `$XDG_RUNTIME_DIR/tether`, the private directory for sockets and pastes.
+/// `TMPDIR` on macOS is the per-user directory supplied by launchd.
+pub fn runtime_dir() -> Result<PathBuf, RuntimeDirError> {
+    let base = if cfg!(target_os = "macos") {
+        env::var_os("TMPDIR")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .ok_or(RuntimeDirError::NoRuntimeDir)?
+    } else {
+        env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .ok_or(RuntimeDirError::NoRuntimeDir)?
+    };
+    Ok(base.join("tether"))
+}
+
+/// Creates the runtime directory once, then refuses any path shape or ownership that
+/// would let another user plant a socket target.
+pub fn prepare_runtime_dir(path: &Path) -> Result<(), RuntimeDirError> {
+    use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
+
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = std::fs::DirBuilder::new();
+            builder.mode(0o700);
+            match builder.create(path) {
+                Ok(()) => {
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+                        .map_err(|source| RuntimeDirError::Io {
+                            path: path.to_owned(),
+                            source,
+                        })?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(source) => {
+                    return Err(RuntimeDirError::Io {
+                        path: path.to_owned(),
+                        source,
+                    });
+                }
+            }
+        }
+        Err(source) => {
+            return Err(RuntimeDirError::Io {
+                path: path.to_owned(),
+                source,
+            });
+        }
     }
+
+    let metadata = std::fs::symlink_metadata(path).map_err(|source| RuntimeDirError::Io {
+        path: path.to_owned(),
+        source,
+    })?;
+    let cause = if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        Some("must be a real directory, not a symlink")
+    } else if metadata.uid() != rustix::process::getuid().as_raw() {
+        Some("must be owned by the daemon user")
+    } else if metadata.mode() & 0o7777 != 0o700 {
+        Some("must have mode 0700")
+    } else {
+        None
+    };
+    if let Some(cause) = cause {
+        return Err(RuntimeDirError::Unsafe {
+            path: path.to_owned(),
+            cause,
+        });
+    }
+    Ok(())
+}
+
+#[derive(Debug, Error)]
+pub enum RuntimeDirError {
+    #[error("XDG_RUNTIME_DIR is required on Linux (no /tmp fallback)")]
+    NoRuntimeDir,
+    #[error("{path}: {cause}")]
+    Unsafe { path: PathBuf, cause: &'static str },
+    #[error("{path}: {source}")]
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 /// An XDG base directory: the variable if it holds an absolute path (the spec ignores
@@ -194,5 +268,17 @@ fn xdg(var: &'static str, fallback: &str) -> Result<PathBuf, ConfigError> {
         _ => env::var_os("HOME")
             .map(|home| PathBuf::from(home).join(fallback))
             .ok_or(ConfigError::NoHome(var)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_old_port_setting_is_ignored() {
+        let config = Config::parse(Path::new("config.toml"), "port = 7850\n")
+            .expect("legacy config remains readable");
+        assert_eq!(config.memory_budget_mib, DEFAULT_MEMORY_BUDGET_MIB);
     }
 }

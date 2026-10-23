@@ -11,6 +11,8 @@ pub struct AuthInfo {
     pub name: String,
     pub daemon_version: String,
     pub protocol: ProtocolRange,
+    pub browser_origin: Option<String>,
+    pub browser_refused: Option<String>,
 }
 
 /// The protocol versions the daemon accepts, as in `hello`'s check.

@@ -82,8 +82,11 @@ The keyboard-shown layout from [plan.md](plan.md#layout), split by owner:
 
 ## Where the web UI comes from
 
-The web UI is **bundled in the app** and served by a `WKURLSchemeHandler`, with a
-Debug-build switch that takes the assets from a dev server instead.
+The native app's web UI is **bundled in the app** and served by a
+`WKURLSchemeHandler`, with a Debug-build switch that takes the assets from a dev
+server instead. Separately, the daemon embeds and serves the production browser build
+at its canonical tailnet origin ([auth.md](auth.md#canonical-origin)); the iOS app
+does not load that copy or register its service worker.
 
 **The scheme handler** (`ios/Tether/Web/AppSchemeHandler.swift`) serves two kinds of
 origin:
@@ -117,9 +120,12 @@ origin:
   - **A `401`** means the device was removed from that host: the handler marks it "not
     enrolled" and passes the `401` on, without retrying.
 
-The web UI builds every host URL through one function, from the host entry's `baseURL`
-([payloads](#boot-and-host-payloads)), so it holds no token for HTTP, and `<img src>`
-works with auth. The daemon serves no UI.
+The native web UI builds every host URL through one function, from the host entry's
+`baseURL` ([payloads](#boot-and-host-payloads)), and the native adapter supplies a
+device token for each host. The production browser adapter uses `location.origin`
+and carries no credential; the daemon judges it as an enrolled tailnet node. Native
+requests continue to present their token and use the same endpoints without browser
+Origin checks.
 
 ### Web content security
 
@@ -165,9 +171,9 @@ single-path media ticket to auth, not before.
   double tap reloads the web view in Debug).
 - Web Inspector: `webView.isInspectable = true` in Debug.
 - A desktop browser also runs the web UI against a real daemon: the host-URL function
-  points at a Vite proxy that forwards to the daemon and adds a token from `tether
-  device add` ([auth.md](auth.md#cli)). A dev shim stands in for the bridge (DOM key
-  events as input, no haptics). Playwright uses the same path.
+  points at a Vite proxy that connects to `local.sock` via `TETHER_SOCKET` and adds a
+  token from `tether device add` ([auth.md](auth.md#cli)). A dev shim stands in for
+  the bridge (DOM key events as input, no haptics). Playwright uses the same path.
 
 The release build runs `scripts/build-web.sh` from an Xcode build phase (`vite build`,
 output copied to `WebUI/`), so a release app always carries the web UI from the same

@@ -319,8 +319,8 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
   counted. tmux has read the file when the group completes; the hub hands the
   `PasteFile` back in a `RemoveFile` effect on `Done` and on every path that drops the
   request (§4.4), and deleting it frees the slot. The daemon empties the directory at
-  startup, after it has bound its port: a second daemon started by mistake fails to bind
-  and must not delete a running daemon's in-flight pastes.
+  startup, after the runtime lock is held and both sockets are established: a second
+  daemon started by mistake must not delete a running daemon's in-flight pastes.
 - **Quoting, on a control-client line:** user arguments go in single quotes (`'` as
   `'\''`) after doubling every `#` (tmux format-expands `-n` and `-c`); control
   characters are rejected. One-shots take arguments, not lines (§3.8).
@@ -1253,82 +1253,103 @@ hand-coded on each side with golden byte fixtures in `tests/fixtures/proto/`:
 ## 6. Limits and the memory ceiling
 
 Every daemon constant lives here, except the file API's, which are in
-[fs.md](fs.md#constants), and completion's, in [complete.md](complete.md#constants).
-Most are fixed. Three scale with `memory_budget_mib`; they are selected once at startup
-from the effective budget. Every memory figure is in MiB (2²⁰ bytes).
+[fs.md](fs.md#constants), and completion's, in [complete.md](complete.md#constants);
+other documents link to this table. Most are fixed. Three scale with the memory
+budget, and those come from the tier table below. Every memory figure is in MiB.
 
 ### 6.1 The memory budget
 
 `memory_budget_mib` in `config.toml` ([plan.md](plan.md#config)), default 72, is the
 most memory tether's unit may hold that the kernel can't reclaim. At startup `main`
-reads it, then reads cgroup v2 as follows:
+reads it, then the cgroup limit:
 
-1. Find the cgroup2 mount in `/proc/self/mountinfo` (filesystem type `cgroup2`),
-   including its mount root and mount point.
-2. Take the path from the `0::` line of `/proc/self/cgroup`, relative to that mount's
-   root.
+1. Find the cgroup2 mount in `/proc/self/mountinfo` (filesystem type `cgroup2`):
+   `/sys/fs/cgroup` on a unified host, `/sys/fs/cgroup/unified` on a hybrid one.
+2. Take the path from the `0::` line of `/proc/self/cgroup`, relative to that
+   mount's root (mountinfo's fourth field).
 3. Walk from that directory up to the mount point, reading `memory.max` and
-   `memory.high` at each level. The effective unit limit is the lowest `memory.max`
-   that isn't `max`; the warning threshold is the lowest `memory.high` that isn't
+   `memory.high` at each level. The limit is the lowest `memory.max` that isn't
    `max`.
-4. A missing or unreadable limit file means no limit at that level. A missing mount,
-   `0::` line or unparsable file means no cgroup limit at all, with a warning naming
+4. A missing or unreadable file means no limit at that level. `memory.max` is absent
+   where the parent doesn't enable the memory controller and at the root. A missing
+   mount, `0::` line or unparsable file means no limit at all, with a warning naming
    the file. Never refuse to start because `/proc` or `/sys` looks odd.
-5. Floor `memory.max` to whole MiB.
+5. Floor the limit to whole MiB.
 
-The **effective budget** is the lower of `memory_budget_mib` and the unit limit. With no
-cgroup v2 limit, it is the configured budget. Linux under systemd warns if no cgroup
-limit is found, since this is how cgroup v1, hybrid hosts and hosts without memory
-controller delegation silently leave `MemoryMax` unenforced. A standalone run and
-macOS do not warn; macOS has no cgroup and no hard memory cap, so the budget only sizes
-the counts.
+The **effective budget** is the lower of the configured budget and that limit.
 
-- Below 42 MiB, startup logs the effective/config/unit values and exits 78. Every
-  `ConfigError` also exits 78; a restart cannot fix invalid configuration.
-- If the unit limit is below the configured budget, a warning names both and the unit
-  limit governs. If it is above the configured budget, info says the config value
-  governs. A `memory.high` below the effective budget less 4 MiB warns that it must be
-  removed: reclaim cannot keep the unit below that soft limit at its caps.
-- The startup info line names the effective budget, tier, control-client cap, socket
-  cap and completion state. The budget is read once. `systemctl --user set-property`
-  changes the cgroup immediately but the selected caps only change after restart.
-  `memory_budget_mib` is not written by the Settings sheet.
+- **Below 42 MiB:** the daemon logs `memory budget <n> MiB (config <c>, unit <u>) is
+  below the minimum of 42 MiB` and exits with status 78, as for every configuration
+  error ([plan.md](plan.md#resource-budget)).
+- **The limit below the configured budget:** a warning names both, and the limit
+  governs. The limit above the budget is logged at info: the budget governs.
+- **No limit found under systemd** (`INVOCATION_ID` is set): a warning, "no cgroup
+  memory limit is in force; the budget alone sizes the caps". This is the case on a
+  cgroup v1 or hybrid host, where the memory controller is v1 and a user unit's
+  `MemoryMax` isn't enforced, and on a host that doesn't delegate `memory` to the
+  user manager. Outside systemd (a dev run, macOS) no limit is expected and nothing
+  is logged.
+- **A `memory.high` below the effective budget less 4 MiB:** a warning, "MemoryHigh
+  <h> is below what tether may hold at its caps; remove it", since the unit would
+  stall at caps (`MemoryHigh` in [plan.md](plan.md#resource-budget)). It changes no
+  cap.
+- The startup log line names the effective budget, the tier, and its caps. The debug
+  endpoint reports them.
 
-The effective budget picks one tier; the boundaries intentionally remain round values.
-Each tier's unreclaimable ceiling plus 4 MiB of headroom fits the lowest budget in its
-range. Above 72 nothing more opens.
+The budget is read once. A change takes effect at the next start, including one made
+with `systemctl --user set-property`, which changes the cgroup at once but not the
+caps. `memory_budget_mib` is not written by the Settings sheet.
+
+**The tiers.** The effective budget picks one row. Each row's unreclaimable ceiling
+(§6.3) plus 4 MiB of headroom fits the lowest budget in its range, so no cap in the
+row can bring the unit to `MemoryMax`. Above 72 nothing more opens.
 
 | Effective budget, MiB | Control clients | Connections (sockets) | Completion |
-|---|---:|---:|---|
+|---|---|---|---|
 | 72 and up (default) | 3 | 3 | on |
 | 64–71 | 2 | 3 | on |
 | 58–63 | 1 | 3 | on |
 | 53–57 | 1 | 2 | on |
 | 42–52 | 1 | 2 | off |
 
-Only these three user-visible counts scale. Per-message and per-frame bounds remain
-protocol/security limits. Credit and capture reservation must still hold the largest
-snapshot. Small slots (capture 2, paste 4, raw responses 2), one-shots, scans and uploads
-(1 each), and watches per connection (2) stay fixed; together they cost under 6 MiB.
-Blocking lanes and `TasksMax` bound threads, while deadlines and coalescing bound time.
-Completion's constants stay unchanged when it is on; below 53 the service is not
-constructed, `welcome.daemon.completion` is false and a stray `/complete` returns
-`200 {"chips":[]}` without building suggestions. The tier table, per-item memory costs
-in KiB, and the test that recomputes each tier's ceiling plus 4 MiB against its range
-(including that the next-higher tier will not fit) live in `src/budget.rs`; `Caps` has
-only the three fields above and hub/socket/completion limits take their values at
-construction.
+**Why these scale and nothing else.** Each scaled cap is a count of things the user
+can see and name (sessions, connections, suggestions), and refusing one more costs a
+wait or a retry, never a wrong result. Every other limit stays fixed:
+
+- **Per-message and per-frame bounds** (inbound message, input and paste per
+  message, frame size, line length, reply bodies per group, tmux names): they are
+  protocol and security bounds, and a peer must not see them change with the host's
+  tuning.
+- **Per-connection credit, overdraft and the capture reservation:** a snapshot of the
+  largest clamped screen has to fit the reservation, and the reservation has to fit
+  the credit. Shrinking them would fail snapshots, not refuse them.
+- **Small slots** (capture 2, paste 4, raw responses 2, shell 4) and **one-shots,
+  scans, uploads (1 each), watches per connection (2):** together they cost under
+  6 MiB at every tier, and halving them would save 2.5 MiB for four more
+  budget-dependent caps.
+- **The connection backstop (64) and hyper's buffers (16 KiB):** together 2.1 MiB.
+  The backstop has to stay above the sum of the routes' caps and waiters (§6.4), or a
+  native reconnect would queue behind a browser's page load.
+- **Blocking lanes and `TasksMax`:** they bound threads, not memory.
+- **Timeouts, deadlines and coalescing:** time, not memory.
+- **Completion's constants**, when completion is on: halving them would change
+  ranking with the budget. Completion is on or off.
+
+The tier table, the per-item costs in KiB, and a unit test that recomputes each
+row's ceiling and checks it against its range all live in `src/budget.rs`. `Caps`
+has three fields; the hub's `State`, the socket semaphore and `complete` take theirs
+once, at construction.
 
 ### 6.2 Limits
 
 | Limit | Value | When hit |
 |---|---|---|
 | connections, from the upgrade | tier table: 3 by default; browser tabs, the PWA and native all count | close 4005 |
-| accepted connections, the HTTP backstop | 64, upgraded sockets included (§6.4) | stop accepting; the TCP listen backlog holds 128 newcomers |
+| connection permits, the backstop | 64 across both Unix sockets, upgraded sockets included (§6.4) | stop accepting; the Unix listen backlog holds newcomers |
 | hyper buffer per connection | 16 KiB, read and write each | a larger request head: 431 |
 | header-read and idle timeout | 100 s | connection closed |
 | watches per connection | 2 | `watchEnded { error }` |
-| control clients | tier table: 3 by default, for every tmux server tether attaches to (a scratch server's included, when scratch shells land); lingering ones closed first | `watchEnded { limit }` naming sessions holding the slots |
+| control clients | tier table: 3 by default, for every tmux server tether attaches to (a scratch server's included, when scratch shells land); lingering ones closed first | `watchEnded { limit }` naming the sessions that hold the slots |
 | control-client linger | 15 s | |
 | groups in flight per control client | 32; user requests below 24 | user: `busy`; maintenance waits |
 | capture slots (snapshot, history) | 2 daemon-wide | history: `busy`; snapshot waits |
@@ -1352,31 +1373,34 @@ construction.
 | inbound WebSocket message | 512 KiB | close 4009 |
 | input / paste per message | 4 KiB / 256 KiB | `error { inputTooLarge }` |
 | paste slots (files awaiting tmux) | 4, daemon-wide | `error { busy }`, before writing |
-| completion: carapace, history, PATH, paths | [complete.md](complete.md#constants); off below 53 MiB | off: `welcome.daemon.completion` is `false`; `/complete` returns `200 {"chips":[]}` |
+| completion: carapace, history, PATH, paths | [complete.md](complete.md#constants); off in the lowest tier | off: `welcome.daemon.completion` is `false`, and a `/complete` that arrives anyway answers `200 {"chips": []}`, building nothing |
 | history per request | 200 rows | clamped |
 | `hello` deadline | 10 s | close 4003 |
 | ping / idle timeout | every 10 s / 25 s silent | close 4000; the 10 s timer also re-checks auth (removed: 4401; unreadable file: 4503) |
 | size clamp | 20..=500 cols × 5..=300 rows | clamped |
 | `pause-after` | 3 s | `Gap` → snapshot |
 | scratch sessions | 2 | `error { tooManySessions }` |
+| whois calls | 2 in flight daemon-wide, 16 distinct addresses waiting | the 17th: `503 busy` at once; joining an existing address takes no slot |
+| shell slots and waiters | 4 and 16 | the 17th waiter: `503 busy` at once |
+| shell stall | 30 s for the socket to take the next slice | aborted |
+| shell size | 3 MiB embedded, 1.5 MiB per file, 128 files | the build fails |
 
-A control-client cap refusal is `watchEnded { reason: "limit", message }`. Its message
-names the host, cap and tmux session names holding it; for example, `tether on devbox
-allows 1 tmux sessions at a time; open now: work`. The control client stores the session
-name from Locate, and does not run a one-shot just to render the refusal. A lingering client doesn't hold
-a slot, since the next watch closes it. After tabs showing the named sessions close, a
-retry succeeds. `busy` remains the short-lived refusal; the socket cap keeps close code
-4005.
+**A cap refusal says which kind it is.** `busy` clears within a second or so, and the
+client retries soon. `watchEnded { reason: "limit", message }` is the control-client
+cap, which clears only when another session's tabs close or the budget is raised.
+Its message names the cap and the sessions holding it: "tether on devbox allows 1
+tmux session at a time; open now: work". A lingering client doesn't hold a slot,
+since the next watch closes it, so once the user closes the named session's tabs on
+any device, the next attempt succeeds. The socket cap keeps its own close code, 4005.
 
 ### 6.3 The memory ceiling
 
-With every in-scope item at its cap at once, in MiB. Nothing grows with time. Measured
-rows (control client, one-shot, completion, slab) were recorded in MB and are taken here
-as MiB, which overstates them by 5%. The static shell and whois rows are browser-auth
-work and are excluded from these ceilings; they are not in this listener.
+With every item at its cap at once, in MiB. Nothing grows with time. Measured rows
+(control client, one-shot, completion, slab) were recorded in MB and are taken here
+as MiB, which overstates them by 5%. The default column is the 72-and-up tier.
 
 | Item | Bound | Per cap | Default |
-|---|---|---:|---:|
+|---|---|---|---|
 | daemon: code, runtime, tasks | budget target | | 5 |
 | one-shot `tmux` | 1 × 4.9 measured | | 4.9 |
 | tmux chunks, pump → hub | 128 × 16 KiB | | 2 |
@@ -1386,88 +1410,137 @@ work and are excluded from these ceilings; they are not in this listener.
 | reply bodies, in the capture slots | 2 × 1 MiB | | 2 |
 | paste files on tmpfs (`shmem`) | 4 × 256 KiB | | 1 |
 | raw responses: a 64 KiB chunk and its channel, kernel buffers | 2 × 0.5 | | 1 |
+| shell slots: kernel buffers | 4 × 256 KiB | | 1 |
+| LocalAPI answers and parse: 2 whois plus 1 tailnet-state read | 3 × (64 KiB + parse) | | 0.3 |
 | control clients | 5.3 measured each | 5.3 | 15.9 |
 | sockets: payloads hub → socket (2 MiB credit + 64 KiB overdraft), the writer's copy of a frame (1 MiB), an inbound message and its decoded copy (1 MiB), kernel buffers (256 KiB) | each | 4.31 | 12.9 |
 | completion, on: indexes, caches, a carapace launch | [complete.md](complete.md#memory-cpu-and-threads), less the slab | | 11.3 |
-| **unreclaimable ceiling** | | | **62.4** |
+| **unreclaimable ceiling** | | | **63.6** |
 | completion's dentry and inode slab (reclaimable) | measured | | 2.4 |
-| **ceiling** | | | **64.8** |
+| embedded shell pages (clean, file-backed, reclaimable) | at most the 3 MiB embedded | | 3 |
+| **ceiling** | | | **69.0** |
 
-By tier, the in-scope unreclaimable ceiling is 62.4 (72 and up), 57.1 (64–71), 51.8
-(58–63), 47.6 (53–57) and 36.3 (42–52). Each plus 4 MiB headroom fits the lowest
-budget in its range.
+By tier, the unreclaimable ceiling is 63.6 (72 and up), 58.3 (64–71), 53.0 (58–63),
+48.8 (53–57) and 37.5 (42–52). Each plus the 4 MiB headroom fits the lowest budget in
+its range.
 
-**What has to fit.** The rule is held on the unreclaimable ceiling: it plus headroom
-must fit the effective budget, which is never above `MemoryMax`. The reclaimable rows
-can take the unit to `MemoryMax`, where the kernel reclaims clean file pages and
-reclaimable slab synchronously before it kills. The unit sets no `MemoryHigh`: below the
-unreclaimable ceiling, a soft limit can't be met by reclaim and instead sleeps every
-allocating task.
+**What has to fit.** The rule is held on the unreclaimable ceiling: it plus the
+headroom must fit the effective budget, which is never above `MemoryMax`. The
+reclaimable rows can take the unit to `MemoryMax`, where the kernel reclaims clean
+file pages and reclaimable slab synchronously before it kills. The unit sets no
+`MemoryHigh`: below the unreclaimable ceiling, a soft limit can't be met by reclaim
+and turns into a sleep on every allocation instead.
 
-One write could leave unreclaimable memory outside the rows: an upload to tmpfs or
-ramfs (`/tmp` on many distributions, `/dev/shm`, `$XDG_RUNTIME_DIR`), whose pages stay
-charged to the unit for as long as the file exists. The file API refuses these uploads
-with `409 memory_backed` ([fs.md](fs.md#errors)). Paste files are the one deliberate
-tmpfs write, bounded by their row.
+One write could leave unreclaimable memory outside these rows: an upload to a
+memory-backed filesystem (tmpfs, ramfs: `/tmp` on many distributions, `/dev/shm`,
+`$XDG_RUNTIME_DIR`), whose pages stay charged to the unit for as long as the file
+exists. The file API refuses such uploads
+([fs.md](fs.md#errors), `memory_backed`). Paste files are the one deliberate tmpfs
+write, bounded by their row.
 
-The [budget measurement](plan.md#resource-budget) checks each tier at its bottom: under
-load at every cap, sample `memory.stat` every 100 ms; the largest `anon + shmem +
-file_dirty + file_writeback + kernel + sock − slab_reclaimable`, divided by 2²⁰, must
-not exceed the computed unreclaimable ceiling, and `memory.events` must show no
-`oom_kill`. Record `memory.peak` beside it. On kernels before 5.18, replace
-`kernel − slab_reclaimable` with `kernel_stack + pagetables + percpu +
-slab_unreclaimable`. The tier claim is for the glibc build the unit runs
+The [budget measurement](plan.md#resource-budget) checks each tier at the bottom of
+its range: under load at every cap, sample the unit's `memory.stat` every 100 ms; the
+largest `anon + shmem + file_dirty + file_writeback + kernel + sock −
+slab_reclaimable`, divided by 2²⁰, must not exceed the row's computed unreclaimable
+ceiling, and `memory.events` must show no `oom_kill`. Record `memory.peak` beside it.
+If a measurement exceeds a row, the row's cost is raised in `src/budget.rs`, and the
+test moves the tier boundary. The `kernel` key needs Linux 5.18 or later; on older
+kernels replace `kernel − slab_reclaimable` with `kernel_stack + pagetables +
+percpu + slab_unreclaimable`. The tiers are claimed for the glibc build the unit runs
 (`%h/.cargo/bin/tether`); the musl release binaries are unmeasured.
 
-The normal case, one control client and one watch, is about 11 MiB, plus up to 14 MiB
-of completion state while typing and for five minutes after (the slab is the part the
-idle drop doesn't free).
+The normal case, one control client and one watch, is about 11 MiB, plus up to
+14 MiB of completion state while Jimmy types and for five minutes after (the slab is
+the part the idle drop doesn't free).
 
 ### 6.4 HTTP connections
 
-Each route caps its own concurrency and, when its waiters are full, answers at once:
-`503 busy` with `Retry-After: 1`, or close 4005 for a socket. Waiters are bounded by
-count, never a timer, except on the auth lane, whose waiters give up after its 10 s
-wait. A connection cap sits behind them as a backstop, sized above their sum so normal
-bursts and native reconnects do not queue behind a browser page load.
+**One rule bounds HTTP.** Each route caps its own concurrency and, when its
+waiters are full, answers at once: `503 busy` with `Retry-After: 1`, or 4005 for a
+socket. Waiters are bounded by count, never by a timer, except on the auth lane,
+whose waiters give up after its 10 s wait. A connection cap sits behind them as a
+backstop, sized above their sum so that ordinary bursts never reach it, and the
+native app's reconnect never queues behind a browser's page load.
 
 | Route | Served at once | Waiting | When full |
 |---|---|---|---|
 | `/ws` | tier table: 3 sockets by default | — | close 4005 |
 | file API | 1 scan, 2 raw, 1 upload | 8 on the fs lane | `503 busy` at once |
 | `/complete` | 4 | — | `503 busy` at once |
+| node-lane identity (whois) | 2 calls | 16 distinct addresses; joins don't take a slot | `503 busy` at once |
+| shell | 4 slots | 16, in arrival order, no deadline | `503 busy` at once |
 | auth routes, and each device route's credential read | the auth lane's 2 threads | a handful; a read takes milliseconds | `503 busy` after the lane's 10 s wait |
 
-The backstop is **64 accepted connections**, upgraded WebSockets included. Before browser
-auth replaces the loopback listener, TCP's listen backlog holds 128 newcomers; the
-backstop is above the current route caps and their waiters.
+Those caps add up to about 60 connections with the auth lane's handful and the idle
+connections tailscaled keeps pooled to the daemon: at most 2, held for 90 s (Go's
+default `MaxIdleConnsPerHost`, which Serve doesn't change; `IdleConnTimeout: 90 *
+time.Second` in its proxy transport). The backstop is **64 connections**, so
+reaching it means a flood, and a flood only denies service.
 
-**The accept loop.** `http::serve` owns its accept loop instead of calling `axum::serve`.
-A listener wrapper alone would not set hyper's buffer size: axum 0.8.9 builds each
-connection with hyper's defaults and no hook. The loop:
+**The accept loop.** `http::serve` owns its accept loop rather than calling
+`axum::serve`. A `Listener` wrapper could cap connections alone, but the memory
+bound needs hyper's buffer size, and axum 0.8.9 builds each connection with
+hyper's defaults and no hook (`serve/mod.rs`). At the default (8 KiB + 400 KiB per
+buffer), 61 connections could hold about 25 MiB. The loop:
 
-- takes one of the **64 connection permits before each accept**. With none free it stops
-  accepting, and the kernel listen backlog holds newcomers. A permit lives in the
-  connection's I/O wrapper, which hyper transfers into an upgraded WebSocket, and is
-  freed only when that socket closes;
-- sizes each socket's kernel buffers with `small_buffers` before serving it;
-- inserts `ConnectInfo<SocketAddr>` into the request extensions on the current loopback
-  TCP listener; the later Unix-socket peer class is not part of this change;
-- serves HTTP/1.1 with hyper's `http1::Builder`, a Tokio timer, **16 KiB max buffers**
-  (read and write; an oversized request head gets 431), a **100 s header-read timeout**
-  and upgrade support for `/ws`.
+- accepts on both daemon Unix sockets, `$XDG_RUNTIME_DIR/tether/serve.sock` and
+  `$XDG_RUNTIME_DIR/tether/local.sock`, sharing the same 64 permits. The accepted
+  socket's `Front::Serve | Front::Local` is inserted into every request; the front
+  chooses the allowed auth lane ([auth.md](auth.md#sockets-and-the-tailscale-check));
+- takes one of the **64 connection permits** before each `accept`. With none free it
+  stops accepting, and the kernel's listen backlog holds newcomers: `somaxconn` on
+  the Unix socket (mio passes −1), where only tailscaled and Jimmy's own processes can
+  queue. The permit lives inside the connection's I/O
+  wrapper, so it moves into an upgraded socket and is freed only when the socket
+  closes. The wrapper forwards `poll_write_vectored` and `is_write_vectored`, so
+  hyper keeps queueing body `Bytes` instead of copying them into its write buffer;
+- sizes each socket's kernel buffers with `small_buffers`, on the Unix stream as on
+  TCP;
+- does not inspect peer credentials. The socket itself selects the front, and the
+  private runtime directory limits which Unix users can connect;
+- serves the connection with hyper's `http1::Builder`. The daemon has only ever
+  spoken HTTP/1.1 (axum's `http1` feature), and tailscaled proxies plain-HTTP
+  backends over HTTP/1.1. The builder gets a tokio timer, **`max_buf_size` of
+  16 KiB** (it bounds the read and the write buffer alike, and a request head that
+  doesn't fit is answered 431), a **100 s header-read timeout**, and
+  `with_upgrades()` for `/ws`.
 
-The header-read timeout also closes idle keep-alive connections, since hyper arms it for
-each request head. It is above tailscaled's 90 s idle timeout, so tailscaled closes
-first. The bounded accept permits also bound how many slow header reads can be held at
-once.
+The header-read timeout also closes idle keep-alive connections, since hyper arms
+it at every request head. 100 s is above tailscaled's 90 s idle timeout, so
+tailscaled always closes an idle connection first and never sends a request on one
+the daemon is closing. Go doesn't retry a POST on such a connection, so a shorter
+timeout would turn a rare enrolment or upload into a 502. tailscaled forwards
+complete heads at once, so a slow sender can only be a local process, and the
+permits bound how many such connections there can be.
 
-**Shutdown.** Each HTTP connection task runs the upgradeable connection future against
-a shutdown watch. On shutdown it calls `graceful_shutdown()` and keeps polling it. The
-loop stops accepting and sets `stop` (every WebSocket closes with 4004, as today). At
-the 2 s deadline it aborts any remaining HTTP tasks; it then waits for the 64 permits
-until that deadline. An upgraded socket holds a permit and a `Ctx`; if it misses the
-deadline, `main` still ends the hub with `HubHandle::stop`.
+**Shutdown.** Each connection task lives in a `JoinSet` and runs `tokio::select!`
+between the connection future and a shutdown `watch` receiver. On the signal it calls
+`UpgradeableConnection::graceful_shutdown()` and keeps polling the connection, as
+axum's own `serve` does; hyper-util's `GracefulShutdown` has no impl for the `http1`
+upgradeable connection. The loop stops accepting and sets `stop` (every socket
+closes with 4004, as today). At the 2 s deadline it aborts every connection task
+still in the `JoinSet`, so a stalled raw response is closed instead of outliving
+`serve`. It then waits for the upgraded sockets' slots until the same deadline, as
+today. axum spawns upgraded sockets outside the `JoinSet`, so one that misses the
+deadline still holds a `Ctx`, and `main` keeps calling `HubHandle::stop`.
+
+### Static shell
+
+The daemon serves the production browser build from its embedded asset manifest at
+the canonical Serve origin; the iOS app continues to bundle and serve its own copy.
+Only explicitly routed shell files (`/`, `/manifest.webmanifest`, `/sw.js`, icons and
+`/assets/*`) are served. A missing asset or unknown API path is a 404, never an
+`index.html` rewrite. Shell and `/auth/info` skip device identity and browser-origin
+checks so a bookmark or cold PWA launch can load the code; the Tailscale login/Funnel
+check and `Host: localhost` rule still apply on `serve.sock`.
+
+At build time `build.rs` runs the web production build, then embeds deterministic
+gzip and raw variants. The shell is bounded to 128 files, 3 MiB total and 1.5 MiB per
+file; every build refuses a larger bundle. Four responses may stream at once and 16
+wait, in arrival order. A 30 s no-progress write deadline aborts a stalled client and
+releases its slot. Static files use content hashes for immutable caching; the root,
+manifest and service worker use `no-cache` and ETags. The generated manifest's name
+is `tether <host>`.
 
 ## 7. Failure handling
 
@@ -1493,6 +1566,8 @@ How each failure ends; §4.5 has the control-client details.
 | connection wedged | control JSON past the overdraft, or its channel full | close 4002; the client reconnects |
 | hub panics | `main` awaits it | exit 1; systemd restarts; clients reconnect and resync |
 | device removed | the 10 s re-check | close 4401 |
+| node removed, no longer eligible, or canonical origin changes | the 10 s re-check | close 4401 |
+| tailnet state or whois unavailable | LocalAPI timeout/read or the 30 s hold expiring | request: `503 identity_unavailable`; three consecutive whois re-check failures: close 4503 |
 | `auth.toml` unreadable | the 10 s re-check, or the token check at the upgrade | close 4503 (HTTP: 503); the client keeps its token and retries |
 | shutdown (SIGTERM) | `main` | close sockets with 4004; `http::serve` waits up to 2 s for open requests, then `main` calls `HubHandle::stop` itself, because a stalled response's connection task outlives axum's graceful shutdown and keeps a handle (§4.7); the hub closes control clients' stdin and `main` waits up to 2 s for their pumps, exits 0; tmux is unaffected |
 | tab from before a tmux restart | server instance differs | `serverExited` for the old instance |

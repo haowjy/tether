@@ -6,7 +6,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use sha2::{Digest, Sha256};
 use subtle::{ConditionallySelectable, ConstantTimeEq};
 
-use super::store::Device;
+use super::store::{Device, DeviceKind};
 
 /// Makes a leaked token recognisable in logs, pastes and secret scanners.
 pub const TOKEN_PREFIX: &str = "tether_";
@@ -53,7 +53,11 @@ pub fn is_host_id(text: &str) -> bool {
 }
 
 pub fn hash(text: &str) -> Hash {
-    Sha256::digest(text.as_bytes()).into()
+    hash_bytes(text.as_bytes())
+}
+
+pub fn hash_bytes(bytes: &[u8]) -> Hash {
+    Sha256::digest(bytes).into()
 }
 
 pub fn hex(hash: &Hash) -> String {
@@ -81,7 +85,11 @@ pub fn matches(stored: &str, hash: &Hash) -> bool {
 pub fn find<'a>(devices: &'a [Device], hash: &Hash) -> Option<&'a Device> {
     let mut found = 0u64;
     for (at, device) in devices.iter().enumerate() {
-        let stored = unhex(&device.token_sha256);
+        let stored = device
+            .token_sha256
+            .as_deref()
+            .filter(|_| device.kind == DeviceKind::Native)
+            .and_then(unhex);
         let valid = subtle::Choice::from(u8::from(stored.is_some()));
         let equal = stored.unwrap_or_default().ct_eq(hash) & valid;
         found.conditional_assign(&(at as u64 + 1), equal);

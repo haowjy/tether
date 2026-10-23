@@ -1,26 +1,30 @@
 # auth
 
-Who may use the daemon ([auth.md](../../docs/design/auth.md)): plain functions over
-the files in `$XDG_STATE_HOME/tether/`, with no task and no cache. `identity.rs` is the
-Tailscale side: the header check, and a small LocalAPI client for the owner's login,
-the MagicDNS name and the serve config (the Funnel check). `token.rs` is pure: tokens,
-codes, host ids, hashes and the constant-time scan. `store.rs` does every file read
-and write. `mod.rs` holds `Auth::check`, which `http/` calls from its middleware, and
-`Auth::recheck`, each socket's re-check: both find the token with `token::find`.
+Request admission and durable device state for the daemon ([auth.md](../../docs/design/auth.md)).
+The socket front selects the lane: native token on either front, enrolled Tailscale
+node only on `serve.sock`. `mod.rs` owns admission and live-socket rechecks;
+`identity.rs` owns Serve headers, the shared 10 s/30 s tailnet-state cell, keep-alive
+LocalAPI and bounded, uncached whois; `node.rs` owns pure forwarded-address, node and
+browser-origin rules; `token.rs` owns tokens, codes and hashes; `store.rs` owns the
+shared `auth.toml` read-modify-write and native/node row shapes.
 
 Rules the code relies on, which are easy to break:
 
 - Every write of `auth.toml` goes through `Store::update`, which holds the state
   directory's flock (`files::lock`, `src/files.rs`) for the whole read-modify-write,
   lands through `files::Temp::replace` (temp file, fsync, rename, directory fsync), and
-  writes nothing when nothing changed. A file that doesn't parse is never overwritten.
-  fs's `config.toml` writes hold the same lock.
-- Checks read the file each time, so `tether device remove` reaches a running daemon
-  with no IPC. Don't add a cache.
-- Only hashes are stored. A token or code exists in memory for one response or one
-  CLI print.
-- Never log a token, a code or file contents. `StoreError::Parse` carries only the
-  line number, because toml's message quotes the file.
-- `Store::enroll` and the other writers block on the flock, and every read blocks on
-  the disk: in the daemon they run on the auth lane (`src/blocking.rs`), as
-  `Auth::check` does, so a hung mount elsewhere can't take auth's threads.
+  writes nothing when nothing changed. A file that doesn't parse is never overwritten;
+  unknown row fields refuse that row alone.
+- Checks re-read `auth.toml`, so `tether device remove` reaches a running daemon with
+  no IPC and closes a live socket at its next 10 s check. Don't add a device cache.
+- Only native token hashes are stored. Browser nodes store the stable node ID and
+  owner login; the node lane has no cookie or portable credential. Never log tokens,
+  codes or file contents.
+- Whois is never cached between requests. Same-address requests share one in-flight
+  result; two LocalAPI clients run at once and at most 16 distinct addresses wait.
+  Keep the address-family, node eligibility and login-match decisions in `node.rs`.
+- The tailnet-state cell is intentionally shared: status and Serve config are read
+  together, held for up to 30 s across LocalAPI failures and refreshed in the
+  background. Don't turn startup LocalAPI availability into a daemon startup gate.
+- Store operations block on disk and run on the auth lane (`src/blocking.rs`), as
+  request checks do; a hung mount must not take the runtime thread or other lanes.

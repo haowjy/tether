@@ -1,79 +1,597 @@
-# Auth: device tokens, enrolment and the Face ID lock
+# Auth: device tokens and enrolled tailnet nodes
 
-Three checks guard every host. The daemon accepts only requests that `tailscale serve`
-tags with Jimmy's Tailscale login. Each phone holds a random **device token** per host,
-issued once at enrolment against a one-time code that `tether enroll` prints on the
-server. The token sits in the iOS Keychain behind Face ID, so one Face ID prompt
-unlocks the app and every host. The device token is the only credential: no session
-tokens, no signatures, no cookies.
+## Overview
 
-This spec covers both sides: the Swift app (`ios/Tether/Auth/`) and the daemon
-(`src/auth/`, the `tether enroll` and `tether device` CLI). The app shell that uses the
-token is [ios-shell.md](ios-shell.md); the WebSocket handshake that carries it is
-[daemon-core.md](daemon-core.md#52-handshake-and-versions). Jimmy chose this scheme on
-2026-10-21; the alternatives he rejected are in
-[decisions.md](decisions.md#auth-a-device-token-behind-face-id).
-
-```mermaid
-sequenceDiagram
-  participant J as Jimmy (server shell)
-  participant A as iOS app
-  participant K as Keychain
-  participant D as daemon (via tailscale serve)
-  Note over J,D: Enrolment, once per host
-  J->>D: tether enroll (writes the pending code to auth.toml)
-  J-->>A: types code K7QM-3XRP
-  A->>D: GET /auth/info
-  D-->>A: hostId, name, protocol range
-  A->>D: POST /auth/enroll {code, deviceName}
-  D-->>A: token (shown once, daemon keeps its hash)
-  A->>K: write tokens item (no prompt)
-  Note over A,K: App unlock: launch, or resume after the lock delay
-  A->>K: read tokens item (one Face ID)
-  A->>D: HTTP: Authorization Bearer, WS: subprotocol
-```
+Every request reaches the daemon through `tailscale serve`, and must carry an
+allowlisted Tailscale login. Past that, a request is admitted on one of two
+**lanes**. The iOS app presents a **device token**, issued at enrolment, kept in the
+Keychain behind Face ID and sent as a bearer token or a WebSocket subprotocol. A
+browser or PWA presents nothing: it is admitted as an **enrolled node**, because
+the tailnet node it runs on, which the daemon learns from tailscaled, is in
+`auth.toml`. Both kinds of device are enrolled with the same one-time code from
+`tether enroll` and revoked with `tether device remove`. tether never authenticates
+with a cookie.
 
 ## Threat model
 
-One user, a tailnet with only his own devices, tailnet-only hosts. The daemon is
-remote code execution for whoever holds a token, so the checks guard against:
+One user, a tailnet with only his own devices, tailnet-only hosts. The dev box may
+have other Unix users, each running their own tether. The daemon is remote code
+execution for whoever passes it, so the checks guard against:
 
-- another tailnet user reaching the port, if the tailnet is ever shared (the login
-  allowlist);
-- his other tailnet devices, or anything running on them (the device token);
-- someone holding the phone unlocked, or who adds a face to it (the Face ID lock,
-  `.biometryCurrentSet`);
-- a process on the server that forges Tailscale headers to enrol itself (the
-  enrolment code, readable only from a shell as Jimmy).
+- another tailnet user reaching the daemon, if the tailnet is ever shared (the login
+  allowlist, and the node's owner);
+- his other tailnet devices, or anything running on them, unless he enrolled them
+  (the device token; the enrolled-node list);
+- **pages on any other origin using an enrolled node's identity through the
+  browser**: other sites, pages served by other machines in the tailnet (all one
+  "site", since `ts.net` is a public suffix), other ports on the dev box, another
+  user's tether ([Browser admission](#browser-admission));
+- **anything else served at tether's origin, or anything else reaching
+  `serve.sock`**: another app mounted beside tether in its Serve entry, or a Serve
+  TCP forward to the socket ([Canonical origin](#canonical-origin));
+- **another Unix user on the dev box** forging Tailscale headers or reaching the
+  daemon from the box's own node (the socket directory, the self-node rule);
+- machines that only *look* like a tailnet node: devices behind a subnet router,
+  tagged servers, nodes shared in from another tailnet, Funnel traffic from the
+  internet ([Node identity](#node-identity));
+- someone holding the phone unlocked, or who adds a face to it, **for the native
+  app only** (the Face ID lock, `.biometryCurrentSet`);
+- a process on the server that forges headers to enrol itself (the enrolment code,
+  readable only from a shell as Jimmy);
+- anything that passes the Tailscale check exhausting memory through HTTP (the
+  per-route caps, the connection backstop and the buffer limits in
+  [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
 
-Out of scope: processes on the server that already run as Jimmy (they can drive tmux
-directly), a jailbroken phone, and malware on the phone that can read process memory
-while the app is unlocked.
+**Who can hold connections.** Only root and Jimmy's processes can connect to the
+sockets. But tailscaled opens a backend connection for each in-flight request from
+any tailnet node the ACLs let reach port 443, including nodes the Tailscale check
+then refuses. So whoever the ACLs let reach the box's port 443 can deny service by
+holding the 64 connection permits; other Unix users on the box can't.
+
+**Accepted:**
+
+- **An enrolled node is trusted whole.** Every browser profile, app and OS account
+  on it reaches the daemon as that node, with no further check, until `tether
+  device remove`. On a phone whose node is enrolled, Safari and the PWA reach the
+  host without Face ID.
+- Anyone holding Jimmy's unlocked laptop or phone can use the browser client. A lock
+  screen drawn by the page would protect nothing the node isn't already sending.
+- An HTTP response already streaming when its device is removed runs to its end
+  ([Live sockets](#live-sockets-and-revocation)).
+- Removing a node in the Tailscale admin console takes effect in tether only once
+  tailscaled on the dev box learns of it, with no documented bound. `tether device
+  remove` takes effect at once, and is the revocation tether relies on.
+- Tailnet state is up to 10 s old when used, and up to 30 s while LocalAPI is
+  failing (§3.3): a handler added beside tether, or a change to the box's own node,
+  is acted on within 10 s while LocalAPI answers.
+
+**Trusted, out of scope:** root and the Tailscale operator (they can write the
+serve config, or drive tmux directly; [running.md](../running.md) says how to keep the
+operator out), processes on the server that run as Jimmy,
+a jailbroken phone, malware on an enrolled device, browser extensions granted
+access to `*.ts.net`, and script injected into tether's own page. The last is kept
+small by the CSP, DOMPurify, and raw files that never run
+([fs.md](fs.md#get-fsrawpath)).
+
+The node lane exists only on the tailnet: off it there is no Serve, no
+`X-Forwarded-For` from tailscaled and no whois. **A public origin admits browsers
+only with a portable credential (passkeys, [Seams](#seams)), on its own socket, and
+must revise this section first.**
+
+## Security state is read when it is used
+
+**Every request reads its inputs when it is judged, within a stated age.** Nothing
+that admits or refuses is derived once at startup, at shell boot, or at any other
+event and then trusted until the next one, because nothing announces when that
+state changes: tailscaled's IPN bus carries no serve-config change, and `auth.toml`
+is edited by another process. A live socket's re-check re-reads what can revoke it:
+its device on both lanes, and on the node lane its node and the canonical origin
+([Live sockets](#live-sockets-and-revocation)). The allowlist is judged per request
+and at the upgrade; `tether device remove` is the revocation for a live socket.
+
+| State | Read from | Read when | If the read fails |
+|---|---|---|---|
+| device rows | `auth.toml` | every auth-lane lookup and every live-socket re-check | `503 auth_unavailable`; a socket closes 4503 |
+| the requesting node | whois | every node-lane request and node-lane re-check | `503 identity_unavailable`; a socket tolerates 2 failures, the 3rd closes 4503 |
+| tailnet state: the serve config, and the self node's stable ID and owner login | `GET /localapi/v0/serve-config` and `GET /localapi/v0/status?peers=false`, read together into one cell | when a request needs the allowlist, the self rule or the canonical origin, from a value at most 10 s old | below |
+
+**The tailnet-state cell.** A request that finds the cell empty or older than 10 s
+starts a read, unless one is in flight, and waits for it; concurrent requests share
+it. When a read fails, requests use the held value without waiting while it is
+under 30 s old, and one background read retries with exponential backoff from 2 s to 30 s while
+requests keep needing the cell, so an outage costs no latency until the hold expires.
+This is the tech lead's deviation from the proposal's fixed 2 s retry, keeping repeated
+LocalAPI failures light on a busy host. Past 30 s,
+or with nothing held, a request that needs the cell gets `503
+identity_unavailable` at once (a socket re-check counts a failure). The reads go
+over one keep-alive LocalAPI connection, apart from whois, with the 2 s timeout and
+a 64 KiB answer limit per answer. Native requests need the cell too, for the
+auto-detected allowlist, so the cell is read about once per 10 s while anyone is
+connected; the
+serve config adds about 2 KB to each read.
 
 ## Constants
 
+The cell retry starts at 2 s and doubles up to 30 s after failures.
+
 | Constant | Value |
 |---|---|
-| device token | `tether_` + 43 characters: base64url, no padding, of 32 random bytes |
-| enrolment code | 8 Crockford base32 characters (40 bits), shown as `XXXX-XXXX` |
-| code lifetime | 10 minutes, single use |
-| wrong codes before the pending code is deleted | 5 |
-| app lock delay | default 5 minutes; immediately, 1, 5, 15 or 60 minutes |
-| `host_id` | 10 random bytes, lowercase base32 (16 characters) |
+| tether's runtime directory | `$XDG_RUNTIME_DIR/tether/`, `0700`, owned by the daemon's user. Holds `lock`, `serve.sock`, `local.sock` (both `0600`) and `paste/` |
+| whois calls in flight | 2 daemon-wide; up to 16 distinct addresses waiting, the 17th `503 busy` |
+| LocalAPI timeout; answer limit | 2 s; 64 KiB (a real whois answer is 1.5–2.5 KB) |
+| tailnet-state cell | a value at most 10 s old is used; after a failed read the held value is used until it is 30 s old, with a background retry starting at 2 s and doubling to 30 s |
+| live-socket re-check | the existing 10 s re-check; 3 consecutive whois failures close with 4503 |
+| minimum browsers | Safari and iOS 16.4, Chrome 76, Firefox 90: the first versions that send `Sec-Fetch-Site` |
+| minimum Tailscale on the server | 1.94, the first with `unix:` proxy targets |
 
-A live socket is re-checked on the connection's own timer, the one that enforces the
-idle timeout; its interval is in
-[daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling).
+## Sockets and the Tailscale check
 
-## Tailscale identity
+**Startup**, in this order:
 
-Every route, the auth routes included, requires a loopback peer and a
-`Tailscale-User-Login` in the allowlist auto-detected from LocalAPI, and the daemon
-refuses to start with Funnel on ([plan.md](plan.md#security)). Probed on the dev box on
-2026-10-21: `tailscale serve` adds `Tailscale-User-Login` and forwards
-`Sec-WebSocket-Protocol` and `Origin` unchanged on a WebSocket upgrade.
+1. **The runtime directory.** `$XDG_RUNTIME_DIR/tether/`. On Linux, without
+   `XDG_RUNTIME_DIR` the daemon refuses to start: a fallback under `/tmp` is a path
+   another user can create first. On macOS it is the per-user temporary directory
+   (`confstr(_CS_DARWIN_USER_TEMP_DIR)`). The daemon creates the directory with mode
+   `0700` if it is missing. If it exists, it must be a directory, not a symlink,
+   owned by the daemon's user, with mode `0700`; otherwise the daemon refuses to
+   start. The directory is never deleted or recreated.
+2. **The lock.** The daemon opens `tether/lock` (creating it, `0600`) and takes a
+   non-blocking `flock` on it, held for its whole life. If another daemon holds it,
+   this one exits with "tether is already running". The kernel drops the lock when
+   its holder dies, so a crash leaves nothing to clean up.
+3. **The sockets**, only once the lock is ours: unlink a stale `serve.sock` and
+   `local.sock`, and bind both.
+4. **Leftovers**, once the lock is ours: empty `tether/paste/` (a subdirectory,
+   never the runtime directory itself) and delete stale upload part files.
 
-## The device token
+Refusals at steps 1–2 for the directory exit 78, since a restart can't fix them;
+"already running" exits 1. `$XDG_RUNTIME_DIR` is `/run/user/<uid>`, which systemd
+keeps while the user unit runs under lingering, as the daemon's unit already
+requires. tailscaled runs as root and reaches `serve.sock` through Serve's `unix:`
+proxy target.
+
+**Startup needs no LocalAPI.** The daemon starts even when tailscaled is down, so a
+boot that starts tether first costs no restart loop. It starts one background fill
+of the tailnet-state cell, retrying with backoff from 2 s to 30 s until it succeeds, then logs the
+canonical origin or the refusal message; it logs again whenever that changes.
+
+**Fronts.** Each socket is a **front**, and the front decides what a connection may
+do:
+
+| Front | Who connects | Lanes | Host |
+|---|---|---|---|
+| `serve.sock` | Serve's HTTP proxy, through tether's one HTTPS entry ([Canonical origin](#canonical-origin)) | node and native | must be `localhost` |
+| `local.sock` | Jimmy's dev proxy, tests, Playwright | native only | not checked |
+
+On `serve.sock`, every request's `Host` must be exactly `localhost`, because Serve
+rewrites it to that for every `unix:` target; the browser's host travels in
+`X-Forwarded-Host`. Any other `Host` is `403 forbidden`. This is a cheap check that
+catches something else pointed at the socket by mistake; it proves nothing, since
+anything that reaches the socket can write `localhost`. What establishes that
+`serve.sock` carries only Serve's HTTP proxy is the directory and the
+canonical-origin rule. On `local.sock`, a request that presents no token is `401
+auth_required`: the node lane doesn't exist there.
+
+**The Tailscale check, on every route of both fronts, before anything else:**
+
+- `Tailscale-Funnel-Request` is absent. Serve sets it on Funnel traffic and strips
+  a spoofed copy.
+- `Tailscale-User-Login` is present and, once decoded (Serve Q-encodes a non-ASCII
+  value, RFC 2047), in the allowlist: the self node's owner login from the
+  tailnet-state cell (§3.3), or the logins given with `--allow-login`. Serve sets the
+  header for user-owned nodes and strips spoofed copies; it sends none for tagged
+  nodes or Funnel.
+
+A failure is `403 forbidden`. The daemon doesn't refuse to start when Funnel is on:
+the Funnel header refuses each such request, and the canonical origin refuses an
+entry with Funnel on (§3.7).
+
+## Node identity
+
+**Resolving the node.** A node-lane request must arrive on `serve.sock`. It must
+carry exactly one `X-Forwarded-For` field holding exactly one address, with no
+comma, and the address must be a Tailscale address (`100.64.0.0/10` or
+`fd7a:115c:a1e0::/48`). Anything else is `403 forbidden`: Serve always writes one
+address, so a list means something appended to it. The daemon then calls `GET
+/localapi/v0/whois?addr=<address>` and takes `Node` and `UserProfile` from the
+answer.
+
+**Node rules.** The node is admitted only if all hold; otherwise the request is
+`403 node_refused` with the reason, and the node can't be enrolled either:
+
+| Rule | Why |
+|---|---|
+| `Tags` is empty | A tagged node belongs to the tailnet, not a person; Serve sends it no login header, so the Tailscale check refuses it already. The rule keeps the node lane from depending on that |
+| `UserProfile.LoginName` equals the decoded `Tailscale-User-Login` | Both come from the same netmap; disagreement means the two lookups saw different nodes, so neither is trusted |
+| `Sharer` is zero | A node shared in from another tailnet is someone else's machine, whatever user it shows |
+| `AllowedIPs` holds only the node's own `Addresses`, apart from the exit-node routes `0.0.0.0/0` and `::/0` | A subnet router masquerades every host on its LAN as itself, so its identity says nothing about which device sent the request. An exit node forwards only outbound traffic, so it can't do that |
+| the stable ID isn't the box's own (`Self.StableID` in the tailnet-state cell) | Every local user on the dev box reaches Serve from the box's own node. Admitting it would let any of them in, through the front door |
+
+Then, on the auth lane, the device lookup: a `node` device whose `node_id` equals
+the stable ID **and** whose `login` equals the node's login. No match is `401
+not_enrolled`. `auth::admit` then judges the found device, as for native.
+
+**Stable IDs.** Tailscale documents that its control plane never reuses a node ID
+(`tailcfg.NodeID`: "global within a control plane URL"). A self-hosted control plane
+such as Headscale makes no such promise; there, a deleted node's ID could in
+principle return, and the `login` match is the remaining guard.
+
+**Per request, never cached.** tailscaled pools its connections to the daemon and
+reuses them for requests from different nodes, so identity is resolved per
+request, never per connection. Results are not kept between requests, because an
+address can later belong to a different node, and only the current netmap says
+which. Concurrent lookups of the same address share one call: the result is
+shared only by requests that arrived while it was in flight, and a request that
+joins a call already queued or running takes no waiting slot. So the caps count
+distinct addresses: at most 2 calls run at once over 2 keep-alive LocalAPI
+connections; up to 16 more addresses wait, and a request for a 17th gets `503 busy`
+at once. One page loading 20 thumbnails makes one call. A whois answer is about
+2 KB and costs tailscaled a map lookup (G4 measures it on the dev box). The shell
+routes and `GET /auth/info` never call whois.
+
+**Failure.** A whois that fails, times out (2 s), or answers more than 64 KiB is
+`503 identity_unavailable`: the daemon can't decide, so it fails closed but
+retryable, never as "not enrolled". A whois that answers "no such peer" is `403
+node_refused` (`unknown_node`).
+
+**Order, and what a flood costs.** For a node-lane request: the `Host` rule, the
+canonical origin, the pure [admission rules](#browser-admission) on headers alone,
+the `X-Forwarded-For` parse, whois, the node rules, then the auth lane's read of
+`auth.toml`. A cross-origin request is refused before any whois or file read; it
+costs at most a shared read of the tailnet-state cell.
+
+## Canonical origin
+
+Browsers are admitted from exactly one origin per daemon, the **canonical origin**:
+`https://<host>` or `https://<host>:<port>`, lowercase, no trailing dot or path.
+
+**The rule.** The daemon finds every reference to its `serve.sock` anywhere in the
+serve config: every `TCP` forward and every `Web` handler, in the background config,
+every foreground config and every Tailscale Service. A `unix:` target names
+`serve.sock` when it is the same file by `stat` identity (device and inode), not by
+string, as tailscaled's own `isTailscaledSocket` does; the daemon `stat`s
+`serve.sock` once, at bind. Another user's socket can't be `stat`ed through their
+`0700` directory, so it never matches. The canonical origin exists when `serve.sock`
+is named exactly once, and that one reference is:
+
+- the only handler of a `Web` entry: mount path `/`, proxy `unix:<serve.sock>`;
+- on a port that serves HTTPS;
+- with Funnel off for its `host:port`.
+
+Otherwise there is no canonical origin and every node-lane request is `403
+bad_origin`. The refusal is one message that names the offending entry or
+reference and the command that fixes it.
+
+| Rule | Why |
+|---|---|
+| `serve.sock` named nowhere else | A Serve `TCP` forward to the socket (`--tcp`, `--tls-terminated-tcp`, from Tailscale 1.102) relays raw bytes from tailscaled itself, so a client writes its own `Host`, `X-Forwarded-For`, `X-Forwarded-Host` and `Tailscale-User-Login`. Only the serve config can show that every connection on `serve.sock` is Serve's HTTP proxy. A second `Web` publication of the same tether is refused by the same count; choosing among several isn't worth a setting |
+| tether is the only handler in its entry | A second handler on the same `host:port` (`--set-path /grafana 3000`, a `Path` handler serving a directory, a `Text` handler) serves pages with tether's origin. They can open `/ws`, `fetch` `/fs/*` and post to `/complete` with exact `Origin` and `Sec-Fetch-Site: same-origin`, and no header tells them apart from tether's page |
+| mount path `/` | The shell and the API assume the root |
+| HTTPS | Browsers need a secure context for the service worker, and Serve marks only TLS requests `https` |
+| Funnel off | Funnel puts the entry on the internet; the node lane is tailnet-only |
+
+**When it is read.** From the tailnet-state cell (§3.3): on every node-lane request,
+every node-lane socket re-check, `GET /auth/info` and `tether enroll`. A handler
+added beside tether, or a stray reference to `serve.sock`, is therefore acted on
+within 10 s, by new requests and by live sockets alike. Request headers (`Host`,
+`X-Forwarded-Host`) never choose the origin.
+
+**Upgrading from loopback TCP.** When there is no canonical origin and some entry
+proxies to `http://127.0.0.1:7850`, today's default publication, the message names
+that entry and gives the one command, `sudo tailscale serve --bg --https=443
+unix:/run/user/<uid>/tether/serve.sock`, which replaces the `/` handler of the
+entry it names. Any other loopback target is someone else's app and gets the plain
+refusal. The daemon logs the message, `tether enroll` prints it, and `GET
+/auth/info` carries it in `browserRefused`.
+
+`GET /auth/info` reports `browserOrigin` (or `null`, with `browserRefused` set to
+the message). The shell compares it with `location.origin` before connecting, and
+on a mismatch shows "Open tether at `<browserOrigin>`" and opens no socket; with
+`null` it shows the message.
+
+## Browser admission
+
+Node identity is ambient: a page on any origin, open in a browser on an enrolled
+node, can make the browser send requests that arrive with that node's identity.
+These rules make sure a node-lane request was sent by tether's own page. The
+browser sets `Origin`, its `Host` and `Sec-Fetch-*` itself and no page can change
+them; Serve copies the browser's `Host` into `X-Forwarded-Host` after deleting any
+inbound copy. So they are trustworthy for browsers. They are no barrier to a
+non-browser process on an enrolled node, which is accepted ([Threat
+model](#threat-model)).
+
+The rules apply to every node-lane request on the device routes (`/ws`, `/fs/*`,
+`/complete`, the debug endpoint) and to `/auth/node/*`. They are pure, on headers
+and the canonical origin.
+
+| Check | Rule | Why this rule |
+|---|---|---|
+| X-Forwarded-Host | exactly one field, equal to the canonical origin's authority (case-insensitive; a default port may be omitted) | Admission compares everything with one origin. A request whose browser-side host isn't that origin's wasn't addressed to it, whatever else it carries |
+| Origin, on WebSocket upgrades and every method but `GET` and `HEAD` | present and equal to the canonical origin, byte for byte after lowercasing; `null`, missing, prefix and suffix matches all fail | **The required control on upgrades and mutations.** Browsers send `Origin` on every cross-origin upgrade and POST, and a WebSocket has no CORS: without it, any page in a browser on an enrolled node could open the shell (cross-site WebSocket hijacking) or submit a form |
+| `Sec-Fetch-Site`, on upgrades and mutations | if present, `same-origin` | Defence in depth. Not required, because WebKit added fetch metadata to WebSocket handshakes late, and the exact `Origin` already decides |
+| `Sec-Fetch-Site`, on `GET` and `HEAD` | present and `same-origin` | **The required control on reads.** Browsers usually send no `Origin` on a GET, so `<img>`, `<video>`, `<script>` or a link from another page would otherwise load `/fs/raw` media, or leak a file's size and dimensions, under the node's identity |
+| Origin, on `GET` and `HEAD` | if present, equal to the canonical origin | Cheap, and refuses the few cross-origin GETs that do carry it |
+
+These rules stop pages on other origins. Pages on tether's own origin are kept to
+tether's by the canonical-origin rule that tether is alone in its entry.
+
+A refusal is `403 bad_origin`; a refused upgrade gets a plain 403 and no socket.
+Each route keeps its own body rule (JSON routes take `application/json` through
+axum's `Json`; `POST /fs/upload` takes a raw body); the content type is no
+cross-site defence, the exact `Origin` is. **No CORS:** the daemon sends no
+`Access-Control-*` header and answers no preflight. **No anti-CSRF token:** every
+admitted mutation carries an exact `Origin`, which no page can forge. A browser
+older than the minimums sends no `Sec-Fetch-Site`, so its GETs are refused; tether
+doesn't support it.
+
+The shell routes (`/`, `/manifest.webmanifest`, `/sw.js`, `/icons/*`,
+`/apple-touch-icon.png`, `/favicon.ico`, `/assets/*`) and `GET /auth/info` judge
+no identity and apply none of these rules: a bookmark, a cold PWA launch or a link
+from another app sends `Sec-Fetch-Site: none` or `cross-site`, and gets the shell.
+The shell is the client's code and carries no host data.
+
+## Carrying the token
+
+The daemon looks at what the request presents. Any `Authorization` header counts,
+whatever its scheme (matched case-insensitively), and so does a `tether.auth.`
+WebSocket subprotocol. `Cookie` is ignored.
+
+| Presented | Lane |
+|---|---|
+| exactly one `Authorization: Bearer <token>`, or exactly one `tether.auth.<token>` subprotocol | native, on either front: today's rules, no origin check, no node identity. Another scheme, or an empty token, is `401 auth_required` |
+| nothing | node, on `serve.sock` only: [Node identity](#node-identity), [Canonical origin](#canonical-origin) and [Browser admission](#browser-admission). On `local.sock`, `401 auth_required` |
+| two `Authorization` headers, two `tether.auth.` subprotocols, or one of each | ambiguous: `401 auth_required` / close 4401 |
+
+A request that presents a token never falls back to the node lane when the token
+is wrong: it is 401. A native token works from any node; a node lane needs no
+token. The iOS app always presents its token, so its requests are judged on the
+native lane even from an enrolled phone node.
+
+**Native enrolment refuses browsers.** `POST /auth/enroll` returns a token in JSON,
+so it refuses any request carrying `Origin` or `Sec-Fetch-Site` with `403
+bad_origin`. A browser never needs a portable token, and refusing keeps script on
+tether's origin that sees a typed code from trading it for one.
+
+**Statuses and close codes for browsers:**
+
+| Answer | Meaning | The browser client |
+|---|---|---|
+| `401 not_enrolled`; close 4401 | this node isn't enrolled, or was removed; or, for a socket, the canonical origin changed | asks `GET /auth/node/session` why: `401` shows the enrolment screen, `403 bad_origin` reloads `/auth/info` |
+| `403 node_refused` (reason) | this node can never be admitted | a screen naming the reason ("This device is a subnet router"), no retry |
+| `403 bad_origin` | the page isn't at the canonical origin, or there is none | reloads `GET /auth/info` and shows "Open tether at …" or the refusal message |
+| `503 identity_unavailable`, `auth_unavailable`, `busy`; close 4503 | the daemon can't decide now | keeps its state and retries with the usual backoff |
+| close 4005 | over the socket cap | "Too many connections" |
+
+A refused node-lane upgrade for identity reasons (not enrolled, node refused,
+whois failed) completes the upgrade and closes at once with 4401 or 4503, as native
+does, because a browser WebSocket can't see a refused upgrade's status. The codes
+`403 unlock_required` and close 4423 are reserved for passkey unlock and are not
+sent in this phase.
+
+**`auth::admit(device, now) -> Grant` is the one policy over a found device**, for
+both lanes, at the initial check and every re-check. Today it returns `Full` for
+every device that exists. Conditions added later (an expiry, a scope, a passkey
+unlock) go here and nowhere else ([Seams](#seams)).
+
+## Enrolment
+
+Steps 1–2 and 5–6 are unchanged and shared by both kinds: one pending code, one
+wrong-try counter, one atomic write that consumes the code and adds the device. A
+node enrols at its own route:
+
+3b. **In a browser**, the shell calls `GET /auth/node/session`. For a node that
+   isn't enrolled it answers `401 {error: "not_enrolled", node: {name}}`, `name`
+   being the node's MagicDNS machine name, and the shell shows the enrolment screen:
+   the host's name from `GET /auth/info`, a code field, and the device name,
+   prefilled with the node's name, which Jimmy can edit. The screen says "This
+   lets every browser and app on <node> use tether on <host>." A refused node gets
+   `403 node_refused` and no code field.
+
+4b. The page sends `POST /auth/node/enroll {code, deviceName}`. It passes the
+   node lane up to the device lookup: front, canonical origin, admission (mutation),
+   whois, node rules. On the auth lane, `Store::enroll` runs with `kind = Node`, the
+   stable ID and the node's login, and `enrolled_by` = the login. If the node is
+   already enrolled, it answers `200` with the existing name and leaves the code
+   unconsumed. The answer is `200 {deviceName}`, `Cache-Control: no-store`. Nothing
+   secret is issued: the node is the credential.
+
+## Live sockets and revocation
+
+A node-lane socket records its node's stable ID, its address and the canonical
+origin at the upgrade. The connection's existing 10 s re-check then does three
+things:
+
+1. Reads `auth.toml` and looks up the device by stable ID and login, as for a new
+   request. Gone: close 4401. File unreadable: close 4503 (as native).
+2. Reads the canonical origin from the tailnet-state cell (§3.3). None, or not the
+   recorded one: close 4401. A cell past its 30 s hold counts a failure, as in
+   step 3.
+3. Calls whois for the recorded address. A different stable ID, "no such peer", or
+   a node that now fails a node rule: close 4401. A failed or slow call keeps the
+   socket and counts a failure; 3 in a row close it with 4503. Any success resets
+   the count.
+
+An upgraded connection carries one client for its whole life, so the identity
+recorded at the upgrade stays the identity of every message on it; the whois
+re-check catches the node leaving the tailnet or changing hands. Tolerating two
+failed calls keeps a briefly slow tailscaled on a busy box from dropping every
+live socket, which would cost each a reconnect; `tether device remove` still takes
+effect within 10 s, because step 1 needs no LocalAPI call. The cost is at most one
+whois per open node-lane socket per 10 s, plus the shared cell read, and none when
+only native or nobody is connected.
+
+**In-flight HTTP is not cut.** A response already streaming when its device is
+removed runs to its end: in practice a `/fs/raw` range, which holds one of 2 raw
+slots and dies after a 30 s stall ([fs.md](fs.md#constants)). Every new request is
+checked, and video makes a new `Range` request every few seconds, so playback
+stops within one range. Cancelling responses by device would need a registry,
+which costs more than one range is worth.
+
+## Removing a device from the browser
+
+Settings has "Remove this device". After a confirmation ("Every browser and app on
+<node> will lose access to <host>"), the client closes its own sockets and sends
+`POST /auth/node/remove {}`. It passes the node lane up to the device lookup; if
+this node is enrolled, the daemon removes it in one locked write. It answers `204`
+either way, and the shell shows the enrolment screen. Any other socket from the
+node, in another tab, browser or the PWA, closes with 4401 at its next re-check.
+Local drafts stay; "Clear local data" is a separate action
+([browser-setup.md](client/browser-setup.md#drafts-installation-and-lifecycle)).
+
+A browser learns it isn't enrolled only from the daemon: `GET /auth/node/session`
+at boot, 401 or 4401 afterwards. It stores no enrolment state of its own.
+
+## State on disk
+
+`auth.toml`: `[[device]]` with `name`, `kind` (`native` or `node`; absent means
+`native`, so files written before nodes parse unchanged), `enrolled_at`,
+`enrolled_by` (the Tailscale login, or `cli`), and per kind: `token_sha256` for
+native; `node_id` (the stable ID) and `login` (the node's owner at enrolment) for
+node. Optional `[pending]` as today.
+
+**A device row with a field the daemon doesn't know is refused, alone**, and logged
+by name; other rows keep working. A later version may add fields that narrow a
+device (an expiry, a scope); an older daemon that ignored them would grant that
+device full power.
+
+```toml
+[[device]]
+name = "iphone"
+token_sha256 = "…"          # kind absent: native
+enrolled_at = "2026-10-21T09:12:00Z"
+enrolled_by = "jimmy@github"
+
+[[device]]
+name = "jimmys-macbook-air"
+kind = "node"
+node_id = "nMM5jYAKHC11CNTRL"
+login = "jimmy@github"
+enrolled_at = "2026-10-23T08:00:00Z"
+enrolled_by = "jimmy@github"
+```
+
+## CLI
+
+| Command | Effect |
+|---|---|
+| `tether enroll [--ttl 10m]` | Print a new code, the host URL for the app, and the browser URL (`browserOrigin`, or the refusal message with its fix). The code works for either kind |
+| `tether device list` | Devices with name, kind, enrolled date and `enrolled_by`; for nodes, the stable ID and whether tailscaled currently knows a peer with it (from `/status` with peers) |
+| `tether device remove <name>` | Remove a device of either kind; its requests are refused at once and its sockets close at the next re-check |
+| `tether device add <name>` | Add a **native** device and print its token once, for the dev shim or Playwright against a real daemon |
+
+## Endpoints
+
+Every route on both fronts sits behind the Tailscale check (`403 forbidden`), and
+every route on `serve.sock` behind the `Host: localhost` rule. API paths are
+reserved before static routing (`/ws`, `/auth/`, `/fs/`, `/complete`, `/debug`): an
+unknown path under them is a JSON 404, never the shell.
+
+| Route | Native lane | Node lane (`serve.sock`) | Request → response |
+|---|---|---|---|
+| shell paths, `GET`/`HEAD` | not judged | not judged | the packaged files, under the shell caps ([daemon-core.md](daemon-core.md#static-shell)) |
+| `GET /auth/info` | not judged | not judged | `{hostId, name, daemonVersion, protocol, browserOrigin, browserRefused}` |
+| `POST /auth/enroll` | redeems the code | refused: any `Origin` or `Sec-Fetch-Site` is `403 bad_origin` | `{code, deviceName}` → `{token, deviceName}` |
+| `POST /auth/node/enroll` | a token is `400 bad_request` | canonical origin, admission (mutation), whois, node rules | `{code, deviceName}` → `200 {deviceName}`; `403 bad_code`, `bad_origin`, `node_refused`; `503` |
+| `GET /auth/node/session` | a token is `400 bad_request` | canonical origin, admission (GET), whois, node rules, lookup | `200 {deviceName}`; `401 {error, node: {name}}`; `403 bad_origin`, `node_refused`; `503` |
+| `POST /auth/node/remove` | a token is `400 bad_request` | canonical origin, admission (mutation), whois, node rules | `{}` → `204` |
+| `GET /ws` | subprotocol token | only `tether.v1` offered; canonical origin, admission (upgrade), whois, node rules, lookup | upgrade; not enrolled → close 4401; can't decide → 4503; bad origin → plain 403 |
+| `GET /fs/*` | `Authorization: Bearer` | admission (GET) and the node lane | as fs.md |
+| `POST /fs/*`, `POST /complete` | `Authorization: Bearer` | admission (mutation) and the node lane | as fs.md, complete.md |
+| debug endpoint | `Authorization: Bearer` | admission for its method and the node lane | as plan.md |
+
+Every non-shell response carries `Cache-Control: no-store`, `X-Content-Type-Options:
+nosniff` and `Cross-Origin-Resource-Policy: same-origin`, so another origin can't
+embed one with `<img>` or `<video>`. New errors: `403 bad_origin`, `403
+node_refused` (with `reason`: `tagged`, `login_mismatch`, `shared`, `routes`,
+`self`, `unknown_node`), `401 not_enrolled`, `503 identity_unavailable`.
+
+**Shell responses** carry `Content-Security-Policy: default-src 'none'; script-src
+'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src
+'self' blob:; font-src 'self'; connect-src 'self' wss://<canonical host>;
+manifest-src 'self'; worker-src 'self'; frame-src 'none'; frame-ancestors 'none';
+object-src 'none'; base-uri 'none'; form-action 'none'`, plus `nosniff`,
+`Referrer-Policy: no-referrer` and `Cross-Origin-Opener-Policy: same-origin`. With
+no canonical origin, `connect-src` is `'self'` alone. Hashed assets get
+`Cache-Control: public, max-age=31536000, immutable`; `/`, `/sw.js` and the
+manifest get `no-cache` and an `ETag` (the content hash), and answer
+`If-None-Match` with 304. The service worker answers only shell paths and never
+calls `respondWith` for anything else, so API, file, media and socket traffic never
+pass through it.
+
+## Module shape
+
+- `node.rs` (new, pure): `forwarded_addr(headers) -> Result<IpAddr, Refused>`;
+  `node_rules(&Whois, login, self_id) -> Result<NodeId, Refusal>`;
+  `Origin::canonical(&ServeConfig, &SocketId) -> Result<Origin, OriginRefusal>`,
+  which counts every reference to the socket and where `OriginRefusal` carries the
+  entry or reference and the fix;
+  `admission(method, upgrade, headers, &Origin) -> Result<(), Refused>`;
+  `presented(headers) -> Presented { None, Native(Authorization | Subprotocol),
+  Ambiguous }`; `decode_login(&HeaderValue)` for Serve's Q-encoding.
+- `identity.rs`: one keep-alive LocalAPI connection for the tailnet-state cell and
+  a pool of 2 for whois, each with the 2 s timeout and the 64 KiB limit; whois
+  single-flight by address, waiters counted by distinct address; the cell and its
+  background retry (§3.3); `ServeConfig` parses `TCP` forwards, `Web` entries,
+  `Handlers`, `unix:` targets, `AllowFunnel`, `Foreground` and `Services`.
+- `store.rs`: `Device.kind` (serde default `Native`) and per-kind fields;
+  `deny_unknown_fields` on the device row, applied row by row so one bad row is
+  refused alone; `enroll(code, name, by, Kind, now)`; `remove_node(node_id)`.
+- `mod.rs`: `check` dispatches on the front and `presented`; `admit(device, now) ->
+  Grant` is the single post-lookup policy, called by `check` and `recheck`.
+- `http/mod.rs`: the accept loop (resource-limits §3.7) accepts on both sockets and
+  inserts `Front::Serve | Front::Local` into every request's extensions, replacing
+  `ConnectInfo<SocketAddr>`. `device_check` runs the canonical origin and `admission` for the node lane
+  before whois. The `/auth/node/*` routes sit outside the `devices` router, like
+  `/auth/enroll`, and call the same steps.
+- `main.rs`: startup in §3.5's order: directory, lock, sockets, then the paste
+  directory and part files ("once the lock is ours" replaces "once the port is
+  ours"). Startup reads nothing from LocalAPI: the exit when `Node::read` or
+  `ServeConfig::read` fails goes, and so does the startup Funnel refusal. The cell's
+  first fill logs the canonical origin or the refusal message.
+- `config.rs`: `runtime_dir()` returns `$XDG_RUNTIME_DIR/tether` on Linux or an error
+  (exit 78), the per-user temporary directory on macOS; the paste directory is its
+  `paste/`.
+- **Deleted in the same change:** `Config.port` and `DEFAULT_PORT` (config's
+  "unknown keys are ignored" keeps old files with `port` parsing);
+  `ServeConfig::reaches`, `url_for(port)` and `funnels_to(port)`, replaced by
+  `Origin::canonical`; the loopback check in `identity::check` and
+  `IdentityError::NotLoopback`; the `TcpListener` bind and its log line;
+  `runtime_dir()`'s `/tmp/tether-<uid>` fallback. `small_buffers` takes the Unix
+  stream instead of `&TcpStream`. In `web/vite.config.ts`, `TETHER_PORT` and the
+  `http://127.0.0.1:7850` target become `TETHER_SOCKET` and a `socketPath` target
+  on `local.sock`. Tests that bind ports connect to the sockets.
+- Dependencies: `hyper` gains `server`; `hyper-util` gains `server`, `http1` and
+  `service`. `flock` comes from `rustix::fs::flock`.
+- The log never carries `Authorization` or `Sec-WebSocket-Protocol` values;
+  refusals log the reason, the path and, for the node lane, the stable ID.
+
+## Seams
+
+**Public HTTPS (passkeys).** A public origin gets its own front, `public.sock`, for
+a public reverse proxy. Its connections never reach the node lane and ignore every
+`Tailscale-*` and `X-Forwarded-*` header, so a proxy that passes client headers
+through, even one running as root, can't make an internet client look like a
+tailnet node. Browsers there need a portable credential, and `presented` gains a
+third lane for it. The planned one is a passkey: a device of kind `passkey` holding
+a WebAuthn credential's public key, registered with the enrolment code; an
+assertion with user verification opens a short session the public phase specifies,
+whose RP ID is the public hostname. `auth::admit` judges that device like any other.
+Nothing of this is built. The same `admit` can later require a passkey unlock for
+node devices on the tailnet (closing the unlocked-device risk); `403
+unlock_required` and close 4423 are reserved for it.
+
+**Guest devices.** A guest would be another person's tailnet node, given one
+session read-only until an expiry. Its row would add `scope` (the session name and
+`read-only`) and `expires_at`, and `admit` would return a `Grant` narrower than
+`Full` that the hub enforces on every message. The guest's login is outside the
+allowlist, so the allowlist would become per device: the owner's login for full
+devices, the guest's own for a guest row. A guest's node shared into Jimmy's
+tailnet may show a non-zero `Sharer`, which the shared-node rule refuses; the guest
+phase revisits that rule. Nothing of this is built. The rule that refuses unknown
+row fields means an older daemon never reads a guest row as a full device.
+
+## Native device token
+
 
 - **256 bits of entropy**, generated by the daemon. A guess is hopeless, so token
   checks need no rate limit or lockout.
@@ -90,77 +608,9 @@ refuses to start with Funnel on ([plan.md](plan.md#security)). Probed on the dev
   derived from it would protect only against capture in transit or from the page, and
   transit is WireGuard plus TLS while the WebSocket alone is full control of the host.
 
-## Enrolment
-
-1. On the server, `tether enroll` prints a code such as `K7QM-3XRP` and the host's
-   URL. Running it again replaces the previous code.
-2. The CLI stores only `sha256(normalized code)`, the expiry and a wrong-try counter
-   of 0, as `pending` in the state file. The daemon reads it when an enrol request
-   arrives; nothing polls it.
-3. In the app, Add host: Jimmy enters the host's MagicDNS name and the code. The app
-   calls `GET /auth/info` and shows the host's name for confirmation.
-4. The app sends `POST /auth/enroll {code, deviceName}`. It passes the Tailscale check
-   first, and the login is recorded as `enrolled_by`.
-5. On the auth lane, the daemon takes the state-directory `flock` (`files::lock`),
-   reads the state file and checks the code against `pending` (constant time, unexpired):
-   - **right:** generate the token, add the device with the token's hash, remove
-     `pending`, and write the file once. Consuming the code and adding the device is
-     one atomic write, so a crash leaves either both or neither.
-   - **wrong:** add one to the counter and write the file; at 5, remove `pending`
-     instead, and `tether enroll` must run again. The counter is in the file, so it
-     survives a restart.
-6. Device names are unique: a name that exists gets a `-2` suffix, so `tether device
-   remove <name>` never has to guess.
-7. The app adds the token to its Keychain item (below). Enrolment doesn't prompt: Add
-   host is reachable only while the app is unlocked, and with no hosts there is
-   nothing to unlock.
-
-Normalization: uppercase, drop `-` and spaces, map `O`→`0` and `I`/`L`→`1`.
-
-The code is what keeps a forged header or another tailnet device from enrolling: it is
-readable only from a shell on the server, and it dies after one use, its lifetime, or
-5 wrong guesses.
-
-## Carrying the token
-
-- **HTTP:** `Authorization: Bearer <token>`. In the app only native code sends HTTP to
-  a host (the scheme handler's proxy, uploads, enrolment;
-  [ios-shell.md](ios-shell.md#where-the-web-ui-comes-from)), on an ephemeral
-  `URLSession` with cookies off. A bad or revoked token gets `401 auth_required`; if the
-  daemon can't read `auth.toml` it can't judge the token, and answers `503
-  auth_unavailable` instead.
-- **WebSocket:** the web UI can't set headers on a WebSocket, so the token rides in the
-  subprotocol list, `Sec-WebSocket-Protocol: tether.v1, tether.auth.<token>`, and never
-  in a URL. At the upgrade of `GET /ws`:
-  - Tailscale check fails → plain HTTP 403, no socket;
-  - token missing, unknown or revoked → the daemon **completes the upgrade**
-    (answering `tether.v1`), closes at once with `4401`, and reads nothing. A browser
-    WebSocket can't see a refused upgrade's status (it reports 1006, like a network
-    failure), so a 401 there would leave the app retrying a dead token;
-  - `auth.toml` unreadable (below) → the same: complete the upgrade, close at once with
-    `4503`;
-  - token valid → upgrade, then `hello`.
-- **Revocation on a live socket:** the connection re-checks its token on its own
-  timer, not on client pings, so a client that stops pinging can't dodge it, and
-  closes with `4401` when the device is gone, or `4503` when the file can't be read at
-  that moment.
-- **On 4401 or a 401,** the host is marked "not enrolled" and Add host is offered,
-  with no retry: no token is rejected for a reason a retry would fix. A 401 is seen by
-  native code directly; a 4401 is seen by the web, which reports it to native with
-  `hostRejected` ([ios-shell.md](ios-shell.md#the-bridge)).
-- **On 4503 or a 503,** the daemon could not decide, so the app keeps its token, does
-  not mark the host "not enrolled", and retries with the usual backoff
-  ([plan.md](plan.md#reconnect)); the pill says the host can't verify the device. Once
-  the file parses again, the next retry succeeds with no re-enrolment.
-
-**No `Origin` check.** Origin checks stop cross-site WebSocket hijacking, which needs
-ambient credentials, and tether has none: no cookies, and a bearer token a foreign
-page can't read. The invariant: **tether never authenticates with a cookie.** POST
-bodies must be `Content-Type: application/json` (axum's `Json` rejects anything else),
-so a page in a browser on the tailnet can't send them without a CORS preflight, which
-the daemon never answers.
 
 ## Swift side: Keychain item and app lock
+
 
 **One Keychain item holds every host's token**: a generic password, service
 `tether.tokens`, whose data is JSON `{ "<host_id>": "<token>" }`.
@@ -195,7 +645,9 @@ stateDiagram-v2
 - **Cancel, a failed match or biometry lockout:** the app stays locked with an Unlock
   button. Nothing is deleted.
 
+
 ## Recovery
+
 
 | Situation | What happens | Fix |
 |---|---|---|
@@ -207,92 +659,9 @@ stateDiagram-v2
 
 Recovery needs a shell on the server that isn't tether (the laptop, or SSH).
 
-## Daemon side
 
-### State on disk
+## Crates
 
-`$XDG_STATE_HOME/tether/` (default `~/.local/state/tether/`), directory mode 0700,
-files 0600.
-
-| File | Contents | Written by |
-|---|---|---|
-| `auth.toml` | `[[device]]` with `name`, `token_sha256`, `enrolled_at`, `enrolled_by` (the Tailscale login, or `cli`); optional `[pending]` with `code_sha256`, `expires_at`, `wrong_tries` | daemon on enrol; CLI on `enroll`, `device add`, `device remove` |
-| `host_id` | the host id | whichever of daemon or CLI runs first; never rewritten |
-| `lock` | empty; `flock` held by every writer for its whole read-modify-write | both |
-
-Every write of `auth.toml` happens under the lock: write a temp file in the same
-directory, `fsync` it, rename it over `auth.toml`, `fsync` the directory.
-
-`host_id` is the host's identity: `welcome.host.id`, `/auth/info.hostId`, and the key
-of the app's token map. It lives apart from `config.toml`, because config files get
-copied between machines with dotfiles and two hosts must never share an id, and apart
-from `auth.toml`, so the file that is rewritten can never take the identity with it.
-Changing the MagicDNS name doesn't change it; the app updates the host's URL.
-
-**Every check reads the file.** `auth::check` reads and parses `auth.toml` and scans
-it, with no cache and no service: the file is a few rows, so a check costs tens of
-microseconds, and `tether device remove` takes effect on the next request with no
-watcher or IPC. A file that can't be read or doesn't parse **fails closed but
-retryable**: every token check is refused until it parses, as `503 auth_unavailable`
-over HTTP and close `4503` on a WebSocket (live sockets at their next re-check), never as
-"not enrolled". A typo in a hand edit therefore costs retries, not a re-enrolment of
-every device. The daemon never overwrites a file it can't parse; the log and the CLI's
-error carry only the line number, never the file's contents.
-
-### CLI
-
-| Command | Effect |
-|---|---|
-| `tether enroll [--ttl 10m]` | Print a new enrolment code and the host URL |
-| `tether device list` | Devices with name, enrolled date and `enrolled_by` |
-| `tether device remove <name>` | Remove a device; its token stops working and its sockets close at the next re-check |
-| `tether device add <name>` | Add a device and print its token once, for a desktop browser or Playwright against a real daemon |
-
-The CLI works whether or not the daemon runs: it only edits files under the lock.
-
-### Endpoints
-
-JSON, camelCase, as in the WebSocket protocol. Errors are `{"error": "<code>"}`. The
-request and response types are in `src/proto/auth.rs`; Swift mirrors them by hand
-([daemon-core.md §5.5](daemon-core.md#55-type-generation)). Every route sits behind the
-Tailscale check; only the two `/auth` routes skip the token check.
-
-| Route | Request | Response | Errors |
-|---|---|---|---|
-| `GET /auth/info` | | `{hostId, name, daemonVersion, protocol: {min, max}}` | |
-| `POST /auth/enroll` | `{code, deviceName}`, `Content-Type: application/json`, body at most 4 KiB | `{token, deviceName}` | 403 `bad_code` (wrong, expired or none pending); 400/415/422 `bad_request`; 413 `too_large`; 500 `internal`; 503 `busy` (auth lane wait) |
-| `GET /ws` | subprotocol token | upgrade | bad token: upgrade, then close 4401; unreadable `auth.toml` or an auth-lane timeout: upgrade, then close 4503 |
-| every other route (`/fs/*`, `/complete`, debug) | `Authorization: Bearer` | | 401 `auth_required`; 503 `auth_unavailable` |
-
-Errors on any route, besides those in the table:
-
-| Status | `error` | Cause |
-|---|---|---|
-| 403 | `forbidden` | The Tailscale check failed: not a loopback peer, or a login outside the allowlist. Sent for every route, unknown paths included, before anything else |
-| 400, 415, 422 | `bad_request` | A body that isn't the route's JSON, with the status axum's `Json` extractor gives: 415 when it isn't `application/json`, 400 or 422 for malformed or mistyped JSON |
-| 413 | `too_large` | The enrolment JSON body exceeds 4 KiB |
-| 500 | `internal` | The enrolment transaction failed (the state file can't be read or written); the cause is logged, never sent. A broken `auth.toml` shows up here for `POST /auth/enroll`, which no token check guards |
-| 503 | `busy` | The auth lane has no thread within 10 s for enrolment |
-| 503 | `auth_unavailable` | The token check cannot read or parse `auth.toml`, or its auth-lane wait expires; retryable (see [Carrying the token](#carrying-the-token)) |
-
-`/auth/info.name` (and `welcome.host.name`) is the config key `name`, else the machine
-name from tailscaled's MagicDNS name ([plan.md](plan.md#config)). It is a label for the
-host list; the host's identity is `hostId`.
-
-### Module shape
-
-`src/auth/` is plain functions over the state file; it owns no task. File reads, writes
-and the shared state-directory flock use `files` on the auth lane. `Auth::recheck`
-uses `token::find` just like the initial token check.
-
-- `identity.rs`: the LocalAPI client, the allowlist, the Tailscale check.
-- `token.rs`: pure `generate() -> String`, `hash(&str) -> [u8; 32]`, and
-  `find(devices, token) -> Option<&Device>`, the constant-time scan.
-- `store.rs`: `auth.toml` and `host_id` I/O under the lock; the enrol transaction.
-- `mod.rs`: `check(headers) -> Result<Device, AuthError>`, used by the axum middleware
-  in `src/http/` and by each connection's re-check.
-
-### Crates
 
 | Need | Crate |
 |---|---|
@@ -312,14 +681,16 @@ On the Swift side, Security and LocalAuthentication cover everything.
 
 ## Open risks
 
-- **The error after a Face ID change** is unconfirmed; spike 1 part B records it. The
-  manual reset means the design doesn't depend on it.
-- **An unreadable `auth.toml` locks every device out until it is fixed**, though none
-  is forgotten: the app keeps its tokens and retries (503 and 4503). The fix needs a
-  server shell, like recovery.
-- **Face ID failure lockout:** with biometry-only access control, if Face ID won't
-  recognise Jimmy (mask, injury), no host is reachable until it does. Accepted for a
-  single-user tool.
-- **A server shell is needed for recovery:** if the laptop is away and the phone has no
-  SSH client, a Face ID change locks him out of every host. Keep an SSH client on the
-  phone until tether has proved itself.
+- The exact Keychain error after Face ID is re-enrolled remains unconfirmed. The
+  manual reset flow means the design does not depend on identifying that error.
+- The node lane still needs the real deployment probes: Serve's Unix-socket headers,
+  Tailscale's `whois` fields and load, browser/PWA behavior (including iOS Safari),
+  cross-origin refusal, and resource headroom under cold shell loads. These require
+  the Linux dev box and the real browser/device matrix; a fake LocalAPI and HTTP tests
+  do not replace them.
+- A bad hand edit to `auth.toml` locks every device out until the file is fixed, though
+  the app keeps its credentials and retries. Recovery needs a shell outside tether.
+- Face ID failure lockout remains accepted for this single-user tool: if Face ID
+  cannot recognize Jimmy, no host is reachable until it can.
+- A server shell is needed for recovery if a Face ID change locks every host and the
+  laptop is away. Keep an SSH client available until tether has proved itself.

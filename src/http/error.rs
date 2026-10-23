@@ -115,7 +115,17 @@ impl From<&AuthError> for CloseCode {
 /// `auth.toml` that can't be read fails closed but retryable: 503 or 4503.
 fn auth(refused: &AuthError) -> (HttpError, CloseCode) {
     match refused {
-        AuthError::NoToken | AuthError::Unknown => (HttpError::AuthRequired, CloseCode::BadToken),
+        AuthError::NoToken
+        | AuthError::Ambiguous
+        | AuthError::Unknown
+        | AuthError::WrongFront
+        | AuthError::BadOrigin
+        | AuthError::Forbidden
+        | AuthError::NodeRefused(_)
+        | AuthError::NotEnrolled { .. } => (HttpError::AuthRequired, CloseCode::BadToken),
+        AuthError::IdentityUnavailable(_) => {
+            (HttpError::AuthUnavailable, CloseCode::AuthUnavailable)
+        }
         AuthError::Store(_) | AuthError::Busy => {
             (HttpError::AuthUnavailable, CloseCode::AuthUnavailable)
         }

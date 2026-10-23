@@ -1,14 +1,13 @@
 #![forbid(unsafe_code)]
 
 use std::error::Error;
-use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use clap::{Parser, Subcommand};
-use tether::auth::identity::{Node, ServeConfig};
-use tether::auth::{Auth, Store};
+use tether::auth::identity::LocalApi;
+use tether::auth::{Auth, DeviceKind, Store};
 use tether::blocking::{BLOCKING_THREADS, Lanes};
 use tether::complete::{self, Environment};
 use tether::config::{self, Config, ConfigError, ConfigFile};
@@ -16,7 +15,6 @@ use tether::fs;
 use tether::http::{self, App};
 use tether::hub::{self, Endpoints};
 use tether::proto::HostInfo;
-use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tracing::{info, warn};
 use tracing_subscriber::filter::{LevelFilter, Targets};
@@ -27,8 +25,6 @@ type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 
 /// How long shutdown waits for the hub to close its control clients.
 const HUB_WAIT: Duration = Duration::from_secs(2);
-/// TCP newcomers held by the kernel while the bounded HTTP accept loop is full.
-const HTTP_BACKLOG: u32 = 128;
 
 /// Phone-first client for tmux sessions on a dev server.
 #[derive(Parser)]
@@ -43,7 +39,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the daemon on 127.0.0.1, for `tailscale serve` to publish.
+    /// Run the daemon on private Unix sockets for `tailscale serve` and local tools.
     Serve {
         /// Tailscale logins let through [default: this node's owner, from tailscaled]
         #[arg(long = "allow-login", value_name = "LOGIN")]
@@ -62,7 +58,7 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DeviceCommand {
-    /// Devices with their name, enrolment date and who enrolled them.
+    /// List native devices and enrolled Tailscale nodes.
     List,
     /// Add a device and print its token once (a desktop browser, Playwright).
     Add { name: String },
@@ -85,9 +81,15 @@ fn main() -> ExitCode {
         Err(cause) => {
             eprintln!("tether: {cause}");
             if cause.downcast_ref::<ConfigError>().is_some()
+                || cause.downcast_ref::<config::RuntimeDirError>().is_some()
                 || cause
                     .downcast_ref::<tether::budget::BelowMinimum>()
                     .is_some()
+                || cause
+                    .downcast_ref::<tether::runtime::RuntimeError>()
+                    .is_some_and(|error| {
+                        matches!(error, tether::runtime::RuntimeError::Directory(_))
+                    })
             {
                 ExitCode::from(78)
             } else {
@@ -113,56 +115,22 @@ fn serve(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<(
 
 async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<()> {
     let budget = tether::budget::resolve(config.memory_budget_mib)?;
+    let runtime_dir = config::runtime_dir()?;
+    let runtime = tether::runtime::Runtime::open(runtime_dir)?;
+    let serve_path = runtime.serve_path.clone();
+    let local_path = runtime.local_path.clone();
+    let paste_dir = runtime.paste_dir.clone();
+    let serve_listener = runtime.serve;
+    let local_listener = runtime.local;
     let store = Store::open(config::state_dir()?)?;
     let home = config::home()?;
     let host_id = store.host_id()?;
-    let port = config.port;
-    let node = Node::read()
-        .await
-        .map_err(|cause| format!("reading this node from tailscaled: {cause}"))?;
-    let serve_config = ServeConfig::read()
-        .await
-        .map_err(|cause| format!("reading tailscale serve's config from tailscaled: {cause}"))?;
-    let funnels = serve_config.funnels_to(port);
-    if !funnels.is_empty() {
-        return Err(format!(
-            "Funnel puts 127.0.0.1:{port} on the public internet at {} (tailscaled's serve \
-             config), and tether is tailnet-only. `tailscale funnel status` shows it; \
-             `tailscale funnel reset` clears it, then publish with `tailscale serve`.",
-            funnels.join(", ")
-        )
-        .into());
-    }
-    match serve_config.url_for(port) {
-        Some(url) => info!(%url, "published by tailscale serve"),
-        None => warn!(
-            "tailscale serve doesn't publish 127.0.0.1:{port}: run `tailscale serve --bg \
-             --https=443 http://127.0.0.1:{port}` (docs/running.md)"
-        ),
-    }
-    let allow = match allow_login {
-        logins if logins.is_empty() => vec![node.owner()?],
-        logins => logins,
-    };
-    let name = config
-        .name
-        .clone()
-        .unwrap_or_else(|| node.machine_name().to_owned());
     let mut shutdown = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
-    let listener =
-        tcp_listener(port).map_err(|cause| format!("listening on 127.0.0.1:{port}: {cause}"))?;
-    // Only once the port is ours: a second daemon started by mistake must not delete
-    // the running one's pastes.
     let lanes = Lanes::default();
-    let runtime_dir = config::runtime_dir();
-    let paste_dir = lanes
-        .auth
-        .run(move || empty_dir(&runtime_dir))
-        .await
-        .map_err(|busy| busy.to_string())??;
     start_file_api(&config, &home, &lanes).await;
 
+    let name = config.name.clone().unwrap_or_else(|| "tether".to_owned());
     let endpoint = config.endpoint();
     let (hub, mut hub_task) = hub::spawn(
         Endpoints {
@@ -172,8 +140,15 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         name.clone(),
     );
     let hub_stop = hub.clone();
+    let api = LocalApi::system();
     let app = App {
-        auth: Auth::new(store, allow.clone(), lanes.auth.clone()),
+        auth: Auth::with_local_api(
+            store,
+            allow_login,
+            lanes.auth.clone(),
+            api,
+            Some(&serve_path),
+        ),
         hub,
         host: HostInfo { id: host_id, name },
         paste_dir,
@@ -191,9 +166,15 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         info!("shutting down");
         let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
     };
-    let mut server = std::pin::pin!(http::serve(listener, app, signalled));
+    let mut server = std::pin::pin!(http::serve(serve_listener, local_listener, app, signalled));
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
-    info!(port, ?allow, tmux = ?endpoint, version = env!("CARGO_PKG_VERSION"), "listening on 127.0.0.1");
+    info!(
+        serve_socket = %serve_path.display(),
+        local_socket = %local_path.display(),
+        tmux = ?endpoint,
+        version = env!("CARGO_PKG_VERSION"),
+        "listening on private Unix sockets"
+    );
 
     tokio::select! {
         served = &mut server => served?,
@@ -211,31 +192,8 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
     }
 }
 
-/// Keep the TCP bound at 128 until browser auth replaces it with the Unix listener.
-fn tcp_listener(port: u16) -> std::io::Result<TcpListener> {
-    let socket = tokio::net::TcpSocket::new_v4()?;
-    socket.set_reuseaddr(true)?;
-    socket.bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))?;
-    socket.listen(HTTP_BACKLOG)
-}
-
-/// The paste directory, 0700 and emptied: files left by a daemon that died are no
-/// longer anyone's. Blocks.
-fn empty_dir(dir: &Path) -> std::result::Result<PathBuf, String> {
-    use std::os::unix::fs::PermissionsExt as _;
-    let failed = |cause: std::io::Error| format!("{}: {cause}", dir.display());
-    match std::fs::remove_dir_all(dir) {
-        Ok(()) => {}
-        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => {}
-        Err(cause) => return Err(failed(cause)),
-    }
-    std::fs::create_dir_all(dir).map_err(failed)?;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(failed)?;
-    Ok(dir.to_owned())
-}
-
 /// Deletes the part files of uploads a daemon that died left, and warns of roots that
-/// fs ignores. Only once the port is ours, as for the paste directory.
+/// fs ignores. Runtime::open holds the single-instance lock before this can run.
 async fn start_file_api(config: &Config, home: &Path, lanes: &Lanes) {
     for entry in config.roots.iter().chain([&config.uploads_dir]) {
         if fs::expand(entry, home).is_none() {
@@ -281,14 +239,40 @@ fn enroll(config: &Config, ttl: Duration) -> Result<()> {
         "It works once, for {}.",
         humantime::format_duration(Duration::from_secs(ttl.as_secs()))
     );
-    let port = config.port;
-    let published = runtime()?.block_on(ServeConfig::read());
-    match published.map(|serve| serve.url_for(port)) {
-        Ok(Some(url)) => println!("Host: {url}"),
-        Ok(None) => println!(
-            "Host: none yet: tailscale serve doesn't publish 127.0.0.1:{port} (docs/running.md)"
-        ),
-        Err(cause) => println!("Host: unknown ({cause})"),
+    let api = LocalApi::system();
+    let publication = runtime()?.block_on(api.tailnet_state());
+    match publication {
+        Ok(state) => {
+            let path = config::runtime_dir()?.join("serve.sock");
+            let origin = tether::auth::identity::SocketIdentity::of(&path)
+                .map_err(|error| error.to_string())
+                .and_then(|socket| {
+                    state
+                        .serve
+                        .canonical_origin(socket, &path)
+                        .map(|origin| origin.origin)
+                        .map_err(|refusal| refusal.message)
+                });
+            match origin {
+                Ok(origin) => {
+                    let label = config
+                        .name
+                        .clone()
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| state.machine_name().to_owned());
+                    println!("Host: {origin} ({label})");
+                    println!("Browser: {origin}");
+                }
+                Err(refusal) => {
+                    println!("Host: unavailable");
+                    println!("Browser: {refusal}");
+                }
+            }
+        }
+        Err(cause) => {
+            println!("Host: unknown ({cause})");
+            println!("Browser: tailnet state is unavailable ({cause})");
+        }
     }
     Ok(())
 }
@@ -298,6 +282,8 @@ fn device(command: DeviceCommand) -> Result<()> {
     match command {
         DeviceCommand::List => {
             let devices = store.read()?.devices;
+            let api = LocalApi::system();
+            let known = runtime()?.block_on(api.known_nodes()).ok();
             if devices.is_empty() {
                 println!("No devices. `tether enroll` prints a code for the app's Add host.");
             }
@@ -307,9 +293,22 @@ fn device(command: DeviceCommand) -> Result<()> {
                 .max()
                 .unwrap_or(0);
             for device in devices {
+                let kind = match device.kind {
+                    DeviceKind::Native => "native".to_owned(),
+                    DeviceKind::Node => {
+                        let id = device.node_id.as_deref().unwrap_or("?");
+                        match &known {
+                            Some(known) if known.contains(id) => {
+                                format!("node {id} (known by tailscaled)")
+                            }
+                            Some(_) => format!("node {id} (not currently known)"),
+                            None => format!("node {id} (status unavailable)"),
+                        }
+                    }
+                };
                 println!(
-                    "{:width$}  {}  {}",
-                    device.name, device.enrolled_at, device.enrolled_by
+                    "{:width$}  {:<24}  {}  {}",
+                    device.name, kind, device.enrolled_at, device.enrolled_by
                 );
             }
         }

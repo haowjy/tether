@@ -5,6 +5,9 @@ version section on release.
 
 ## [Unreleased]
 
+- Serve the browser/PWA shell from the daemon over private Unix sockets and admit
+  browsers as enrolled tailnet nodes. Native device-token auth is unchanged; `tether
+  device list/remove` now includes node devices.
 - Rebuild the web client's skeleton: one Platform interface with browser and test adapters,
   admission read from the daemon at every launch, a design system of owned primitives with
   light and dark themes, and Playwright with axe over every route. `scripts/preflight.sh full

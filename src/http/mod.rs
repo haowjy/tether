@@ -1,25 +1,20 @@
-//! The daemon's HTTP surface (plan.md "Security", auth.md "Endpoints"): axum on
-//! `127.0.0.1` only, published by `tailscale serve`. Two layers guard it. The Tailscale
-//! check runs on every route, the fallback included; the device check runs on every
-//! route but `/auth/info` and `/auth/enroll`, so a route added beside `/ws` is guarded
-//! without asking. `http/` drives the hub through `HubHandle` and never names a tmux
-//! type. Every accepted socket gets 64 KiB kernel buffers (fs.md "Constants"): each is
-//! the loopback hop from `tailscale serve`, and the unit is charged for its buffers.
+//! HTTP routes and admission layers. The accepted socket sets `Front`; that front
+//! chooses which credential lane may run, and unknown API paths never become shell UI.
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts as _, Request, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts as _, Request, State};
+use axum::http::{StatusCode, header};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::{get, post};
 use tokio::sync::{Semaphore, watch};
 use tracing::{error, warn};
 
-use crate::auth::{Auth, AuthError};
+use crate::auth::{Auth, AuthError, Front, Session};
 use crate::blocking::Lanes;
 use crate::budget::Caps;
 use crate::config::ConfigFile;
@@ -32,54 +27,40 @@ mod complete;
 mod enroll;
 mod error;
 mod fs;
+mod node_auth;
 mod server;
+mod shell;
 mod ws;
 
 pub use server::serve;
 
-/// `POST /auth/enroll` bodies are a code and a device name.
 const ENROLL_BODY: usize = 4 * 1024;
 
-/// What the routes need.
 pub struct App {
     pub auth: Auth,
     pub hub: HubHandle,
-    /// `welcome.host` and `/auth/info`.
     pub host: HostInfo,
-    /// Paste files wait here for tmux (0700, emptied at startup by the caller).
     pub paste_dir: PathBuf,
-    /// Re-read by every fs request for `roots` and `uploads_dir`.
     pub config: ConfigFile,
-    /// `$HOME`: the picker's scope, and what `~/` in the roots means.
     pub home: PathBuf,
-    /// `[complete]` and what completion reads of the environment.
     pub complete: crate::complete::Settings,
-    /// Startup-selected caps from the effective memory budget.
     pub caps: Caps,
-    /// The runtime's blocking threads: every blocking call runs on one of these.
     pub lanes: Lanes,
 }
 
-/// `App` plus the daemon-wide limits the connections share.
 struct Ctx {
     app: App,
-    /// Accepted HTTP connections, including sockets transferred to WebSockets.
     accepts: Arc<Semaphore>,
-    /// WebSockets from the upgrade (daemon-core.md §6).
+    shell: Arc<Semaphore>,
+    shell_waiters: Arc<Semaphore>,
     conns: Arc<Semaphore>,
-    /// Paste files waiting for tmux, daemon-wide.
     pastes: Arc<Semaphore>,
-    /// The file API's lane, scans, raw responses and uploads.
     fs: Slots,
-    /// Absent when the selected memory tier disables completion.
     complete: Option<crate::complete::Completer>,
-    /// `/complete` requests in flight.
     completing: Arc<Semaphore>,
-    /// Becomes true on shutdown: every socket closes with 4004.
     shutdown: watch::Receiver<bool>,
 }
 
-/// The Tailscale login of the request, set by the Tailscale check.
 #[derive(Debug, Clone)]
 struct Login(String);
 
@@ -89,61 +70,225 @@ fn router(ctx: Arc<Ctx>) -> Router {
         .merge(fs::routes())
         .merge(complete::routes())
         .route_layer(from_fn_with_state(ctx.clone(), device_check));
+    let node_routes = Router::new()
+        .route("/auth/node/session", get(node_auth::session))
+        .route(
+            "/auth/node/enroll",
+            post(node_auth::enroll).layer(DefaultBodyLimit::max(ENROLL_BODY)),
+        )
+        .route(
+            "/auth/node/remove",
+            post(node_auth::remove).layer(DefaultBodyLimit::max(ENROLL_BODY)),
+        )
+        .route_layer(from_fn_with_state(ctx.clone(), node_check));
     Router::new()
         .route("/auth/info", get(enroll::info))
         .route(
             "/auth/enroll",
             post(enroll::enroll).layer(DefaultBodyLimit::max(ENROLL_BODY)),
         )
+        .merge(node_routes)
         .merge(devices)
+        .merge(shell::routes())
+        .fallback(shell::fallback)
         .layer(from_fn_with_state(ctx.clone(), tailscale_check))
         .with_state(ctx)
 }
 
-/// Every route: a loopback peer and an allowed `Tailscale-User-Login`, else a plain
-/// 403, even on a WebSocket upgrade.
+/// Every route on either front requires an allowed Serve login. Serve rewrites Host
+/// to localhost for Unix targets; the browser's actual authority is in its forwarded
+/// host and is checked later on the node lane.
 async fn tailscale_check(
     State(ctx): State<Arc<Ctx>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    match ctx.app.auth.identity(peer, request.headers()) {
-        Ok(login) => {
-            request.extensions_mut().insert(Login(login));
+    let front = request
+        .extensions()
+        .get::<Front>()
+        .copied()
+        .unwrap_or(Front::Local);
+    let bad_serve_host = front == Front::Serve
+        && request
+            .headers()
+            .get(header::HOST)
+            .and_then(|value| value.to_str().ok())
+            != Some("localhost");
+    let shell_path = shell::is_shell_path(request.uri().path());
+    let mut response = if bad_serve_host {
+        Refusal::from(HttpError::Forbidden).into_response()
+    } else {
+        match ctx.app.auth.identity(request.headers()).await {
+            Ok(login) => {
+                request.extensions_mut().insert(Login(login));
+                next.run(request).await
+            }
+            Err(refused) => {
+                warn!(%refused, path = request.uri().path(), "refused by the Tailscale check");
+                match refused {
+                    crate::auth::IdentityError::Unavailable(_) => identity_unavailable(),
+                    _ => Refusal::from(HttpError::Forbidden).into_response(),
+                }
+            }
+        }
+    };
+    common_headers(&mut response, shell_path);
+    response
+}
+
+async fn device_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: Next) -> Response {
+    let front = request
+        .extensions()
+        .get::<Front>()
+        .copied()
+        .unwrap_or(Front::Local);
+    let login = request
+        .extensions()
+        .get::<Login>()
+        .map_or("", |login| login.0.as_str());
+    let upgrade = request
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+    match ctx
+        .app
+        .auth
+        .check(
+            front,
+            request.method(),
+            request.headers(),
+            upgrade,
+            login,
+            false,
+        )
+        .await
+    {
+        Ok(session) => {
+            request.extensions_mut().insert(session);
             next.run(request).await
         }
         Err(refused) => {
-            warn!(%refused, path = request.uri().path(), "refused by the Tailscale check");
-            Refusal::from(HttpError::Forbidden).into_response()
+            match &refused {
+                AuthError::Store(_) | AuthError::IdentityUnavailable(_) => {
+                    error!(cause = %refused, path = request.uri().path(), "device check unavailable");
+                }
+                _ => warn!(%refused, path = request.uri().path(), "device check refused request"),
+            }
+            auth_refusal(request, refused).await
         }
     }
 }
 
-/// Every route but the enrolment routes: a device token in `auth.toml`. Without one,
-/// HTTP gets `401 auth_required`; a WebSocket upgrade completes and closes with 4401,
-/// since a browser can't see a refused upgrade's status (auth.md "Carrying the token").
-/// An `auth.toml` that can't be read or parsed fails closed, but as `503
-/// auth_unavailable` or close 4503, which the app retries with the token it has.
-async fn device_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: Next) -> Response {
-    let refused = match ctx.app.auth.check(request.headers()).await {
-        Ok(device) => {
-            request.extensions_mut().insert(device);
-            return next.run(request).await;
+async fn node_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: Next) -> Response {
+    let front = request
+        .extensions()
+        .get::<Front>()
+        .copied()
+        .unwrap_or(Front::Local);
+    let login = request
+        .extensions()
+        .get::<Login>()
+        .map_or("", |login| login.0.as_str());
+    let allow_unenrolled = matches!(
+        request.uri().path(),
+        "/auth/node/enroll" | "/auth/node/remove"
+    );
+    let upgrade = request
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+    match ctx
+        .app
+        .auth
+        .check(
+            front,
+            request.method(),
+            request.headers(),
+            upgrade,
+            login,
+            allow_unenrolled,
+        )
+        .await
+    {
+        Ok(session @ (Session::Node { .. } | Session::NodeUnenrolled { .. })) => {
+            request.extensions_mut().insert(session);
+            next.run(request).await
         }
-        Err(refused) => refused,
-    };
-    match &refused {
-        AuthError::Store(_) | AuthError::Busy => {
-            error!(cause = %refused, "can't read auth.toml: every token fails");
-        }
-        AuthError::NoToken | AuthError::Unknown => {
-            warn!(%refused, path = request.uri().path(), "refused by the device check");
+        Ok(Session::Native(_)) => Refusal::from(HttpError::BadRequest).into_response(),
+        Err(refused) => auth_refusal(request, refused).await,
+    }
+}
+
+async fn auth_refusal(request: Request, refused: AuthError) -> Response {
+    let upgrade = request
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+    if upgrade {
+        let (mut parts, _) = request.into_parts();
+        if let Ok(upgrade) = WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+            return match refused {
+                AuthError::BadOrigin => bad_origin(),
+                AuthError::Forbidden => Refusal::from(HttpError::Forbidden).into_response(),
+                AuthError::IdentityUnavailable(_) | AuthError::Store(_) | AuthError::Busy => {
+                    ws::refuse(upgrade, CloseCode::AuthUnavailable)
+                }
+                _ => ws::refuse(upgrade, CloseCode::BadToken),
+            };
         }
     }
-    let (mut parts, _) = request.into_parts();
-    match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
-        Ok(upgrade) => ws::refuse(upgrade, CloseCode::from(&refused)),
-        Err(_) => Refusal::from(&refused).into_response(),
+    match refused {
+        AuthError::BadOrigin => bad_origin(),
+        AuthError::Forbidden => Refusal::from(HttpError::Forbidden).into_response(),
+        AuthError::NodeRefused(reason) => (
+            StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({"error":"node_refused", "reason":reason.as_str()})),
+        )
+            .into_response(),
+        AuthError::NotEnrolled { node_name } => (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({"error":"not_enrolled", "node":{"name":node_name}})),
+        )
+            .into_response(),
+        AuthError::IdentityUnavailable(_) => identity_unavailable(),
+        AuthError::Store(_) => Refusal::from(HttpError::AuthUnavailable).into_response(),
+        AuthError::Busy => Refusal::from(HttpError::Busy).into_response(),
+        AuthError::NoToken | AuthError::Ambiguous | AuthError::Unknown | AuthError::WrongFront => {
+            Refusal::from(HttpError::AuthRequired).into_response()
+        }
     }
+}
+
+fn bad_origin() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        axum::Json(serde_json::json!({ "error": "bad_origin" })),
+    )
+        .into_response()
+}
+
+fn identity_unavailable() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(serde_json::json!({ "error": "identity_unavailable" })),
+    )
+        .into_response()
+}
+
+fn common_headers(response: &mut Response, shell: bool) {
+    let headers = response.headers_mut();
+    if !shell || !headers.contains_key(header::CACHE_CONTROL) {
+        headers.insert(header::CACHE_CONTROL, "no-store".parse().expect("header"));
+        headers.insert(
+            "cross-origin-resource-policy",
+            "same-origin".parse().expect("header"),
+        );
+    }
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        "nosniff".parse().expect("header"),
+    );
 }

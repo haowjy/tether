@@ -4,29 +4,28 @@
 use std::convert::Infallible;
 use std::future::Future;
 use std::io::{self, IoSlice};
-use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::ConnectInfo;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, watch};
 use tokio::task::JoinSet;
-use tokio::time::{Instant, sleep, timeout_at};
+use tokio::time::{Instant, Sleep, sleep, sleep_until, timeout_at};
 use tower::ServiceExt as _;
 use tracing::{debug, warn};
 
-use super::{App, Ctx, router, ws};
+use super::{App, Ctx, Front, router, ws};
 use crate::budget::ACCEPTED_CONNECTIONS;
 use crate::complete::Completer;
 use crate::fs::Slots;
@@ -35,13 +34,41 @@ const HYPER_BUFFER: usize = 16 * 1024;
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(100);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
 const SOCKET_BUFFER: usize = 64 * 1024;
+const SHELL_STALL: Duration = Duration::from_secs(30);
+
+/// Shared with a shell body so its accepted transport can enforce a write-progress
+/// deadline without timing ordinary idle keep-alive connections.
+#[derive(Default)]
+pub(super) struct ShellStall {
+    active: AtomicBool,
+    generation: AtomicU64,
+}
+
+impl ShellStall {
+    pub fn begin(self: &Arc<Self>) -> ShellStallGuard {
+        self.active.store(true, Ordering::SeqCst);
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        ShellStallGuard(self.clone())
+    }
+}
+
+pub(super) struct ShellStallGuard(Arc<ShellStall>);
+
+impl Drop for ShellStallGuard {
+    fn drop(&mut self) {
+        self.0.active.store(false, Ordering::SeqCst);
+        self.0.generation.fetch_add(1, Ordering::SeqCst);
+    }
+}
 
 /// Serves until shutdown, then gives requests and upgraded sockets a bounded grace.
 pub async fn serve(
-    listener: TcpListener,
+    serve_listener: UnixListener,
+    local_listener: UnixListener,
     app: App,
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> io::Result<()> {
+    app.auth.start();
     let (stop, shutdown) = watch::channel(false);
     tokio::spawn(async move {
         signal.await;
@@ -56,6 +83,8 @@ pub async fn serve(
     let ctx = Arc::new(Ctx {
         app,
         accepts: Arc::new(tokio::sync::Semaphore::new(ACCEPTED_CONNECTIONS)),
+        shell: Arc::new(tokio::sync::Semaphore::new(4)),
+        shell_waiters: Arc::new(tokio::sync::Semaphore::new(16)),
         conns: Arc::new(tokio::sync::Semaphore::new(caps.sockets)),
         pastes: Arc::new(tokio::sync::Semaphore::new(ws::PASTE_SLOTS)),
         fs,
@@ -82,9 +111,14 @@ pub async fn serve(
                 drop(permit);
                 break;
             }
-            accepted = listener.accept() => accepted,
+            accepted = async {
+                tokio::select! {
+                    accepted = serve_listener.accept() => accepted.map(|(stream, _)| (stream, Front::Serve)),
+                    accepted = local_listener.accept() => accepted.map(|(stream, _)| (stream, Front::Local)),
+                }
+            } => accepted,
         };
-        let (stream, peer) = match accepted {
+        let (stream, front) = match accepted {
             Ok(accepted) => accepted,
             Err(error) => {
                 drop(permit);
@@ -101,11 +135,12 @@ pub async fn serve(
         }
         spawn_and_reap(
             &mut connections,
-            connection(stream, peer, permit, routes.clone(), shutdown.clone()),
+            connection(stream, front, permit, routes.clone(), shutdown.clone()),
         );
     }
 
-    drop(listener);
+    drop(serve_listener);
+    drop(local_listener);
     let deadline = Instant::now() + SHUTDOWN_WAIT;
     while !connections.is_empty() {
         match timeout_at(deadline, connections.join_next()).await {
@@ -135,23 +170,27 @@ fn spawn_and_reap(connections: &mut JoinSet<()>, task: impl Future<Output = ()> 
     }
 }
 
-fn small_buffers(stream: &TcpStream) -> io::Result<()> {
+fn small_buffers(stream: &UnixStream) -> io::Result<()> {
     rustix::net::sockopt::set_socket_send_buffer_size(stream, SOCKET_BUFFER)?;
     rustix::net::sockopt::set_socket_recv_buffer_size(stream, SOCKET_BUFFER)?;
     Ok(())
 }
 
 async fn connection(
-    stream: TcpStream,
-    peer: SocketAddr,
+    stream: UnixStream,
+    front: Front,
     permit: OwnedSemaphorePermit,
     routes: Router,
     mut shutdown: watch::Receiver<bool>,
 ) {
+    let stall = Arc::new(ShellStall::default());
+    let service_stall = stall.clone();
     let service = service_fn(move |mut request: Request<Incoming>| {
         let routes = routes.clone();
+        let stall = service_stall.clone();
         async move {
-            request.extensions_mut().insert(ConnectInfo(peer));
+            request.extensions_mut().insert(front);
+            request.extensions_mut().insert(stall);
             let response = match routes.oneshot(request.map(Body::new)).await {
                 Ok(response) => response,
                 Err(never) => match never {},
@@ -162,6 +201,9 @@ async fn connection(
     let io = TokioIo::new(AcceptedStream {
         stream,
         _permit: permit,
+        stall,
+        stall_generation: 0,
+        stall_deadline: Box::pin(sleep_until(Instant::now() + SHELL_STALL)),
     });
     let mut builder = http1::Builder::new();
     builder
@@ -187,8 +229,35 @@ async fn connection(
 /// Hyper transfers this I/O object to `Upgraded` on a WebSocket upgrade. Keeping the
 /// permit inside it makes the 64-connection backstop count upgraded sockets too.
 struct AcceptedStream {
-    stream: TcpStream,
+    stream: UnixStream,
     _permit: OwnedSemaphorePermit,
+    stall: Arc<ShellStall>,
+    stall_generation: u64,
+    stall_deadline: Pin<Box<Sleep>>,
+}
+
+impl AcceptedStream {
+    fn poll_stall(&mut self, cx: &mut Context<'_>) -> bool {
+        if !self.stall.active.load(Ordering::SeqCst) {
+            return false;
+        }
+        let generation = self.stall.generation.load(Ordering::SeqCst);
+        if generation != self.stall_generation {
+            self.stall_generation = generation;
+            self.stall_deadline
+                .as_mut()
+                .reset(Instant::now() + SHELL_STALL);
+        }
+        self.stall_deadline.as_mut().poll(cx).is_ready()
+    }
+
+    fn wrote(&mut self, count: usize) {
+        if count > 0 && self.stall.active.load(Ordering::SeqCst) {
+            self.stall_deadline
+                .as_mut()
+                .reset(Instant::now() + SHELL_STALL);
+        }
+    }
 }
 
 impl AsyncRead for AcceptedStream {
@@ -207,7 +276,18 @@ impl AsyncWrite for AcceptedStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+        let this = self.get_mut();
+        if this.poll_stall(cx) {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "shell response stalled",
+            )));
+        }
+        let result = Pin::new(&mut this.stream).poll_write(cx, buf);
+        if let Poll::Ready(Ok(count)) = &result {
+            this.wrote(*count);
+        }
+        result
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -227,7 +307,18 @@ impl AsyncWrite for AcceptedStream {
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write_vectored(cx, bufs)
+        let this = self.get_mut();
+        if this.poll_stall(cx) {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "shell response stalled",
+            )));
+        }
+        let result = Pin::new(&mut this.stream).poll_write_vectored(cx, bufs);
+        if let Poll::Ready(Ok(count)) = &result {
+            this.wrote(*count);
+        }
+        result
     }
 }
 

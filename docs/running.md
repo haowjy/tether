@@ -1,14 +1,17 @@
 # Running tether
 
-tether runs as you, on `127.0.0.1`, in a systemd user unit. `tailscale serve` publishes
-it to your tailnet over HTTPS, and every request must carry your Tailscale login and an
-enrolled device's token ([auth.md](design/auth.md)). It attaches to your tmux server
-and never starts one, so start tmux the way you always do.
+tether runs as you, in a systemd user unit. It listens only on private Unix sockets in
+`$XDG_RUNTIME_DIR/tether/`; Tailscale Serve publishes `serve.sock` to your tailnet over
+HTTPS. Native iOS requests use an enrolled device token, while browser/PWA requests
+are admitted as an enrolled tailnet node ([auth.md](design/auth.md)). It attaches to
+your tmux server and never starts one, so start tmux the way you always do.
 
-`tether serve` runs on Linux only for now. It reads your login and the serve config
-from tailscaled's LocalAPI unix socket, which the macOS Tailscale apps (App Store and
-standalone) don't have. The Mac is for recording tmux 3.7b fixtures and building the iOS
-app, not for running the daemon.
+`tether serve` runs on Linux only for now because it needs tailscaled's LocalAPI Unix
+socket for login, whois, status and Serve config; the macOS Tailscale apps (App Store
+and standalone) don't expose one. LocalAPI availability is not a startup gate: tether
+starts before tailscaled and reports identity-dependent requests unavailable until
+the API responds. The Mac is for recording tmux 3.7b fixtures and building the iOS
+app, not for running the production daemon.
 
 ## Install
 
@@ -22,7 +25,6 @@ Every key is optional; `~/.config/tether/config.toml` may not exist at all. Unkn
 are ignored.
 
 ```toml
-port = 7850              # tether listens on 127.0.0.1:7850
 name = "devbox"          # the host's name in the app; default: the MagicDNS name
 memory_budget_mib = 72   # default memory budget; minimum 42; sets the daemon's caps
 
@@ -44,13 +46,32 @@ files, so if you set `TMUX_TMPDIR` there, set `socket_path` here.
 ## Publish it on the tailnet
 
 ```bash
-tailscale serve --bg --https=443 http://127.0.0.1:7850
+sudo tailscale serve --bg --https=443 unix:/run/user/<uid>/tether/serve.sock
 ```
 
-Never use `tailscale funnel`. tether reads the serve config from tailscaled at startup
-and refuses to run if Funnel exposes its port to the internet. At startup it also
-reads your login from tailscaled and lets only that login through; `tether serve
---allow-login <login>` replaces that list.
+Use Tailscale 1.94 or later. Replace `<uid>` with `id -u`. The canonical browser origin
+exists only while `serve.sock` is the sole root handler of one HTTPS Serve entry, with
+Funnel off; another handler beside it, a second publication, or a TCP forward to the
+socket refuses browser admission. The daemon does not require LocalAPI or Serve to be
+available to start, and it does not make Funnel a startup gate: requests marked as
+Funnel are refused, and the browser origin becomes unavailable until Serve is safe.
+The default Tailscale owner login is allowed; `tether serve --allow-login <login>`
+replaces that allowlist.
+
+On tailscaled 1.100 and later, every later `tailscale serve` change needs root because
+the CLI updates the whole config containing the Unix target. Another Unix user who
+runs tether needs root to publish their socket too. The Tailscale operator remains
+trusted and can replace the publication; use `sudo tailscale set --operator=<user>`
+to restrict who can change it.
+
+The daemon creates `$XDG_RUNTIME_DIR/tether/` with mode `0700`, requiring it to be a
+real directory owned by the daemon user. It refuses a missing Linux `XDG_RUNTIME_DIR`,
+a symlink, the wrong owner or any mode other than `0700` with exit 78. It holds an
+exclusive lock before replacing stale `serve.sock`/`local.sock` sockets or cleaning
+`paste/`, so a second daemon cannot damage the running one. An old `port = 7850` key
+is ignored and can be removed. If the existing Serve config still targets
+`http://127.0.0.1:7850`, tether logs the one publish command above and `tether enroll`
+prints it as the browser refusal.
 
 ## Run it under systemd
 
@@ -193,31 +214,38 @@ sizes the counts.
 ## Enrol the phone
 
 ```bash
-tether enroll                   # prints a code like K7QM-3XRP and the host's URL
+tether enroll                   # prints a code and the canonical browser URL when available
 ```
 
 In the app, Add host takes the host's name and the code. The code works once, for 10
 minutes (`--ttl` changes that), and 5 wrong tries delete it.
 
 ```bash
-tether device list              # name, when, and who enrolled it
-tether device add laptop        # a token for a desktop browser, printed once
-tether device remove iphone     # its token stops working; its sockets close within 10 s
+tether device list              # native devices and enrolled tailnet nodes
+tether device add playwright    # a native token for local dev/Playwright, printed once
+tether device remove laptop     # revokes its token or node; live sockets close within 10 s
 ```
 
 These commands only edit files under `~/.local/state/tether/`, so they work whether or
 not the daemon runs. That directory also holds `host_id`, the host's identity in the
-app: don't copy it to another machine.
+app: don't copy it to another machine. Enrol a browser/PWA from its shell using the
+same one-time code; it enrolls the browser machine's Tailscale node, not an individual
+browser profile. Removing the node revokes every browser on that machine.
 
 ## When something fails
 
 | Symptom | Cause |
 |---|---|
-| tether exits at start, naming Funnel | Funnel exposes its port: `tailscale funnel reset`, then serve again |
-| tether exits at start: "no logged-in user" | tailscaled isn't logged in; log in, or pass `--allow-login` |
-| `403 forbidden` | the request didn't come through `tailscale serve`, or not from an allowed login |
-| `401 auth_required`, or the socket closes with 4401 | the device was removed: enrol it again |
-| `503 auth_unavailable`, or the socket closes with 4503 | `auth.toml` can't be read, usually a typo from a hand edit; the log names the line. Fix the file: the app keeps its token and retries, so nothing needs re-enrolling |
+| `GET /auth/info` has no `browserOrigin`, or browser says to publish tether | Serve is missing, has another handler/publication, or Funnel is on; use the command in `browserRefused` and leave Funnel off |
+| `403 forbidden` | missing/invalid Tailscale login or Funnel marker; confirm the request goes through Serve and the login is allowed |
+| `403 bad_origin` | browser Origin/forwarded host/fetch metadata did not match the canonical Serve origin, or a Serve handler was added beside tether |
+| `403 node_refused` | the node is tagged, shared, a subnet router, the box itself, or has a login mismatch; use another node |
+| `401 not_enrolled`, or a socket closes with 4401 | enroll this node from its browser/PWA using `tether enroll`, or remove-and-re-enroll it |
+| `401 auth_required`, or the native socket closes with 4401 | token is missing or its device was removed; enrol the native app again |
+| `503 identity_unavailable` | LocalAPI whois or tailnet state is unavailable; tether retries and never interprets a failed lookup as “not enrolled” |
+| `503 auth_unavailable`, or the native socket closes with 4503 | `auth.toml` can't be read, usually a typo from a hand edit; the log names the line. Fix it: native keeps its token and retries |
+| tether exits with “already running” | another daemon holds the runtime lock; do not delete its sockets or paste files |
+| tether exits at start with status 78 naming `XDG_RUNTIME_DIR` | Linux runtime directory is absent or unsafe; use the user's real `/run/user/<uid>` runtime directory with mode 0700 |
 | the app shows no sessions | no tmux server on the configured socket |
 | tether exits at start with status 78 | configuration is invalid or the effective budget is below 42 MiB; fix the journal's named cause, then start tether again |
 | the journal says "no cgroup memory limit is in force" | the user manager lacks the memory controller or the host uses cgroup v1/hybrid; `MemoryMax` isn't enforced |

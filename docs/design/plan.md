@@ -21,7 +21,7 @@ and record decisions in decisions.md.
 | plan.md (this) | Goal, product rules, layout, keyboard, touch, file manager, security overview, code structure, phases, spikes |
 | [daemon-core.md](daemon-core.md) | `src/tmux/`, `src/hub/`, `src/proto/`: control mode, snapshots, pane streams, the WebSocket protocol, and every daemon limit |
 | [ios-shell.md](ios-shell.md) | The native iOS app: keyboard, focus, bridge, scheme handler, lifecycle, media |
-| [auth.md](auth.md) | Device tokens, enrolment, the Face ID lock, the auth routes |
+| [auth.md](auth.md) | Native device tokens, enrolled-node browser admission, enrolment and auth routes |
 | [fs.md](fs.md) | `src/fs/`: roots, path resolution, the `/fs/*` routes, uploads, their limits |
 | [complete.md](complete.md) | `src/complete/`: `POST /complete`, the history, PATH, carapace and path sources, the shell snippet, how they stay inside the budget |
 | [spike-1-keyboard.md](spike-1-keyboard.md) | The keyboard spike Jimmy runs on the phone |
@@ -68,12 +68,14 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
 - **Files:** project roots picked in the app; one uploads folder; HEIC converted on
   the phone; no video thumbnails; no file watcher. The MVP views and uploads; edit,
   new file and rename come in v2. Move, mkdir and delete are done in the terminal.
-- **Auth:** the Tailscale login check, a device token per phone enrolled with a code
-  printed on the server, and a Face ID lock ([auth.md](auth.md)).
+- **Auth:** allowlisted Tailscale login plus two device lanes: an iOS device token
+  behind Face ID and an enrolled tailnet node for the browser/PWA. Both use the same
+  one-time code and can be revoked with `tether device remove` ([auth.md](auth.md)).
 - **Hosts:** the app connects to each host's daemon directly; one host in the MVP.
 - **Server platform:** `tether serve` runs on Linux only for now. It needs tailscaled's
-  LocalAPI unix socket for the login allowlist and the Funnel check, and the macOS
-  Tailscale apps (App Store and standalone) don't expose one. The Mac is for recording
+  LocalAPI Unix socket for the login allowlist, node `whois`, self-node status and
+  Serve config; the macOS Tailscale apps (App Store and standalone) don't expose one.
+  The Mac is for recording
   the 3.7b tmux fixtures ([daemon-core.md §8](daemon-core.md#8-testing)) and building
   the iOS app, not for running the daemon. On macOS there is no cgroup or hard memory
   cap; if run there, the budget only sizes the counts.
@@ -93,11 +95,13 @@ flowchart TB
     daemon["tether daemon<br/>one static Rust binary"]
     cc["tmux -C control clients<br/>one per session with a watched tab"]
   end
+  dev["Vite dev proxy<br/>native token, local.sock"]
   carapace["carapace, one run at a time, on demand<br/>own transient scope, outside the unit's limits"]
   tmux["Jimmy's tmux server<br/>started outside tether, never by it"]
   scratch["scratch tmux server<br/>own transient scope"]
   phone -- "HTTPS + one WebSocket per host" --> serve
-  serve -- "127.0.0.1:PORT" --> daemon
+  serve -- "serve.sock (private Unix socket)" --> daemon
+  dev -- "local.sock (private Unix socket)" --> daemon
   daemon --> cc
   cc -- "control protocol on stdio" --> tmux
   cc --> scratch
@@ -111,7 +115,8 @@ Inside the daemon ([layout](#code-structure-and-standards)):
 - **completion** (`/complete`): history, PATH, carapace (outside the unit, in its own
   scope), paths; lazy ([Suggestion strip](#suggestion-strip), [complete.md](complete.md)).
 - **file API** (`/fs/*`): rooted, range-capable, uploads ([fs.md](fs.md)).
-- **auth**: the Tailscale check and device tokens on every route ([auth.md](auth.md)).
+- **auth**: the Tailscale check, native-token and enrolled-node lanes, and live
+  revocation ([auth.md](auth.md)).
 
 **tether never starts Jimmy's tmux server.** A tmux server first started from inside a
 systemd unit lives in that unit's cgroup: it dies on `systemctl --user stop`, and
@@ -181,9 +186,9 @@ Versions verified 2026-10-21 ([libraries.md](research/libraries.md),
 |---|---|---|
 | Runtime | tokio, current-thread runtime, 8 blocking threads split into bounded-wait lanes | see [Resource budget](#resource-budget) |
 | HTTP | axum 0.8, tower-http 0.7 | `/fs/raw` stays custom, so root checks and range limits are tether's own |
-| Web assets | none in the daemon | the web UI is bundled in the iOS app |
-| Device-token auth | sha2, subtle, getrandom | [auth.md](auth.md#crates) |
-| Tailscale LocalAPI | own ~100-line client over the tailscaled socket (hyper): `status` and the serve config only | |
+| Web assets | built by Vite and embedded in the daemon | the same web UI is bundled in the iOS app; the daemon serves browser/PWA shell paths |
+| Auth | sha2, subtle, getrandom | [auth.md](auth.md#crates) |
+| Tailscale LocalAPI | bounded keep-alive client over tailscaled's Unix socket: status, Serve config and per-request whois | |
 | systemd and logs | sd-notify (`READY=1`, `STOPPING=1`; no watchdog), tracing + tracing-subscriber writing to stderr, which the journal captures | no watchdog because it needs a periodic timer, which breaks the zero-wakeup idle; no tracing-journald because stderr already reaches the journal |
 | Protocol types | ts-rs (TypeScript); Swift hand-written for the auth DTOs | [daemon-core.md §5.5](daemon-core.md#55-type-generation) |
 | tmux parser | hand-written, pure, fixture-tested | libtmux-rs studied for ideas only |
@@ -201,7 +206,6 @@ and the note on `TMUX_TMPDIR` under systemd, are in [running.md](../running.md).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `port` | 7850 | the daemon listens on `127.0.0.1:<port>` |
 | `name` | the MagicDNS machine name | the host's name in the app: `/auth/info.name`, `welcome.host.name` |
 | `memory_budget_mib` | 72 | the memory budget in MiB, at least 42; selects the control-client/socket caps and whether completion runs ([daemon-core.md §6.1](daemon-core.md#61-the-memory-budget)); read at startup and keep `MemoryMax` equal to it |
 | `[tmux] program` | `tmux` | the tmux executable; an absolute path if the unit's `PATH` doesn't find it |
@@ -564,32 +568,35 @@ load as they scroll into view; upload has a "resize / send original" toggle.
 **Runs as Jimmy, no SSH keys.** The daemon runs as Jimmy in a systemd user unit and
 attaches to his tmux server directly.
 
-**Tailnet only.** Bind to `127.0.0.1:PORT` and publish with `tailscale serve
---https=443 http://127.0.0.1:PORT`. Never `tailscale funnel`: at startup tether reads
-the serve config from LocalAPI and refuses to run if Funnel is on for its port.
+**Tailnet only.** The daemon binds `serve.sock` and `local.sock` in
+`$XDG_RUNTIME_DIR/tether/`, a private `0700` directory. Publish only
+`serve.sock` with `sudo tailscale serve --bg --https=443
+unix:/run/user/<uid>/tether/serve.sock` (Tailscale 1.94 or later). The daemon starts
+without LocalAPI and refuses Funnel traffic per request; it does not make Funnel a
+startup gate. On Tailscale 1.100 and later changing Serve after publishing a Unix
+socket needs root. See [running.md](../running.md).
 
-**Identity.** `tailscale serve` adds `Tailscale-User-Login` to proxied requests.
-tether accepts a request only from loopback with a login in the allowlist, which is
-auto-detected from LocalAPI `/localapi/v0/status` (`Self.UserID` →
-`User[...].LoginName`) and overridable with `--allow-login`. Any process on the box
-can fake that header, but those already run as Jimmy and can drive tmux directly; the
-real gap, enrolling a device, is closed by the enrolment code. Tailscale ACLs are
-optional hardening: if the tailnet is ever shared, add a grant limiting `tcp:443` on
-the dev box to Jimmy.
+**Identity and device lanes.** Every request requires an allowed
+`Tailscale-User-Login` and no Funnel marker. The native iOS app presents its device
+token on either front. A browser/PWA presents no credential and is admitted as its
+Tailscale node only on `serve.sock`, only when that socket is the single root HTTPS
+Serve handler and its node stable ID plus login is enrolled in `auth.toml`. The node
+lane rejects tagged, shared-in, subnet-routing and self nodes. `local.sock` is native
+only. `tether device remove` revokes either kind; live sockets are rechecked every 10
+seconds. The full rules are in [auth.md](auth.md).
 
-**Device token and Face ID lock:** [auth.md](auth.md). The token is checked on every
-route (`/ws`, `/fs/*`, `/complete`, the debug endpoint) by one middleware; only the
-two `/auth` routes skip it. One unprotected route is remote code execution. If the
-device file can't be read, the check fails closed with a retryable answer (HTTP 503,
-WebSocket close 4503) rather than "not enrolled", so a typo in a hand edit never costs
-a re-enrolment ([auth.md](auth.md#state-on-disk)).
+**Canonical origin and browser requests.** The daemon trusts the browser lane only
+when `serve.sock` is named exactly once across the Serve config, as the sole `/`
+handler of one HTTPS entry with Funnel off. It checks `Host: localhost`, one
+`X-Forwarded-Host` matching that origin, exact `Origin` on upgrades and mutations,
+and `Sec-Fetch-Site: same-origin` on reads. API responses are `no-store` with
+`Cross-Origin-Resource-Policy: same-origin`; the embedded shell has a restrictive
+CSP. Native auth remains cookie-free and needs no Origin exception.
 
-**Web hardening:** the bundled UI runs under a strict CSP with no inline script, at
-`tether-app://ui`; daemon responses come from per-host origins the UI's
-`script-src` never covers, and carry `sandbox`; the web view navigates only to the
-app's page, and the bridge answers only that page
-([ios-shell.md](ios-shell.md#web-content-security)). No cookies anywhere, so there is
-no cross-site request to forge ([auth.md](auth.md#carrying-the-token)).
+**Device files fail closed.** The daemon reads `auth.toml` on every check. An unreadable
+or malformed file returns a retryable unavailable response (HTTP 503, socket close
+4503), never a false revoked-device result. An unknown field rejects only its device
+row. One unprotected route is remote code execution.
 
 **Rendered content is untrusted:** DOMPurify on all rendered HTML, Mermaid with
 `securityLevel: "strict"`, and the CSP above.
@@ -601,7 +608,6 @@ file contents. File writes are logged by path and action.
 target as well as every read; creates and renames never replace a file; size caps on
 upload and edit; nothing in the uploads folder is ever executed by tether
 ([fs.md](fs.md#path-resolution-fsopen)).
-
 ## Long-term
 
 - **Multi-host (v2):** the app connects to each host's daemon directly. The daemon
@@ -631,13 +637,14 @@ One crate to start; split a part out only when it starts changing on its own.
 src/tmux/      sans-IO control client (parser, Session, snapshot), pump, one-shots
 src/hub/       sans-IO hub State, reconcile, per-connection Outbox, the hub task
 src/proto/     wire messages (source of the TypeScript types), handshake
-src/http/      axum routes (/ws, /fs/*, /auth/*, /complete), the auth middleware
+src/http/      axum routes (/ws, /fs/*, /auth/*, /complete, embedded shell), auth middleware
 src/blocking.rs blocking pool lanes; the only owner of spawn_blocking
 src/files.rs   shared stamps, state-file lock, and whole-file temp writes
-src/auth/      LocalAPI identity, device tokens, enrolment (auth.md)
+src/auth/      LocalAPI identity, native/node devices, admission and enrolment (auth.md)
+src/runtime.rs private runtime directory, single-instance lock, serve/local Unix sockets
 src/fs/        the only place paths are resolved and checked against roots
 src/complete/  /complete: history, PATH index, carapace runner (bounded, cached; complete.md)
-web/           Vite app, bundled into the iOS app:
+web/           Vite app, embedded by the daemon and bundled into the iOS app:
   native/      the bridge to the Swift shell: one method per message, a host's HTTP origin
   proto/       generated wire types, binary frames, HostLink (one WebSocket), window identity
   net/         Host: a host's shared socket, its reconnect, watch routing and requests
@@ -769,19 +776,19 @@ once they've answered.
 - **Spike 1** is its own Xcode project and needs no server.
 - **Spikes 3–8** run their web pages inside the app, through the Debug build's
   dev-server switch ([ios-shell.md](ios-shell.md#where-the-web-ui-comes-from)):
-  1. Run the page from a local process bound to loopback, e.g. Vite on
-     `127.0.0.1:5173`. A spike that needs a live terminal attaches to a tmux server on
+  1. Run the page from Vite behind a private Unix socket using `TETHER_SOCKET`.
+     Its proxy presents a native token to `local.sock`. A spike that needs a live terminal attaches to a tmux server on
      its own socket (`tmux -L tether-spike`), which Jimmy starts from a shell; spike
      code never starts it.
-  2. Publish it on the tailnet: `tailscale serve --bg --https=8443
-     http://127.0.0.1:5173`. Never `tailscale funnel`; `tailscale serve status` should
+  2. Publish it on the tailnet with root: `sudo tailscale serve --bg --https=8443
+     unix:<the Vite socket>`. Never `tailscale funnel`; `tailscale serve status` should
      show the handler as tailnet-only. For Vite, allow the `ts.net` host
      (`server.allowedHosts`) and point HMR at the public port.
   3. In the app's Debug settings, set the web UI source to
      `https://<machine>.<tailnet>.ts.net:8443`.
   4. Safari's Web Inspector on the Mac attaches to the app's web view. The spike page
      also shows an on-screen log.
-  5. Tear down: `tailscale serve --https=8443 off`, then stop the local process.
+  5. Tear down: `sudo tailscale serve --https=8443 off`, then stop the local process.
 
 Spike 2 needs none of this: it is a test harness against tmux on the box (and the
 Mac), on its own `-L` socket.

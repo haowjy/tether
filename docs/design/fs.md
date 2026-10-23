@@ -261,16 +261,18 @@ disabled.
 | `Content-Type` | from the extension table below |
 | `ETag` | strong: `"<ino>-<size>-<mtime_ns>"` in hex, from `files::Stamp` of the `fstat` at open |
 | `Accept-Ranges` | `bytes` |
-| `Cache-Control` | `private, no-cache` |
+| `Cache-Control` | `no-store` |
+| `Cross-Origin-Resource-Policy` | `same-origin` |
 | `X-Content-Type-Options` | `nosniff` |
 | `Content-Security-Policy` | `sandbox` |
 
-The daemon sets `nosniff` and `sandbox` itself, because the native player fetches
-without the scheme handler, which also adds them. The web reads `Content-Range` and
-`ETag` across origins, which only the scheme handler's
-`Access-Control-Expose-Headers` makes possible
-([ios-shell.md](ios-shell.md#where-the-web-ui-comes-from)); the daemon sends no CORS
-headers.
+The daemon sets `nosniff`, `sandbox`, `no-store` and same-origin CORP itself, because
+the native player fetches without the scheme handler. The browser shell and raw
+responses share one origin, so the web reads `Content-Range` and `ETag` directly; the
+daemon sends no CORS headers. CORP prevents another origin from embedding a raw
+response, while `no-store` prevents private file bytes being retained by an HTTP
+cache. `sandbox` and non-executable MIME types keep repository content from running
+as tether or registering as its service worker.
 
 - **Range:** one range only, `bytes=a-b`, `bytes=a-` or `bytes=-n` → `206` with
   `Content-Range`. A range list, or a header that doesn't parse, is ignored → `200`
@@ -356,8 +358,9 @@ sweeps stale part files from the uploads directory.
 On the cap, the idle timeout, a client disconnect or a write error, the part file is
 deleted. A body that stalls for the idle timeout, or that breaks because the client
 disconnected, answers `400 bad_request`: the body failed, and the client is usually
-gone to read it. At startup, after the port is bound (as for the paste directory), the daemon
-deletes leftover `.tether-upload-*.part` files in `uploads_dir`; nothing else in
+gone to read it. At startup, after the runtime lock is held and both sockets are
+established (as for the paste directory), the daemon deletes leftover
+`.tether-upload-*.part` files in `uploads_dir`; nothing else in
 tether uses that prefix.
 
 ## Errors

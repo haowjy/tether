@@ -275,7 +275,8 @@ fn random(n: usize) -> io::Result<String> {
         .collect())
 }
 
-/// Deletes part files a daemon that died left in `dir`. Run after the port is bound:
+/// Deletes part files a daemon that died left in `dir`. Run after the runtime lock and
+/// both HTTP sockets are established, so a second daemon can't sweep live uploads:
 /// a second daemon started by mistake mustn't delete the running one's uploads.
 pub fn sweep(dir: &Path) -> io::Result<usize> {
     let entries = match std::fs::read_dir(dir) {

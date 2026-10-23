@@ -45,13 +45,13 @@ whichever profile happens to be active when a request completes.
 
 ## Authentication versus reachability
 
-Tailscale-only authentication was discussed as a simpler first-phase option:
-verified Serve identity plus server-side authorization could avoid another user
-login. It was not an instruction to remove the existing device-token check. The
-cookie proposal in browser-setup.md is likewise research, not a settled requirement.
-Before implementation, choose and record the first-phase trust model, including
-unlocked-device access, revocation and browser request protections. Preserve current
-authentication until the replacement is reviewed; never trust mere network reachability.
+The first-phase trust model is settled in [auth.md](../auth.md): native clients use a
+per-device bearer token behind the iOS Keychain/Face ID flow; browsers and PWAs are
+admitted as enrolled Tailscale nodes, with the node trusted whole until removal.
+Node admission exists only on `serve.sock` at the canonical HTTPS Serve origin and
+requires the exact browser Origin, forwarded host and fetch-metadata checks. Whois is
+read for each node-lane request; browser identity alone is not enough. The cookie
+proposal in older browser research is rejected. This is not a public HTTPS contract.
 
 Public HTTPS needs both **reachability** and **authentication**. A password or key
 does not traverse NAT/firewalls. Each machine needs a reachable TLS endpoint, or a
@@ -63,7 +63,9 @@ without Serve identity, strong authentication, TLS termination, request/Origin/C
 controls, credential recovery/revocation, abuse/resource bounds, and browser/native
 parity. Do not simply expose the existing loopback service or disable identity checks.
 The current no-Funnel and tailnet-only deployment rules remain in force. Public
-hosting is future work, not permission to change running service exposure.
+hosting is future work, not permission to change running service exposure. The node
+lane does not extend to a public origin; passkeys remain the planned public-phase
+seam, judged by `auth::admit` on their own socket, with a public hostname as RP ID.
 
 ## Implementation boundary
 
@@ -72,7 +74,7 @@ selection, transport and credential handling outside the terminal components so
 public HTTPS can be added without another terminal implementation. Do not build
 speculative transport/plugin infrastructure before the first browser adapter works.
 
-Read [browser setup research](browser-setup.md) for the current deployment proposal,
+Read [browser setup](browser-setup.md) for the PWA behavior and delivery contract,
 [interaction behavior](browser-behaviors.md) for client UX, and
 [auth.md](../auth.md) for current security invariants. Future public work must update
 those subsystem specs and the decision log before changing production behavior.

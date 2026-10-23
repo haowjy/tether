@@ -27,7 +27,7 @@ use tokio::time::sleep_until;
 use tracing::{debug, error, info, warn};
 
 use super::Ctx;
-use crate::auth::{AuthError, Device};
+use crate::auth::{AuthError, Device, Session};
 use crate::hub::{ConnId, Frame, FromConn, Next, Outbox, PasteFile, ToConn};
 use crate::proto::{
     self, ClientMsg, CloseCode, DaemonInfo, Decoded, ErrorCode, MIN_PROTOCOL, PROTOCOL_VERSION,
@@ -62,11 +62,16 @@ type Stream = SplitStream<WebSocket>;
 /// `GET /ws`, after both checks.
 pub(super) async fn upgrade(
     State(ctx): State<Arc<Ctx>>,
-    Extension(device): Extension<Device>,
+    Extension(session): Extension<Session>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
+    let Some(device) = session.device().cloned() else {
+        return refuse(upgrade, CloseCode::BadToken);
+    };
     match ctx.conns.clone().try_acquire_owned() {
-        Ok(slot) => configure(upgrade).on_upgrade(move |socket| run(socket, ctx, device, slot)),
+        Ok(slot) => {
+            configure(upgrade).on_upgrade(move |socket| run(socket, ctx, session, device, slot))
+        }
         Err(_) => {
             warn!(device = %device.name, "over the connection cap");
             refuse(upgrade, CloseCode::OverCap)
@@ -101,24 +106,35 @@ enum End {
     Gone,
 }
 
-async fn run(socket: WebSocket, ctx: Arc<Ctx>, device: Device, _slot: OwnedSemaphorePermit) {
+async fn run(
+    socket: WebSocket,
+    ctx: Arc<Ctx>,
+    session: Session,
+    device: Device,
+    _slot: OwnedSemaphorePermit,
+) {
     let (mut sink, mut stream) = socket.split();
     let end = match handshake(&mut sink, &mut stream, &device).await {
         Err(end) => end,
         Ok(protocol) => match ctx.app.hub.connect().await {
             Err(_) => End::Gone,
             Ok((id, channel)) => {
+                let mut host = ctx.app.host.clone();
+                if host.name == "tether" {
+                    host.name = ctx.app.auth.machine_name("tether").await;
+                }
                 let welcome = ServerMsg::Welcome {
                     protocol,
                     daemon: DaemonInfo {
                         version: VERSION.to_owned(),
                         completion: ctx.app.caps.completion,
                     },
-                    host: ctx.app.host.clone(),
+                    host,
                 };
                 let now = Instant::now();
                 let mut conn = Conn {
                     ctx: &ctx,
+                    session: &session,
                     device: &device,
                     id,
                     sink: &mut sink,
@@ -130,6 +146,7 @@ async fn run(socket: WebSocket, ctx: Arc<Ctx>, device: Device, _slot: OwnedSemap
                     unflushed: 0,
                     heard: now,
                     checked: now,
+                    identity_failures: 0,
                     pastes: 0,
                 };
                 let end = conn.serve(ctx.shutdown.clone()).await;
@@ -180,6 +197,7 @@ async fn handshake(sink: &mut Sink, stream: &mut Stream, device: &Device) -> Res
 
 struct Conn<'a> {
     ctx: &'a Ctx,
+    session: &'a Session,
     device: &'a Device,
     id: ConnId,
     sink: &'a mut Sink,
@@ -197,6 +215,7 @@ struct Conn<'a> {
     heard: Instant,
     /// When the device was last re-checked.
     checked: Instant,
+    identity_failures: u8,
     /// Paste files written, to name the next.
     pastes: u64,
 }
@@ -363,18 +382,41 @@ impl Conn<'_> {
         }
         if now >= self.checked + RECHECK {
             self.checked = now;
-            if let Err(refused) = self.ctx.app.auth.recheck(self.device).await {
+            if let Err(refused) = self.ctx.app.auth.recheck(self.session).await {
                 let (conn, device) = (self.id.0, &self.device.name);
+                if matches!(self.session, Session::Node { .. })
+                    && matches!(&refused, AuthError::IdentityUnavailable(_))
+                {
+                    self.identity_failures = self.identity_failures.saturating_add(1);
+                    if self.identity_failures < 3 {
+                        warn!(
+                            conn,
+                            %device,
+                            failures = self.identity_failures,
+                            cause = %refused,
+                            "node identity check unavailable; keeping socket"
+                        );
+                        return Ok(self.next_tick());
+                    }
+                }
                 match &refused {
-                    AuthError::NoToken | AuthError::Unknown => {
+                    AuthError::NoToken | AuthError::Unknown | AuthError::NotEnrolled { .. } => {
                         info!(conn, %device, "the device was removed");
                     }
-                    AuthError::Store(_) | AuthError::Busy => {
+                    AuthError::Store(_) | AuthError::Busy | AuthError::IdentityUnavailable(_) => {
                         error!(conn, %device, cause = %refused, "can't re-check the device");
+                    }
+                    AuthError::Ambiguous
+                    | AuthError::WrongFront
+                    | AuthError::BadOrigin
+                    | AuthError::Forbidden
+                    | AuthError::NodeRefused(_) => {
+                        info!(conn, %device, cause = %refused, "node identity was revoked");
                     }
                 }
                 return Err(End::Close(CloseCode::from(&refused)));
             }
+            self.identity_failures = 0;
         }
         Ok(self.next_tick())
     }

@@ -66,7 +66,11 @@ async fn a_video_streams_by_range_with_a_stable_etag() {
     assert_eq!(probe.header("accept-ranges"), Some("bytes"));
     assert_eq!(probe.header("x-content-type-options"), Some("nosniff"));
     assert_eq!(probe.header("content-security-policy"), Some("sandbox"));
-    assert_eq!(probe.header("cache-control"), Some("private, no-cache"));
+    assert_eq!(probe.header("cache-control"), Some("no-store"));
+    assert_eq!(
+        probe.header("cross-origin-resource-policy"),
+        Some("same-origin")
+    );
     let etag = probe.header("etag").expect("an ETag").to_owned();
 
     // A range across chunk boundaries, with a matching If-Range.

@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::warn;
 
 use super::token::{self, Hash};
 use crate::files::{self, Dir, Temp};
@@ -26,7 +27,7 @@ const NAME_LIMIT: usize = 64;
 const AUTH: &str = "auth.toml";
 const HOST_ID: &str = "host_id";
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct AuthFile {
     #[serde(default, rename = "device", skip_serializing_if = "Vec::is_empty")]
     pub devices: Vec<Device>,
@@ -34,11 +35,34 @@ pub struct AuthFile {
     pub pending: Option<Pending>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKind {
+    #[default]
+    Native,
+    Node,
+}
+
+impl DeviceKind {
+    fn is_native(&self) -> bool {
+        *self == Self::Native
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Device {
     pub name: String,
-    /// sha256 of the token, hex. The token itself is never stored.
-    pub token_sha256: String,
+    #[serde(default, skip_serializing_if = "DeviceKind::is_native")]
+    pub kind: DeviceKind,
+    /// sha256 of a native device's token, hex. The token itself is never stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_sha256: Option<String>,
+    /// Stable node ID and owner login for a browser device.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login: Option<String>,
     /// RFC 3339, UTC.
     pub enrolled_at: String,
     /// The Tailscale login that enrolled it, or `cli`.
@@ -167,28 +191,43 @@ impl Store {
         by: &str,
         now: SystemTime,
     ) -> Result<Added, EnrollError> {
-        let presented = token::hash(&token::normalize_code(code));
         let token = token::generate().map_err(StoreError::from)?;
         let token_hash = token::hash(&token);
         self.update(|file| {
-            let Some(pending) = &mut file.pending else {
-                return Err(EnrollError::BadCode);
-            };
-            let live = humantime::parse_rfc3339(&pending.expires_at).is_ok_and(|at| now < at);
-            if !live {
-                file.pending = None;
-                return Err(EnrollError::BadCode);
-            }
-            if !token::matches(&pending.code_sha256, &presented) {
-                pending.wrong_tries += 1;
-                if pending.wrong_tries >= MAX_WRONG_TRIES {
-                    file.pending = None;
-                }
-                return Err(EnrollError::BadCode);
-            }
-            file.pending = None;
-            let name = add(&mut file.devices, device_name, &token_hash, by, now);
+            redeem(file, code, now)?;
+            let name = add_native(&mut file.devices, device_name, &token_hash, by, now);
             Ok(Added { name, token })
+        })?
+    }
+
+    /// `POST /auth/node/enroll`. An existing node keeps its name and doesn't consume
+    /// the shared code.
+    pub fn enroll_node(
+        &self,
+        code: &str,
+        device_name: &str,
+        node_id: &str,
+        login: &str,
+        by: &str,
+        now: SystemTime,
+    ) -> Result<String, EnrollError> {
+        self.update(|file| {
+            if let Some(device) = file.devices.iter().find(|device| {
+                device.kind == DeviceKind::Node
+                    && device.node_id.as_deref() == Some(node_id)
+                    && device.login.as_deref() == Some(login)
+            }) {
+                return Ok(device.name.clone());
+            }
+            redeem(file, code, now)?;
+            Ok(add_node(
+                &mut file.devices,
+                device_name,
+                node_id,
+                login,
+                by,
+                now,
+            ))
         })?
     }
 
@@ -196,7 +235,8 @@ impl Store {
     pub fn add_device(&self, name: &str, now: SystemTime) -> Result<Added, StoreError> {
         let token = token::generate()?;
         let token_hash = token::hash(&token);
-        let name = self.update(|file| add(&mut file.devices, name, &token_hash, "cli", now))?;
+        let name =
+            self.update(|file| add_native(&mut file.devices, name, &token_hash, "cli", now))?;
         Ok(Added { name, token })
     }
 
@@ -205,6 +245,17 @@ impl Store {
         self.update(|file| {
             let before = file.devices.len();
             file.devices.retain(|device| device.name != name);
+            file.devices.len() < before
+        })
+    }
+
+    /// Removes the enrolled node and any accidentally duplicated row for the same ID.
+    pub fn remove_node(&self, node_id: &str) -> Result<bool, StoreError> {
+        self.update(|file| {
+            let before = file.devices.len();
+            file.devices.retain(|device| {
+                device.kind != DeviceKind::Node || device.node_id.as_deref() != Some(node_id)
+            });
             file.devices.len() < before
         })
     }
@@ -237,29 +288,93 @@ impl Store {
     }
 }
 
-/// Adds a device under a unique name (`-2`, `-3`… on a clash) and returns the name.
-fn add(
+/// Checks the pending code and applies its shared wrong-try counter.
+fn redeem(file: &mut AuthFile, code: &str, now: SystemTime) -> Result<(), EnrollError> {
+    let presented = token::hash(&token::normalize_code(code));
+    let Some(pending) = &mut file.pending else {
+        return Err(EnrollError::BadCode);
+    };
+    let live = humantime::parse_rfc3339(&pending.expires_at).is_ok_and(|at| now < at);
+    if !live {
+        file.pending = None;
+        return Err(EnrollError::BadCode);
+    }
+    if !token::matches(&pending.code_sha256, &presented) {
+        pending.wrong_tries += 1;
+        if pending.wrong_tries >= MAX_WRONG_TRIES {
+            file.pending = None;
+        }
+        return Err(EnrollError::BadCode);
+    }
+    file.pending = None;
+    Ok(())
+}
+
+/// Picks a device name shared by both device kinds.
+fn unique_name(devices: &[Device], name: &str) -> String {
+    let base = clean_name(name);
+    let taken = |candidate: &str| devices.iter().any(|device| device.name == candidate);
+    let mut candidate = base.clone();
+    let mut suffix = 2;
+    while taken(&candidate) {
+        candidate = format!("{base}-{suffix}");
+        suffix += 1;
+    }
+    candidate
+}
+
+fn add_native(
     devices: &mut Vec<Device>,
     name: &str,
     token_hash: &Hash,
     by: &str,
     now: SystemTime,
 ) -> String {
-    let base = clean_name(name);
-    let taken = |name: &str| devices.iter().any(|device| device.name == name);
-    let mut name = base.clone();
-    let mut suffix = 2;
-    while taken(&name) {
-        name = format!("{base}-{suffix}");
-        suffix += 1;
-    }
+    let name = unique_name(devices, name);
     devices.push(Device {
         name: name.clone(),
-        token_sha256: token::hex(token_hash),
+        kind: DeviceKind::Native,
+        token_sha256: Some(token::hex(token_hash)),
+        node_id: None,
+        login: None,
         enrolled_at: rfc3339(now),
         enrolled_by: by.to_owned(),
     });
     name
+}
+
+fn add_node(
+    devices: &mut Vec<Device>,
+    name: &str,
+    node_id: &str,
+    login: &str,
+    by: &str,
+    now: SystemTime,
+) -> String {
+    let name = unique_name(devices, name);
+    devices.push(Device {
+        name: name.clone(),
+        kind: DeviceKind::Node,
+        token_sha256: None,
+        node_id: Some(node_id.to_owned()),
+        login: Some(login.to_owned()),
+        enrolled_at: rfc3339(now),
+        enrolled_by: by.to_owned(),
+    });
+    name
+}
+
+impl Device {
+    pub(crate) fn valid(&self) -> bool {
+        match self.kind {
+            DeviceKind::Native => {
+                self.token_sha256.is_some() && self.node_id.is_none() && self.login.is_none()
+            }
+            DeviceKind::Node => {
+                self.token_sha256.is_none() && self.node_id.is_some() && self.login.is_some()
+            }
+        }
+    }
 }
 
 /// Device names come from the phone and are printed in a terminal: no control
@@ -277,9 +392,33 @@ fn clean_name(name: &str) -> String {
 }
 
 fn parse(path: &Path, text: &str) -> Result<AuthFile, StoreError> {
-    toml::from_str(text).map_err(|error| StoreError::Parse {
+    #[derive(Deserialize)]
+    struct Raw {
+        #[serde(default, rename = "device")]
+        devices: Vec<toml::Value>,
+        #[serde(default)]
+        pending: Option<Pending>,
+    }
+
+    let raw: Raw = toml::from_str(text).map_err(|error| StoreError::Parse {
         path: path.to_owned(),
         line: files::toml_line(text, &error),
+    })?;
+    let mut devices = Vec::with_capacity(raw.devices.len());
+    for value in raw.devices {
+        let name = value
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("<unnamed>")
+            .to_owned();
+        match value.try_into::<Device>() {
+            Ok(device) if device.valid() => devices.push(device),
+            _ => warn!(device = %name, "refused invalid or unknown device row"),
+        }
+    }
+    Ok(AuthFile {
+        devices,
+        pending: raw.pending,
     })
 }
 
@@ -453,6 +592,21 @@ mod tests {
         );
         // A write refuses to replace it.
         assert!(store.add_device("b", SystemTime::now()).is_err());
+    }
+
+    #[test]
+    fn unknown_device_fields_refuse_only_that_row_and_legacy_rows_stay_native() {
+        let (store, _cleanup) = temp_store();
+        fs::write(
+            store.dir().join(AUTH),
+            "[[device]]\nname = \"future\"\ntoken_sha256 = \"bad\"\nenrolled_at = \"2026-10-23T00:00:00Z\"\nenrolled_by = \"cli\"\nfuture_scope = \"read-only\"\n\n[[device]]\nname = \"old\"\ntoken_sha256 = \"bad\"\nenrolled_at = \"2026-10-23T00:00:00Z\"\nenrolled_by = \"cli\"\n",
+        )
+        .expect("written");
+
+        let devices = store.read().expect("the file").devices;
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].name, "old");
+        assert_eq!(devices[0].kind, DeviceKind::Native);
     }
 
     #[test]

@@ -1285,13 +1285,16 @@ found each point while running the daemon.
   as an ordinary disconnect (checked), but the spec's rule is the clean one.
 - **Rejected:** leaving it: the daemon exiting before its pumps.
 
-### The paste directory is emptied after the port is bound
+### The paste directory is emptied after the port is bound (superseded)
 
 - **What:** the daemon binds `127.0.0.1:<port>` first, then empties
   `$XDG_RUNTIME_DIR/tether/` ([daemon-core.md §3.4](daemon-core.md#34-commands-commandrs)).
 - **Why:** a daemon started by mistake emptied the directory and then failed to bind,
   deleting a running daemon's in-flight paste files. Found in the live run.
 - **Rejected:** emptying first, as the build did.
+- **Superseded:** the browser-auth runtime uses a private runtime directory and two Unix
+  sockets. It holds the runtime lock, binds both sockets, then empties only `paste/`
+  ([daemon-core.md §3.4](daemon-core.md#34-commands-commandrs)).
 
 ## iOS app
 
@@ -2413,6 +2416,36 @@ the p61 review. The product calls behind it are Jimmy's
   current until reviewed replacements are specified. No public exposure is authorized
   by this roadmap, and no network/service configuration changes accompany it.
 
+## Browser authentication: enrolled tailnet nodes
+
+- **Decided:** 2026-10-23, tech lead (Jimmy delegated first-phase auth).
+- **What:** A browser/PWA presents no credential; it is admitted as an enrolled
+  Tailscale node. The daemon listens on `serve.sock` and `local.sock` in a private
+  `0700` runtime directory. Only `serve.sock` can admit nodes, and only when the
+  canonical-origin check finds that socket exactly once in the Serve configuration,
+  as the sole `/` handler of one HTTPS entry with Funnel off. The daemon checks the
+  exact forwarded host, browser Origin and fetch metadata, resolves the forwarded
+  address with LocalAPI whois on each node-lane request, refuses tagged, shared,
+  subnet-routing and self nodes, then matches stable ID and owner login against a
+  `node` row in `auth.toml`. The iOS app's device-token lane remains unchanged.
+  Both kinds share `tether enroll`'s one-time code and `tether device remove`; live
+  node sockets re-check the device, node and origin every 10 seconds.
+- **Why:** a cookie can be replayed by any HTTPS service on the same hostname and
+  node-wide Tailscale access alone cannot be revoked per device. Serve's identity
+  headers are trusted only on the socket tailscaled's HTTP proxy reaches, and the
+  canonical-origin rule closes the raw TCP-forward and same-origin co-resident-app
+  paths.
+- **Costs:** an enrolled node is trusted whole, including every browser, app and OS
+  account on it. On Tailscale 1.100 and later, changing Serve after publishing a Unix
+  target needs root; root publishes each Unix user's tether. The operator remains
+  trusted and can replace the publication.
+- **Rejected:** a replayable browser cookie; a token in browser storage; Tailscale
+  identity without enrolment; a loopback TCP peer check or `sock_diag` UID lookup;
+  choosing an auth lane from peer UID; caching whois by address; trusting the Serve
+  TCP-forward peer UID without inspecting the full Serve config; a configurable
+  `browser_origin`; and a startup-only security snapshot. Public HTTPS and passkeys
+  remain a separate future lane on its own socket.
+
 ## Resource limits
 
 ### One memory budget sizes daemon caps, checked against the unit
@@ -2425,10 +2458,11 @@ the p61 review. The product calls behind it are Jimmy's
   The round tier boundaries stay 72, 64, 58, 53 and 42; the tier selects three caps:
   control clients, sockets and completion on/off. The default gives 3 clients, 3 sockets
   and completion; the current in-scope unreclaimable ceiling is 62.4 MiB. The browser-
-  auth whois and shell rows (1.2 MiB) are not part of this TCP-listener change. Linux
+  auth whois and shell rows (1.2 MiB) are not part of this resource-limit change. Linux
   uploads to tmpfs or ramfs are refused as `409 memory_backed`. The 64-permit HTTP
-  accept loop uses today's loopback TCP listener, 16 KiB hyper buffers and the 128
-  connection backlog. Completion-off is `welcome.daemon.completion: false`; a stray
+  accept loop shares 64 permits across `serve.sock` and `local.sock`, with 16 KiB hyper
+  buffers and the 128 connection backlog. Completion-off is
+  `welcome.daemon.completion: false`; a stray
   `/complete` gets `200 {"chips":[]}` without constructing completion. The control
   client cap ends a watch with `reason: "limit"`; its message names the holding tmux
   session IDs. Every `ConfigError` and a budget below 42 exits 78. The systemd unit has
@@ -2441,9 +2475,9 @@ the p61 review. The product calls behind it are Jimmy's
   Tiers keep each configuration measurable; scaling only session, socket and completion
   counts makes refusals explainable. The default preserves three sessions because the
   unit bounds tether, not tmux and its processes. A memory-backed upload could leave
-  unreclaimable shmem after the request, outside the ceiling. The TCP accept bound is
-  required because otherwise unupgraded HTTP connections and hyper buffers are
-  unbounded. `MemoryHigh` below the unreclaimable ceiling stalls allocations instead
+  unreclaimable shmem after the request, outside the ceiling. The HTTP accept bound is
+  required because otherwise unupgraded connections and hyper buffers are unbounded.
+  `MemoryHigh` below the unreclaimable ceiling stalls allocations instead
   of making the budget safe. A 10 ms quota period bounds a throttled keystroke by one
   period.
 - **Rejected:** documentation only (one missed edit and caps outgrow `MemoryMax`); using
