@@ -97,7 +97,7 @@ test.describe("overlays and focus", () => {
 test.describe("lists", () => {
   test("arrow keys rove among the rows, with one row in the tab order", async ({ page }) => {
     await openFixture(page, "restored", desktop);
-    const rows = page.locator('[aria-label="Open tabs"] button');
+    const rows = page.locator('[aria-label^="Sessions on"] [data-roving] >> visible=true');
     await expect(rows).toHaveCount(2);
     expect(await rows.evaluateAll((els) => els.map((e) => (e as HTMLElement).tabIndex))).toEqual([0, -1]);
     await rows.first().focus();

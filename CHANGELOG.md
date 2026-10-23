@@ -5,6 +5,11 @@ version section on release.
 
 ## [Unreleased]
 
+- Home, the session picker and Settings: open tabs, a search over sessions and windows,
+  New session and New window (with an optional start directory), every listing state
+  (loading, offline, refused, no tmux server, stale with Retry), and Settings with Remove
+  this device, Clear local data and Add to Home Screen steps. An offline launch says "Can't
+  reach <host>" and its tabs read "Reconnecting…".
 - The session-limit message says "1 tmux session" when the limit is one.
 - Show refused auth row names in device listing, list nodes by stored ID, and send
   the native welcome and manifest without waiting for a tailnet refresh.

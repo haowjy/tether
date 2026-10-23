@@ -2639,3 +2639,28 @@ the p61 review. The product calls behind it are Jimmy's
 - **Why:** the global override also animated scheme changes and made the accessibility
   contrast gate flaky.
 - **Rejected:** a blanket reduced-motion rule forcing every transition to 1 ms.
+
+## Home, picker and Settings details
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** the controller owns the sessions cache (`sessions/cache.ts`), so a save before
+  any screen mounts still writes the saved expansion. A new session or window opens its
+  tab from the next listing that holds it, because `created` carries references, not
+  names; after 5 s the form says it was created but has not appeared. Closing an overlay
+  by an action waits for the history pop before it activates a tab. Expansion keys are
+  `<tmux run>/<session id>`, so a restarted tmux does not inherit open groups, and a
+  listing drops the keys of vanished sessions. Open tabs have a sibling close button, and
+  a restoring tab reads "Checking…", or "Reconnecting…" while its host is unreachable.
+  An empty open-tabs list is one muted line. "Updating" sits beside the host heading and
+  fades in after 250 ms. Settings confirmations are overlays, so Back returns to
+  Settings. Clear local data deletes storage only; open tabs stay until closed. The
+  admitted state carries the device name, so Settings names it. The saved workspace
+  carries the host's last known name, so an offline launch says "Can't reach pop-os".
+- **Why:** each rule keeps one owner for a piece of state and keeps the list from moving
+  under the user's finger.
+- **Rejected:** a cache built by the first screen to ask (a save before then wrote an
+  empty expansion); inventing names from the form to open the tab at once; activating a
+  tab before the pop lands, which the pop then undoes; a status row above the list, which
+  shifts every row on each Home entry; the large empty-state block for no open tabs, which
+  pushed sessions down about 120 px; `<node>` copy that reads "this device" because the
+  name was unavailable; a separate host record in storage for the offline name.
