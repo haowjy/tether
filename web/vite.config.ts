@@ -17,7 +17,7 @@ function forbidTestModules(): Plugin {
 }
 
 /** The Shiki grammars the file viewer ships, each its own lazy chunk (client-architecture.md §8.4). */
-const GRAMMARS = ["shellscript", "json", "yaml", "toml", "markdown", "typescript", "javascript", "python", "rust", "go", "swift", "c", "diff"];
+const GRAMMARS = ["shellscript", "json", "yaml", "toml", "markdown", "typescript", "tsx", "javascript", "python", "rust", "go", "swift", "c", "diff"];
 /** `bash` is Shiki's alias of the `shellscript` grammar. */
 const ALIASES: Record<string, string> = { bash: "shellscript" };
 

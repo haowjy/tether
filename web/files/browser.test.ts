@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FileBrowser, within } from "./browser";
+import { entryPlace, FileBrowser, parentPlace, within } from "./browser";
 import { FakeFs, type FakeTree } from "../platform/test/fs";
 
 const tree = (): FakeTree => ({
@@ -32,23 +32,19 @@ describe("within", () => {
 });
 
 describe("FileBrowser", () => {
-  it("opens at the tab's cwd when a root holds it", async () => {
-    const { browser } = setup();
-    await browser.start("/home/j/repo/src");
-    expect(browser.snapshot.place).toEqual({ kind: "dir", path: "/home/j/repo/src" });
-    expect(browser.snapshot.pages?.entries.map((e) => e.name)).toEqual(["main.rs"]);
-  });
-
-  it("opens at the roots when no root holds the cwd, without listing it", async () => {
+  it("shows the roots for no place, and a folder the router names", async () => {
     const { browser, fs } = setup();
-    await browser.start("/home/j/repo2");
+    await browser.follow(null);
     expect(browser.snapshot.place).toEqual({ kind: "roots" });
-    expect(fs.calls).toEqual(["roots"]);
+    expect(browser.snapshot.roots?.roots.map((r) => r.path)).toEqual(["/home/j/repo"]);
+    await browser.follow({ kind: "dir", path: "/home/j/repo/src" });
+    expect(browser.snapshot.pages?.entries.map((e) => e.name)).toEqual(["main.rs"]);
+    expect(fs.calls).toEqual(["roots", "list /home/j/repo/src 0"]);
   });
 
   it("lists directories first, pages on demand, and keeps hidden files out until asked", async () => {
     const { browser, fs } = setup();
-    await browser.start("/home/j/repo");
+    await browser.follow({ kind: "dir", path: "/home/j/repo" });
     expect(browser.snapshot.pages?.entries.map((e) => e.name)).toEqual(["src", "README.md", "a.ts"]);
     await browser.more();
     expect(browser.snapshot.pages?.entries.map((e) => e.name)).toEqual(["src", "README.md", "a.ts", "b.png", "c.rs"]);
@@ -58,35 +54,48 @@ describe("FileBrowser", () => {
     expect(browser.snapshot.pages?.entries.map((e) => e.name)).toContain(".git");
   });
 
-  it("goes back from a viewer to the listing it came from without relisting", async () => {
+  it("opens a listed file from the listing it came from, and returns to it without relisting", async () => {
     const { browser, fs } = setup();
-    await browser.start("/home/j/repo");
+    await browser.follow({ kind: "dir", path: "/home/j/repo" });
     const readme = browser.snapshot.pages?.entries.find((e) => e.name === "README.md");
     if (!readme) throw new Error("no README");
-    await browser.openEntry(readme);
-    expect(browser.snapshot.place).toMatchObject({ kind: "file", file: { path: "/home/j/repo/README.md", mime: "text/markdown; charset=utf-8" } });
-    const lists = fs.calls.length;
-    await browser.back();
+    const place = entryPlace("/home/j/repo", readme);
+    expect(place).toEqual({ kind: "file", path: "/home/j/repo/README.md" });
+    await browser.follow(place);
+    expect(browser.snapshot.place).toMatchObject({ kind: "file", file: { name: "README.md", mime: "text/markdown; charset=utf-8", size: 10 } });
+    const calls = fs.calls.length;
+    await browser.follow({ kind: "dir", path: "/home/j/repo" });
     expect(browser.snapshot.place).toEqual({ kind: "dir", path: "/home/j/repo" });
-    expect(fs.calls.length).toBe(lists);
+    expect(fs.calls.length).toBe(calls);
   });
 
-  it("walks up to the root's top, then to the roots", async () => {
+  it("opens a file by path with a probe, and a folder that a link led to as a listing", async () => {
     const { browser } = setup();
-    await browser.start("/home/j/repo/src");
-    await browser.back();
-    expect(browser.snapshot.place).toEqual({ kind: "dir", path: "/home/j/repo" });
-    await browser.back();
-    expect(browser.snapshot.place).toEqual({ kind: "roots" });
+    await browser.follow({ kind: "file", path: "/home/j/repo/src/main.rs" });
+    expect(browser.snapshot.place).toMatchObject({ kind: "file", file: { name: "main.rs", mime: "text/plain; charset=utf-8" } });
+    expect(await browser.resolve("/home/j/repo/src")).toEqual({ kind: "dir", path: "/home/j/repo/src" });
+    expect(await browser.resolve("/home/j/repo/src/main.rs")).toEqual({ kind: "file", path: "/home/j/repo/src/main.rs" });
+  });
+
+  it("goes up to the root's top, then to the roots", async () => {
+    const { browser } = setup();
+    await browser.follow({ kind: "file", path: "/home/j/repo/src/main.rs" });
+    expect(parentPlace(browser.snapshot)).toEqual({ kind: "dir", path: "/home/j/repo/src" });
+    await browser.follow({ kind: "dir", path: "/home/j/repo/src" });
+    expect(parentPlace(browser.snapshot)).toEqual({ kind: "dir", path: "/home/j/repo" });
+    await browser.follow({ kind: "dir", path: "/home/j/repo" });
+    expect(parentPlace(browser.snapshot)).toEqual({ kind: "roots" });
+    await browser.follow(null);
+    expect(parentPlace(browser.snapshot)).toBeNull();
   });
 
   it("drops an answer for a folder already left", async () => {
     const { browser, fs } = setup();
-    await browser.start("/home/j/repo");
+    await browser.follow({ kind: "dir", path: "/home/j/repo" });
     fs.hold = true;
-    const slow = browser.openDir("/home/j/repo/src");
+    const slow = browser.follow({ kind: "dir", path: "/home/j/repo/src" });
     fs.hold = false;
-    await browser.openDir("/home/j/up");
+    await browser.follow({ kind: "dir", path: "/home/j/up" });
     fs.release();
     await slow;
     expect(browser.snapshot.place).toEqual({ kind: "dir", path: "/home/j/up" });
@@ -95,50 +104,16 @@ describe("FileBrowser", () => {
 
   it("shows a refusal and no stale entries for a folder outside the roots", async () => {
     const { browser } = setup();
-    await browser.start("/home/j/repo");
-    await browser.openDir("/home/j/other");
+    await browser.follow({ kind: "dir", path: "/home/j/repo" });
+    await browser.follow({ kind: "dir", path: "/home/j/other" });
     expect(browser.snapshot.error?.code).toBe("outside_roots");
     expect(browser.snapshot.pages).toBeNull();
-  });
-
-  it("opens a linked path as a file or a folder", async () => {
-    const { browser } = setup();
-    await browser.start("/home/j/repo");
-    await browser.openPath("/home/j/repo/src/main.rs");
-    expect(browser.snapshot.place).toMatchObject({ kind: "file", file: { name: "main.rs", path: "/home/j/repo/src/main.rs" } });
-    await browser.openPath("/home/j/repo/src");
-    expect(browser.snapshot.place).toEqual({ kind: "dir", path: "/home/j/repo/src" });
-  });
-
-  it("adds a root from the $HOME picker and returns to Settings", async () => {
-    const { browser, fs } = setup();
-    await browser.start(null);
-    browser.showSettings();
-    await browser.pick("root");
-    expect(browser.snapshot.place).toEqual({ kind: "pick", purpose: "root", path: "/home/j" });
-    expect(browser.snapshot.pages?.entries.every((e) => e.kind === "dir")).toBe(true);
-    const other = browser.snapshot.pages?.entries.find((e) => e.name === "other");
-    if (!other) throw new Error("no other");
-    await browser.openEntry(other);
-    await browser.choose();
-    expect(fs.calls).toContain("add /home/j/other");
-    expect(browser.snapshot.place).toEqual({ kind: "settings" });
-    expect(browser.snapshot.roots?.roots.map((r) => r.path)).toEqual(["/home/j/repo", "/home/j/other"]);
-    await browser.removeRoot("/home/j/repo");
-    expect(browser.snapshot.roots?.roots.map((r) => r.path)).toEqual(["/home/j/other"]);
-  });
-
-  it("goes back from the picker's top to Settings", async () => {
-    const { browser } = setup();
-    await browser.start(null);
-    await browser.pick("uploads");
-    await browser.back();
-    expect(browser.snapshot.place).toEqual({ kind: "settings" });
+    expect(parentPlace(browser.snapshot)).toEqual({ kind: "roots" });
   });
 
   it("relists the folder on screen when an upload lands in it", async () => {
     const { browser, fs } = setup();
-    await browser.start("/home/j/up");
+    await browser.follow({ kind: "dir", path: "/home/j/up" });
     const before = fs.calls.length;
     await browser.uploaded("/home/j/repo/x.jpg");
     expect(fs.calls.length).toBe(before);
