@@ -139,7 +139,7 @@ means kept with its tests; "Revise" names the change.
 | `proto/link.ts` | **Revise**: `token` becomes optional. `tether.v1` is always offered, and `tether.auth.<token>` only when a token exists. `hello.client.kind` is `"web"` in the browser (it defaults to `"ios"` today) | Auth rev 4 §3.14 and §5: the node lane offers only `tether.v1` |
 | `net/host.ts` | **Revise**: takes its socket from `platform.transport` (§5.2). Routes errors with no `req` that answer a paste to the paste's tab (§7.5) | Reconnect, backoff and request routing already match plan.md "Reconnect" |
 | `net/http.ts`, `net/fakes.ts` | **Keep** | |
-| `tabs/connection.ts`, `tabs/driver.ts` | **Keep**. The driver gains the `limited` state (§6.4) and the paste result (§7.5) | Tested state machine. `cover`/`uncover` already end and resume the watch |
+| `tabs/connection.ts`, `tabs/driver.ts` | **Keep**. The driver gains the `limited` state (§6.4) and the paste result (§7.5) | Tested state machine. `cover`/`uncover` already end and resume the watch; `Terminals` calls them |
 | `tabs/input.ts` | **Keep**. `InputEvent` moves to `platform/types.ts` | `toMessages` and `shellQuote` are pure |
 | `term/pipeline.ts`, `term/index.ts` | **Keep**, unchanged. The pipeline gets no wrap map: L3 replays soft wraps inside the snapshot bytes, so xterm marks the continuation rows itself. `term/index.ts` gains the renderer API P3 needs (§11) | Serialized writes, renderer boundary |
 | `term/prompt.ts` | **Keep** | Tap-to-position on the prompt line reads its OSC 133 marks (plan.md "Cursor movement"; §7.6) |
@@ -744,11 +744,12 @@ Consequences:
 
 `workspace/` is a pure reducer over the open tabs and nothing else. Events go in:
 `opened`, `closed`, `activated`, `listing`, `windowClosed`, `serverExited`, `renamed`,
-`navigated`, `restored`, `watching`. State and effects come out: `cover`, `uncover`,
-`save`, `navigate`, `focus`, `notice`. The controller in `app/` runs the effects against
-`TabDriver`, the router, the focus controller and persist now. `TabDriver` keeps owning its own
-watch and its connection states, `limited` included; the workspace only says which tab
-is on screen.
+`navigated`, `restored`, `watching`. State and effects come out: `save`, `navigate`,
+`focus`, `notice`. The controller in `app/` runs the effects against the router, the focus
+controller and persist now. `TabDriver` keeps owning its own watch and its connection states,
+`limited` included. The workspace only says which tab is on screen, through `shownTab(state)`;
+the terminal lane's `Terminals` owns every driver and covers or uncovers each from that, so
+there is no second copy of "which tab is shown" and no cover/uncover effect.
 
 ```ts
 type TabKey = { host: string; window: WindowRef };   // WindowRef = { server, window }
@@ -789,9 +790,13 @@ A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
   - The host's name is appended only when tabs from more than one host are open
     (native).
   - The full label is the pill's tooltip and accessible name.
-- **On screen.** Only the active tab on the Terminal destination is uncovered. Leaving
+- **On screen.** Only the active tab on the Terminal destination is uncovered
+  (`shownTab`). `Terminals.sync()` runs on every app change and covers every other driver
+  and uncovers that one, once the box is measured; both calls are idempotent. Leaving
   Terminal for Home or Files covers it, which ends its watch and returns tmux its size.
-  Returning uncovers it and repaints from a fresh snapshot.
+  Returning uncovers it and repaints from a fresh snapshot. Native's `input` events reach
+  the same `Terminals`, and a native screen covering the terminal is Swift's own state, so
+  W5 needs no reducer effect: nothing in the reducer or the controller addresses a driver.
 - **Closing** follows the contract. Closing the active tab activates its right
   neighbour, else its left. Closing the last tab returns Home (a `navigate` effect), and
   on desktop focuses Home search.
@@ -800,7 +805,7 @@ A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
   - `opened` and `activated` emit `navigate: terminal` unless the page is already on
     Terminal; closing the last tab from Terminal emits `navigate: home`.
   - The controller runs `navigate` through the router, which emits `navigated` at once,
-    so `onTerminal`, `cover` and `uncover` follow before any `focus` effect runs.
+    so `onTerminal` (and with it `shownTab`) follows before any `focus` effect runs.
   - Arriving at Terminal with an active tab (`navigated`: a tab tap, the rail, Back, a
     deep link) emits `focus: terminal`; `opened` and `activated` emit it themselves only
     when already there.
@@ -1179,10 +1184,15 @@ it.
 - **Upload from Files.** When it completes, Files shows the preview and "Insert path
   into `<tab label>`" for the tab active when the upload started. With no connected
   tab, the action is disabled with "Open a terminal tab first", and with "That tab isn't
-  connected" while the target is reconnecting or refused for the session limit
-  (`AppView.tabsOffline`). A path waiting for its watch is dropped, with a notice, if the
-  watch fails first. Native's `upload` events follow the same offer instead of inserting
+  connected" while the target is reconnecting, refused for the session limit or closed.
+  A path waiting for its watch is dropped, with a notice, if the watch fails first. Native's `upload` events follow the same offer instead of inserting
   automatically.
+- **One owner decides.** `Terminals.canInsert(id)` and `Terminals.insertPath(id, path)` read
+  the driver's own state: a connecting or live tab takes the path (it waits for the watch, or
+  for the tab to be on screen), a reconnecting, limited or closed one refuses it. Files and
+  image paste both call them. A refusal gets one notice from `insertPath`; a path dropped
+  while waiting gets the driver's. The result is `typed`, `queued` or `refused`, so callers
+  never claim an insertion that did not happen.
 - **Insert path** from a preview uses the same rules. The target is captured on click,
   the path is quoted, no Enter is sent, and then Terminal opens on that tab. A path
   holding a C0 control or DEL (CR, LF, ESC, ^C) is refused with a notice: typed into a
@@ -1694,7 +1704,7 @@ sheet follows the theme (§8.5), and each server's installed PWA is named
 | R1 L2 protocol range | Fixed | §4.1 |
 | R1 L3 harness string check | Fixed: module graph check | §5.11 |
 | R1 L4 two homes for phone Files | Fixed: `#/files` only. The back-then-switch ordering is gone with R3 F3 | §6.6 |
-| R1 L5 duplicate watch state | Fixed: the reducer emits `cover`/`uncover`; the active tab is covered off Terminal | §6.1 |
+| R1 L5 duplicate watch state | Fixed: the active tab is covered off Terminal. Later superseded: `Terminals` derives cover and uncover from `shownTab`, and the reducer emits neither | §6.1 |
 | R1 L6 `TabKey` types | Fixed: derived from `WindowRef` | §6.1 |
 | R1 L7 `pick` can hang | Fixed: synchronous click, `cancel`, `AbortSignal` | §5.7 |
 | R1 L8 symbols font size | Fixed: subset with a 150 KB budget, committed with its script | §8.4 |

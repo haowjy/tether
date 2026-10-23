@@ -43,8 +43,6 @@ export type WorkspaceEvent =
   | { type: "watching"; id: string };
 
 export type WorkspaceEffect =
-  | { type: "cover"; id: string }
-  | { type: "uncover"; id: string }
   | { type: "save" }
   /** Go to a destination through the router. It runs before the focus effects, and the focus lands on the screen it opens. */
   | { type: "navigate"; to: "home" | "terminal" }
@@ -54,7 +52,7 @@ export type WorkspaceEffect =
 
 export const initialWorkspace: WorkspaceState = { tabs: [], active: null, onTerminal: false };
 
-/** The tab whose watch runs: only the active tab, and only on the Terminal destination. */
+/** The tab whose watch runs: only the active tab, and only on the Terminal destination. The terminal lane reads this to cover and uncover its drivers. */
 export function shownTab(state: WorkspaceState): string | null {
   return state.onTerminal ? state.active : null;
 }
@@ -174,21 +172,11 @@ export interface Reduced {
   effects: WorkspaceEffect[];
 }
 
-/**
- * One event in, the next state and the effects the controller runs out. `cover` and
- * `uncover` come from comparing which tab is on screen before and after; `save` follows
- * every change to what {@link savedTabs} holds.
- */
+/** One event in, the next state and the effects the controller runs out. `save` follows every change to what {@link savedTabs} holds. */
 export function reduce(state: WorkspaceState, event: WorkspaceEvent): Reduced {
   const result = step(state, event);
   const next = result.state;
   const effects: WorkspaceEffect[] = [];
-  const before = shownTab(state);
-  const after = shownTab(next);
-  if (before !== after) {
-    if (before !== null && next.tabs.some((t) => t.id === before)) effects.push({ type: "cover", id: before });
-    if (after !== null) effects.push({ type: "uncover", id: after });
-  }
   if (savedChanged(state, next)) effects.push({ type: "save" });
   if (result.navigate) effects.push({ type: "navigate", to: result.navigate });
   if (result.focus === "terminal" && next.active !== null) effects.push({ type: "focus", target: "terminal" });

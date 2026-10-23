@@ -695,11 +695,11 @@ Dependency rules: `hub/` never sees HTTP, `http/` never talks to tmux, and
 
 The web `workspace/` is a pure reducer over tabs, not the navigation owner. It handles
 `hostsKnown`, `opened`, `closed`, `activated`, `listing`, `windowClosed`, `serverExited`,
-`renamed`, `restored`, `watching` and `navigated` events. It emits `cover`, `uncover`,
-`save`, `navigate`, `focus` and `notice`;
+`renamed`, `restored`, `watching` and `navigated` events. It emits `save`, `navigate`,
+`focus` and `notice`;
 the controller applies navigation through the router before focus effects. The terminal
-lane registers each driver with `attachDriver(id, { cover, uncover, insertPath })`; a newly
-registered driver is covered unless it is the tab already shown. The router alone owns
+lane's `Terminals` owns every tab driver: it covers each one except `shownTab(workspace)`,
+and is the one way a path is inserted into a tab (`canInsert`, `insertPath`). The router alone owns
 destinations, overlays and Files places. `Platform.subscribe` is one change channel:
 `app/controller.ts` handles app, host, viewport, lifecycle, storage and update changes,
 and deliberately leaves input, compose and draft events to their lane owners' direct

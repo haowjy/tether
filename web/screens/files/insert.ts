@@ -1,9 +1,12 @@
 // Insert path (client-architecture.md §7.5): the quoted absolute path goes into one tab,
 // captured when the action began, with no Enter. If that tab is gone, nothing is sent
-// anywhere else.
+// anywhere else. The terminal lane decides whether the tab takes it (`Terminals.insertPath`).
 import type { AppController } from "../../app/controller";
+import { useApp, useAppView } from "../../app/context";
 import { hasControlChars } from "../../tabs/input";
+import { useStore } from "../../ui/store";
 import { tabLabels } from "../../workspace/labels";
+import { terminalsOf } from "../terminal/terminals";
 
 export interface InsertTarget {
   id: string;
@@ -20,20 +23,25 @@ export function insertTarget(app: AppController, id: string | null): InsertTarge
   if (!tab || tab.restoring) return null;
   const hosts = app.snapshot.hosts;
   const label = tabLabels(tabs, (host) => hosts.find((h) => h.hostId === host)?.name ?? host).find((l) => l.id === tab.id);
-  return label ? { id: tab.id, label: label.full, blocked: app.snapshot.tabsOffline.includes(tab.id) ? "That tab isn't connected" : null } : null;
+  return label ? { id: tab.id, label: label.full, blocked: terminalsOf(app).canInsert(tab.id) ? null : "That tab isn't connected" } : null;
 }
 
-/** Sends `path` to the tab `id` and shows it. When the tab is gone, says so and sends nothing. */
+/** {@link insertTarget}, re-read when the tabs, the host names or that tab's connection change. */
+export function useInsertTarget(id: string | null): InsertTarget | null {
+  const app = useApp();
+  const terminals = terminalsOf(app);
+  useAppView((v) => v.workspace.tabs);
+  useStore(terminals, () => id !== null && terminals.canInsert(id));
+  return insertTarget(app, id);
+}
+
+/** Sends `path` to the tab `id` and shows it. When the tab can't take it, the terminal lane says why and nothing is sent. */
 export function insertPath(app: AppController, id: string, path: string): boolean {
   if (hasControlChars(path)) {
     app.notify("This name has control characters, so its path wasn't inserted. Open it in the terminal instead.");
     return false;
   }
-  const target = insertTarget(app, id);
-  if (!target || target.blocked || !app.insertPath(id, path)) {
-    app.notify(`The path wasn't inserted: ${target?.blocked?.toLowerCase() ?? "that tab is closed"}. The file is still in Files.`);
-    return false;
-  }
+  if (terminalsOf(app).insertPath(id, path) === "refused") return false;
   // Activating a tab opens Terminal on it.
   app.dispatch({ type: "activated", id });
   return true;

@@ -272,30 +272,30 @@ describe("upload insertion", () => {
     t.tab.insertPath("/up/a.jpg");
     t.link().say({ type: "windowClosed", data: { window: window1 } });
     expect(t.notices).toEqual(["Could not insert a.jpg: the tab closed."]);
-    t.tab.insertPath("/up/b.jpg");
-    expect(t.notices).toHaveLength(2);
+    expect(t.tab.insertPath("/up/b.jpg")).toBe("refused");
+    expect(t.notices).toHaveLength(1);
   });
 
-  it("is dropped with a notice when the watch fails before it binds, and refused outright while disconnected", () => {
+  it("is dropped with a notice when the watch fails before it binds, and refused while disconnected", () => {
     const t = setup();
     t.link().welcome();
-    expect(t.tab.insertPath("/up/a.jpg")).toBe(false);
+    expect(t.tab.insertPath("/up/a.jpg")).toBe("queued");
     t.link().say({ type: "watchEnded", data: { watch: 1, reason: "error" } });
     expect(t.notices).toHaveLength(1);
     expect(t.notices[0]).toContain("a.jpg");
-    expect(t.tab.insertPath("/up/b.jpg")).toBe(false);
-    expect(t.notices).toHaveLength(2);
+    expect(t.tab.insertPath("/up/b.jpg")).toBe("refused");
+    expect(t.notices).toHaveLength(1);
     vi.advanceTimersByTime(500);
     t.link().say(t.watching(2));
     expect(t.link().types()).not.toContain("input");
   });
 
-  it("reports whether the path was typed now", () => {
+  it("reports whether the path was typed now, waiting, or refused", () => {
     const t = setup();
     const l = t.bind();
-    expect(t.tab.insertPath("/up/a.jpg")).toBe(true);
+    expect(t.tab.insertPath("/up/a.jpg")).toBe("typed");
     t.tab.cover();
-    expect(t.tab.insertPath("/up/b.jpg")).toBe(false);
+    expect(t.tab.insertPath("/up/b.jpg")).toBe("queued");
     expect(l.types()).toEqual(["watch", "input", "unwatch"]);
   });
 });

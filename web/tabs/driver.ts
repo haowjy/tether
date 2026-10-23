@@ -2,10 +2,13 @@ import type { ClientMsg, ServerMsg, Size, WindowRef } from "../proto/generated/m
 import type { Frame } from "../proto/frames";
 import type { Host, TabPort } from "../net/host";
 import type { TerminalRenderer } from "../term";
-import { initialState, reduce, type ConnectionEvent, type ConnectionState } from "./connection";
+import { acceptsInsert, initialState, reduce, type ConnectionEvent, type ConnectionState } from "./connection";
 import type { InputEvent } from "../platform/types";
-import { shellQuote, toMessages } from "./input";
+import { cannotInsert, shellQuote, toMessages } from "./input";
 import { sameWindow } from "../proto/window";
+
+/** What became of a path: typed now, waiting for the watch, or refused (the tab can't take it, and nothing was kept). */
+export type InsertResult = "typed" | "queued" | "refused";
 
 type Watching = Extract<ServerMsg, { type: "watching" }>["data"];
 
@@ -107,17 +110,14 @@ export class TabDriver {
 
   /**
    * Types the path, quoted and without Enter: now if bound, else at the next `watching`.
-   * Returns whether it was typed now. A path still waiting when the tab loses its
-   * connection or closes is dropped with a notice.
+   * A path still waiting when the tab loses its connection or closes is dropped with a
+   * notice; one refused here is the caller's to report.
    */
-  insertPath(path: string): boolean {
-    if (this.state.kind === "closed" || this.state.kind === "reconnecting" || this.state.kind === "limited") {
-      this.dropInsert(path);
-      return false;
-    }
+  insertPath(path: string): InsertResult {
+    if (!acceptsInsert(this.state)) return "refused";
     this.pendingInserts.push(path);
     this.flushInserts();
-    return this.pendingInserts.length === 0;
+    return this.pendingInserts.length === 0 ? "typed" : "queued";
   }
 
   /**
@@ -297,12 +297,8 @@ export class TabDriver {
     this.send({ type: "resize", data: { watch: this.watchId, size } });
   }
 
-  private dropInsert(path: string, why = "the tab isn't connected"): void {
-    this.opts.onNotice(`Could not insert ${path.split("/").pop() ?? path}: ${why}.`);
-  }
-
   private dropInserts(why: string): void {
-    for (const path of this.pendingInserts.splice(0)) this.dropInsert(path, why);
+    for (const path of this.pendingInserts.splice(0)) this.opts.onNotice(cannotInsert(path, why));
   }
 
   private jitter(): number {

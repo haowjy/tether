@@ -2848,3 +2848,26 @@ the p61 review. The product calls behind it are Jimmy's
   socket late and a slow one early); dropping the request timeout (a daemon that never
   replies would hold the form forever); `wss://<Host header>` in the CSP (the header is the
   client's); rendering control characters as `$'..'` (a TUI does not parse it).
+
+## Terminals owns the tab drivers and which tab is shown
+
+- **Decided:** 2026-10-23, tech lead, from the maintainability review of the web client at
+  `f5c8869` (finding H1, the third round on this seam).
+- **What:**
+  - *`Terminals` is the one owner of the drivers.* `sync()` covers and uncovers each from
+    `shownTab(workspace)` on every app change; the reducer's `cover`/`uncover` effects, the
+    controller's driver registry (`attachDriver`, `TabHandle`), `Terminals.shown` and the
+    `detach` map are gone. Native needs none of them: its input already reaches `Terminals`
+    through `Platform.subscribe`, and a native screen covering the terminal is Swift's state.
+  - *One eligibility rule for inserting a path.* `Terminals.canInsert(id)` and `insertPath(id,
+    path)` read the driver's state: connecting and live accept (the path waits for the
+    watch), reconnecting, limited and closed refuse. Files' Insert path and image paste both
+    use them, so a connecting tab no longer takes one and refuses the other. `insertPath`
+    returns `typed`, `queued` or `refused`; a refusal gets one notice, and `AppView.tabsOffline`
+    is gone. This replaces the `tabsOffline` rule of the G2 fixes.
+- **Why:** the controller and `Terminals` each kept a copy of the drivers and of which tab was
+  on screen, and each round fixed one copy's symptom (p96 M4, p96 L2, p97 #4).
+- **Rejected:** a port the terminal lane registers with the controller for Files (Files imports
+  `terminalsOf` directly, as every screen reaches its own core; a port would be the registry
+  again); keeping the reducer's effects and deleting only the controller's map (the reducer would
+  still compute "which tab is shown" a second time, from a diff).

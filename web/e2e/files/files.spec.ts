@@ -140,6 +140,26 @@ for (const [name, scenario] of SCREENS) {
       expect(await page.evaluate(() => window.__harness?.app.snapshot.workspace.active)).toBe(AGENT);
     });
 
+    test("Insert path is disabled for a tab the daemon refused for its session limit, and offered again once it connects", async ({ page }) => {
+      await openFixture(page, "filesCode", scenario, "#/files");
+      await page.evaluate(() => { const d = window.__harness?.platform.daemon; if (d) d.watch = { limit: "tether on pop-os allows 1 tmux session at a time" }; });
+      // Showing the tab asks the daemon to watch it, and the refusal marks it limited.
+      await page.evaluate(() => window.__harness?.app.router.go("terminal"));
+      await expect(page.getByText("allows 1 tmux session at a time").first()).toBeVisible();
+      await page.evaluate(() => window.__harness?.app.router.go("files"));
+      const button = page.getByRole("button", { name: "Insert path into tether / agent" });
+      await expect(button).toHaveAttribute("aria-disabled", "true");
+      await expect(button).toHaveAccessibleDescription("That tab isn't connected");
+      await button.click({ force: true });
+      expect(await typed(page)).toEqual([]);
+      // The daemon now answers: the tab's own backoff retries, and Insert is offered again.
+      await page.evaluate(() => { const d = window.__harness?.platform.daemon; if (d) d.watch = "ok"; });
+      await page.evaluate(() => window.__harness?.app.router.go("terminal"));
+      await expect(page.getByText("allows 1 tmux session at a time")).toHaveCount(0, { timeout: 10_000 });
+      await page.evaluate(() => window.__harness?.app.router.go("files"));
+      await expect(button).not.toHaveAttribute("aria-disabled", "true");
+    });
+
     test("Insert path says why it is unavailable with no tab open", async ({ page }) => {
       await openFixture(page, "filesCode", scenario, "#/files");
       await page.evaluate(() => { for (const id of ["h-pop/main:1-1/1", "h-pop/main:1-1/3"]) window.__harness?.app.dispatch({ type: "closed", id }); });

@@ -8,7 +8,7 @@ import { HostRegistry, type HostClient } from "../net/hosts";
 import { SessionsCache } from "../sessions/cache";
 import type { BootResult, Lifecycle, Platform, UpdateState, Viewport } from "../platform/types";
 import { Store } from "../ui/store";
-import { reduce, initialWorkspace, savedTabs, shownTab, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
+import { reduce, initialWorkspace, savedTabs, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
 import { FocusController } from "./focus";
 import { ListingFetcher } from "./listing";
 import { Persist } from "./persist";
@@ -17,14 +17,6 @@ import { browserHistory, Router, type HistoryPort, type Navigated } from "./rout
 const NOTICE_MS = 5_000;
 /** The update check on becoming visible runs at most this often. */
 const UPDATE_CHECK_EVERY_MS = 60 * 60_000;
-
-/** What a tab's driver offers the controller: the terminal lane registers one per open tab. */
-export interface TabHandle {
-  cover(): void;
-  uncover(): void;
-  /** The tab's driver quotes `path` and types it, with no Enter, once its watch is bound. */
-  insertPath(path: string): boolean;
-}
 
 export interface AppView {
   viewport: Viewport;
@@ -35,8 +27,6 @@ export interface AppView {
   hosts: HostClient[];
   /** One message at a time, for the polite live region. */
   notice: string | null;
-  /** Tabs whose connection failed (reconnecting, or refused for the session limit): Insert path is not offered for them. */
-  tabsOffline: readonly string[];
   /** The database was closed for a newer build's schema upgrade: later writes stay in memory. */
   storageClosed: boolean;
   update: UpdateState;
@@ -58,7 +48,6 @@ export class AppController extends Store<AppView> {
   readonly persist: Persist;
   readonly listing: ListingFetcher;
   readonly sessions: SessionsCache;
-  private readonly drivers = new Map<string, TabHandle>();
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastUpdateCheck = 0;
   private readonly listed = new Set<string>();
@@ -80,7 +69,6 @@ export class AppController extends Store<AppView> {
       nav: { destination: router.entry.destination, entry: router.entry },
       hosts: [],
       notice: null,
-      tabsOffline: [],
       storageClosed: false,
       update: "none",
     });
@@ -135,30 +123,6 @@ export class AppController extends Store<AppView> {
     this.syncListing();
   }
 
-  /** The terminal lane registers each tab's driver; it follows the workspace's choice of the tab on screen. Returns the way to detach. */
-  attachDriver(id: string, handle: TabHandle): () => void {
-    this.drivers.set(id, handle);
-    if (shownTab(this.snapshot.workspace) === id) handle.uncover();
-    else handle.cover();
-    return () => {
-      if (this.drivers.get(id) === handle) this.drivers.delete(id);
-    };
-  }
-
-  /** Hands `path` to the driver registered for tab `id`. False when none is registered. */
-  insertPath(id: string, path: string): boolean {
-    const handle = this.drivers.get(id);
-    handle?.insertPath(path);
-    return handle !== undefined;
-  }
-
-  /** The terminal lane reports each tab whose connection failed, and clears it when the tab recovers or closes. */
-  setTabOffline(id: string, offline: boolean): void {
-    const { tabsOffline } = this.snapshot;
-    if (tabsOffline.includes(id) === offline) return;
-    this.update({ tabsOffline: offline ? [...tabsOffline, id] : tabsOffline.filter((t) => t !== id) });
-  }
-
   /** A message for the polite live region, replaced by the next. */
   notify(text: string): void {
     clearTimeout(this.noticeTimer);
@@ -179,12 +143,6 @@ export class AppController extends Store<AppView> {
 
   private run(effect: WorkspaceEffect): void {
     switch (effect.type) {
-      case "cover":
-        this.drivers.get(effect.id)?.cover();
-        break;
-      case "uncover":
-        this.drivers.get(effect.id)?.uncover();
-        break;
       case "save":
         this.persist.save();
         break;

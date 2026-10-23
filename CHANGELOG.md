@@ -30,6 +30,9 @@ version section on release.
   the page is not cached with a CSP that omits the socket's origin.
 - Files: opened first (at `#/files` before the host's name is known), its messages name the host
   ("Can't reach pop-os") instead of staying "the server" for the page's life.
+- Image paste and Files' Insert path follow one rule: a tab still connecting takes the path and
+  types it once it is watching (image paste used to refuse it), and a reconnecting, limited or
+  closed tab refuses it with one notice.
 - Settings: a finished Remove this device or Clear local data closes Settings in Safari too.
 - The session-limit message says "1 tmux session" when the limit is one.
 - Show refused auth row names in device listing, list nodes by stored ID, and send

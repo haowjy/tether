@@ -32,6 +32,11 @@ export type ConnectionEvent =
   | { type: "serverExited" }
   | { type: "userClosed" };
 
+/** Whether a path typed now is worth keeping: a connecting tab will bind and take it, a reconnecting, limited or closed one would take it only after an outage the user did not see. */
+export function acceptsInsert(state: ConnectionState): boolean {
+  return state.kind === "connecting" || state.kind === "live";
+}
+
 export const initialState: ConnectionState = { kind: "connecting", attempt: 0 };
 
 const BASE_MS = 500;

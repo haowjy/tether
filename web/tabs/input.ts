@@ -65,11 +65,15 @@ export function toMessages(watch: number, events: InputEvent[]): ClientMsg[] {
 
 /** A C0 control or DEL: typed into a pane, a CR or LF submits, ESC and ^C act as keys. Quoting does not make them text. */
 export function hasControlChars(text: string): boolean {
-  // eslint-disable-next-line no-control-regex
   return /[\x00-\x1f\x7f]/.test(text);
 }
 
 /** A path as one shell word: bare when it needs no quoting, else single-quoted. */
 export function shellQuote(path: string): string {
   return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
+}
+
+/** The notice for a path that was not typed. */
+export function cannotInsert(path: string, why: string): string {
+  return `Could not insert ${path.split("/").pop() ?? path}: ${why}.`;
 }

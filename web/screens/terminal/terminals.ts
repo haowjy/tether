@@ -4,13 +4,13 @@
 // replaces the shell) never loses the buffer or a tab's watch. It runs the pieces no
 // component should: one `TabDriver` per open tab, tmux's size from the stable box, desktop
 // direct input, and paste.
-import type { AppController, TabHandle } from "../../app/controller";
+import type { AppController } from "../../app/controller";
 import type { HostClient } from "../../net/hosts";
 import { tabId } from "../../platform/tabKey";
 import type { InputEvent, Viewport } from "../../platform/types";
-import type { ConnectionState } from "../../tabs/connection";
-import { TabDriver } from "../../tabs/driver";
-import { shellQuote } from "../../tabs/input";
+import { acceptsInsert, type ConnectionState } from "../../tabs/connection";
+import { TabDriver, type InsertResult } from "../../tabs/driver";
+import { cannotInsert, shellQuote } from "../../tabs/input";
 import { createXtermRenderer, type TerminalRenderer } from "../../term";
 import { TerminalSizer } from "../../term/size";
 import { Store } from "../../ui/store";
@@ -61,13 +61,10 @@ export class Terminals extends Store<TerminalsView> {
   private renderer: TerminalRenderer | null = null;
   private creating = false;
   private readonly drivers = new Map<string, TabDriver>();
-  private readonly detach = new Map<string, () => void>();
-  /** The tab the workspace wants watching, which waits for `ready`. */
-  private shown: string | null = null;
   private readonly sizer: TerminalSizer;
   private viewport: Viewport;
   private registered: HTMLElement | null = null;
-  /** The tab whose snapshot is on the surface. Another tab's content never shows under a pill that isn't its own. */
+  /** The tab whose snapshot is on the surface. Another tab's content never shows under a pill that isn't its own. Closing that tab clears it. */
   private painted: string | null = null;
   private batch: { id: string; events: InputEvent[] } | null = null;
   private batchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -114,9 +111,22 @@ export class Terminals extends Store<TerminalsView> {
     this.drivers.get(id)?.nudge();
   }
 
-  /** Whether `id`'s tab is connected now, for "Open a terminal tab first". */
-  connected(id: string): boolean {
-    return this.snapshot.tabs[id]?.state.kind === "live";
+  /** Whether `id`'s tab takes Insert path now (the driver's own rule, read from its state): a connecting tab does, and the path waits for its watch. */
+  canInsert(id: string): boolean {
+    const state = this.snapshot.tabs[id]?.state;
+    return state !== undefined && acceptsInsert(state);
+  }
+
+  /**
+   * The one way a path reaches a tab (Files' Insert path, an uploaded image): quoted, no
+   * Enter, into that tab only, once it is watching. A refusal is reported here, once;
+   * a path that is later dropped is reported by the driver.
+   */
+  insertPath(id: string, path: string): InsertResult {
+    const driver = this.drivers.get(id);
+    const result = driver?.insertPath(path) ?? "refused";
+    if (result === "refused") this.app.notify(cannotInsert(path, driver ? "the tab isn't connected" : "that tab is closed") + " The file is still in Files.");
+    return result;
   }
 
   private sync(): void {
@@ -138,11 +148,25 @@ export class Terminals extends Store<TerminalsView> {
     for (const [id, driver] of this.drivers) {
       if (workspace.tabs.some((t) => t.id === id)) continue;
       this.drivers.delete(id);
-      this.detach.get(id)?.();
-      this.detach.delete(id);
+      if (this.painted === id) this.painted = null;
       driver.close();
       this.update({ tabs: Object.fromEntries(Object.entries(this.snapshot.tabs).filter(([key]) => key !== id)) });
     }
+    // The tab on screen watches once the box is measured; every other tab rests covered. Both calls are idempotent.
+    const shown = shownTab(workspace);
+    for (const [id, driver] of this.drivers) {
+      if (id === shown && this.snapshot.ready) driver.uncover();
+      else driver.cover();
+    }
+    this.showPainted();
+  }
+
+  /** On Terminal the surface shows a tab only once its own snapshot has painted; off Terminal it keeps what it holds, for the return, unless no tab is left. */
+  private showPainted(): void {
+    const { workspace } = this.app.snapshot;
+    const blank = workspace.active === null || (workspace.onTerminal && this.painted !== workspace.active);
+    if (blank) this.element.dataset["blank"] = "true";
+    else if (workspace.onTerminal) this.element.removeAttribute("data-blank");
   }
 
   private open(id: string, window: { server: string; window: number }, client: HostClient): void {
@@ -155,8 +179,7 @@ export class Terminals extends Store<TerminalsView> {
           await this.renderer?.snapshot(snapshot);
           // The surface now holds this tab's content, whichever tab is on screen by the time xterm finished parsing.
           this.painted = id;
-          if (this.shown === id) this.element.removeAttribute("data-blank");
-          else this.element.dataset["blank"] = "true";
+          this.showPainted();
         },
       },
       host: client.socket,
@@ -168,21 +191,6 @@ export class Terminals extends Store<TerminalsView> {
       onNotice: (text) => { this.app.notify(text); },
     });
     this.drivers.set(id, driver);
-    // `insertPath` is Files' way in (`AppController.insertPath`): the driver quotes the path, types it with
-    // no Enter into this tab only once it is watching, and reports it if the tab closes first.
-    const handle: TabHandle = {
-      insertPath: (path) => driver.insertPath(path),
-      cover: () => {
-        if (this.shown === id) this.shown = null;
-        driver.cover();
-      },
-      uncover: () => {
-        this.shown = id;
-        if (this.painted !== id) this.element.dataset["blank"] = "true";
-        if (this.snapshot.ready) driver.uncover();
-      },
-    };
-    this.detach.set(id, this.app.attachDriver(id, handle));
   }
 
   private stateChanged(id: string, hostId: string, server: string, state: ConnectionState): void {
@@ -195,7 +203,6 @@ export class Terminals extends Store<TerminalsView> {
       retryAt: state.kind === "reconnecting" && state.retryInMs !== null ? now + state.retryInMs : state.kind === "limited" ? now + state.retryInMs : null,
     };
     this.update({ tabs: { ...this.snapshot.tabs, [id]: status } });
-    this.app.setTabOffline(id, state.kind === "reconnecting" || state.kind === "limited");
     if (state.kind !== "closed") return;
     // A window or server that went away closes the tab; a tab the user closed already left.
     if (state.reason === "windowClosed") this.app.dispatch({ type: "windowClosed", id });
@@ -254,7 +261,7 @@ export class Terminals extends Store<TerminalsView> {
   private becomeReady(): void {
     if (this.snapshot.ready) return;
     this.update({ ready: true });
-    if (this.shown !== null) this.drivers.get(this.shown)?.uncover();
+    this.sync();
   }
 
   private async createRenderer(): Promise<void> {
@@ -352,14 +359,10 @@ export class Terminals extends Store<TerminalsView> {
         this.app.notify(`Upload failed: ${event.error}`);
       } else if ("path" in event) {
         const name = event.path.split("/").pop() ?? event.path;
-        // The tab may have closed or lost its connection: the file stays in Files.
-        const driver = this.drivers.get(id);
-        if (driver && this.connected(id)) {
-          // The tab may be covered: the path then waits for it to watch again.
-          this.app.notify(driver.insertPath(event.path) ? `Inserted ${shellQuote(name)}` : `Uploaded ${name}: its path will be inserted when you return to that tab`);
-        } else {
-          this.app.notify(`Uploaded ${name}, but the path wasn't inserted: the tab isn't connected. The file is in Files.`);
-        }
+        // The tab may be covered or still connecting: the path then waits for its watch. A refusal says so itself.
+        const result = this.insertPath(id, event.path);
+        if (result === "typed") this.app.notify(`Inserted ${shellQuote(name)}`);
+        else if (result === "queued") this.app.notify(`Uploaded ${name}: its path will be inserted when that tab is on screen and connected`);
       }
     }
   }

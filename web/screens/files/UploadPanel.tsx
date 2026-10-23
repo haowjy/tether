@@ -1,4 +1,4 @@
-import { useApp, useAppView } from "../../app/context";
+import { useApp } from "../../app/context";
 import { baseName } from "../../files/browser";
 import type { UploadItem } from "../../files/uploads";
 import { useStore } from "../../ui/store";
@@ -6,14 +6,14 @@ import { Button } from "../../ui/primitives/Button";
 import { Icon } from "../../ui/primitives/Icon";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { Spinner } from "../../ui/primitives/Spinner";
-import { insertPath, insertTarget } from "./insert";
+import { insertPath, useInsertTarget } from "./insert";
 import type { FilesSession } from "./session";
 import styles from "./UploadPanel.module.css";
 
 function Item({ session, item, onPreview }: { session: FilesSession; item: UploadItem; onPreview: (path: string) => void }) {
   const app = useApp();
   // The offer follows the tab the upload began in, never the one active now.
-  useAppView((v) => v.workspace.tabs);
+  const target = useInsertTarget(item.target);
   const dismiss = (): void => { session.uploads.dismiss(item.id); };
 
   if (item.state === "uploading") {
@@ -39,7 +39,6 @@ function Item({ session, item, onPreview }: { session: FilesSession; item: Uploa
       </li>
     );
   }
-  const target = insertTarget(app, item.target);
   return (
     <li class={styles.item}>
       <Icon name="check" class={styles.ok} />

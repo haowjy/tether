@@ -92,13 +92,12 @@ describe("what is on screen", () => {
   it("watches only the active tab on the Terminal destination", () => {
     let r = run([{ type: "opened", key: key(1), session: "s", window: "a", index: 1 }]);
     expect(shownTab(r.state)).toBeNull();
-    expect(r.effects.some((e) => e.type === "uncover")).toBe(false);
     r = run([{ type: "navigated", onTerminal: true }], r.state);
-    expect(r.effects).toContainEqual({ type: "uncover", id: tabId(key(1)) });
+    expect(shownTab(r.state)).toBe(tabId(key(1)));
     r = run([{ type: "opened", key: key(2), session: "s", window: "b", index: 2 }], r.state);
-    expect(r.effects).toEqual(expect.arrayContaining([{ type: "cover", id: tabId(key(1)) }, { type: "uncover", id: tabId(key(2)) }]));
+    expect(shownTab(r.state)).toBe(tabId(key(2)));
     r = run([{ type: "navigated", onTerminal: false }], r.state);
-    expect(r.effects).toContainEqual({ type: "cover", id: tabId(key(2)) });
+    expect(shownTab(r.state)).toBeNull();
   });
 
   it("saves on every change to the tabs, and on none other", () => {

@@ -7,7 +7,7 @@ import { viewerFor } from "../../files/kinds";
 import type { LinkTarget } from "../../files/render/markdown";
 import type { HttpRefusal } from "../../net/http";
 import { Button } from "../../ui/primitives/Button";
-import { insertPath, insertTarget } from "./insert";
+import { insertPath, useInsertTarget } from "./insert";
 import { ImageViewer } from "./ImageViewer";
 import type { FilesSession } from "./session";
 import { CodeViewer, MarkdownViewer } from "./TextViewers";
@@ -54,10 +54,7 @@ function MediaViewer({ session, file }: { session: FilesSession; file: FileRef }
 function InsertBar({ file, children }: { file: FileRef; children?: ComponentChildren }) {
   const app = useApp();
   const active = useAppView((v) => v.workspace.active);
-  // Re-read when tabs change: the label follows renames, and a closed tab disables the button.
-  useAppView((v) => v.workspace.tabs);
-  useAppView((v) => v.tabsOffline);
-  const target = insertTarget(app, active);
+  const target = useInsertTarget(active);
   return (
     <div class={styles.bar}>
       <Button
