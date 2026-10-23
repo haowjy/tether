@@ -1,7 +1,8 @@
 # Browser and PWA authentication, first phase (draft)
 
-Status: draft, revision 5, 2026-10-23. Nothing here is built. Every decision in §2 is
-settled; the draft goes to a review round, then its sections 3–5 land in the specs.
+Status: draft, revision 6, 2026-10-23. Nothing here is built. Every decision in §2 is
+settled. Review 5 approved revision 5 with notes; revision 6 applies them, mostly as
+deletions, and sections 3–5 then land in the specs.
 The [Review disposition](#review-disposition) table at the end records what became of
 every review finding.
 
@@ -25,7 +26,7 @@ sequenceDiagram
   participant L as LocalAPI
   B->>S: HTTPS request (no credential)
   S->>D: over serve.sock: Host localhost, X-Forwarded-For = node IP, X-Forwarded-Host
-  D->>D: from tailscaled? Origin, X-Forwarded-Host, Sec-Fetch-Site exact?
+  D->>D: Host localhost? Origin, X-Forwarded-Host, Sec-Fetch-Site exact?
   D->>L: whois(IP)
   L-->>D: node: stable ID, owner login, tags, routes
   D->>D: node rules, then stable ID in auth.toml?
@@ -38,11 +39,13 @@ for such servers and revoke when it finds one. Node identity needs none of that.
 
 Four things carry the weight instead, and each is specified as a required control:
 
-- **Proof that a request came through tailscaled.** `X-Forwarded-For` is only as
-  trustworthy as whoever wrote it. The daemon listens on Unix sockets in its own
-  `0700` runtime directory. Serve proxies to one of them, `serve.sock`, and only
-  connections accepted there from tailscaled's uid can use the node lane. A process
-  of another Unix user can't connect at all, so it can't forge the header (D1).
+- **Proof that a request came through Serve's HTTP proxy.** `X-Forwarded-For` is
+  only as trustworthy as whoever wrote it. The daemon listens on Unix sockets in its
+  own `0700` runtime directory, so only root and Jimmy's own processes can connect. A
+  process of another Unix user can't connect at all, so it can't forge the header
+  (D1). Serve proxies to one of the sockets, `serve.sock`, and browsers are admitted
+  only while the serve config names `serve.sock` exactly once, as tether's HTTPS
+  entry. tailscaled then has no other path to the socket.
 - **Exact `Origin`, `X-Forwarded-Host` and `Sec-Fetch-Site` rules.** Node identity is
   ambient: every page open in any browser on an enrolled node reaches tether with that
   node's identity. The rules make sure only tether's own page is admitted.
@@ -54,20 +57,23 @@ Four things carry the weight instead, and each is specified as a required contro
   admitted, because for each of them "this node" doesn't mean "Jimmy's device".
 
 One rule runs through all of them: **security state is read when it is used**
-([§3.3](#33-security-state-is-read-when-it-is-used-new-section)). Every check reads
-its inputs on the request or re-check it judges, within a stated age, never only at
-startup or at some earlier event.
+([§3.3](#33-security-state-is-read-when-it-is-used-new-section)). Every request is
+judged on inputs read within a stated age, never only at startup or at some earlier
+event, and a live socket's re-check re-reads what can revoke it.
 
 ### What Jimmy carries
 
-- **Publishing needs root, and so does every later `tailscale serve` change.** Since
-  Tailscale 1.100, a serve config that contains a `unix:` target can be written only
-  by root. tether is published with `sudo tailscale serve --bg --https=443
-  unix:/run/user/<uid>/tether/serve.sock`. Afterwards every `tailscale serve` change
-  on the box needs sudo (a spike on `:8443`, `serve off` on another port), because
-  the CLI posts the whole config, tether's handler included. Another Unix user who
-  wants their own tether needs root to publish it once. In exchange, only root can
-  re-point tether's origin or add a handler beside it.
+- **Publishing needs root, and so does every later `tailscale serve` change.** This
+  is how tailscaled 1.100 and later behave, and the dev box runs 1.104.1: only root
+  can write a serve config that contains a `unix:` target. tether is published with
+  `sudo tailscale serve --bg --https=443 unix:/run/user/<uid>/tether/serve.sock`.
+  Afterwards every `tailscale serve` change on the box needs sudo (a spike on
+  `:8443`, `serve off` on another port), because the CLI posts the whole config,
+  tether's handler included. Another Unix user who wants their own tether needs root
+  to publish it once. The same rule means only root can add a handler beside tether.
+  The Tailscale operator, whom tether trusts, can still replace tether's publication
+  without sudo (`tailscale serve reset`, then publish something else); to keep the
+  operator out, set no operator or make Jimmy the operator.
 - **Enrolling a node trusts everything on it.** Every browser profile, the PWA, every
   app, and every OS user account on that machine reach tether as the node. On the
   iPhone it means Safari and the PWA reach a host with no Face ID step once the
@@ -79,7 +85,8 @@ startup or at some earlier event.
   device re-enrols with a code.
 - **Upgrading from today's publication.** Until the serve command above replaces
   today's `http://127.0.0.1:7850` publication, the iOS app gets 502 from Serve. The
-  daemon logs the exact commands at startup, and `tether enroll` prints them
+  daemon logs the command once it reads the serve config, and `tether enroll` prints
+  it
   ([§3.7](#37-canonical-origin-new-section)).
 - **Several Unix users on one box each run their own tether, and none can borrow
   another's enrolments.** Each daemon reads only its own `auth.toml`, admits nodes
@@ -94,10 +101,10 @@ startup or at some earlier event.
 | **stable ID** | the node's `StableID` (`n…CNTRL`): fixed for the node's life; Tailscale's control plane never reuses one |
 | **enrolled node** | a device of kind `node` in `auth.toml`: a stable ID, the login that owned the node at enrolment, and a name |
 | **native device** | a device of kind `native`: the iOS app's token, as today |
-| **front** | which of the daemon's sockets a connection arrived on: `serve.sock` (from tailscaled) or `local.sock` (the dev proxy, tests) |
+| **front** | which of the daemon's sockets a connection arrived on: `serve.sock` (Serve's HTTP proxy) or `local.sock` (the dev proxy, tests) |
 | **node lane** / **native lane** | how a request is judged: by its node (it presents no credential) or by its token (it presents one) |
 | **canonical origin** | the one `https://` origin browsers are admitted from: tether's own Serve entry, while tether is alone in it |
-| **tailnet state** | what the daemon reads from LocalAPI to judge requests: the serve config, and from `/status` the self node, its owner login and tailscaled's version |
+| **tailnet state** | what the daemon reads from LocalAPI to judge requests, held in one cell: the serve config, and from `/status` the self node and its owner login |
 | **browser client** | the web UI running in a browser or PWA (not in the iOS app) |
 
 "Browser device", "browser credential", "tailscaled peer", `http.sock`,
@@ -111,7 +118,7 @@ Jimmy's yes; the costs he carries are listed in [§1](#what-jimmy-carries).
 
 | # | Decision | Rejected |
 |---|---|---|
-| D1 | **The daemon listens on Unix sockets in `$XDG_RUNTIME_DIR/tether/` (`0700`), and Serve proxies to `serve.sock`.** The node lane exists only on `serve.sock`, and only for tailscaled's uid. Minimum Tailscale 1.100. **Cost:** every `tailscale serve` change on the box needs sudo afterwards; root publishes each user's tether; the dev proxy and tests connect to `local.sock` instead of a port. **Gain:** other Unix users can't connect, forge headers or flood the permits; only root can re-point Serve or add a handler beside tether | (b) Keep `127.0.0.1:<port>` and look up each connection's owner uid with a netlink `sock_diag` query: every local user can still connect and fill the 64 permits; Linux-only. (c) Keep today's loopback trust: any local process can forge `X-Forwarded-For` with an enrolled node's address (`tailscale status` lists them) and get a shell as Jimmy |
+| D1 | **The daemon listens on Unix sockets in `$XDG_RUNTIME_DIR/tether/` (`0700`), and Serve proxies to `serve.sock`.** The node lane exists only on `serve.sock`, and only while the serve config names `serve.sock` exactly once, as the sole handler of one HTTPS entry (§3.7). Minimum Tailscale 1.94. **Cost:** on tailscaled 1.100 and later, every `tailscale serve` change on the box needs sudo; root publishes each user's tether; the dev proxy and tests connect to `local.sock` instead of a port. **Gain:** other Unix users can't connect, forge headers or flood the permits | (b) Keep `127.0.0.1:<port>` and look up each connection's owner uid with a netlink `sock_diag` query: every local user can still connect and fill the 64 permits; Linux-only. (c) Keep today's loopback trust: any local process can forge `X-Forwarded-For` with an enrolled node's address (`tailscale status` lists them) and get a shell as Jimmy |
 | D2 | **An enrolled node is trusted whole**: everything on it is admitted. Enrol the laptop's node; enrol the phone's node only if Safari and the PWA on the phone are wanted, knowing they bypass Face ID for that host. The dev box's own node is always refused | Per-browser credentials: they need the cookie this design removes |
 | D3 | **"Remove this device"** replaces logout: a button in Settings that deletes this node's enrolment, after a confirmation that says every browser and the PWA on this machine lose access. Local drafts stay; "Clear local data" is a separate action | No logout in the client, only `tether device remove`. A per-browser "log out" that only hides the UI: it protects nothing, because the node is still admitted |
 | D4 | **One pending code for both kinds.** `tether enroll` prints one code; native redeems it at `POST /auth/enroll`, a node at `POST /auth/node/enroll`. Both share the pending code, its 5-try counter and its expiry | `tether enroll --node`: a second CLI mode for no security gain |
@@ -122,30 +129,38 @@ a narrower scope buys nothing yet); native requests never consult node identity;
 tether never authenticates with a cookie, sets none and ignores any it receives; the
 node rules (§3.6); the origin rules (§3.8).
 
-### Why the Unix socket, and why 1.100
+### Why the Unix socket
 
 `X-Forwarded-For` decides who a node-lane request is, so the daemon must know that
-tailscaled wrote it. Serve overwrites `X-Forwarded-For` with the source address of
-the tailnet connection, and its reverse proxy (Go's `httputil.ReverseProxy` in
-`Rewrite` mode) drops any inbound `X-Forwarded-*` before that. So the header is
-trustworthy exactly when the connection to tether is tailscaled's own.
+Serve's HTTP proxy wrote it. That proxy overwrites `X-Forwarded-For` with the source
+address of the tailnet connection, and (as Go's `httputil.ReverseProxy` in `Rewrite`
+mode) drops any inbound `X-Forwarded-*` before that. So the header is trustworthy
+exactly when the connection to tether is that proxy's.
 
 | | Unix socket (chosen) | loopback TCP + `sock_diag` |
 |---|---|---|
 | Who can connect | root and Jimmy (directory `0700`) | every local user |
-| How the lane is chosen | by the socket: `serve.sock` or `local.sock`; on `serve.sock` the `SO_PEERCRED` uid must be tailscaled's | a netlink `INET_DIAG` query for each connection's owner uid |
+| How the lane is chosen | by the socket: `serve.sock` or `local.sock` | a netlink `INET_DIAG` query for each connection's owner uid |
 | Another user floods the permits | can't connect | possible: denial of service |
-| Needs | Tailscale ≥ 1.100 | any Tailscale; a netlink client |
-| macOS, if the daemon ever runs there | `getpeereid` does the same | no equivalent |
+| Needs | Tailscale ≥ 1.94 | any Tailscale; a netlink client |
+| macOS, if the daemon ever runs there | works the same | no equivalent |
 
-`unix:` proxy targets first appear in Tailscale 1.94. The minimum is 1.100 because
-from 1.100 tailscaled lets only a local admin (root, or the operator who can also run
-`sudo tailscale`) write a serve config that serves a `unix:` target. On 1.94–1.98 the
-Tailscale operator can rewrite the config without sudo; on a box where the operator
-isn't Jimmy, that operator could re-point tether's origin at their own server, which
-could then plant a service worker on tether's origin that survives the re-point back.
-The daemon reads tailscaled's version with the rest of the tailnet state and refuses
-browsers below 1.100 (§3.7).
+Two things make a `serve.sock` connection Serve's HTTP proxy. The directory keeps out
+everyone but root and Jimmy, and both are trusted: a forwarder Jimmy points at
+`serve.sock` himself is his own process. tailscaled, running as root, can reach the
+socket by more than one path: from Tailscale 1.102 a Serve `TCP` forward
+(`--tcp`, `--tls-terminated-tcp`) can target a `unix:` socket and relays raw bytes,
+headers included, exactly as the client wrote them. So the serve config must name
+`serve.sock` only once, as the sole handler of tether's HTTPS entry (§3.7). No socket
+option can tell those paths apart, because both arrive from tailscaled.
+
+`unix:` proxy targets first appear in Tailscale 1.94, the floor. From 1.100
+tailscaled lets only a local admin (root, or the operator who can run `sudo
+tailscale`) post a serve config that serves a `unix:` target, which is where the sudo
+cost comes from. tether relies on none of that: the check inspects only the config
+being posted, so the operator can still drop tether's handler (`tailscale serve
+reset`) and publish something else at its origin without sudo. Root and the operator
+are trusted (§3.2).
 
 ### What an enrolled node proves
 
@@ -158,14 +173,28 @@ don't stop it. Requirement 6 accepts the unlocked-device risk; D2 widens it from
 are Jimmy's own, and the guard against everything *else* on the tailnet (other
 machines, other users, pages on other origins) is unchanged.
 
-### Next to D1: a separate dev-only hole
+### Next to D1: the dev proxy
 
 `web/vite.config.ts` proxies to the daemon and injects a fixed `Tailscale-User-Login`
-header and a native token from `tether.dev.token`, for any caller that reaches the
-Vite port. A published spike therefore lets any tailnet peer that reaches it act as
-Jimmy. This predates the draft and is dev-only. Fix, outside this spec: the proxy
-forwards the incoming `Tailscale-User-Login` instead of inventing one, and refuses
-requests without it. Tracked as a follow-up, not a ship gate.
+header and a native token, for any caller that reaches the Vite port. Any Unix user
+on the box can connect to that port, and checking an incoming login header doesn't
+help, because any local process can write one. Left as it is, a running dev server
+reopens the hole D1 closes.
+
+**The fix: the dev server listens on a Unix socket in a `0700` directory** (Vite in
+middleware mode behind a Node `server.listen(path)`), published with `sudo tailscale
+serve --bg --https=8443 unix:<that socket>`. Then only root and Jimmy can connect, and
+every request arrives through Serve's HTTP proxy carrying headers Serve wrote. The
+proxy keeps injecting the token and forwards Serve's `Tailscale-User-Login` to
+`local.sock`, so the daemon applies the allowlist as usual.
+
+The other option, keeping TCP and injecting no token, is not simpler. The page would
+then have to present a token itself, which adds a dev-only token path to the browser
+adapter and puts the token in page code; the socket changes only the proxy's
+listener. What remains accepted for dev: while the publication on `:8443` is up,
+anything on a node of an allowlisted login that the ACLs let reach that port acts
+with the dev token. `sudo tailscale serve --https=8443 off` ends it. Tracked as a
+follow-up, not a ship gate.
 
 ## 3. Proposed text for `auth.md`
 
@@ -202,11 +231,11 @@ sections stay as written; they describe native.
 >   browser**: other sites, pages served by other machines in the tailnet (all one
 >   "site", since `ts.net` is a public suffix), other ports on the dev box, another
 >   user's tether ([Browser admission](#browser-admission));
-> - **anything else served at tether's origin**: another app mounted beside tether in
->   its Serve entry ([Canonical origin](#canonical-origin));
+> - **anything else served at tether's origin, or anything else reaching
+>   `serve.sock`**: another app mounted beside tether in its Serve entry, or a Serve
+>   TCP forward to the socket ([Canonical origin](#canonical-origin));
 > - **another Unix user on the dev box** forging Tailscale headers or reaching the
->   daemon from the box's own node (the socket directory, the front rules, the
->   self-node rule);
+>   daemon from the box's own node (the socket directory, the self-node rule);
 > - machines that only *look* like a tailnet node: devices behind a subnet router,
 >   tagged servers, nodes shared in from another tailnet, Funnel traffic from the
 >   internet ([Node identity](#node-identity));
@@ -237,11 +266,13 @@ sections stay as written; they describe native.
 > - Removing a node in the Tailscale admin console takes effect in tether only once
 >   tailscaled on the dev box learns of it, with no documented bound. `tether device
 >   remove` takes effect at once, and is the revocation tether relies on.
-> - Tailnet state is up to 10 s old when used (§3.3): a handler added beside tether,
->   or a change to the box's own node, is acted on within 10 s.
+> - Tailnet state is up to 10 s old when used, and up to 30 s while LocalAPI is
+>   failing (§3.3): a handler added beside tether, or a change to the box's own node,
+>   is acted on within 10 s while LocalAPI answers.
 >
 > **Trusted, out of scope:** root and the Tailscale operator (they can write the
-> serve config, or drive tmux directly), processes on the server that run as Jimmy,
+> serve config, or drive tmux directly; [running.md](../running.md) says how to keep the
+> operator out), processes on the server that run as Jimmy,
 > a jailbroken phone, malware on an enrolled device, browser extensions granted
 > access to `*.ts.net`, and script injected into tether's own page. The last is kept
 > small by the CSP, DOMPurify, and raw files that never run
@@ -254,32 +285,33 @@ sections stay as written; they describe native.
 
 ### 3.3 Security state is read when it is used (new section)
 
-> **Every check reads its inputs when it judges a request or a live socket, within a
-> stated age.** Nothing that admits or refuses is derived once at startup, at shell
-> boot, or at any other event and then trusted until the next one, because nothing
-> announces when that state changes: tailscaled's IPN bus carries no serve-config
-> change, and `auth.toml` is edited by another process.
+> **Every request reads its inputs when it is judged, within a stated age.** Nothing
+> that admits or refuses is derived once at startup, at shell boot, or at any other
+> event and then trusted until the next one, because nothing announces when that
+> state changes: tailscaled's IPN bus carries no serve-config change, and `auth.toml`
+> is edited by another process. A live socket's re-check re-reads what can revoke it:
+> its device on both lanes, and on the node lane its node and the canonical origin
+> ([Live sockets](#live-sockets-and-revocation)). The allowlist is judged per request
+> and at the upgrade; `tether device remove` is the revocation for a live socket.
 >
-> | State | Read from | Read when | Used by | If the read fails |
-> |---|---|---|---|---|
-> | device rows | `auth.toml` | every auth-lane lookup and every live-socket re-check | both lanes | `503 auth_unavailable`; a socket closes 4503 |
-> | the requesting node | whois | every node-lane request; every node-lane re-check | node lane | `503 identity_unavailable`; a socket tolerates 2 failures, the 3rd closes 4503 |
-> | the serve config | `GET /localapi/v0/serve-config` | when a node-lane request or re-check needs the canonical origin, from a value at most 10 s old | canonical origin | below |
-> | the self node's stable ID and owner login; tailscaled's version | `GET /localapi/v0/status?peers=false` | when any request needs the allowlist, or a node-lane request needs the self rule or the version, from a value at most 10 s old | the Tailscale check (auto-detected allowlist); node rules; canonical origin | below |
-> | tailscaled's uid | `SO_PEERCRED` on the daemon's own LocalAPI connection | at each connect to LocalAPI; compared at every accept on `serve.sock` | the front rules | keeps the uid of the last connection |
-> | tether's own socket | `stat` of `serve.sock` at bind | compared with the serve config at each read | canonical origin | — |
+> | State | Read from | Read when | If the read fails |
+> |---|---|---|---|
+> | device rows | `auth.toml` | every auth-lane lookup and every live-socket re-check | `503 auth_unavailable`; a socket closes 4503 |
+> | the requesting node | whois | every node-lane request and node-lane re-check | `503 identity_unavailable`; a socket tolerates 2 failures, the 3rd closes 4503 |
+> | tailnet state: the serve config, and the self node's stable ID and owner login | `GET /localapi/v0/serve-config` and `GET /localapi/v0/status?peers=false`, read together into one cell | when a request needs the allowlist, the self rule or the canonical origin, from a value at most 10 s old | below |
 >
-> **The tailnet-state cells.** The serve config and `/status` are each held in one
-> cell. A request that finds its cell older than 10 s refreshes it and waits for the
-> read; concurrent requests share one read. A failed read keeps the last value until
-> it is 30 s old; after that the cell is unknown, and a request that needs it gets
-> `503 identity_unavailable` (a socket re-check counts a failure). This reaches native
-> too, through the allowlist; a LocalAPI down for 30 s almost always means tailscaled
-> is down, and Serve with it, so only `local.sock` notices. The cells are read
-> only while requests need them: about one read of each per 10 s while browsers are
-> active, and one `/status` read per 10 s while only native is. Both reads go over
-> their own keep-alive LocalAPI connection, apart from whois, with the 2 s timeout and
-> a 64 KiB answer limit.
+> **The tailnet-state cell.** A request that finds the cell empty or older than 10 s
+> starts a read, unless one is in flight, and waits for it; concurrent requests share
+> it. When a read fails, requests use the held value without waiting while it is
+> under 30 s old, and one background read retries every 2 s while requests keep
+> needing the cell, so an outage costs no latency until the hold expires. Past 30 s,
+> or with nothing held, a request that needs the cell gets `503
+> identity_unavailable` at once (a socket re-check counts a failure). The reads go
+> over one keep-alive LocalAPI connection, apart from whois, with the 2 s timeout and
+> a 64 KiB answer limit per answer. Native requests need the cell too, for the
+> auto-detected allowlist, so the cell is read about once per 10 s while anyone is
+> connected; the
+> serve config adds about 2 KB to each read.
 
 ### 3.4 Constants (rows added)
 
@@ -288,10 +320,10 @@ sections stay as written; they describe native.
 | tether's runtime directory | `$XDG_RUNTIME_DIR/tether/`, `0700`, owned by the daemon's user. Holds `lock`, `serve.sock`, `local.sock` (both `0600`) and `paste/` |
 | whois calls in flight | 2 daemon-wide; up to 16 distinct addresses waiting, the 17th `503 busy` |
 | LocalAPI timeout; answer limit | 2 s; 64 KiB (a real whois answer is 1.5–2.5 KB) |
-| tailnet-state cells | a value at most 10 s old is used; a failed read keeps the last value until it is 30 s old |
+| tailnet-state cell | a value at most 10 s old is used; after a failed read the held value is used until it is 30 s old, with a background retry every 2 s |
 | live-socket re-check | the existing 10 s re-check; 3 consecutive whois failures close with 4503 |
 | minimum browsers | Safari and iOS 16.4, Chrome 76, Firefox 90: the first versions that send `Sec-Fetch-Site` |
-| minimum Tailscale on the server | 1.100: serve-config writes with a `unix:` target need root |
+| minimum Tailscale on the server | 1.94, the first with `unix:` proxy targets |
 
 ### 3.5 Sockets and the Tailscale check (replaces "Tailscale identity")
 
@@ -319,25 +351,27 @@ sections stay as written; they describe native.
 > requires. tailscaled runs as root and reaches `serve.sock` through Serve's `unix:`
 > proxy target.
 >
+> **Startup needs no LocalAPI.** The daemon starts even when tailscaled is down, so a
+> boot that starts tether first costs no restart loop. It starts one background fill
+> of the tailnet-state cell, retrying every 2 s until it succeeds, then logs the
+> canonical origin or the refusal message; it logs again whenever that changes.
+>
 > **Fronts.** Each socket is a **front**, and the front decides what a connection may
 > do:
 >
 > | Front | Who connects | Lanes | Host |
 > |---|---|---|---|
-> | `serve.sock` | tailscaled: an accepted connection whose `SO_PEERCRED` uid isn't tailscaled's is closed at once | node and native | must be `localhost` |
+> | `serve.sock` | Serve's HTTP proxy, through tether's one HTTPS entry ([Canonical origin](#canonical-origin)) | node and native | must be `localhost` |
 > | `local.sock` | Jimmy's dev proxy, tests, Playwright | native only | not checked |
 >
 > On `serve.sock`, every request's `Host` must be exactly `localhost`, because Serve
 > rewrites it to that for every `unix:` target; the browser's host travels in
-> `X-Forwarded-Host`. Any other `Host` means the request didn't come through Serve's
-> proxy, and it is `403 forbidden`. On `local.sock`, a request that presents no token
-> is `401 auth_required`: the node lane doesn't exist there.
->
-> The uid rule on `serve.sock` guards against a confused deputy: a forwarder Jimmy
-> runs, pointed at `serve.sock` by mistake, that relays tailnet traffic with Serve's
-> headers intact. It isn't what keeps other users out; the directory does that. If
-> tailscaled runs as Jimmy (a userspace-networking setup), the rule admits Jimmy's own
-> processes, which are out of scope anyway.
+> `X-Forwarded-Host`. Any other `Host` is `403 forbidden`. This is a cheap check that
+> catches something else pointed at the socket by mistake; it proves nothing, since
+> anything that reaches the socket can write `localhost`. What establishes that
+> `serve.sock` carries only Serve's HTTP proxy is the directory and the
+> canonical-origin rule. On `local.sock`, a request that presents no token is `401
+> auth_required`: the node lane doesn't exist there.
 >
 > **The Tailscale check, on every route of both fronts, before anything else:**
 >
@@ -345,7 +379,7 @@ sections stay as written; they describe native.
 >   a spoofed copy.
 > - `Tailscale-User-Login` is present and, once decoded (Serve Q-encodes a non-ASCII
 >   value, RFC 2047), in the allowlist: the self node's owner login from the
->   `/status` cell (§3.3), or the logins given with `--allow-login`. Serve sets the
+>   tailnet-state cell (§3.3), or the logins given with `--allow-login`. Serve sets the
 >   header for user-owned nodes and strips spoofed copies; it sends none for tagged
 >   nodes or Funnel.
 >
@@ -372,7 +406,7 @@ sections stay as written; they describe native.
 > | `UserProfile.LoginName` equals the decoded `Tailscale-User-Login` | Both come from the same netmap; disagreement means the two lookups saw different nodes, so neither is trusted |
 > | `Sharer` is zero | A node shared in from another tailnet is someone else's machine, whatever user it shows |
 > | `AllowedIPs` holds only the node's own `Addresses`, apart from the exit-node routes `0.0.0.0/0` and `::/0` | A subnet router masquerades every host on its LAN as itself, so its identity says nothing about which device sent the request. An exit node forwards only outbound traffic, so it can't do that |
-> | the stable ID isn't the box's own (the `/status` cell's `Self.StableID`) | Every local user on the dev box reaches Serve from the box's own node. Admitting it would let any of them in, through the front door |
+> | the stable ID isn't the box's own (`Self.StableID` in the tailnet-state cell) | Every local user on the dev box reaches Serve from the box's own node. Admitting it would let any of them in, through the front door |
 >
 > Then, on the auth lane, the device lookup: a `node` device whose `node_id` equals
 > the stable ID **and** whose `login` equals the node's login. No match is `401
@@ -401,55 +435,55 @@ sections stay as written; they describe native.
 > retryable, never as "not enrolled". A whois that answers "no such peer" is `403
 > node_refused` (`unknown_node`).
 >
-> **Order, and what a flood costs.** For a node-lane request: the front rules, the
+> **Order, and what a flood costs.** For a node-lane request: the `Host` rule, the
 > canonical origin, the pure [admission rules](#browser-admission) on headers alone,
 > the `X-Forwarded-For` parse, whois, the node rules, then the auth lane's read of
 > `auth.toml`. A cross-origin request is refused before any whois or file read; it
-> costs at most a shared read of the serve-config cell.
+> costs at most a shared read of the tailnet-state cell.
 
 ### 3.7 Canonical origin (new section)
 
 > Browsers are admitted from exactly one origin per daemon, the **canonical origin**:
 > `https://<host>` or `https://<host>:<port>`, lowercase, no trailing dot or path.
 >
-> **The rule.** Among the `Web` entries of the serve config (the background config,
-> every foreground config, every Tailscale Service), take those with any handler
-> whose proxy target is a `unix:` path naming this daemon's `serve.sock`, matched by
-> `stat` identity (device and inode), not by string, as tailscaled's own
-> `isTailscaledSocket` does. Another user's socket can't be `stat`ed through their
-> `0700` directory, so it never matches. The canonical origin exists when all hold:
+> **The rule.** The daemon finds every reference to its `serve.sock` anywhere in the
+> serve config: every `TCP` forward and every `Web` handler, in the background config,
+> every foreground config and every Tailscale Service. A `unix:` target names
+> `serve.sock` when it is the same file by `stat` identity (device and inode), not by
+> string, as tailscaled's own `isTailscaledSocket` does; the daemon `stat`s
+> `serve.sock` once, at bind. Another user's socket can't be `stat`ed through their
+> `0700` directory, so it never matches. The canonical origin exists when `serve.sock`
+> is named exactly once, and that one reference is:
 >
-> - exactly one entry matches;
-> - its port serves HTTPS;
-> - its `Handlers` hold exactly one handler: mount path `/`, proxy `unix:<serve.sock>`;
-> - Funnel is off for its `host:port`;
-> - tailscaled's version (the `/status` cell) is 1.100 or later.
+> - the only handler of a `Web` entry: mount path `/`, proxy `unix:<serve.sock>`;
+> - on a port that serves HTTPS;
+> - with Funnel off for its `host:port`.
 >
 > Otherwise there is no canonical origin and every node-lane request is `403
-> bad_origin`. The refusal is one message that names the entry and what is wrong,
-> and the commands that fix it.
+> bad_origin`. The refusal is one message that names the offending entry or
+> reference and the command that fixes it.
 >
 > | Rule | Why |
 > |---|---|
+> | `serve.sock` named nowhere else | A Serve `TCP` forward to the socket (`--tcp`, `--tls-terminated-tcp`, from Tailscale 1.102) relays raw bytes from tailscaled itself, so a client writes its own `Host`, `X-Forwarded-For`, `X-Forwarded-Host` and `Tailscale-User-Login`. Only the serve config can show that every connection on `serve.sock` is Serve's HTTP proxy. A second `Web` publication of the same tether is refused by the same count; choosing among several isn't worth a setting |
 > | tether is the only handler in its entry | A second handler on the same `host:port` (`--set-path /grafana 3000`, a `Path` handler serving a directory, a `Text` handler) serves pages with tether's origin. They can open `/ws`, `fetch` `/fs/*` and post to `/complete` with exact `Origin` and `Sec-Fetch-Site: same-origin`, and no header tells them apart from tether's page |
-> | exactly one entry | Several publications of one tether is a state `sudo tailscale serve --https=<port> off` fixes; choosing among them isn't worth a setting |
 > | mount path `/` | The shell and the API assume the root |
 > | HTTPS | Browsers need a secure context for the service worker, and Serve marks only TLS requests `https` |
 > | Funnel off | Funnel puts the entry on the internet; the node lane is tailnet-only |
-> | tailscaled ≥ 1.100 | Below it, the Tailscale operator can rewrite the config without root, so "only root can add a handler beside tether" doesn't hold |
 >
-> **When it is read.** From the serve-config and `/status` cells (§3.3): on every
-> node-lane request, every node-lane socket re-check, `GET /auth/info` and `tether
-> enroll`. A handler added beside tether is therefore acted on within 10 s, by new
-> requests and by live sockets alike. Request headers (`Host`, `X-Forwarded-Host`)
-> never choose the origin.
+> **When it is read.** From the tailnet-state cell (§3.3): on every node-lane request,
+> every node-lane socket re-check, `GET /auth/info` and `tether enroll`. A handler
+> added beside tether, or a stray reference to `serve.sock`, is therefore acted on
+> within 10 s, by new requests and by live sockets alike. Request headers (`Host`,
+> `X-Forwarded-Host`) never choose the origin.
 >
-> **Upgrading from loopback TCP.** When no entry matches and some entry proxies to a
-> loopback TCP address, the message says so and gives the two commands:
-> `sudo tailscale serve --https=<port> off` for that entry, then `sudo tailscale
-> serve --bg --https=443 unix:/run/user/<uid>/tether/serve.sock`. The daemon logs it
-> at startup, `tether enroll` prints it, and `GET /auth/info` carries it in
-> `browserRefused`.
+> **Upgrading from loopback TCP.** When there is no canonical origin and some entry
+> proxies to `http://127.0.0.1:7850`, today's default publication, the message names
+> that entry and gives the one command, `sudo tailscale serve --bg --https=443
+> unix:/run/user/<uid>/tether/serve.sock`, which replaces the `/` handler of the
+> entry it names. Any other loopback target is someone else's app and gets the plain
+> refusal. The daemon logs the message, `tether enroll` prints it, and `GET
+> /auth/info` carries it in `browserRefused`.
 >
 > `GET /auth/info` reports `browserOrigin` (or `null`, with `browserRefused` set to
 > the message). The shell compares it with `location.origin` before connecting, and
@@ -570,8 +604,9 @@ sections stay as written; they describe native.
 >
 > 1. Reads `auth.toml` and looks up the device by stable ID and login, as for a new
 >    request. Gone: close 4401. File unreadable: close 4503 (as native).
-> 2. Reads the canonical origin from the cells (§3.3). None, or not the recorded one:
->    close 4401. A cell that is unknown counts a failure, as in step 3.
+> 2. Reads the canonical origin from the tailnet-state cell (§3.3). None, or not the
+>    recorded one: close 4401. A cell past its 30 s hold counts a failure, as in
+>    step 3.
 > 3. Calls whois for the recorded address. A different stable ID, "no such peer", or
 >    a node that now fails a node rule: close 4401. A failed or slow call keeps the
 >    socket and counts a failure; 3 in a row close it with 4503. Any success resets
@@ -583,7 +618,7 @@ sections stay as written; they describe native.
 > failed calls keeps a briefly slow tailscaled on a busy box from dropping every
 > live socket, which would cost each a reconnect; `tether device remove` still takes
 > effect within 10 s, because step 1 needs no LocalAPI call. The cost is at most one
-> whois per open node-lane socket per 10 s, plus the shared cell reads, and none when
+> whois per open node-lane socket per 10 s, plus the shared cell read, and none when
 > only native or nobody is connected.
 >
 > **In-flight HTTP is not cut.** A response already streaming when its device is
@@ -688,16 +723,17 @@ enrolled_by = "jimmy@github"
 
 > - `node.rs` (new, pure): `forwarded_addr(headers) -> Result<IpAddr, Refused>`;
 >   `node_rules(&Whois, login, self_id) -> Result<NodeId, Refusal>`;
->   `Origin::canonical(&ServeConfig, &SocketId, version) -> Result<Origin,
->   OriginRefusal>`, where `OriginRefusal` carries the entry and the fix;
+>   `Origin::canonical(&ServeConfig, &SocketId) -> Result<Origin, OriginRefusal>`,
+>   which counts every reference to the socket and where `OriginRefusal` carries the
+>   entry or reference and the fix;
 >   `admission(method, upgrade, headers, &Origin) -> Result<(), Refused>`;
 >   `presented(headers) -> Presented { None, Native(Authorization | Subprotocol),
 >   Ambiguous }`; `decode_login(&HeaderValue)` for Serve's Q-encoding.
-> - `identity.rs`: one keep-alive LocalAPI connection for the tailnet-state cells and
+> - `identity.rs`: one keep-alive LocalAPI connection for the tailnet-state cell and
 >   a pool of 2 for whois, each with the 2 s timeout and the 64 KiB limit; whois
->   single-flight by address, waiters counted by distinct address; the two cells
->   (§3.3); tailscaled's uid from `SO_PEERCRED` at each LocalAPI connect; `ServeConfig`
->   parses `Web` entries, `Handlers`, `unix:` targets, `AllowFunnel` and `Services`.
+>   single-flight by address, waiters counted by distinct address; the cell and its
+>   background retry (§3.3); `ServeConfig` parses `TCP` forwards, `Web` entries,
+>   `Handlers`, `unix:` targets, `AllowFunnel`, `Foreground` and `Services`.
 > - `store.rs`: `Device.kind` (serde default `Native`) and per-kind fields;
 >   `deny_unknown_fields` on the device row, applied row by row so one bad row is
 >   refused alone; `enroll(code, name, by, Kind, now)`; `remove_node(node_id)`.
@@ -705,14 +741,14 @@ enrolled_by = "jimmy@github"
 >   Grant` is the single post-lookup policy, called by `check` and `recheck`.
 > - `http/mod.rs`: the accept loop (resource-limits §3.7) accepts on both sockets and
 >   inserts `Front::Serve | Front::Local` into every request's extensions, replacing
->   `ConnectInfo<SocketAddr>`; `serve.sock` closes a connection from another uid at
->   accept. `device_check` runs the canonical origin and `admission` for the node lane
+>   `ConnectInfo<SocketAddr>`. `device_check` runs the canonical origin and `admission` for the node lane
 >   before whois. The `/auth/node/*` routes sit outside the `devices` router, like
 >   `/auth/enroll`, and call the same steps.
 > - `main.rs`: startup in §3.5's order: directory, lock, sockets, then the paste
 >   directory and part files ("once the lock is ours" replaces "once the port is
->   ours"). The startup Funnel refusal goes; startup logs the canonical origin or the
->   refusal message.
+>   ours"). Startup reads nothing from LocalAPI: the exit when `Node::read` or
+>   `ServeConfig::read` fails goes, and so does the startup Funnel refusal. The cell's
+>   first fill logs the canonical origin or the refusal message.
 > - `config.rs`: `runtime_dir()` returns `$XDG_RUNTIME_DIR/tether` on Linux or an error
 >   (exit 78), the per-user temporary directory on macOS; the paste directory is its
 >   `paste/`.
@@ -726,8 +762,7 @@ enrolled_by = "jimmy@github"
 >   `http://127.0.0.1:7850` target become `TETHER_SOCKET` and a `socketPath` target
 >   on `local.sock`. Tests that bind ports connect to the sockets.
 > - Dependencies: `hyper` gains `server`; `hyper-util` gains `server`, `http1` and
->   `service`. `SO_PEERCRED` comes from `tokio::net::UnixStream::peer_cred`; `flock`
->   from `rustix::fs::flock`.
+>   `service`. `flock` comes from `rustix::fs::flock`.
 > - The log never carries `Authorization` or `Sec-WebSocket-Protocol` values;
 >   refusals log the reason, the path and, for the node lane, the stable ID.
 
@@ -764,9 +799,9 @@ enrolled_by = "jimmy@github"
 - **Decided:** 2026-10-23, tech lead (Jimmy delegated auth).
 - **What:** a browser or PWA presents no credential. tether listens on Unix sockets
   in a `0700` runtime directory: `serve.sock`, which `tailscale serve` proxies to
-  (`unix:` target, Tailscale ≥ 1.100), and `local.sock` for the dev proxy and tests.
-  The node lane exists only on `serve.sock`, from tailscaled's uid. For those
-  requests the daemon takes the one address in `X-Forwarded-For`, which Serve
+  (`unix:` target, Tailscale ≥ 1.94), and `local.sock` for the dev proxy and tests.
+  The node lane exists only on `serve.sock`, and only while the serve config names
+  `serve.sock` exactly once. For those requests the daemon takes the one address in `X-Forwarded-For`, which Serve
   overwrites, resolves it per request with LocalAPI whois, refuses tagged, shared-in,
   subnet-router, mismatched-login and self nodes, and admits the node when its stable
   ID and owner login are an enrolled `node` device in `auth.toml`. Enrolment uses the
@@ -774,21 +809,24 @@ enrolled_by = "jimmy@github"
   10 s re-check, which also re-resolves the node and the origin. Exact
   `X-Forwarded-Host`, `Origin` (on upgrades and mutations) and `Sec-Fetch-Site:
   same-origin` (on reads) against one canonical origin: the one HTTPS Serve entry
-  whose only handler is `/` → tether's socket. Security state (devices, node, serve
-  config, self node, allowlist) is read when it is used, at most 10 s old. Native
-  admission is unchanged.
+  whose only handler is `/` → tether's socket, with the socket named nowhere else in
+  the serve config. Security state (devices, node, serve config, self node,
+  allowlist) is read when it is used, at most 10 s old. Native admission is
+  unchanged.
 - **Why:** a cookie is a bearer secret that any HTTPS server on the same hostname
   receives, because cookies ignore ports, and could replay. A node gives a sibling
   server nothing to replay. Serve strips spoofed identity headers, and whois needs
   only LocalAPI read access. The socket closes the gap that header trust left once
-  other Unix users share the box, and from Tailscale 1.100 only root can re-point it.
-- **Costs:** every `tailscale serve` change on the box needs sudo once tether is
-  published; root publishes each user's tether. An enrolled node is trusted whole.
+  other Unix users share the box.
+- **Costs:** on tailscaled 1.100 and later, every `tailscale serve` change on the box
+  needs sudo once tether is published, and root publishes each user's tether; from
+  1.100 adding a handler beside tether needs root, while the operator, trusted, can
+  still replace tether's publication. An enrolled node is trusted whole.
 - **Changes:** "No `Origin` check" holds for the native lane only. "tether never
   authenticates with a cookie" stays. "The daemon serves no UI" no longer holds. The
-  daemon binds Unix sockets instead of `127.0.0.1:PORT`, holds a lock file, and keeps
-  pastes in `paste/`. The Tailscale check gains the Funnel-header refusal; the
-  startup Funnel refusal goes.
+  daemon binds Unix sockets instead of `127.0.0.1:PORT`, holds a lock file, keeps
+  pastes in `paste/`, and starts without LocalAPI. The Tailscale check gains the
+  Funnel-header refusal; the startup Funnel refusal goes.
 - **Rejected:**
   - An `HttpOnly` device cookie (revisions 1–3 of the design): replayable by any
     sibling server on the hostname, and detection of siblings can't be complete,
@@ -805,7 +843,13 @@ enrolled_by = "jimmy@github"
     Looking up the TCP peer's uid with `sock_diag`: every local user can still connect
     and fill the permits, and it has no macOS counterpart.
   - Choosing the lane by the peer's uid on one socket: a root-run public proxy would
-    pass as tailscaled. The socket decides the lane; the uid only guards `serve.sock`.
+    pass as tailscaled. The socket decides the lane.
+  - Requiring tailscaled's uid on `serve.sock`: a Serve TCP forward to the socket
+    arrives from tailscaled too, with headers the client wrote. Only the serve
+    config shows the socket carries nothing but Serve's HTTP proxy.
+  - Requiring Tailscale 1.100, where `unix:` serve configs need root: it guards
+    against the operator, who is trusted, and doesn't stop the operator replacing
+    tether's publication anyway.
   - A `browser_origin` setting to choose among several publications: one `serve off`
     fixes that state.
   - Reading the serve config at startup and shell boot: a handler added beside tether
@@ -822,12 +866,13 @@ enrolled_by = "jimmy@github"
 
 - **"Tailnet only"**: "Bind Unix sockets in `$XDG_RUNTIME_DIR/tether/`, and publish
   with `sudo tailscale serve --bg --https=443 unix:/run/user/<uid>/tether/serve.sock`
-  (Tailscale 1.100 or later). Every later `tailscale serve` change on the box needs
-  sudo."
+  (Tailscale 1.94 or later). On tailscaled 1.100 and later, every later `tailscale
+  serve` change on the box needs sudo."
 - **"Identity"**: replace "tether accepts a request only from loopback … closed by the
   enrolment code" with: every request needs an allowlisted login and no Funnel
-  marker; the node lane exists only on `serve.sock` from tailscaled, which other Unix
-  users can't reach ([auth.md](auth.md#sockets-and-the-tailscale-check)).
+  marker; the node lane exists only on `serve.sock`, which other Unix users can't
+  reach, while the serve config names it only as tether's HTTPS entry
+  ([auth.md](auth.md#sockets-and-the-tailscale-check)).
 - **"Device token and Face ID lock"** → **"Devices"**: "Two kinds: a token behind
   Face ID for the iOS app, and an enrolled tailnet node for browsers and the PWA,
   admitted only from the canonical origin. Both are checked on every route but the
@@ -839,7 +884,7 @@ enrolled_by = "jimmy@github"
   entry ([auth.md](auth.md#browser-admission))." Add the shell CSP pointer. Drop "The
   daemon serves no UI".
 - **"Server platform"**: add "The browser lane also depends on LocalAPI (whois,
-  status, serve config) and on `SO_PEERCRED`. A Mac is a fine *client*: its browsers
+  status, serve config). A Mac is a fine *client*: its browsers
   are judged by whois on the server, and need nothing from the Mac's Tailscale app."
 - **"Running the phone spikes"**: publishing a spike on `--https=8443` needs `sudo`
   now, and is harmless, because nothing tether issues can leak to it and it isn't in
@@ -853,9 +898,8 @@ Its §3.7 needs these changes for revision 5 (the line list is in
 [browser-auth-rev4-notes.md](browser-auth-rev4-notes.md)):
 
 - The loop accepts on two sockets, `serve.sock` and `local.sock`, and inserts the
-  front (`Front::Serve | Front::Local`) instead of the `SO_PEERCRED` peer class.
-  `serve.sock` closes a connection from any uid but tailscaled's at accept. Both
-  share the 64 permits.
+  front (`Front::Serve | Front::Local`) instead of the `SO_PEERCRED` peer class. It
+  checks no uid. Both share the 64 permits.
 - The whois row's 16 waiters count distinct addresses: a request joining an
   in-flight or queued call takes no slot.
 - The memory row for whois becomes "LocalAPI answers: 2 whois + 1 cell read, each
@@ -926,13 +970,16 @@ value.
 ### running.md
 
 - Publishing: `sudo tailscale serve --bg --https=443
-  unix:/run/user/<uid>/tether/serve.sock`; Tailscale 1.100 or later; every later
-  `tailscale serve` change needs sudo; another Unix user's tether is published by
-  root. A restart needs nothing manual: the daemon removes stale sockets under its
-  lock.
-- **Upgrading from loopback TCP:** run `sudo tailscale serve --https=443 off`, then
-  the command above. Until then the iOS app gets 502; the daemon's startup log and
-  `tether enroll` print both commands. The `port` key in `config.toml` is ignored and
+  unix:/run/user/<uid>/tether/serve.sock`; Tailscale 1.94 or later; on 1.100 and
+  later every later `tailscale serve` change needs sudo; another Unix user's tether
+  is published by root. A restart needs nothing manual: the daemon removes stale
+  sockets under its lock, and it starts even before tailscaled.
+- **The Tailscale operator** can replace tether's publication without sudo and is
+  trusted. To keep anyone else from doing that, set no operator or make Jimmy the
+  operator (`sudo tailscale set --operator=<jimmy>`).
+- **Upgrading from loopback TCP:** run the command above; it replaces the `/` handler
+  on 443. Until then the iOS app gets 502; the daemon's log and `tether enroll` print
+  the command. The `port` key in `config.toml` is ignored and
   can be deleted. The `CHANGELOG.md` `[Unreleased]` bullet says the same.
 
 ## 6. Probe gates and acceptance checks
@@ -943,13 +990,13 @@ None of these was run for this draft.
 
 | # | Gate | Decides |
 |---|---|---|
-| G1 | On the dev box: Tailscale version ≥ 1.100; `sudo tailscale serve --https=443 unix:<serve.sock>` proxies HTTP and a WebSocket upgrade to the socket in `/run/user/<uid>/tether/`; the same command without sudo is refused; afterwards an unrelated `tailscale serve --https=8443 3000` without sudo is refused; `SO_PEERCRED` shows tailscaled's uid; another Unix user gets `EACCES` connecting | D1 as written, and the sudo cost in running.md |
+| G1 | On the dev box (Tailscale 1.104.1): `sudo tailscale serve --https=443 unix:<serve.sock>` proxies HTTP and a WebSocket upgrade to the socket in `/run/user/<uid>/tether/`; the same command without sudo is refused; afterwards an unrelated `tailscale serve --https=8443 3000` without sudo is refused; another Unix user gets `EACCES` connecting | D1 as written, and the sudo cost in running.md |
 | G2 | Through Serve, from a laptop, a phone browser and the PWA: the daemon sees `Host: localhost`, exactly one `X-Forwarded-Host` carrying the browser's host (with and without `:443`), and exactly one `X-Forwarded-For` address, the node's own tailnet IP, on GET, POST and the upgrade. A request sent with a forged `X-Forwarded-For`, `X-Forwarded-Host`, `Tailscale-User-Login` or `Tailscale-Funnel-Request` arrives with only Serve's values. `Origin` and `Sec-Fetch-*` arrive unchanged. Safari 26's HTTP/2 WebSocket (extended CONNECT) reaches the daemon as an HTTP/1.1 upgrade with these headers | The node lane's trust in the headers, and the forwarded-host rule |
-| G3 | whois for each test node returns `StableID`, the owner login, `Tags`, `Sharer` and `AllowedIPs` as §3.6 reads them; a subnet router (with and without SNAT), a tagged node and the dev box itself are refused with the right reason; a laptop with `--advertise-exit-node` is admitted. `/status?peers=false` returns `Self.StableID`, the owner and `Version` | The node rules, the `/status` cell |
+| G3 | whois for each test node returns `StableID`, the owner login, `Tags`, `Sharer` and `AllowedIPs` as §3.6 reads them; a subnet router (with and without SNAT), a tagged node and the dev box itself are refused with the right reason; a laptop with `--advertise-exit-node` is admitted. `/status?peers=false` returns `Self.StableID` and the owner | The node rules, the tailnet-state cell |
 | G4 | whois latency and tailscaled CPU on the dev box under its usual load: p50 and p99 of 1,000 calls over a new LocalAPI connection each and over a keep-alive connection, and of 20 concurrent; response sizes; `/status?peers=false` and `serve-config` answer sizes | The per-request, uncached rule; the keep-alive pool. If p99 exceeds 10 ms, revisit a per-request-burst cache |
 | G5 | iOS Safari and the PWA, with Private Relay on: requests to the tailnet name go through the Tailscale VPN and arrive with the phone's address | Phone browsers work at all |
 | G6 | The app's `URLSession` sends no `Origin` or `Sec-Fetch-*` on `POST /auth/enroll` | The native-enrol refusal doesn't break native |
-| G7 | The canonical origin agrees with `tailscale serve status` for: the `unix:` target alone; tether in a Service; a co-resident `--set-path` proxy, a `Path` handler and a `Text` handler in tether's entry (each refused); two publications (refused); a non-root mount; plain HTTP; Funnel on; the socket path spelled through a symlink (matched); another user's tether publication (never matched); today's loopback TCP publication (refused with the upgrade commands) | §3.7 |
+| G7 | The canonical origin agrees with `tailscale serve status` for: the `unix:` target alone; tether in a Service; a co-resident `--set-path` proxy, a `Path` handler and a `Text` handler in tether's entry (each refused); two publications (refused); a `--tcp` and a `--tls-terminated-tcp` forward to `serve.sock` beside a valid entry (each refused, the message naming it); a non-root mount; plain HTTP; Funnel on; the socket path spelled through a symlink (matched); another user's tether publication (never matched); today's `127.0.0.1:7850` publication (refused with the upgrade command); another app on `127.0.0.1:3000` (the plain refusal) | §3.7 |
 | G8 | A raw `.svg` and `.html` opened top-level from `/fs/raw` run no script under `CSP: sandbox`; a raw `.js` is refused as `<script>` and by `serviceWorker.register` | Same-origin raw files can't run as tether |
 | G9 | From a page on another tailnet machine, another port of the dev box (a spike, another user's tether), and an internet site, in a browser on an enrolled node: WebSocket hijack, `fetch` POST, form POST and `<img>`/`<video>` of `/fs/raw` all fail (403 or blocked by CORP). With a `--set-path` app added beside tether while a tab is open: the tab's socket closes 4401 within 10 s and new requests are 403 | The cross-origin defence end to end; drift |
 | G10 | In Safari, iOS Safari, the PWA and Chrome: a typed URL, a bookmark, a PWA cold launch and a link from another app load the shell, which then connects; `<video>` range requests carry `Sec-Fetch-Site: same-origin` (WebKit may load media through AVFoundation) | The shell routes judge nothing; if media GETs omit the header, allow a missing one on `GET /fs/raw` only, with CORP guarding the response |
@@ -958,19 +1005,20 @@ None of these was run for this draft.
 
 ### Acceptance checks (automated in `tests/http_auth.rs` where a socket suffices)
 
-Tests stand in for tailscaled with a fake LocalAPI on a Unix socket, run by the test
-process, so the test's own uid is "tailscaled's" and its connections to `serve.sock`
-pass the front rule.
+Tests stand in for tailscaled with a fake LocalAPI on a Unix socket, and connect to
+`serve.sock` directly with the headers Serve would write.
 
 - **Startup:** with no `XDG_RUNTIME_DIR` on Linux, a runtime directory of another
   owner, mode `0755`, or a symlink: exit 78. A second daemon on the same directory
   exits 1 with "already running", and the first one's sockets, pastes and part files
   are untouched and it still answers. After `kill -9`, a new daemon starts and
   removes the stale sockets. `paste/` is emptied; the runtime directory itself isn't
-  recreated.
+  recreated. With no fake LocalAPI, the daemon starts and stays up, and requests
+  that need the cell get 503; once the fake starts, the log shows the canonical
+  origin and requests are admitted.
 - **Fronts:** a request with no token on `local.sock` is 401; with a native token it
   is admitted. On `serve.sock`, a `Host` other than `localhost` is 403 on every
-  route; a connection whose uid isn't the fake LocalAPI's is closed at accept.
+  route.
 - **Tailscale check:** `Tailscale-Funnel-Request` present is 403 on every route,
   shell included; a missing or unlisted login is 403; a Q-encoded non-ASCII login is
   decoded and matched.
@@ -988,12 +1036,12 @@ pass the front rule.
   one queued address all wait and none is refused. A whois timeout is `503
   identity_unavailable`, never 401; an oversized answer is 503.
 - **Canonical origin:** with a second handler (`/grafana` proxy, `Path`, `Text`) in
-  tether's entry, two entries, a non-root mount, Funnel on, or a version below
-  1.100: every node-lane request is `403 bad_origin`, and `/auth/info` reports `null`
+  tether's entry, two entries, a `TCP` forward to `serve.sock` (node or Service), a
+  non-root mount, or Funnel on: every node-lane request is `403 bad_origin`, and `/auth/info` reports `null`
   with a message naming the entry. A handler added while a node-lane socket is open
   closes it 4401 at the next re-check; removed again, new requests are admitted
-  within 10 s. A serve-config read failing for 20 s keeps admitting; past 30 s,
-  node-lane requests are 503.
+  within 10 s. A tailnet-state read failing for 20 s keeps admitting, with no
+  request waiting on a read; past 30 s, requests that need the cell are 503.
 - **Read at use:** the fake `/status` changing the self node's stable ID or owner is
   acted on within 10 s, without restart.
 - **Lanes:** a token and nothing else uses the native lane on either front; a bad
@@ -1034,9 +1082,11 @@ pass the front rule.
   user headers; non-ASCII values Q-encoded by `encTailscaleHeaderValue`);
   `reverseProxy.ServeHTTP` sets `Host` to `localhost` for `unix:` targets; the
   reverse proxy uses `Rewrite`, and both hooks run for `unix:` targets. `unix:` proxy
-  targets appear first in v1.94.0. `ipn/localapi/serve.go`
-  `authorizeServeConfigForGOOSAndUserContext` requires `IsLocalAdmin` for configs
-  with `IsServingUnixAny` from v1.100.0. `ipn/serve.go` `WebServerConfig.Handlers`
+  targets appear first in v1.94.0; `TCP` forwards to `unix:` sockets first in
+  v1.102.0 (`cmd/tailscale/cli/serve_v2.go`, `ipn/ipnlocal/serve.go` dialing
+  `unix`). `ipn/localapi/serve.go` `authorizeServeConfigForGOOSAndUserContext`
+  requires `IsLocalAdmin` from v1.100.0, and only for a posted config with a path
+  handler or `IsServingUnixAny`, so `tailscale serve reset` needs only `PermitWrite`. `ipn/serve.go` `WebServerConfig.Handlers`
   (several mount paths per entry). `ipn/backend.go` `Notify` (no serve-config
   field). `ipn/localapi/localapi.go` whois requires `PermitRead`, takes `addr`.
   `ipn/ipnlocal/local.go` `WhoIs` normalises mapped addresses and looks up the node by
@@ -1060,7 +1110,8 @@ pass the front rule.
   `daemon-core.md` §5–6, `fs.md`, `ios-shell.md`, `client/browser-setup.md`,
   `client/connection-roadmap.md`; [resource-limits.md](resource-limits.md) revision 2.
 - Reviews: [1](browser-auth-review-1.md), [2](browser-auth-review-2.md),
-  [3](browser-auth-review-3.md), [4](browser-auth-review-4.md).
+  [3](browser-auth-review-3.md), [4](browser-auth-review-4.md),
+  [5](browser-auth-review-5.md).
   [Public Suffix List](https://publicsuffix.org/list/public_suffix_list.dat) (`ts.net`),
   [RFC 6265 §8.5](https://httpwg.org/specs/rfc6265.html#section-8.5),
   [OWASP WebSocket cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html).
@@ -1069,7 +1120,7 @@ pass the front rule.
 
 Revision 4 replaced the cookie credential of revisions 1–3 with enrolled nodes; rows
 marked *moot* concerned the cookie. Revision 5 applies review 4 and the tech lead's
-decisions.
+decisions; revision 6 applies review 5, deleting the uid rule and the version gate.
 
 | Finding | Disposition | Landed in |
 |---|---|---|
@@ -1085,7 +1136,7 @@ decisions.
 | L2 credential-table gaps | **Kept** for tokens | §3.9 |
 | L3 tailnet-only bound | **Kept:** the node lane doesn't exist off the tailnet | §3.2, §3.17 |
 | L4 in-flight HTTP not cut | **Accepted** as before | §3.11 |
-| L5 Vite proxy forges the login | **Accepted, follow-up** | §2 |
+| L5 Vite proxy forges the login | **Follow-up**, with the fix stated (review 5 M3) | §2 |
 | L6 phone-only re-enrol every 30 days | **Moot:** no expiry; a new Tailscale node re-enrols | §1 |
 | **Round 2** | | |
 | N1, N2, N6, N7 (sibling residual, spike workflow, enrol/revoke race, refresh triggers) | **Moot** with sibling detection; N1's class (state refreshed at events) recurred as review 4 H2 and is closed by D5 | §3.3 |
@@ -1095,7 +1146,7 @@ decisions.
 | M1 graceful shutdown doesn't compile | **Fixed**, now in resource-limits §3.7 | §5 |
 | M2 MiB units and missing file pages | **Fixed** in resource-limits revision 2 | §5 |
 | M3 60 s whole-response deadline | **Fixed:** dropped, in resource-limits revision 2 | §5 |
-| M4 LocalAPI failure on re-check drops sockets | **Fixed:** 3 consecutive whois failures; removal never needs LocalAPI; the tailnet-state cells keep their last value for 30 s | §3.3, §3.11, G11 |
+| M4 LocalAPI failure on re-check drops sockets | **Fixed:** 3 consecutive whois failures; removal never needs LocalAPI; the tailnet-state cell keeps its last value for 30 s | §3.3, §3.11, G11 |
 | Low: backlog, auth-lane waiters, dependencies, slab naming | **Fixed**, in resource-limits revision 2 and §3.16 | §3.16, §5 |
 | Low: 3 tabs lock out native with 4005 | **Open risk**, reported | report |
 | D6 (third control client) | **Withdrawn:** resource-limits' default budget of 72 keeps 3 | resource-limits |
@@ -1103,11 +1154,20 @@ decisions.
 | H1 `Host` is `localhost` through a `unix:` target | **Fixed:** `X-Forwarded-Host` (exactly one) is compared with the canonical origin; on `serve.sock`, `Host` must be `localhost`; the DNS-rebinding rationale is gone; G2 corrected, acceptance row added | §3.5, §3.8, G2 |
 | H2 another app in tether's entry is same-origin | **Fixed:** tether must be the only handler in its entry; the serve config is read at use (≤ 10 s) on node-lane requests and in the socket re-check. `browser_origin`, `ambiguous_origin`, `browser_origin_unpublished` and `not_at_root` are gone; one message names the entry. The class is closed by D5, which applies to every security read in the draft (allowlist, self node, version, devices, node) | §2 D5, §3.3, §3.7, §3.11, G7, G9 |
 | H3 socket in the paste directory; no singleton lock | **Fixed:** directory check, `flock` on `tether/lock`, then unlink and bind, then empty `paste/`; no `/tmp` fallback on Linux; directory refusals exit 78 | §3.4, §3.5, §3.16 |
-| M1 D1 costs sudo from 1.100 | **Accepted by the tech lead:** minimum 1.100; the sudo cost and the root-only upside are stated; root and the operator are trusted; the daemon refuses browsers below 1.100 | §1, §2, §3.2, §3.7, running.md, G1 |
-| M2 the uid doesn't make a public proxy safe | **Fixed:** the socket decides the lane (`serve.sock`, `local.sock`, later `public.sock`); the uid guards `serve.sock` against a confused deputy | §3.5, §3.9, §3.17 |
+| M1 D1 costs sudo from 1.100 | **Accepted by the tech lead:** the sudo cost is stated; root and the operator are trusted. Rev 5's 1.100 gate was deleted in rev 6 (review 5 M2) | §1, §2, §3.2, running.md, G1 |
+| M2 the uid doesn't make a public proxy safe | **Fixed:** the socket decides the lane (`serve.sock`, `local.sock`, later `public.sock`). Rev 5's uid rule on `serve.sock` was deleted in rev 6 (review 5 M1) | §3.5, §3.9, §3.17 |
 | L1 joined waiters count against 16 | **Fixed:** the cap counts distinct addresses; acceptance row | §3.6 |
 | L2 no upgrade path; code left behind | **Fixed:** the refusal message, startup log and `tether enroll` give the commands; running.md and the CHANGELOG say it; §3.16 lists the deletions | §3.7, §3.16, running.md |
-| L3 a LocalAPI connection per whois | **Fixed:** keep-alive connections, 2 for whois, 1 for the cells; G4 measures both | §3.3, §3.6, G4 |
+| L3 a LocalAPI connection per whois | **Fixed:** keep-alive connections, 2 for whois, 1 for the cell; G4 measures both | §3.3, §3.6, G4 |
 | L4 Q-encoded login; stable-ID promise; path matching | **Fixed:** decoded before comparison; the never-reused claim is scoped to Tailscale's control plane; the socket is matched by `stat` identity | §3.5, §3.6, §3.7 |
 | L5 who can hold connections | **Fixed:** whoever the ACLs let reach port 443 | §3.2 |
 | D1, D2, D3 | **Settled** by the tech lead | §2 |
+| **Round 5** | | |
+| M1 a Serve TCP forward to `serve.sock` passes the uid and `Host` rules | **Fixed:** `serve.sock` must be named exactly once in the whole serve config (`TCP`, `Web`, `Foreground`, `Services`), as the sole handler of one HTTPS entry. The uid rule, its state, the accept-time close and its test row are deleted; `Host: localhost` stays as a misconfiguration check. G7 and acceptance rows for TCP forwards | §1, §2, §3.5, §3.7, §3.16, §4, G7 |
+| M2 the 1.100 gate guards a trusted actor; "only root can re-point" is false | **Fixed:** gate deleted; floor 1.94; sudo described as tailscaled ≥ 1.100 behaviour; the claims now say only adding a handler beside tether needs root, and the operator can still replace tether's publication; running.md says how to keep the operator out | §1, §2, §3.4, §3.7, §4, §5, G1, G3 |
+| M3 the dev proxy reopens D1 | **Fixed in the follow-up:** a Unix socket in a `0700` directory, published through Serve; chosen over "no injected token", which moves the token into page code | §2 |
+| L1 two cells | **Fixed:** one tailnet-state cell; after a failed read, the held value is served while one background read retries | §3.3, §3.4 |
+| L2 upgrade detection matches any loopback app | **Fixed:** only `127.0.0.1:7850` matches; one command, no `off` step | §3.7, running.md, G7 |
+| L3 startup with LocalAPI down | **Fixed:** startup reads nothing from LocalAPI; a background fill logs the origin | §3.5, §3.16, acceptance |
+| L4 D5 overclaims "every check" | **Fixed by scoping:** D5 covers requests; a live socket's re-check re-reads what can revoke it, and the allowlist is judged per request and at the upgrade | §3.3 |
+| L5 `client-architecture.md` drift | **Listed** in the notes file | notes |
