@@ -65,12 +65,12 @@ P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, doc
 
 | Lane | Spawn | State |
 |---|---|---|
-| A auth rev 4 | p31 → rev 4 (Unix socket + SO_PEERCRED, whois per request); review p42 | reviewing |
-| B limits 72 | review p32 (1H 6M, 2 simplifications); rev 2 p45 | revising |
+| A auth | rev 4 p31; review p42 (3H: Host via XFH, sole Serve handler checked on use, flock); rev 5 p48 | revising |
+| B limits 72 | rev 2 p45 (all findings applied) → implementing L1 p47 | building |
 | C inventory | p25 done (report only: protocol already has create/attachedElsewhere/index) | done |
-| E wrap design | p33: -F on 3.7b+, paired -N -T/-J alignment on 3.4 (fail closed); tmux builds at /tmp/tether-wrap-build/prefix/{3.4,3.7b}/bin/tmux; structure review p44 | reviewing |
+| E wrap | review p44 → map stays in daemon, pair on every version (no -F branch), history clamp fix first; implementing L3 p46 | building |
 | F tmux 3.8 | p27 → 50e5499 | done, unpushed |
-| D client architecture + design system | p34 → rev 3 (owned primitives on native HTML, no library); review p43 | reviewing |
+| D client architecture | rev 3 p34; review p43 (2H: PWA update flow, duplicate listing fetch); rev 4 p49 | revising |
 
 ## Tech-lead calls (2026-10-23 night)
 
@@ -81,3 +81,9 @@ P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, doc
   "tether <host>" (daemon fills the manifest). Kept for Jimmy: whether a closed tab's
   draft is kept (proposed: yes, up to 32).
 - No worktree exception: lanes stay on disjoint directories in one checkout.
+- Auth D1: Unix socket kept, Tailscale ≥ 1.100; cost accepted: later `tailscale serve`
+  changes on the box need sudo (tell Jimmy). Upside: only root can add a handler beside tether.
+- Wrap: no tmux version branch; the -N -T/-J pair on every version.
+- Limits: tier boundaries stay round (72/64/58/53/42).
+- Lanes in one checkout: coders don't commit; the lead commits each change by pathspec
+  after review and preflights a clean export of the commit (client-arch review F5).
