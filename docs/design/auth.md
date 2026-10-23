@@ -449,7 +449,8 @@ by name; other rows keep working. New device names avoid names in both admitted 
 refused rows. A later version may add fields that narrow a
 device (an expiry, a scope); an older daemon that ignored them would grant that
 device full power. Refused rows remain as raw TOML values across writes to other
-rows or `[pending]`; `tether device remove <name>` can remove a refused row by name.
+rows or `[pending]`; `tether device list` marks named refused rows, and
+`tether device remove <name>` can remove one by name.
 
 ```toml
 [[device]]
@@ -472,7 +473,7 @@ enrolled_by = "jimmy@github"
 | Command | Effect |
 |---|---|
 | `tether enroll [--ttl 10m]` | Print a new code, the host URL for the app, and the browser URL (`browserOrigin`, or the refusal message with its fix). The code works for either kind |
-| `tether device list` | Devices with name, kind, enrolled date and `enrolled_by`; for nodes, the stored stable ID |
+| `tether device list` | Devices with name, kind, enrolled date and `enrolled_by`; for nodes, the stored stable ID; named refused rows are marked `refused` |
 | `tether device remove <name>` | Remove a device of either kind; its requests are refused at once and its sockets close at the next re-check |
 | `tether device add <name>` | Add a **native** device and print its token once, for the dev shim or Playwright against a real daemon |
 

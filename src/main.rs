@@ -281,13 +281,19 @@ fn device(command: DeviceCommand) -> Result<()> {
     let store = Store::open(config::state_dir()?)?;
     match command {
         DeviceCommand::List => {
-            let devices = store.read()?.devices;
-            if devices.is_empty() {
+            let file = store.read()?;
+            let refused = file
+                .refused_device_names()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let devices = file.devices;
+            if devices.is_empty() && refused.is_empty() {
                 println!("No devices. `tether enroll` prints a code for the app's Add host.");
             }
             let width = devices
                 .iter()
                 .map(|d| d.name.chars().count())
+                .chain(refused.iter().map(|name| name.chars().count()))
                 .max()
                 .unwrap_or(0);
             for device in devices {
@@ -302,6 +308,9 @@ fn device(command: DeviceCommand) -> Result<()> {
                     "{:width$}  {:<24}  {}  {}",
                     device.name, kind, device.enrolled_at, device.enrolled_by
                 );
+            }
+            for name in refused {
+                println!("{:width$}  {:<24}  -  -", name, "refused");
             }
         }
         DeviceCommand::Add { name } => {

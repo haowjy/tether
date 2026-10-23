@@ -66,6 +66,15 @@ impl Serialize for AuthFile {
     }
 }
 
+impl AuthFile {
+    /// Names on rows kept raw because this daemon cannot safely admit them.
+    pub fn refused_device_names(&self) -> impl Iterator<Item = &str> {
+        self.refused_devices
+            .iter()
+            .filter_map(|row| row.get("name").and_then(toml::Value::as_str))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
@@ -641,10 +650,11 @@ mod tests {
         )
         .expect("written");
 
-        let devices = store.read().expect("the file").devices;
-        assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].name, "old");
-        assert_eq!(devices[0].kind, DeviceKind::Native);
+        let file = store.read().expect("the file");
+        assert_eq!(file.devices.len(), 1);
+        assert_eq!(file.devices[0].name, "old");
+        assert_eq!(file.devices[0].kind, DeviceKind::Native);
+        assert_eq!(file.refused_device_names().collect::<Vec<_>>(), ["future"]);
 
         let added = store
             .add_device("future", SystemTime::now())

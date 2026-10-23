@@ -5,8 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
-- Keep device listing to stored node IDs and send the native welcome and manifest
-  without waiting for a tailnet refresh.
+- Show refused auth row names in device listing, list nodes by stored ID, and send
+  the native welcome and manifest without waiting for a tailnet refresh.
 - Use pnpm 10.23.0 to install, build and check the web client.
 - Serve the browser/PWA shell from the daemon over private Unix sockets and admit
   browsers as enrolled tailnet nodes. Native device-token auth is unchanged; `tether
