@@ -132,6 +132,15 @@ describe("requests", () => {
     await expect(slow).rejects.toMatchObject({ reason: "timeout" });
 
     t.link().welcome();
+    // Once sent, a request waits for its reply, not for the socket: 5 s of a slow daemon is no failure.
+    const sent = list(t);
+    vi.advanceTimersByTime(29_000);
+    t.link().say({ type: "sessions", data: { req: t.link().sent.length > 0 ? (t.link().sent.at(-1) as { data: { req: number } }).data.req : 0, tmux: null } });
+    await expect(sent).resolves.toBeNull();
+    const silent = list(t);
+    vi.advanceTimersByTime(30_000);
+    await expect(silent).rejects.toMatchObject({ reason: "timeout" });
+
     const paused = list(t);
     t.host.background();
     await expect(paused).rejects.toMatchObject({ reason: "background" });

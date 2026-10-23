@@ -4,7 +4,15 @@ import type { ClientMsg, ErrorCode, ServerMsg } from "../proto/generated/message
 import { CloseCode } from "../proto/generated/messages";
 import { backoffMs, type Halt } from "../tabs/connection";
 
-const REQUEST_TIMEOUT_MS = 5_000;
+/** How long a request waits for a socket to send it on. */
+const SEND_TIMEOUT_MS = 5_000;
+/**
+ * How long a sent request waits for its reply. The daemon may already be acting on it (a
+ * create), so giving up early on a slow link only invites a duplicate; a dead socket is the
+ * link's to find (25 s silent) and fails the request as `lost`. This is the backstop for a
+ * socket that is alive but a daemon that never answers.
+ */
+const REPLY_TIMEOUT_MS = 30_000;
 
 /** Why a request got no answer: the daemon's refusal, the socket closing or halting, or no reply in time. */
 export class RequestError extends Error {
@@ -15,6 +23,8 @@ export class RequestError extends Error {
 
 interface Pending {
   msg: ClientMsg;
+  /** Puts `msg` on the link, and from then on waits for the reply rather than for a socket. */
+  transmit(link: Link): void;
   /** True when `reply` settled the request; an answer of the wrong kind is ignored. */
   answer(reply: ServerMsg): boolean;
   fail(error: RequestError): void;
@@ -118,8 +128,9 @@ export class Host {
 
   /**
    * Sends `build(req)` once the socket is up and resolves with `match` of its answer. It
-   * rejects on the daemon's `error`, after a timeout, and when the socket closes or the app
-   * goes to the background: nothing is sent twice. A halted host is tried again.
+   * rejects on the daemon's `error`, when no socket takes it in 5 s or no reply follows in
+   * 30 s, and when the socket closes or the app goes to the background: nothing is sent
+   * twice. A halted host is tried again.
    */
   request<T>(build: (req: number) => ClientMsg, match: (reply: ServerMsg) => T | undefined): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -128,13 +139,19 @@ export class Host {
         return;
       }
       const req = ++this.lastReq;
-      const timer = setTimeout(() => {
+      const expireIn = (ms: number): ReturnType<typeof setTimeout> => setTimeout(() => {
         this.pending.delete(req);
         reject(new RequestError("timed out", "timeout"));
         this.closeIfUnused();
-      }, REQUEST_TIMEOUT_MS);
+      }, ms);
+      let timer = expireIn(SEND_TIMEOUT_MS);
       const pending: Pending = {
         msg: build(req),
+        transmit: (link) => {
+          clearTimeout(timer);
+          timer = expireIn(REPLY_TIMEOUT_MS);
+          link.send(pending.msg);
+        },
         answer: (reply) => {
           if (reply.type === "error") {
             reject(new RequestError(reply.data.message, reply.data.code));
@@ -152,7 +169,7 @@ export class Host {
         },
       };
       this.pending.set(req, pending);
-      if (this.ready) this.link?.send(pending.msg);
+      if (this.ready && this.link) pending.transmit(this.link);
       else if (this.status === "idle" || this.status === "halted") {
         this.attempt = 0;
         this.connect();
@@ -223,7 +240,7 @@ export class Host {
     this.status = "open";
     this.attempt = 0;
     this.stuck = 0;
-    for (const p of this.pending.values()) this.link?.send(p.msg);
+    if (this.link) for (const p of this.pending.values()) p.transmit(this.link);
     for (const tab of this.tabs) tab.linkUp();
   }
 
