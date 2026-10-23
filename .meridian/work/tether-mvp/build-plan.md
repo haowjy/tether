@@ -65,9 +65,19 @@ P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, doc
 
 | Lane | Spawn | State |
 |---|---|---|
-| A auth rev 4 | p23 died (machine slept); p31 design-lead | running |
-| B limits 72 | p24 done; review p32 | reviewing |
+| A auth rev 4 | p31 → rev 4 (Unix socket + SO_PEERCRED, whois per request); review p42 | reviewing |
+| B limits 72 | review p32 (1H 6M, 2 simplifications); rev 2 p45 | revising |
 | C inventory | p25 done (report only: protocol already has create/attachedElsewhere/index) | done |
-| E wrap design | p26: exact on 3.7b+ via capture -F; p33 seeks exact 3.4 map, builds 3.4/3.7b | running |
+| E wrap design | p33: -F on 3.7b+, paired -N -T/-J alignment on 3.4 (fail closed); tmux builds at /tmp/tether-wrap-build/prefix/{3.4,3.7b}/bin/tmux; structure review p44 | reviewing |
 | F tmux 3.8 | p27 → 50e5499 | done, unpushed |
-| D client architecture + design system | p34 design-lead | running |
+| D client architecture + design system | p34 → rev 3 (owned primitives on native HTML, no library); review p43 | reviewing |
+
+## Tech-lead calls (2026-10-23 night)
+
+- Auth rev 4 D2 (an enrolled node is trusted whole, so phone Safari/PWA reach tether
+  without Face ID) and D3 ("Remove this device" replaces logout): accepted, under
+  Jimmy's accepted unlocked-device risk. D1 (Unix socket) pending review p42.
+- Client arch: the phone picker follows the theme; each server's installed PWA is named
+  "tether <host>" (daemon fills the manifest). Kept for Jimmy: whether a closed tab's
+  draft is kept (proposed: yes, up to 32).
+- No worktree exception: lanes stay on disjoint directories in one checkout.
