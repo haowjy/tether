@@ -40,7 +40,7 @@ export async function openFixture(page: Page, fixture: string, scenario: Scenari
 /** axe on the page as it stands: zero violations, including contrast in both themes. */
 export async function expectAccessible(page: Page): Promise<void> {
   // axe reads colours as they are now: let entrance animations (a toast fading in) finish first; endless ones (the spinner) never do.
-  await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished)));
+  await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations.map((v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(" ")).join("; ")})`)).toEqual([]);
 }

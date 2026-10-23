@@ -2879,11 +2879,15 @@ the p61 review. The product calls behind it are Jimmy's
   to the active tab's button in the tab strip. The keymap handles it before any key is sent
   (`decideKey` returns `leave`); Settings and browser-behaviors.md name it.
 - **Why this chord:** a terminal cannot encode Ctrl+Shift+letter apart from Ctrl+letter, so
-  shells lose nothing. Checked against Chrome's published shortcuts (Windows, Linux, macOS:
-  Ctrl+Shift uses only a, b, d, g, h, j, m, n, o, r, t, w and a few more, never f) and
-  from memory for Firefox (Ctrl+Shift: a, b, c, d, e, h, i, j, k, m, o, p, q, r, s, t, v, w,
-  x, y, z) and Safari (its shortcuts use Cmd or Ctrl+Cmd, not Ctrl+Shift). Firefox's page
-  would not load, so that check is not first-hand. Ctrl+Shift+C and V are copy and paste.
+  shells lose nothing. First-hand checks: [Chrome's keyboard shortcuts](https://support.google.com/chrome/answer/157179)
+  for Windows, Linux and macOS; Firefox's [`browser-sets.inc.xhtml`](https://github.com/mozilla-firefox/firefox/blob/main/browser/base/content/browser-sets.inc.xhtml)
+  and [`DevToolsStartup.sys.mjs`](https://github.com/mozilla-firefox/firefox/blob/main/devtools/startup/DevToolsStartup.sys.mjs);
+  and [Safari's keyboard shortcuts](https://support.apple.com/guide/safari/keyboard-and-other-shortcuts-cpsh003/mac).
+  None defines Ctrl+Shift+F; Firefox's only Shift+F full-screen binding is Cmd+Shift+F in
+  its macOS-only keyset. Windows' Microsoft Pinyin IME uses Ctrl+Shift+F while active to
+  switch Simplified/Traditional Chinese, rebindable in IME settings ([Huawei support](https://consumer.huawei.com/en/support/content/en-us00689079),
+  [Microsoft Q&A](https://learn.microsoft.com/en-us/answers/a/12306063)); that is an OS/IME
+  shortcut, not a browser shortcut. Ctrl+Shift+C and V are copy and paste.
 - **Rejected:** Ctrl+Shift+L (Edge's paste and go), Ctrl+Shift+U and E (GTK's Unicode and
   emoji input on Linux), Ctrl+Shift+Y (Firefox downloads), Escape (a shell and vim need it).
 

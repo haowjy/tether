@@ -74,7 +74,7 @@ export function decideKey(e: KeyFacts, mode: KeyMode): KeyDecision {
   // Cmd (and a Super key elsewhere) is never a terminal key: the browser's shortcuts keep their meaning.
   if (e.metaKey || BROWSER_FUNCTION.test(e.key)) return { kind: "browser" };
   if (e.ctrlKey && e.shiftKey && !e.altKey) {
-    const key = e.key.toLowerCase();
+    const key = printable(e)?.toLowerCase();
     if (key === "c") return { kind: "copy" };
     // No default Chrome, Firefox or Safari shortcut takes Ctrl+Shift+F on macOS, Linux or Windows, and a terminal cannot tell it from Ctrl+F.
     if (key === "f") return { kind: "leave" };

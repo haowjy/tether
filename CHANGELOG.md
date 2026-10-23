@@ -37,6 +37,7 @@ version section on release.
   pop-os" with Retry on the host banner, as the spec says; tabs used to read only "Reconnecting".
 - Terminal: Ctrl+Shift+F leaves a focused terminal for the tab strip, so a keyboard user can
   reach the rail-less controls; Enter on a tab returns. Settings lists it under Keyboard.
+- Terminal keyboard shortcuts match their physical letters, so Ctrl+Shift+C/F work on non-Latin layouts.
 - Terminal: the selected tab's watch pauses while a native screen covers Terminal and resumes
   with a fresh snapshot when Terminal returns.
 - Settings: a finished Remove this device or Clear local data closes Settings in Safari too.

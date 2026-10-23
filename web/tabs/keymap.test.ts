@@ -59,14 +59,14 @@ describe("decideKey, desktop", () => {
     expect(decideKey(ev("F5", { ctrlKey: true }), "xterm")).toEqual({ kind: "browser" });
     expect(decideKey(ev("t", { metaKey: true }), "xterm")).toEqual({ kind: "browser" });
     expect(decideKey(ev("ArrowLeft", { metaKey: true }), "xterm")).toEqual({ kind: "browser" });
-    expect(decideKey(ev("V", { ctrlKey: true, shiftKey: true }), "xterm")).toEqual({ kind: "browser" });
+    expect(decideKey(ev("М", { ctrlKey: true, shiftKey: true, code: "KeyV" }), "xterm")).toEqual({ kind: "browser" });
   });
 
-  it("copies on Ctrl+Shift+C and leaves the terminal on Ctrl+Shift+F", () => {
-    expect(decideKey(ev("C", { ctrlKey: true, shiftKey: true }), "xterm")).toEqual({ kind: "copy" });
-    expect(decideKey(ev("F", { ctrlKey: true, shiftKey: true }), "xterm")).toEqual({ kind: "leave" });
-    expect(decideKey(ev("F", { ctrlKey: true, shiftKey: true }), "owned")).toEqual({ kind: "leave" });
-    expect(decideKey(ev("f", { ctrlKey: true }), "xterm")).toEqual({ kind: "default" });
+  it("matches Ctrl+Shift+C and F by physical key across layouts", () => {
+    expect(decideKey(ev("С", { ctrlKey: true, shiftKey: true, code: "KeyC" }), "xterm")).toEqual({ kind: "copy" });
+    expect(decideKey(ev("А", { ctrlKey: true, shiftKey: true, code: "KeyF" }), "xterm")).toEqual({ kind: "leave" });
+    expect(decideKey(ev("А", { ctrlKey: true, shiftKey: true, code: "KeyF" }), "owned")).toEqual({ kind: "leave" });
+    expect(decideKey(ev("а", { ctrlKey: true, code: "KeyF" }), "xterm")).toEqual({ kind: "default" });
   });
 
   it("does nothing while an IME composes, however the browser reports it", () => {
