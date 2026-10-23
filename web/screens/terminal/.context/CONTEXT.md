@@ -24,5 +24,5 @@ The Terminal destination. The design is client-architecture.md §5.4, §6.4, §6
 - **Cmd combinations are the browser's, everywhere, and Ctrl+Shift+C copies everywhere.** Telling
   macOS from the rest needs `navigator`, which only `platform/` may read; no terminal key is lost
   by this (nobody sends Super+key to a shell, and `^C` still is Ctrl+C).
-- `e2e/terminal/` runs a real daemon, isolated. See `stack.ts` for why a front proxy answers
-  `/auth/info` and why the daemon runs with `--allow-login`.
+- `e2e/terminal/` runs a real daemon, isolated, on `e2e/shared/stack.ts`: see it for why a front proxy
+  answers `/auth/info` and why the daemon runs with `--allow-login`. `pnpm e2e:real` runs it.

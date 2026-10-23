@@ -1,0 +1,12 @@
+Nice-to-have, by area:
+
+- Home and the picker: a keyboard-only walk test (tab order, Escape, focus return).
+- Files: open at the active tab's directory (needs the terminal lane to publish `cwd`); name each
+  running upload row (`UploadEvent` has no file name); keep a parent folder's scroll when going up;
+  Vite still emits one 44 to 60 byte re-export stub per grammar (14 files of the shell's 48).
+- Terminal: a `bufferText` test (soft wrap, hard break at the exact column, blank lines,
+  indentation) for P3b to own; an end-to-end test of copy.
+- PWA: re-point the lazy-viewer gate in e2e/pwa at the Markdown chunk (it fetches another page's
+  entry script, which takes the same code path).
+- Test platform: scripted upload events as a `createTestPlatform` option (Files' fixtures overwrite
+  `uploads.pick` at render instead).

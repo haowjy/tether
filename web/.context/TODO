@@ -1,15 +1,9 @@
-Must-do, by lane (client-architecture.md §11):
+Must-do (client-architecture.md §11):
 
-- W2: retarget tabs/driver.ts, tabs/input.ts, term/size.ts and its test from native/bridge to
-  platform/types (`InputEvent`, the new `Viewport`), then size from the one formula in §5.4.
-  Mount the renderer once in screens/terminal and register each TabDriver with
-  `useApp().attachDriver(id, driver)`; create it `covered` unless it is the shown tab.
-  Add the `limited` connection state: `tabs/status.ts` already has `limitedStatus()`.
-- W3: trim files/kinds.ts LANGUAGES to the Shiki allowlist in vite.config.ts (GRAMMARS). A grammar
-  outside it builds as a tiny re-export stub and, for cpp, an 800 KB chunk: the shell budgets
-  (<= 64 files, 1.5 MiB gz) fail. Replace the stub platform/browser/uploads.ts.
-- W4: replace sw/sw.ts, sw/vite-plugin.ts and platform/browser/pwa.ts stubs.
 - W5: move native/bridge.ts to platform/native/ at bridge version 2 (§5.10), then delete native/
   and its lint exemption in lint/rules.js.
-- W1: sessions/ is the cache over `app.listing.subscribe(...)`; Home's stub calls
-  `app.listing.refresh(handle)` on entry and shows no sessions yet.
+- L4 (daemon): an `input` or `paste` the daemon refuses (`busy`, `inputTooLarge`) names no request, so
+  `net/host.ts` drops the error. Once it does, a refused paste can say "Not pasted", and
+  screens/terminal/terminals.ts can stop leaning on its 8 ms input batching to survive a burst.
+- Settings (W1): a fresh install has no way to add a Files root; it means editing `config.toml` on
+  the host. The `/fs/roots/*` client methods in files/api.ts are kept for this.
