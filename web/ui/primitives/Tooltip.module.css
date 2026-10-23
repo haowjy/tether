@@ -34,8 +34,12 @@
   }
 }
 .root[data-dismissed] .tip { display: none; }
-/* Touch has no hover to reveal it: the control's name is its label. */
+/* Touch has no hover to reveal it: the control's name is its label. Touch density covers a
+   window with a mouse-less viewport too, where a dialog's programmatic focus on Close would
+   otherwise raise the tip over the title. */
 @media (hover: none) {
   .root:hover .tip,
   .root:focus-within .tip { display: none; }
 }
+:root[data-density="touch"] .root:hover .tip,
+:root[data-density="touch"] .root:focus-within .tip { display: none; }

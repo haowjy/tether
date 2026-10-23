@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "test": "vitest run --configLoader runner",
     "e2e": "playwright test",
+    "e2e:real": "TETHER_E2E_REAL=1 playwright test",
     "check": "pnpm run typecheck && eslint . && node scripts/checks.mjs source && vitest run --configLoader runner && vite build --configLoader runner && node scripts/checks.mjs build"
   },
   "dependencies": {

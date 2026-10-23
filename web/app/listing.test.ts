@@ -112,6 +112,26 @@ describe("ListingFetcher", () => {
     expect(t.events.at(-1)).toMatchObject({ type: "listed" });
   });
 
+  it("reports a lost socket with nothing in flight", async () => {
+    const t = setup();
+    t.fetcher.setWanted("h1", true);
+    t.link().welcome();
+    t.answer(null);
+    await vi.advanceTimersByTimeAsync(0);
+    t.link().drop();
+    expect(t.events.at(-1)).toEqual({ type: "failed", handle: "h1", reason: "lost" });
+  });
+
+  it("retries a busy answer soon, with nothing reported", async () => {
+    const t = setup();
+    t.fetcher.setWanted("h1", true);
+    t.link().welcome();
+    t.link().say({ type: "error", data: { req: 1, code: "busy", message: "busy" } });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.lists()).toBe(2);
+    expect(t.events.every((e) => e.type !== "listed")).toBe(true);
+  });
+
   it("forwards renames", () => {
     const t = setup();
     t.fetcher.setWanted("h1", true);

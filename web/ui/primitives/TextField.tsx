@@ -55,7 +55,7 @@ export function TextField({ label, hideLabel, value, onInput, hint, error, focus
 type SearchProps = Pick<FieldProps, "label" | "value" | "onInput" | "placeholder" | "focusTarget" | "class">;
 
 /** A field that filters a list: a search glyph, and Escape empties it before it closes anything else. */
-export function SearchField({ label, value, onInput, placeholder, focusTarget, class: className }: SearchProps) {
+export function SearchField({ label, value, onInput, placeholder, focusTarget, class: className, ...rest }: SearchProps) {
   const focusRef = useFocusRef(focusTarget);
   return (
     <div class={cx(styles.search, className)}>
@@ -66,6 +66,7 @@ export function SearchField({ label, value, onInput, placeholder, focusTarget, c
         autocapitalize="off"
         autocomplete="off"
         spellcheck={false}
+        {...rest}
         {...(placeholder !== undefined && { placeholder })}
         value={value}
         onInput={(e) => { onInput(e.currentTarget.value); }}

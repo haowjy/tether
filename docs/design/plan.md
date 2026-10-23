@@ -665,7 +665,8 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
   sessions/       per-host listing cache, search, expansion and creation requests
   drafts/         local draft records, Insert state machine and eviction
   files/          /fs client and FileBrowser; render/ holds markdown and code viewers
-  app/            App context, controller, router.ts, focus.ts, listing.ts, persist.ts
+  app/            App context, controller (owns the sessions cache), router.ts, focus.ts,
+                  listing.ts, persist.ts
   screens/
     shell/        rail, destination frame and host banner
     home/         open tabs, sessions list, creation dialogs and phone bottom nav
@@ -695,7 +696,7 @@ The web `workspace/` is a pure reducer over tabs, not the navigation owner. It h
 `renamed`, `restored`, `watching` and `navigated` events. It emits `cover`, `uncover`,
 `save`, `navigate`, `focus` and `notice`;
 the controller applies navigation through the router before focus effects. The terminal
-lane registers each driver with `attachDriver(id, { cover, uncover })`; a newly
+lane registers each driver with `attachDriver(id, { cover, uncover, insertPath })`; a newly
 registered driver is covered unless it is the tab already shown. The router alone owns
 destinations, overlays and Files places. `Platform.subscribe` is one change channel:
 `app/controller.ts` handles app, host, viewport, lifecycle, storage and update changes,

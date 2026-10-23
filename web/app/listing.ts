@@ -65,7 +65,11 @@ export class ListingFetcher {
     };
     state.port = {
       linkUp: () => { this.fetch(handle); },
-      linkLost: () => { clearTimeout(state.relist); },
+      linkLost: () => {
+        clearTimeout(state.relist);
+        // A request in flight fails on its own; with none, cached rows would otherwise stay unmarked.
+        if (!state.inFlight) this.emit({ type: "failed", handle, reason: "lost" });
+      },
       paused: () => { clearTimeout(state.relist); },
       frame: () => undefined,
       message: (msg: ServerMsg) => {
@@ -149,7 +153,8 @@ export class ListingFetcher {
         },
         (error: unknown) => {
           this.emit({ type: "failed", handle, reason: error instanceof RequestError ? error.reason : "lost" });
-          if (this.opts.restoring()) {
+          // A busy daemon is retried soon and silently; a restoring tab retries on any failure.
+          if (this.opts.restoring() || (error instanceof RequestError && error.reason === "busy")) {
             const delay = backoffMs(state.attempt++, (this.opts.random ?? Math.random)());
             state.retry = setTimeout(() => { this.fetch(handle); }, delay);
           }

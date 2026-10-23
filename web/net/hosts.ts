@@ -50,12 +50,13 @@ interface Slot {
 
 /** The text of a JSON error body, if it is one. */
 async function readReply(res: Response): Promise<SessionReply> {
-  const body = (await res.json().catch(() => null)) as { error?: unknown; reason?: unknown; node?: { name?: unknown } } | null;
+  const body = (await res.json().catch(() => null)) as { error?: unknown; reason?: unknown; deviceName?: unknown; node?: { name?: unknown } } | null;
   return {
     status: res.status,
     ...(typeof body?.error === "string" && { error: body.error }),
     ...(typeof body?.reason === "string" && { reason: body.reason }),
     ...(typeof body?.node?.name === "string" && { nodeName: body.node.name }),
+    ...(typeof body?.deviceName === "string" && { deviceName: body.deviceName }),
   };
 }
 

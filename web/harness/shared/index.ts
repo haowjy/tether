@@ -1,3 +1,4 @@
+import type { TestPlatform } from "../../platform/test";
 import type { SavedWorkspace, TabKey } from "../../platform/types";
 import type { TmuxListing } from "../../proto/generated/messages";
 import type { Fixtures } from "../fixture";
@@ -35,11 +36,21 @@ export const SAVED: SavedWorkspace = {
   expanded: {},
 };
 
+/** The daemon's `/fs/roots`: one folder, so the real app's Files screen has a list to show. */
+const ROOT = { path: "/home/jimmy/tether", canonical: "/home/jimmy/tether", ok: true };
+const withFiles: NonNullable<TestPlatform["daemon"]["fs"]> = ({ path }) =>
+  path === "/fs/roots"
+    ? new Response(JSON.stringify({ home: "/home/jimmy", roots: [ROOT], uploadsDir: { ...ROOT, path: "/home/jimmy/tether-uploads", canonical: "/home/jimmy/tether-uploads" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    : undefined;
+
 export const fixtures: Fixtures = {
   /** Admitted, no tabs. */
-  home: { daemon: (d) => { d.listing = LISTING; } },
+  home: { daemon: (d) => { d.listing = LISTING; d.fs = withFiles; } },
   /** Admitted, with a saved workspace: restore decides each tab from the first listing. */
-  restored: { options: () => ({ workspace: SAVED }), daemon: (d) => { d.listing = LISTING; } },
+  restored: { options: () => ({ workspace: SAVED }), daemon: (d) => { d.listing = LISTING; d.fs = withFiles; } },
   /** The daemon has no tmux server. */
   noServer: { daemon: (d) => { d.listing = null; } },
   enrol: { daemon: (d) => { d.node = "notEnrolled"; d.nodeName = "laptop"; } },

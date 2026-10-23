@@ -7,6 +7,7 @@ import type { PlatformStorage, SavedWorkspace } from "../platform/types";
 export class Persist {
   private files: () => SavedWorkspace["files"] = () => null;
   private expanded: () => SavedWorkspace["expanded"] = () => ({});
+  private hostName: () => string | null = () => null;
   private readonly flushers = new Set<() => void>();
 
   constructor(
@@ -26,6 +27,11 @@ export class Persist {
     this.expanded = getter;
   }
 
+  /** The controller says the page's host name, once `/auth/info` has told it. */
+  provideHostName(getter: () => string | null): void {
+    this.hostName = getter;
+  }
+
   /** drafts/ registers its pending-write flush; returns the way to stop. */
   onFlush(flush: () => void): () => void {
     this.flushers.add(flush);
@@ -34,11 +40,13 @@ export class Persist {
 
   /** The workspace changed: hand storage the assembled workspace (the adapter coalesces). */
   save(): void {
+    const hostName = this.hostName();
     this.storage.saveWorkspace({
       version: 1,
       ...this.tabs(),
       files: this.files(),
       expanded: this.expanded(),
+      ...(hostName !== null && { hostName }),
     });
   }
 

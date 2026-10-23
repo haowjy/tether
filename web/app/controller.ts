@@ -2,8 +2,10 @@
 // runs the workspace reducer's effects. Everything else has its own owner: the workspace
 // reducer owns tabs, `net/hosts.ts` owns sockets and admission, the router owns navigation,
 // `app/focus.ts` owns focus, `app/persist.ts` owns persistence, `app/listing.ts` owns the
-// listing. Screens reach each of them through `useApp()`.
+// listing, `sessions/cache.ts` the rows Home and the picker render. Screens reach each of them
+// through `useApp()`.
 import { HostRegistry, type HostClient } from "../net/hosts";
+import { SessionsCache } from "../sessions/cache";
 import type { BootResult, Lifecycle, Platform, UpdateState, Viewport } from "../platform/types";
 import { Store } from "../ui/store";
 import { applyViewport } from "../ui/theme";
@@ -21,6 +23,8 @@ const UPDATE_CHECK_EVERY_MS = 60 * 60_000;
 export interface TabHandle {
   cover(): void;
   uncover(): void;
+  /** The tab's driver quotes `path` and types it, with no Enter, once its watch is bound. */
+  insertPath(path: string): void;
 }
 
 export interface AppView {
@@ -50,6 +54,7 @@ export class AppController extends Store<AppView> {
   readonly focus: FocusController;
   readonly persist: Persist;
   readonly listing: ListingFetcher;
+  readonly sessions: SessionsCache;
   private readonly drivers = new Map<string, TabHandle>();
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastUpdateCheck = 0;
@@ -84,20 +89,28 @@ export class AppController extends Store<AppView> {
       ...(options.fetchFn && { fetchFn: options.fetchFn }),
     });
     this.persist = new Persist(platform.storage, () => savedTabs(this.snapshot.workspace), boot.workspace);
+    this.persist.provideHostName(() => this.hosts.all()[0]?.name ?? null);
     this.listing = new ListingFetcher({
       restoring: () => this.snapshot.workspace.tabs.some((t) => t.restoring),
       visible: () => this.snapshot.lifecycle.visible,
     });
+    this.sessions = new SessionsCache(boot.workspace?.expanded);
+    this.persist.provideExpanded(() => this.sessions.saved());
 
     applyViewport(boot.viewport);
     this.hosts.subscribe(() => { this.hostsChanged(); });
     this.hosts.setLifecycle(boot.lifecycle);
-    this.hosts.set(boot.hosts);
+    // A browser host's name is unknown until `/auth/info` answers; an offline launch names it from the last save.
+    const savedName = boot.workspace?.hostName;
+    this.hosts.set(boot.hosts.map((h) => (h.name === null && h.pageOrigin !== null && savedName !== undefined ? { ...h, name: savedName } : h)));
     this.dispatch({ type: "restored", saved: boot.workspace });
     this.dispatch({ type: "navigated", onTerminal: router.entry.destination === "terminal" });
     router.subscribe((nav) => { this.navigated(nav); });
     this.listing.subscribe((event) => {
       const client = this.hosts.get(event.handle);
+      if (event.type === "listed") this.sessions.listed(event.handle, event.listing, client?.hostId ?? null);
+      else if (event.type === "failed") this.sessions.failed(event.handle, event.reason);
+      else this.sessions.renamed(event.handle, event.window, event.name);
       if (!client?.hostId) return;
       if (event.type === "listed") this.dispatch({ type: "listing", hostId: client.hostId, listing: event.listing });
       else if (event.type === "renamed") this.dispatch({ type: "renamed", hostId: client.hostId, window: event.window, name: event.name });
@@ -123,6 +136,13 @@ export class AppController extends Store<AppView> {
     return () => {
       if (this.drivers.get(id) === handle) this.drivers.delete(id);
     };
+  }
+
+  /** Hands `path` to the driver registered for tab `id`. False when none is registered. */
+  insertPath(id: string, path: string): boolean {
+    const handle = this.drivers.get(id);
+    handle?.insertPath(path);
+    return handle !== undefined;
   }
 
   /** A message for the polite live region, replaced by the next. */

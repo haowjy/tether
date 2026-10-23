@@ -61,6 +61,10 @@ export interface FakeDaemon {
   /** The code `POST /auth/node/enroll` accepts. */
   code: string;
   listing: TmuxListing | null;
+  /** How the daemon answers `watch`: a snapshot, a refusal for its session limit, or nothing (the default). */
+  watch?: "ok" | { limit: string } | "never";
+  /** Answers `/fs/*` requests; `undefined` falls through to a 404. */
+  fs?: (request: { method: string; path: string; query: URLSearchParams; body: string | null }) => Response | undefined;
   /** Requests seen, `"METHOD /path"`, in order. */
   requests: string[];
 }
@@ -134,8 +138,12 @@ function daemonFetch(daemon: FakeDaemon): typeof fetch {
       case "POST /auth/node/remove":
         daemon.node = "notEnrolled";
         return Promise.resolve(new Response(null, { status: 204 }));
-      default:
-        return Promise.resolve(json(404, { error: "not_found" }));
+      default: {
+        const answer = url.pathname.startsWith("/fs/")
+          ? daemon.fs?.({ method, path: url.pathname, query: url.searchParams, body: typeof init?.body === "string" ? init.body : null })
+          : undefined;
+        return Promise.resolve(answer ?? json(404, { error: "not_found" }));
+      }
     }
   };
 }
@@ -153,6 +161,18 @@ function nodeReply(daemon: FakeDaemon): Response {
     case "busy":
       return json(503, { error: "identity_unavailable" });
   }
+}
+
+function answerWatch(link: FakeLink, daemon: FakeDaemon, msg: Extract<ClientMsg, { type: "watch" }>): void {
+  const { watch, window, size } = msg.data;
+  if (daemon.watch === undefined || daemon.watch === "never") return;
+  if (daemon.watch !== "ok") {
+    link.say({ type: "watchEnded", data: { watch, reason: "limit", message: daemon.watch.limit } });
+    return;
+  }
+  const session = daemon.listing?.sessions.find((s) => s.windows.some((w) => w.id === window.window));
+  link.say({ type: "watching", data: { watch, window, session: { server: window.server, session: session?.id ?? 1 }, pane: 1, cwd: null } });
+  link.frame({ kind: "snapshot", watch, cols: size.cols, rows: size.rows, restore: new TextEncoder().encode("$ ") });
 }
 
 export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatform {
@@ -212,6 +232,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
         link.send = (msg: ClientMsg) => {
           send(msg);
           if (msg.type === "listSessions") link.say({ type: "sessions", data: { req: msg.data.req, tmux: daemon.listing } });
+          else if (msg.type === "watch") answerWatch(link, daemon, msg);
         };
         return link;
       },

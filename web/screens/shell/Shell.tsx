@@ -20,28 +20,31 @@ export function Shell() {
   // The browser has one host; native may have several, each with its own banner.
   const blocking = hosts.find((h) => ["notEnrolled", "wrongOrigin", "originRefused", "nodeRefused", "incompatible"].includes(h.admission.kind) && h.entry.pageOrigin !== null);
 
-  if (blocking) {
-    return (
-      <div class={styles.shell} data-layout={layout}>
-        <main class={styles.screen}>{blocking.admission.kind === "notEnrolled" ? <Enrol host={blocking} /> : <HostProblem host={blocking} />}</main>
-      </div>
-    );
-  }
-
+  // The terminal stays mounted, hidden, under an admission screen: its buffer and watches outlive it (§6.5).
   return (
     <div class={styles.shell} data-layout={layout}>
-      {desktop && <Rail destination={destination} />}
+      {!blocking && desktop && <Rail destination={destination} />}
       <div class={styles.column}>
-        <div class={styles.banners}>{hosts.map((h) => <HostBanner key={h.entry.handle} host={h} />)}</div>
+        {!blocking && <div class={styles.banners}>{hosts.map((h) => <HostBanner key={h.entry.handle} host={h} />)}</div>}
         <main class={styles.screen}>
-          {hosts.length === 0 && <div class={styles.waiting}><Spinner label="Checking access" /></div>}
-          {destination === "home" && <Home pane="sessions" />}
-          {destination === "files" && (desktop ? <FilesScreen /> : <Home pane="files" />)}
-          <TerminalScreen active={destination === "terminal"} />
+          {blocking ? (
+            blocking.admission.kind === "notEnrolled" ? <Enrol host={blocking} /> : <HostProblem host={blocking} />
+          ) : (
+            <>
+              {hosts.length === 0 && <div class={styles.waiting}><Spinner label="Checking access" /></div>}
+              {destination === "home" && <Home pane="sessions" />}
+              {destination === "files" && (desktop ? <FilesScreen /> : <Home pane="files" />)}
+            </>
+          )}
+          <TerminalScreen active={!blocking && destination === "terminal"} />
         </main>
       </div>
-      <Picker />
-      <Settings />
+      {!blocking && (
+        <>
+          <Picker />
+          <Settings />
+        </>
+      )}
     </div>
   );
 }

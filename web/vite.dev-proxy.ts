@@ -61,9 +61,11 @@ function deny(res: ServerResponse): void {
   res.end(JSON.stringify({ error: "forbidden" }));
 }
 
-/** `/auth/info` from the daemon, with `browserOrigin` set to this dev server's origin. */
+/** `/auth/info` from the daemon, with `browserOrigin` set to this dev server's origin. The daemon's Tailscale check refuses a request with neither the token nor the caller's login header. */
 function authInfo(req: IncomingMessage, res: ServerResponse): void {
-  const upstream = request({ ...daemonTarget(), path: "/auth/info", method: "GET" }, (reply) => {
+  const login = req.headers["tailscale-user-login"];
+  const headers = { Authorization: `Bearer ${token()}`, ...(typeof login === "string" && { "Tailscale-User-Login": login }) };
+  const upstream = request({ ...daemonTarget(), path: "/auth/info", method: "GET", headers }, (reply) => {
     const chunks: Buffer[] = [];
     reply.on("data", (c: Buffer) => chunks.push(c));
     reply.on("end", () => {

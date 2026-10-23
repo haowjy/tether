@@ -19,10 +19,13 @@ export interface SessionReply {
   error?: string;
   reason?: string;
   nodeName?: string;
+  /** The enrolled device's name, on a 200. */
+  deviceName?: string;
 }
 
 export type Admission =
-  | { kind: "admitted" }
+  /** `deviceName` is this device's name as the daemon enrolled it; a token-admitted host has none. */
+  | { kind: "admitted"; deviceName?: string }
   /** This page is not at the daemon's canonical origin. No socket opens. */
   | { kind: "wrongOrigin"; origin: string }
   | { kind: "originRefused"; reason: string }
@@ -54,7 +57,7 @@ export function fromSession(reply: SessionReply): Admission {
     case 0:
       return { kind: "unreachable" };
     case 200:
-      return { kind: "admitted" };
+      return { kind: "admitted", ...(reply.deviceName !== undefined && { deviceName: reply.deviceName }) };
     case 401:
       return reply.error === "not_enrolled" ? { kind: "notEnrolled", nodeName: reply.nodeName ?? "this device" } : { kind: "deciding" };
     case 403:

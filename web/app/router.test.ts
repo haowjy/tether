@@ -94,6 +94,26 @@ describe("Router", () => {
     expect(deep.h.entries).toHaveLength(1);
   });
 
+  it("Files returns to the place it was left, and its in-app back goes back or replaces", () => {
+    const { router, h } = setup();
+    router.go("files");
+    router.pushFiles({ kind: "dir", path: "/a" });
+    router.pushFiles({ kind: "file", path: "/a/b" });
+    router.go("terminal");
+    router.go("files");
+    expect(router.entry.files).toEqual({ kind: "file", path: "/a/b" });
+
+    router.back();
+    router.back();
+    router.toParent({ kind: "dir", path: "/a" }); // the previous entry is that folder
+    expect(router.entry.files).toEqual({ kind: "dir", path: "/a" });
+    expect(h.at).toBe(2);
+    router.toParent({ kind: "roots" }); // the previous entry is not: the top entry is replaced
+    expect(router.entry.files).toEqual({ kind: "roots" });
+    expect(h.at).toBe(2);
+    expect(router.entry.destination).toBe("files");
+  });
+
   it("restores overlays dropped on reload: a state from an earlier page life stands alone", () => {
     const { router, h } = setup();
     router.go("files");

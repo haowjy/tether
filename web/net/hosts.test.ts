@@ -24,7 +24,7 @@ async function boot(edit: (p: TestPlatform) => void = () => undefined, options: 
 describe("admission, read from the daemon at launch", () => {
   it("admits an enrolled node and learns the host id", async () => {
     const t = await boot();
-    expect(t.host()?.admission).toEqual({ kind: "admitted" });
+    expect(t.host()?.admission).toEqual({ kind: "admitted", deviceName: "laptop" });
     expect(t.host()).toMatchObject({ hostId: "h-pop", name: "pop-os" });
     expect(t.platform.daemon.requests).toEqual(["GET /auth/info", "GET /auth/node/session"]);
   });
@@ -59,7 +59,7 @@ describe("admission, read from the daemon at launch", () => {
     expect(t.host()?.checkingSince).not.toBeNull();
     t.platform.daemon.node = "enrolled";
     await vi.advanceTimersByTimeAsync(500);
-    expect(t.host()?.admission).toEqual({ kind: "admitted" });
+    expect(t.host()?.admission).toEqual({ kind: "admitted", deviceName: "laptop" });
     expect(t.host()?.checkingSince).toBeNull();
   });
 
@@ -70,7 +70,7 @@ describe("admission, read from the daemon at launch", () => {
     t.registry.setLifecycle({ visible: true, online: false, locked: false });
     t.registry.setLifecycle({ visible: true, online: true, locked: false });
     await vi.advanceTimersByTimeAsync(0);
-    expect(t.host()?.admission).toEqual({ kind: "admitted" });
+    expect(t.host()?.admission).toEqual({ kind: "admitted", deviceName: "laptop" });
   });
 
   it("calls a protocol outside the daemon's range incompatible, and stays", async () => {
@@ -91,7 +91,7 @@ describe("enrolment", () => {
     expect(t.host()?.admission.kind).toBe("notEnrolled");
     expect(await t.registry.enrol("h1", "123456", "my laptop")).toEqual({ kind: "enrolled" });
     await vi.advanceTimersByTimeAsync(0);
-    expect(t.host()?.admission).toEqual({ kind: "admitted" });
+    expect(t.host()?.admission).toEqual({ kind: "admitted", deviceName: "laptop" });
   });
 
   it("reports a busy daemon as tryAgain, and a refused node on the refusal screen", async () => {

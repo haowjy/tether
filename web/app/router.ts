@@ -54,6 +54,8 @@ export class Router {
   private readonly listeners = new Set<(nav: Navigated) => void>();
   private nextId = Date.now();
   private readonly off: () => void;
+  /** The last Files place any entry held: `go("files")` returns to it. */
+  private lastFiles: FilesPlace | null;
 
   /**
    * Reload restores the destination from the hash and the Files place from the saved
@@ -63,6 +65,7 @@ export class Router {
     const destination = destinationFromHash(port.current().hash);
     const entry: Entry = { id: this.nextId++, destination, overlay: null, files: destination === "files" ? files : null, parent: destination === "home" ? null : "home" };
     this.stack = [entry];
+    this.lastFiles = entry.files;
     port.replace(entry, HASHES[destination]);
     this.off = port.onPop(() => { this.popped(); });
   }
@@ -80,11 +83,11 @@ export class Router {
     this.off();
   }
 
-  /** Changing destination pushes an entry. The same destination changes nothing. */
+  /** Changing destination pushes an entry. The same destination changes nothing. Files returns to where it was left. */
   go(destination: Destination): void {
     const { entry } = this;
     if (entry.destination === destination) return;
-    this.push({ destination, overlay: null, files: null, parent: destination === "home" ? null : "home" });
+    this.push({ destination, overlay: null, files: destination === "files" ? this.lastFiles : null, parent: destination === "home" ? null : "home" });
   }
 
   openOverlay(overlay: Overlay): void {
@@ -112,13 +115,19 @@ export class Router {
   /**
    * An in-app back button: to the logical parent. If the previous entry is that parent,
    * this is `history.back()`; after a reload or a deep link the entry is replaced with the
-   * parent, so Back never leaves the app unexpectedly.
+   * parent, so Back never leaves the app unexpectedly. Within Files the parent is the
+   * enclosing place, given as `files`.
    */
-  toParent(): void {
+  toParent(files?: FilesPlace): void {
     const { entry } = this;
+    const previous = this.stack[this.stack.length - 2];
+    if (files) {
+      if (previous?.destination === "files" && previous.overlay === null && JSON.stringify(previous.files) === JSON.stringify(files)) this.port.back();
+      else this.replace({ destination: "files", overlay: null, files, parent: "home" });
+      return;
+    }
     const parent = entry.parent;
     if (parent === null) return;
-    const previous = this.stack[this.stack.length - 2];
     if (previous?.destination === parent && previous.overlay === null) this.port.back();
     else this.replace({ destination: parent, overlay: null, files: null, parent: parent === "home" ? null : "home" });
   }
@@ -151,6 +160,7 @@ export class Router {
   }
 
   private emit(): void {
+    if (this.entry.files) this.lastFiles = this.entry.files;
     const nav: Navigated = { destination: this.entry.destination, entry: this.entry };
     for (const listener of [...this.listeners]) listener(nav);
   }

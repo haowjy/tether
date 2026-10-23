@@ -13,7 +13,7 @@ interface DialogProps {
   /** `sheet` is the same dialog styled as a tall bottom sheet with safe-area padding. */
   variant?: "dialog" | "sheet";
   /** Where focus returns on close: an element or a registered name. Default: the control that opened it. */
-  returnFocusTo?: FocusTarget | null;
+  returnFocusTo?: HTMLElement | FocusTarget | null;
   /** The field a fine pointer starts in; in `touch` density focus never starts in a field. */
   initialFocus?: () => HTMLElement | null;
   children: ComponentChildren;

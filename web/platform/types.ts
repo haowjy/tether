@@ -62,6 +62,8 @@ export interface SavedWorkspace {
   files: { hostId: string; place: FilesPlace } | null;
   /** Expanded session ids, by hostId. */
   expanded: Record<string, string[]>;
+  /** The host's last known name: an offline launch cannot ask `/auth/info`, yet still says "Can't reach pop-os". */
+  hostName?: string;
 }
 
 export interface DraftRecord {
@@ -115,7 +117,8 @@ export interface Uploads {
   send?(handle: string, file: File, signal: AbortSignal): AsyncIterable<UploadEvent>;
 }
 
-export type UpdateState = "none" | "ready";
+/** `ready`: a new build waits for a tap. `reload`: another page applied an update, and this page keeps running the previous build. */
+export type UpdateState = "none" | "ready" | "reload";
 export interface Updates {
   check(): Promise<void>;
   apply(): void;
