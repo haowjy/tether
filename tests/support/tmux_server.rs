@@ -131,8 +131,15 @@ impl Server {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
-        thread::sleep(Duration::from_millis(300));
-        Ok(child)
+        // Wait until tmux lists the client: a fixed sleep raced slow CI runners.
+        for _ in 0..100 {
+            let modes = self.run(&["list-clients", "-F", "#{client_control_mode}"])?;
+            if modes.lines().any(|mode| mode == "0") {
+                return Ok(child);
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        Err("the terminal client never attached".into())
     }
 
     /// Types a shell line into a pane, outside the control client.
