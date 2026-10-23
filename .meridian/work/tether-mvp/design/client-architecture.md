@@ -863,7 +863,9 @@ saved expansion.
   `sessionsChanged` keeps arriving. This costs one of the daemon's three sockets while
   Home is on screen. It closes 30 s after both are gone if no tab needs it.
 - **Cached first, then fresh.** Home shows the last listing at once, with a quiet
-  "Updating". A failure keeps the cached rows, marks them stale and offers Retry. These
+  "Updating" from the moment the fetcher sends a request (it emits `requested`, and the
+  cache sets the flag; screens set nothing) until the answer. A relist that only a
+  `sessionsChanged` hint asked for is not announced. A failure keeps the cached rows, marks them stale and offers Retry. These
   are distinct states, each with its own copy:
   - loading;
   - no tmux server ("No tmux server is running on pop-os". tether never starts one);

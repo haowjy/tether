@@ -18,7 +18,7 @@ function setup(over: { restoring?: boolean; visible?: boolean } = {}) {
   const fetcher = new ListingFetcher({ restoring: () => state.restoring, visible: () => state.visible, random: () => 0.5 });
   const events: ListingEvent[] = [];
   fetcher.subscribe((e) => events.push(e));
-  fetcher.add("h1", h.host);
+  fetcher.setHosts([{ handle: "h1", host: h.host }]);
   const lists = (): number => h.link().sent.filter((m) => m.type === "listSessions").length;
   const answer = (tmux: TmuxListing | null): void => {
     const sent = h.link().sent.filter((m) => m.type === "listSessions").at(-1);
@@ -36,7 +36,34 @@ describe("ListingFetcher", () => {
     expect(t.lists()).toBe(1);
     t.answer(listing("a", [1]));
     await vi.advanceTimersByTimeAsync(0);
-    expect(t.events).toEqual([{ type: "listed", handle: "h1", listing: listing("a", [1]) }]);
+    expect(t.events).toEqual([{ type: "requested", handle: "h1" }, { type: "listed", handle: "h1", listing: listing("a", [1]) }]);
+  });
+
+  it("announces a listing it sends for the user, and not one a sessionsChanged hint asked for", async () => {
+    const t = setup();
+    t.fetcher.setWanted("h1", true);
+    t.link().welcome();
+    t.answer(null);
+    await vi.advanceTimersByTimeAsync(0);
+    t.events.length = 0;
+    t.link().say({ type: "sessionsChanged" });
+    await vi.advanceTimersByTimeAsync(300);
+    t.answer(null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.events.map((e) => e.type)).toEqual(["listed"]);
+    t.fetcher.refresh("h1");
+    expect(t.events.map((e) => e.type)).toEqual(["listed", "requested"]);
+  });
+
+  it("drops a host that is no longer among the hosts", () => {
+    const t = setup();
+    t.fetcher.setWanted("h1", true);
+    t.link().welcome();
+    t.answer(null);
+    t.fetcher.setHosts([]);
+    t.link().say({ type: "sessionsChanged" });
+    vi.advanceTimersByTime(300);
+    expect(t.lists()).toBe(1);
   });
 
   it("keeps the socket 30 s after the last reason for it goes", () => {
@@ -116,13 +143,13 @@ describe("ListingFetcher", () => {
     t.link().welcome();
     t.link().drop(); // fails the request: nothing decided
     await vi.advanceTimersByTimeAsync(0);
-    expect(t.events).toEqual([{ type: "failed", handle: "h1", reason: "lost" }]);
+    expect(t.events).toEqual([{ type: "requested", handle: "h1" }, { type: "failed", handle: "h1", reason: "lost" }]);
     await vi.advanceTimersByTimeAsync(500);
     t.link().welcome();
     expect(t.lists()).toBe(1);
     t.answer(listing("a", [1]));
     await vi.advanceTimersByTimeAsync(0);
-    expect(t.events.at(-1)).toMatchObject({ type: "listed" });
+    expect(t.events.map((e) => e.type)).toContain("listed");
   });
 
   it("reports a lost socket with nothing in flight", async () => {
@@ -150,6 +177,6 @@ describe("ListingFetcher", () => {
     t.fetcher.setWanted("h1", true);
     t.link().welcome();
     t.link().say({ type: "windowRenamed", data: { window: { server: "a", window: 4 }, name: "vim" } });
-    expect(t.events).toEqual([{ type: "renamed", handle: "h1", window: { server: "a", window: 4 }, name: "vim" }]);
+    expect(t.events.filter((e) => e.type !== "requested")).toEqual([{ type: "renamed", handle: "h1", window: { server: "a", window: 4 }, name: "vim" }]);
   });
 });

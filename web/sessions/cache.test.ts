@@ -18,10 +18,10 @@ describe("SessionsCache", () => {
     expect(cache.snapshot.hosts["h1"]).toEqual({ listing: listing(1), failure: null, updating: false });
   });
 
-  it("is updating from entering Home until an answer, and keeps the cached rows meanwhile", () => {
+  it("is updating from a requested listing until an answer, and keeps the cached rows meanwhile", () => {
     const cache = new SessionsCache();
     cache.listed("h1", listing(1), null);
-    cache.expectFresh("h1");
+    cache.requested("h1");
     expect(cache.snapshot.hosts["h1"]).toMatchObject({ listing: listing(1), updating: true });
     cache.listed("h1", listing(1, 2), null);
     expect(cache.snapshot.hosts["h1"]?.updating).toBe(false);
@@ -39,7 +39,7 @@ describe("SessionsCache", () => {
   it("tells a daemon refusal from a network failure, and ignores busy and background", () => {
     expect([classifyFailure("lost"), classifyFailure("timeout"), classifyFailure("tmux"), classifyFailure("unauthorized")]).toEqual(["offline", "offline", "refused", "refused"]);
     const cache = new SessionsCache();
-    cache.expectFresh("h1");
+    cache.requested("h1");
     cache.failed("h1", "busy");
     cache.failed("h1", "background");
     expect(cache.snapshot.hosts["h1"]).toEqual({ listing: undefined, failure: null, updating: true });

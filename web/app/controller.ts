@@ -50,7 +50,6 @@ export class AppController extends Store<AppView> {
   readonly sessions: SessionsCache;
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastUpdateCheck = 0;
-  private readonly listed = new Set<string>();
   private onHomeOrPicker = false;
 
   static async start(platform: Platform, options: StartOptions = {}): Promise<AppController> {
@@ -103,7 +102,8 @@ export class AppController extends Store<AppView> {
     router.subscribe((nav) => { this.navigated(nav); });
     this.listing.subscribe((event) => {
       const client = this.hosts.get(event.handle);
-      if (event.type === "listed") this.sessions.listed(event.handle, event.listing, client?.hostId ?? null);
+      if (event.type === "requested") this.sessions.requested(event.handle);
+      else if (event.type === "listed") this.sessions.listed(event.handle, event.listing, client?.hostId ?? null);
       else if (event.type === "failed") this.sessions.failed(event.handle, event.reason);
       else this.sessions.renamed(event.handle, event.window, event.name);
       if (!client?.hostId) return;
@@ -171,17 +171,7 @@ export class AppController extends Store<AppView> {
   private hostsChanged(): void {
     const hosts = this.hosts.all();
     this.update({ hosts });
-    for (const client of hosts) {
-      if (!this.listed.has(client.entry.handle)) {
-        this.listed.add(client.entry.handle);
-        this.listing.add(client.entry.handle, client.socket);
-      }
-    }
-    for (const handle of [...this.listed]) {
-      if (hosts.some((h) => h.entry.handle === handle)) continue;
-      this.listed.delete(handle);
-      this.listing.remove(handle);
-    }
+    this.listing.setHosts(hosts.map((h) => ({ handle: h.entry.handle, host: h.socket })));
     const ids = hosts.flatMap((h) => (h.hostId === null ? [] : [h.hostId]));
     this.dispatch({ type: "hostsKnown", ids, complete: hosts.length > 0 && ids.length === hosts.length });
   }

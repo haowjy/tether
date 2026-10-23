@@ -11,6 +11,8 @@ const RELIST_DELAY_MS = 300;
 const LINGER_MS = 30_000;
 
 export type ListingEvent =
+  /** A `listSessions` was sent for a user-visible reason (not a `sessionsChanged` hint): rows read "Updating" until the answer. */
+  | { type: "requested"; handle: string }
   | { type: "listed"; handle: string; listing: TmuxListing | null }
   /** Nothing decided: cached rows go stale and offer Retry. */
   | { type: "failed"; handle: string; reason: RequestError["reason"] }
@@ -22,7 +24,8 @@ interface HostState {
   wanted: boolean;
   joined: boolean;
   inFlight: boolean;
-  queued: boolean;
+  /** A trigger arrived during the request in flight: one more follows, announced if any trigger was. */
+  queued: "quiet" | "loud" | null;
   attempt: number;
   relist: ReturnType<typeof setTimeout> | undefined;
   retry: ReturnType<typeof setTimeout> | undefined;
@@ -48,8 +51,15 @@ export class ListingFetcher {
     return () => { this.listeners.delete(listener); };
   }
 
-  /** Starts watching a host for hints. A host is joined only while something wants it. */
-  add(handle: string, host: Host): void {
+  /** The hosts to list for: new ones are watched for hints (joined only while something wants them), the others dropped. */
+  setHosts(hosts: ReadonlyArray<{ handle: string; host: Host }>): void {
+    for (const { handle, host } of hosts) this.add(handle, host);
+    for (const handle of [...this.hosts.keys()]) {
+      if (!hosts.some((h) => h.handle === handle)) this.remove(handle);
+    }
+  }
+
+  private add(handle: string, host: Host): void {
     if (this.hosts.has(handle)) return;
     const state: HostState = {
       host,
@@ -57,7 +67,7 @@ export class ListingFetcher {
       wanted: false,
       joined: false,
       inFlight: false,
-      queued: false,
+      queued: null,
       attempt: 0,
       relist: undefined,
       retry: undefined,
@@ -76,14 +86,14 @@ export class ListingFetcher {
         if (msg.type === "windowRenamed") this.emit({ type: "renamed", handle, window: msg.data.window, name: msg.data.name });
         else if (msg.type === "sessionsChanged" && this.opts.visible()) {
           clearTimeout(state.relist);
-          state.relist = setTimeout(() => { this.fetch(handle); }, RELIST_DELAY_MS);
+          state.relist = setTimeout(() => { this.fetch(handle, false); }, RELIST_DELAY_MS);
         }
       },
     };
     this.hosts.set(handle, state);
   }
 
-  remove(handle: string): void {
+  private remove(handle: string): void {
     const state = this.hosts.get(handle);
     if (!state) return;
     this.clear(state);
@@ -137,16 +147,17 @@ export class ListingFetcher {
     clearTimeout(state.linger);
   }
 
-  /** At most one request per host is in flight; a trigger during it queues one more. */
-  private fetch(handle: string): void {
+  /** At most one request per host is in flight; a trigger during it queues one more. A hint-driven relist is not announced: rows that change under the user need no "Updating". */
+  private fetch(handle: string, announce = true): void {
     const state = this.hosts.get(handle);
     if (!state) return;
     if (state.inFlight) {
-      state.queued = true;
+      state.queued = announce || state.queued === "loud" ? "loud" : "quiet";
       return;
     }
     state.inFlight = true;
     clearTimeout(state.retry);
+    if (announce) this.emit({ type: "requested", handle });
     state.host
       .request(
         (req) => ({ type: "listSessions", data: { req } }),
@@ -169,8 +180,9 @@ export class ListingFetcher {
       .finally(() => {
         state.inFlight = false;
         if (state.queued) {
-          state.queued = false;
-          this.fetch(handle);
+          const announce = state.queued === "loud";
+          state.queued = null;
+          this.fetch(handle, announce);
         }
       });
   }
