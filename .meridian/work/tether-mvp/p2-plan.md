@@ -76,3 +76,7 @@ Approve with notes. H1, M1–M4, L1–L3 fixed. Open: H2 save half untested; M-a
 §6.1, no bridge signal); L-a chords on e.key; L-b axe animation.finished AbortError flake; L-c decisions cites memory.
 Chord verified first-hand in Chrome, Firefox (source) and Safari; Windows Pinyin IME uses Ctrl+Shift+F while active.
 p105 folds all five in; the lead reads the diffs (no third review round).
+p105 landed 9499477 (Files save-side assertion, sabotage-checked), 41b314c (`Lifecycle.covered`, one predicate
+`shownTerminalTab()`; ios-shell + §5.10/§6.1 + decision), 3d173ab (chords via `printable()`/e.code, axe catch, chord
+sources + Pinyin note). check 269 vitest; files/uploads/keyboard/shared e2e 320/320 each browser. Lead read the diffs.
+P2 closed; pushed.
