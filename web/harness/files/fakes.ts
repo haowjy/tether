@@ -38,6 +38,8 @@ fn main() -> io::Result<()> {
 export const HOME = "/home/jimmy";
 export const REPO = `${HOME}/tether`;
 export const UPLOADS = `${HOME}/tether-uploads`;
+/** A folder under $HOME whose link leads outside it: the picker lists it, and the daemon refuses to add it. */
+export const ESCAPE = `${HOME}/escape`;
 
 const MD = "text/markdown; charset=utf-8";
 const TEXT = "text/plain; charset=utf-8";
@@ -48,7 +50,7 @@ export function filesTree(): FakeTree {
     home: HOME,
     roots: [REPO, `${HOME}/notes`],
     uploads: UPLOADS,
-    dirs: [HOME, REPO, `${REPO}/src`, `${REPO}/docs`, `${REPO}/notes`, `${REPO}/.git`, `${REPO}/empty`, `${HOME}/notes`, UPLOADS, `${HOME}/other`],
+    dirs: [HOME, REPO, `${REPO}/src`, `${REPO}/docs`, `${REPO}/notes`, `${REPO}/.git`, `${REPO}/empty`, `${HOME}/notes`, UPLOADS, `${HOME}/other`, `${HOME}/other/deep`, `${HOME}/.config`, ESCAPE],
     files: {
       [`${REPO}/README.md`]: MD,
       [`${REPO}/Cargo.toml`]: TEXT,
@@ -82,6 +84,11 @@ export class FilesFs extends FakeFs {
   override list(path: string, offset: number, hidden: boolean): ReturnType<FakeFs["list"]> {
     if (this.denied.has(path)) return Promise.reject(new HttpRefusal(403, "denied"));
     return super.list(path, offset, hidden);
+  }
+
+  override addRoot(path: string): ReturnType<FakeFs["addRoot"]> {
+    if (path === ESCAPE) return Promise.reject(new HttpRefusal(403, "outside_home"));
+    return super.addRoot(path);
   }
 
   override text(path = ""): Promise<{ text: string; size: number; truncated: boolean }> {

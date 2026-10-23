@@ -6,7 +6,7 @@ import type { SavedWorkspace } from "../../platform/types";
 import type { Fixture, Fixtures } from "../fixture";
 import { LISTING, SAVED } from "../shared";
 import { Frame } from "./Frame";
-import { filesTree, REPO } from "./fakes";
+import { filesTree, HOME, REPO } from "./fakes";
 
 const at = (place: NonNullable<SavedWorkspace["files"]>["place"] | null): Fixture => ({
   options: () => ({ workspace: { ...SAVED, files: place && { hostId: "h-pop", place } } }),
@@ -27,7 +27,7 @@ export const fixtures: Fixtures = {
   /** No roots configured at all. */
   filesNoRoots: {
     ...at(null),
-    render: () => h(Frame, { tree: { ...filesTree(), roots: [], dirs: [] } }),
+    render: () => h(Frame, { tree: { ...filesTree(), roots: [], dirs: [HOME, `${HOME}/code`] } }),
   },
   /** The folder refuses to list. */
   filesDenied: {

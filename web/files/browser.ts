@@ -148,6 +148,15 @@ export class FileBrowser extends Store<FilesView> {
     if (this.snapshot.place.kind === "dir") await this.reload();
   }
 
+  /** Adds a root, then shows the roots the daemon answered with. A refusal throws for the dialog to show. */
+  async addRoot(path: string): Promise<void> {
+    this.update({ roots: await this.api.addRoot(path) });
+  }
+
+  async removeRoot(path: string): Promise<void> {
+    this.update({ roots: await this.api.removeRoot(path) });
+  }
+
   /** An upload landed at `path`: relist if it is in the folder on screen. */
   async uploaded(path: string): Promise<void> {
     const { place } = this.snapshot;

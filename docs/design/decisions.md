@@ -2724,6 +2724,24 @@ the p61 review. The product calls behind it are Jimmy's
   text for `.tsx` (the lead added the grammar, about 17 KB gzipped, loaded on demand);
   Shiki's `typescript` grammar on JSX, which mis-colours it.
 
+## Add folder in Files
+
+- **Decided:** 2026-10-23, Jimmy.
+- **What:** Files adds "Add folder…" and a Remove button per root, reversing the removal
+  recorded in "Files details" (client-architecture.md §3.1). The picker browses `/fs/dirs` from
+  `$HOME`, directories only, one folder at a time, and adds with `POST /fs/roots/add`; Remove
+  confirms, then `POST /fs/roots/remove`. Both are router overlays on the Files destination (a
+  Dialog on desktop, the sheet on a phone). At `$HOME` the add button is disabled with its
+  reason, since the daemon refuses `$HOME` itself; other refusals (`outside_home` through a
+  symlink, a read-only `config.toml`) show in the dialog. Moving `uploads_dir` stays in
+  `config.toml`.
+- **Why:** a fresh install has no root and no way to add one without editing `config.toml` on the
+  host, which defeats a phone-first client.
+- **Rejected:** a text field for an absolute path (the phone keyboard, and no way to see what
+  exists); a free-roaming picker above `$HOME` (the daemon confines it); a Settings entry
+  (roots are Files' state, and Settings is for the device); swipe-to-remove (undiscoverable, and
+  no confirmation).
+
 ## The PWA is built by the Vite plugin
 
 - **Decided:** 2026-10-23, tech lead.

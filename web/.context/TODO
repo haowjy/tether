@@ -5,5 +5,3 @@ Must-do (client-architecture.md §11):
 - L4 (daemon): an `input` or `paste` the daemon refuses (`busy`, `inputTooLarge`) names no request, so
   `net/host.ts` drops the error. Once it does, a refused paste can say "Not pasted", and
   screens/terminal/terminals.ts can stop leaning on its 8 ms input batching to survive a burst.
-- Settings (W1): a fresh install has no way to add a Files root; it means editing `config.toml` on
-  the host. The `/fs/roots/*` client methods in files/api.ts are kept for this.

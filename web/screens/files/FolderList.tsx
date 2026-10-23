@@ -5,6 +5,7 @@ import { formatSize } from "../../files/format";
 import type { FilesPlace } from "../../platform/types";
 import { Button } from "../../ui/primitives/Button";
 import { EmptyState } from "../../ui/primitives/EmptyState";
+import { IconButton } from "../../ui/primitives/IconButton";
 import type { IconName } from "../../ui/primitives/Icon";
 import { Row } from "../../ui/primitives/Row";
 import { RovingList } from "../../ui/primitives/RovingList";
@@ -31,34 +32,54 @@ function metaFor(entry: Entry): string | undefined {
   return entry.kind === "file" && entry.size !== undefined ? formatSize(entry.size) : undefined;
 }
 
-export function RootsList({ roots, hostName, onOpen }: { roots: Roots; hostName: string; onOpen: (place: FilesPlace) => void }) {
+export interface RootsListProps {
+  roots: Roots;
+  hostName: string;
+  onOpen: (place: FilesPlace) => void;
+  /** The button that asked is passed back, so the dialog returns focus to it. */
+  onAdd: (from: HTMLElement) => void;
+  onRemove: (path: string, from: HTMLElement) => void;
+}
+
+export function RootsList({ roots, hostName, onOpen, onAdd, onRemove }: RootsListProps) {
   const rows = [
-    ...roots.roots.map((r) => ({ key: r.path, entry: r, meta: undefined })),
-    { key: "uploads", entry: roots.uploadsDir, meta: "Uploads" },
+    ...roots.roots.map((r) => ({ key: r.path, entry: r, removable: true, meta: undefined })),
+    { key: "uploads", entry: roots.uploadsDir, removable: false, meta: "Uploads" },
   ];
   const usable = rows.filter((r) => r.entry.ok && r.entry.canonical !== null);
+  const add = (
+    <Button icon="plus" data-add-folder="" onClick={(e) => { onAdd(e.currentTarget); }}>Add folder…</Button>
+  );
   return (
     <div class={styles.wrap}>
       {usable.length === 0 ? (
-        <EmptyState icon="folder" title="No folders to show">Add one to roots in ~/.config/tether/config.toml on {hostName}.</EmptyState>
+        <EmptyState icon="folder" title="No folders to show" action={add}>Add a folder inside your home folder to browse it here.</EmptyState>
       ) : (
-        <RovingList label="Folders" class={styles.list}>
-          {rows.map(({ key, entry, meta }) => (
-            <Row
-              key={key}
-              roving
-              class={styles.item}
-              icon="folder"
-              label={shorten(entry.canonical ?? entry.path, roots.home)}
-              meta={entry.ok ? meta : "Missing"}
-              {...(entry.ok && { trailing: "chevron" as const })}
-              disabled={!entry.ok || entry.canonical === null}
-              onClick={() => { if (entry.canonical) onOpen({ kind: "dir", path: entry.canonical }); }}
-            />
-          ))}
-        </RovingList>
+        <>
+          <RovingList label="Folders" class={styles.list}>
+            {rows.map(({ key, entry, removable, meta }) => {
+              const label = shorten(entry.canonical ?? entry.path, roots.home);
+              return (
+                <div key={key} class={styles.line}>
+                  <Row
+                    roving
+                    class={styles.item}
+                    icon="folder"
+                    label={label}
+                    meta={entry.ok ? meta : "Missing"}
+                    {...(entry.ok && { trailing: "chevron" as const })}
+                    disabled={!entry.ok || entry.canonical === null}
+                    onClick={() => { if (entry.canonical) onOpen({ kind: "dir", path: entry.canonical }); }}
+                  />
+                  {removable && <IconButton icon="close" label={`Remove ${label}`} class={styles.remove} onClick={(e) => { onRemove(entry.path, e.currentTarget); }} />}
+                </div>
+              );
+            })}
+          </RovingList>
+          <div class={styles.footer}>{add}</div>
+          <p class={styles.note}>Uploads go to the folder marked Uploads. Change it in ~/.config/tether/config.toml on {hostName}.</p>
+        </>
       )}
-      {usable.length > 0 && <p class={styles.note}>Folders are set in ~/.config/tether/config.toml on {hostName}.</p>}
     </div>
   );
 }

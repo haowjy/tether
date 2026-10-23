@@ -178,6 +178,101 @@ for (const [name, scenario] of SCREENS) {
       await expect(page.getByRole("list", { name: "Uploads" })).toHaveCount(0);
     });
 
+    test("Add folder browses from home one folder at a time, refuses home itself, and adds the choice", async ({ page }) => {
+      await openFixture(page, "files", scenario, "#/files");
+      await page.getByRole("button", { name: "Add folder…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Add a folder" });
+      await expect(dialog).toBeVisible();
+      // Home itself: listed, but not addable, and it says so.
+      await expect(dialog.getByText("~", { exact: true })).toBeVisible();
+      await expect(dialog.getByText("Your home folder itself can't be added.")).toBeVisible();
+      const add = dialog.getByRole("button", { name: "Add this folder" });
+      await expect(add).toHaveAttribute("aria-disabled", "true");
+      await expect(add).toHaveAccessibleDescription("Open a folder inside your home folder first");
+      const folders = dialog.getByRole("group", { name: "Subfolders" }).getByRole("button");
+      // Directories only: the home folder holds no files in the fixture, and the daemon's order is kept.
+      await expect(folders).toHaveCount(5);
+      await expect(dialog.getByRole("button", { name: "tether", exact: true })).toBeVisible();
+      await dialog.getByRole("button", { name: "Show hidden folders" }).click();
+      await expect(dialog.getByRole("button", { name: ".config" })).toBeVisible();
+      await dialog.getByRole("button", { name: "Hide hidden folders" }).click();
+      await expect(dialog.getByRole("button", { name: ".config" })).toHaveCount(0);
+
+      await dialog.getByRole("button", { name: "other" }).click();
+      await expect(dialog.getByText("~/other", { exact: true })).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "deep" })).toBeFocused();
+      await dialog.getByRole("button", { name: "Up one folder" }).click();
+      await expect(dialog.getByText("~", { exact: true })).toBeVisible();
+      await dialog.getByRole("button", { name: "other" }).click();
+      await dialog.getByRole("button", { name: "deep" }).click();
+      await expect(dialog.getByText("~/other/deep", { exact: true })).toBeVisible();
+      await expect(dialog.getByText("No folders here")).toBeVisible();
+      await add.click();
+      await expect(dialog).toBeHidden();
+      await expect(page.getByRole("button", { name: "~/other/deep", exact: true })).toBeVisible();
+      await expect(page.getByText("Added ~/other/deep")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Add folder…" })).toBeFocused();
+      expect(await hash(page)).toBe("#/files");
+    });
+
+    test("Add folder says plainly when a folder is already added or the daemon refuses it", async ({ page }) => {
+      await openFixture(page, "files", scenario, "#/files");
+      await page.getByRole("button", { name: "Add folder…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Add a folder" });
+      await dialog.getByRole("button", { name: "tether", exact: true }).click();
+      await expect(dialog.getByRole("button", { name: "Add this folder" })).toHaveAccessibleDescription("Already in your folders");
+      await dialog.getByRole("button", { name: "Up one folder" }).click();
+      await dialog.getByRole("button", { name: "escape" }).click();
+      await dialog.getByRole("button", { name: "Add this folder" }).click();
+      await expect(dialog.getByRole("alert")).toHaveText("Only folders inside your home folder can be added.");
+      await expect(dialog).toBeVisible();
+      // Back closes it, like every overlay, and adds nothing.
+      await page.goBack();
+      await expect(dialog).toBeHidden();
+      await expect(page.getByRole("group", { name: "Folders" }).getByRole("button", { name: /escape/ })).toHaveCount(0);
+    });
+
+    test("Escape closes Add folder and returns focus to the button", async ({ page }) => {
+      await openFixture(page, "files", scenario, "#/files");
+      await page.getByRole("button", { name: "Add folder…" }).click();
+      await expect(page.getByRole("dialog", { name: "Add a folder" })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog", { name: "Add a folder" })).toBeHidden();
+      await expect(page.getByRole("button", { name: "Add folder…" })).toBeFocused();
+    });
+
+    test("Remove asks first, keeps the folder on Cancel, and removes it on confirm", async ({ page }) => {
+      await openFixture(page, "files", scenario, "#/files");
+      const notes = page.getByRole("button", { name: "~/notes", exact: true });
+      await page.getByRole("button", { name: "Remove ~/notes" }).click();
+      const dialog = page.getByRole("dialog", { name: "Remove this folder?" });
+      await expect(dialog).toContainText("~/notes will no longer show in Files");
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(dialog).toBeHidden();
+      await expect(notes).toBeVisible();
+      await expect(page.getByRole("button", { name: "Remove ~/notes" })).toBeFocused();
+
+      await page.getByRole("button", { name: "Remove ~/notes" }).click();
+      await dialog.getByRole("button", { name: "Remove folder" }).click();
+      await expect(dialog).toBeHidden();
+      await expect(notes).toHaveCount(0);
+      await expect(page.getByText("Removed ~/notes")).toBeVisible();
+      // The row that held the button is gone: focus goes to Add folder.
+      await expect(page.getByRole("button", { name: "Add folder…" })).toBeFocused();
+      // Uploads is not a root and has no Remove.
+      await expect(page.getByRole("button", { name: /Remove ~\/tether-uploads/ })).toHaveCount(0);
+    });
+
+    test("with no folders, the empty state offers Add folder", async ({ page }) => {
+      await openFixture(page, "filesNoRoots", scenario, "#/files");
+      await page.getByRole("button", { name: "Add folder…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Add a folder" });
+      await dialog.getByRole("button", { name: "code" }).click();
+      await dialog.getByRole("button", { name: "Add this folder" }).click();
+      await expect(dialog).toBeHidden();
+      await expect(page.getByRole("button", { name: "~/code", exact: true })).toBeVisible();
+    });
+
     test("states: empty folder, refusal with retry, no roots", async ({ page }) => {
       await openFixture(page, "filesEmpty", scenario, "#/files");
       await expect(page.getByText("This folder is empty")).toBeVisible();
@@ -202,6 +297,8 @@ const STATES = [
   ["empty", "filesEmpty"],
   ["refused", "filesDenied"],
   ["no roots", "filesNoRoots"],
+  ["add folder", "files"],
+  ["remove folder", "files"],
 ] as const;
 
 for (const scenario of SCENARIOS) {
@@ -216,6 +313,15 @@ for (const scenario of SCENARIOS) {
           await page.getByRole("button", { name: "Upload" }).click();
           await page.evaluate(() => { window.__files?.uploads.push({ id: "u1", progress: 0.4 }); window.__files?.uploads.push({ id: "u2", path: "/home/jimmy/tether-uploads/20261022-101010Z-abcd.jpg" }); window.__files?.uploads.push({ id: "u3", error: "That file is over the 128 MiB limit" }); });
           await expect(page.getByText("Saved 20261022-101010Z-abcd.jpg")).toBeVisible();
+        }
+        if (state === "add folder") {
+          await page.getByRole("button", { name: "Add folder…" }).click();
+          await page.getByRole("dialog", { name: "Add a folder" }).getByRole("button", { name: "other" }).click();
+          await expect(page.getByText("~/other", { exact: true })).toBeVisible();
+        }
+        if (state === "remove folder") {
+          await page.getByRole("button", { name: "Remove ~/notes" }).click();
+          await expect(page.getByRole("dialog", { name: "Remove this folder?" })).toBeVisible();
         }
         await expectAccessible(page);
         await expectNoHorizontalScroll(page);

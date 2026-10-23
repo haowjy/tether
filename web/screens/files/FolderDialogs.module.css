@@ -1,0 +1,29 @@
+.body { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; }
+.where { display: flex; align-items: center; gap: var(--space-2); min-height: var(--size-target); }
+.path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+}
+.results { display: flex; flex-direction: column; gap: var(--space-2); min-height: 8rem; }
+.list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-bg-raised);
+  overflow: hidden;
+}
+.list .item { border: 0; border-radius: 0; border-bottom: 1px solid var(--color-border); }
+.list .item:last-child { border-bottom: 0; }
+.loading { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-6) 0; color: var(--color-text-muted); }
+.more { display: flex; justify-content: center; }
+.hidden { align-self: center; }
+.hint { font-size: var(--text-small); color: var(--color-text-muted); text-wrap: pretty; }
+.error { font-size: var(--text-small); color: var(--color-status-error); }
+.actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+/* A destructive action reads as one (Settings does the same): the error colour on its label. */
+.danger { color: var(--color-status-error); }
