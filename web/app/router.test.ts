@@ -10,7 +10,7 @@ function fakeHistory(initialHash = "#/", initialState: unknown = null) {
     current: () => entries[at] as { state: unknown; hash: string },
     push(state, hash) { entries.splice(at + 1); entries.push({ state, hash }); at++; },
     replace(state, hash) { entries[at] = { state, hash }; },
-    back() { if (at > 0) { at--; pop?.(); } },
+    go(delta) { if (at + delta >= 0 && at + delta < entries.length) { at += delta; pop?.(); } },
     onPop(l) { pop = l; return () => { pop = undefined; }; },
   };
   return { port, entries, get at() { return at; }, forward() { at++; pop?.(); } };
@@ -71,6 +71,16 @@ describe("Router", () => {
     router.closeOverlay();
     expect(router.entry.overlay).toBeNull();
     expect(h.at).toBe(1);
+  });
+
+  it("closing every overlay is one history step, however many are stacked", () => {
+    const { router, h } = setup();
+    router.openOverlay({ screen: "settings", name: "open" });
+    router.openOverlay({ screen: "settings", name: "clearData" });
+    expect(h.entries).toHaveLength(3);
+    router.closeAllOverlays();
+    expect(router.entry.overlay).toBeNull();
+    expect(h.at).toBe(0);
   });
 
   it("after a reload an overlay cannot be popped to, so closing replaces the entry", () => {

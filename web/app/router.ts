@@ -34,7 +34,7 @@ export interface HistoryPort {
   current(): { state: unknown; hash: string };
   push(state: unknown, hash: string): void;
   replace(state: unknown, hash: string): void;
-  back(): void;
+  go(delta: number): void;
   onPop(listener: () => void): () => void;
 }
 
@@ -98,7 +98,19 @@ export class Router {
   /** Back closes the top overlay first. After a reload there is nothing to go back to, so the entry is replaced. */
   closeOverlay(): void {
     if (this.entry.overlay === null) return;
-    if (this.stack.length > 1 && this.stack[this.stack.length - 2]?.destination === this.entry.destination) this.port.back();
+    this.closeOverlays(1);
+  }
+
+  /** Closes every overlay open on this destination at once: one history step, so none is left open (WebKit drops a second `back()` issued before the first pops). */
+  closeAllOverlays(): void {
+    let open = 0;
+    while (this.stack[this.stack.length - 1 - open]?.overlay) open++;
+    this.closeOverlays(open);
+  }
+
+  private closeOverlays(count: number): void {
+    if (this.entry.overlay === null) return;
+    if (this.stack[this.stack.length - 1 - count]?.destination === this.entry.destination) this.port.go(-count);
     else this.replace({ ...this.entry, overlay: null });
   }
 
@@ -109,7 +121,7 @@ export class Router {
 
   /** The browser's Back. It never touches tmux. */
   back(): void {
-    this.port.back();
+    this.port.go(-1);
   }
 
   /**
@@ -122,13 +134,13 @@ export class Router {
     const { entry } = this;
     const previous = this.stack[this.stack.length - 2];
     if (files) {
-      if (previous?.destination === "files" && previous.overlay === null && JSON.stringify(previous.files) === JSON.stringify(files)) this.port.back();
+      if (previous?.destination === "files" && previous.overlay === null && JSON.stringify(previous.files) === JSON.stringify(files)) this.port.go(-1);
       else this.replace({ destination: "files", overlay: null, files, parent: "home" });
       return;
     }
     const parent = entry.parent;
     if (parent === null) return;
-    if (previous?.destination === parent && previous.overlay === null) this.port.back();
+    if (previous?.destination === parent && previous.overlay === null) this.port.go(-1);
     else this.replace({ destination: parent, overlay: null, files: null, parent: parent === "home" ? null : "home" });
   }
 
@@ -172,7 +184,7 @@ export function browserHistory(): HistoryPort {
     current: () => ({ state: history.state as unknown, hash: location.hash }),
     push: (state, hash) => { history.pushState(state, "", hash); },
     replace: (state, hash) => { history.replaceState(state, "", hash); },
-    back: () => { history.back(); },
+    go: (delta) => { history.go(delta); },
     onPop: (listener) => {
       addEventListener("popstate", listener);
       return () => { removeEventListener("popstate", listener); };

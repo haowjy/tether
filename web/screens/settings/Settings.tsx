@@ -4,19 +4,12 @@
 // its own overlay, so Back from the confirmation returns here.
 import { useState } from "preact/hooks";
 import { useApp, useAppView } from "../../app/context";
-import type { AppController } from "../../app/controller";
 import type { HostClient } from "../../net/hosts";
 import { Button } from "../../ui/primitives/Button";
 import { Dialog } from "../../ui/primitives/Dialog";
 import styles from "./Settings.module.css";
 
 type Confirmation = "removeDevice" | "clearData";
-
-/** Closes the confirmation and Settings under it: a finished action leaves nothing open. */
-function closeAll(app: AppController): void {
-  app.router.closeOverlay();
-  app.router.closeOverlay();
-}
 
 function Confirm({ name, title, confirmLabel, run, children }: {
   name: Confirmation;
@@ -36,7 +29,7 @@ function Confirm({ name, title, confirmLabel, run, children }: {
     const failed = await run();
     setBusy(false);
     if (failed) setError(failed);
-    else closeAll(app);
+    else app.router.closeAllOverlays(); // a finished action leaves nothing open
   };
   return (
     <Dialog open={open} title={title} onClose={() => { app.router.closeOverlay(); }}>

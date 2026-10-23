@@ -94,6 +94,16 @@ test.describe("overlays and focus", () => {
     await page.goBack();
     await expect(page.getByRole("dialog", { name: "Settings" })).toBeHidden();
   });
+
+  test("a finished Settings action closes the confirmation and Settings together", async ({ page }) => {
+    await openFixture(page, "home", desktop);
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { name: "Clear local data" }).click();
+    await page.getByRole("dialog", { name: "Clear local data?" }).getByRole("button", { name: "Clear local data" }).click();
+    // WebKit drops a second history.back() issued before the first pops: both must close in one step.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "tether" })).toBeVisible();
+  });
 });
 
 test.describe("lists", () => {
