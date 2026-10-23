@@ -40,7 +40,10 @@ if [[ -n "$COMMIT" ]]; then
   # One fixed export path with its own Cargo target directory. Tests read fixtures through
   # env!("CARGO_MANIFEST_DIR"), baked in at compile time, so a stable path keeps the build
   # incremental (dependencies build once, only the tether crate rebuilds for a new export)
-  # without cleaning or disturbing the checkout's own target directory.
+  # without cleaning or disturbing the checkout's own target directory. Cargo judges
+  # freshness by mtime, so the export is extracted with fresh mtimes (tar -m): archive
+  # mtimes are commit times, older than the last build, and would pass off the previous
+  # export's build (and build.rs output) as this commit's.
   PREFLIGHT_DIR="${TETHER_PREFLIGHT_DIR:-$ROOT_DIR/target/preflight}"
   EXPORT_DIR="$PREFLIGHT_DIR/export"
   LOCK_DIR="$PREFLIGHT_DIR/lock"
@@ -60,7 +63,7 @@ if [[ -n "$COMMIT" ]]; then
   rm -rf "$EXPORT_DIR"
   mkdir -p "$EXPORT_DIR"
   printf 'preflight: exporting %s to %s\n' "$SHA" "$EXPORT_DIR" >&2
-  git -C "$ROOT_DIR" archive "$SHA" | tar -x -C "$EXPORT_DIR"
+  git -C "$ROOT_DIR" archive "$SHA" | tar -x -m -C "$EXPORT_DIR"
   if [[ -d "$ROOT_DIR/web/node_modules" ]]; then
     ln -s "$ROOT_DIR/web/node_modules" "$EXPORT_DIR/web/node_modules"
   fi
