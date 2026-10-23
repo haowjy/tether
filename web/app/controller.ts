@@ -8,7 +8,6 @@ import { HostRegistry, type HostClient } from "../net/hosts";
 import { SessionsCache } from "../sessions/cache";
 import type { BootResult, Lifecycle, Platform, UpdateState, Viewport } from "../platform/types";
 import { Store } from "../ui/store";
-import { applyViewport } from "../ui/theme";
 import { reduce, initialWorkspace, savedTabs, shownTab, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
 import { FocusController } from "./focus";
 import { ListingFetcher } from "./listing";
@@ -44,6 +43,8 @@ export interface AppView {
 }
 
 export interface StartOptions {
+  /** Puts a viewport where CSS reads it, before the app renders it: the page passes `applyViewport`, vitest has no document. */
+  applyViewport?: (viewport: Viewport) => void;
   /** Fake the daemon's HTTP: the harness passes the test platform's. */
   fetchFn?: typeof fetch;
   /** The harness and tests stand in for `window.history`. */
@@ -68,6 +69,8 @@ export class AppController extends Store<AppView> {
     return new AppController(platform, boot, options);
   }
 
+  private readonly applyViewport: (viewport: Viewport) => void;
+
   private constructor(readonly platform: Platform, boot: BootResult, options: StartOptions) {
     const router = new Router(options.history ?? browserHistory(), boot.workspace?.files?.place ?? null);
     super({
@@ -82,6 +85,7 @@ export class AppController extends Store<AppView> {
       update: "none",
     });
     this.router = router;
+    this.applyViewport = options.applyViewport ?? (() => undefined);
     this.focus = new FocusController(platform.input, () => this.snapshot.viewport);
     this.hosts = new HostRegistry({
       transport: platform.transport,
@@ -100,7 +104,7 @@ export class AppController extends Store<AppView> {
     this.sessions = new SessionsCache(boot.workspace?.expanded);
     this.persist.provideExpanded(() => this.sessions.saved());
 
-    applyViewport(boot.viewport);
+    this.applyViewport(boot.viewport);
     this.hosts.subscribe(() => { this.hostsChanged(); });
     this.hosts.setLifecycle(boot.lifecycle);
     // A browser host's name is unknown until `/auth/info` answers; an offline launch names it from the last save.
@@ -246,7 +250,7 @@ export class AppController extends Store<AppView> {
         this.hosts.set(event.hosts);
         break;
       case "viewport":
-        applyViewport(event.viewport);
+        this.applyViewport(event.viewport);
         this.update({ viewport: event.viewport });
         break;
       case "lifecycle":

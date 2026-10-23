@@ -6,6 +6,7 @@ import { App } from "../app/App";
 import { AppProvider } from "../app/context";
 import { AppController } from "../app/controller";
 import { createTestPlatform, DESKTOP, PHONE, type TestPlatform } from "../platform/test";
+import { applyViewport } from "../ui/theme";
 import "../ui/tokens/index.css";
 import { fixtures } from "./index";
 
@@ -32,7 +33,7 @@ const viewport = {
 };
 const platform = createTestPlatform({ viewport, ...fixture.options?.() });
 fixture.daemon?.(platform.daemon);
-const app = await AppController.start(platform, { fetchFn: platform.fetch });
+const app = await AppController.start(platform, { fetchFn: platform.fetch, applyViewport });
 window.__harness = { platform, app };
 
 const root = document.getElementById("app");
