@@ -2796,3 +2796,55 @@ the p61 review. The product calls behind it are Jimmy's
 - **Why:** closing a tab is often a tidy-up, not a decision to throw away text; losing
   a half-written prompt costs more than a bounded record in local storage.
 - **Rejected:** deleting the draft with its tab, which is simpler but loses text.
+
+## G2 fixes to the rebuilt web client
+
+- **Decided:** 2026-10-23, tech lead, from three G2 reviews and a browser probe of
+  `d051e21`.
+- **What:**
+  - *Every end of a tab sends `unwatch`.* `TabDriver` sends it from its `closed`
+    transition, the one place user close, pruning, a gone window and a removed host all
+    pass through, so the daemon's 2-per-connection watch cap and its tmux clients are
+    never leaked.
+  - *The driver owns sending the size.* It remembers the size the daemon last heard for
+    the watch and, on `watching`, sends a `resize` if the terminal's size differs, so a
+    rotation during an in-flight watch is not lost.
+  - *A failed watch backs off.* `watchEnded { error }` climbs the attempt count like a
+    refusal does and keeps the daemon's message for the status band.
+  - *Requests wait 5 s for a socket, then 30 s for the reply.* A create sent on a live
+    socket is not abandoned at 5 s: the daemon may be acting on it, and the user's retry
+    would then hit a duplicate. Dead sockets already fail every request as `lost` (25 s
+    silent). The failing run was a loaded machine (load average 100 to 170) and WebKit.
+  - *Insert path is offered only to a tab that is not reconnecting or limited*
+    (`AppView.tabsOffline`, set by the terminal lane). A path waiting for its watch is
+    dropped with a notice if the watch fails; the image-paste notice says whether the path
+    was typed or will be when the user returns.
+  - *Names with a C0 control or DEL are never inserted.* The path is typed as raw
+    `send-keys` bytes, so CR or LF would submit, as the daemon's own completion inserts
+    already refuse.
+  - *Markdown is sanitized by allowlist* (`ALLOWED_TAGS`, `ALLOWED_ATTR`), and a click
+    inside a document is always cancelled, with `a` and `area` forwarded to the link
+    handler. `<area>` had navigated the whole app off-site.
+  - *A finished Settings action closes both overlays in one `history.go(-n)`*
+    (`Router.closeAllOverlays`); two `back()` calls in one task close only one in WebKit.
+  - *`/` answers `503 busy` while a daemon behind Tailscale serve cannot read the
+    browser origin*, so the worker's precache retries instead of freezing a CSP without
+    `wss://<host>`. A daemon not behind serve (tests, dev) still serves `'self'` alone.
+  - *The shell cache falls back to the network for a path in no cache.* This reverses the
+    earlier "404, not the network": with `/` cached but an asset evicted, a 404 left a
+    blank page.
+  - *The storage-closed banner is hidden on Terminal*, like the update banners: in flow it
+    shrank the stable box and resized tmux. The workspace saves only when its saved form
+    changed. A file over 128 MiB is refused before sending, a second Upload tap removes
+    the first pick's listeners, `mailto:` hands off to the mail app, and Update after a
+    hard reload waits for the worker to activate.
+- **Home's "Another terminal is attached" notice was not a regression.** The e2e attached
+  a terminal and loaded Home without waiting for tmux to list the client; the page lists
+  once and does not poll, so a listing taken first never shows it. The stack's `attach` now
+  waits until tmux lists the client. Reproduced by loading the page first: it fails the same
+  way on the unchanged UI.
+- **Rejected:** a second `closeOverlay()` chained on `navigated` (every caller would need
+  it); making the request timeout longer but still one number (it would still fail a dead
+  socket late and a slow one early); dropping the request timeout (a daemon that never
+  replies would hold the form forever); `wss://<Host header>` in the CSP (the header is the
+  client's); rendering control characters as `$'..'` (a TUI does not parse it).

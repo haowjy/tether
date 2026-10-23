@@ -18,6 +18,17 @@ version section on release.
   root now means editing `config.toml` on the host.
 - PWA: install tether from Chromium or Safari, open Home offline from the cached shell, and
   see "Update ready" on Home; a new version waits for your tap and only that window reloads.
+- Closing a tab now ends its watch on the daemon, so tabs no longer stop connecting after
+  two closes; a failed watch backs off and shows the daemon's message; a resize while a tab
+  is connecting is sent once it connects; a create on a slow connection waits for its reply
+  instead of failing at 5 s.
+- Files: Markdown is cut down to an allowlist and cannot navigate the page, a second Upload
+  tap no longer uploads files twice, files over 128 MiB are refused before sending, names with
+  control characters are never inserted, Insert path is disabled while the tab is
+  reconnecting, and `mailto:` links open the mail app.
+- PWA: a missing cached file falls back to the network, Update works after a hard reload, and
+  the page is not cached with a CSP that omits the socket's origin.
+- Settings: a finished Remove this device or Clear local data closes Settings in Safari too.
 - The session-limit message says "1 tmux session" when the limit is one.
 - Show refused auth row names in device listing, list nodes by stored ID, and send
   the native welcome and manifest without waiting for a tailnet refresh.
