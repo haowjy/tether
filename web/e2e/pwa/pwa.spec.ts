@@ -165,8 +165,8 @@ test("two updates in a row: the page two builds behind misses its chunks, and on
     await expect(newer.locator(`script[src="${entryOf(next)}"]`)).toHaveCount(1);
   }
 
-  // h1's page: its entry script is in no cache any more, so a lazy chunk of h1 would miss.
-  expect(await status(page, entryOf(builds.h1))).toBe(404);
+  // h1's page: its entry script is in no cache any more, so a lazy chunk of h1 goes to the network (the real daemon answers 404).
+  expect(await page.evaluate(async (p) => (await caches.match(p)) !== undefined, entryOf(builds.h1))).toBe(false);
   expect(await cacheNames(page)).toEqual([cacheOf(builds.h2), cacheOf(builds.h3), "tether-meta"].sort());
   await expect(page.getByText("Reload to finish updating")).toBeVisible();
 });

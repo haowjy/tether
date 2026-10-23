@@ -5,13 +5,14 @@
 import { restart } from "./restart";
 import type { Platform, PlatformEvent, UpdateState } from "../types";
 
-/** How long `apply()` waits for a build that is still installing before it reloads anyway. */
+/** How long `apply()` waits for a build that is still installing or activating before it reloads anyway. */
 const INSTALL_WAIT_MS = 15_000;
 
-function installed(worker: ServiceWorker): Promise<void> {
+/** Resolves when `worker` reaches `state` (or is discarded), or after {@link INSTALL_WAIT_MS}. */
+function reached(worker: ServiceWorker, state: "installed" | "activated"): Promise<void> {
   return new Promise((resolve) => {
     const done = (): void => { clearTimeout(timer); worker.removeEventListener("statechange", onChange); resolve(); };
-    const onChange = (): void => { if (worker.state === "installed" || worker.state === "redundant") done(); };
+    const onChange = (): void => { if (worker.state === state || worker.state === "redundant") done(); };
     const timer = setTimeout(done, INSTALL_WAIT_MS);
     worker.addEventListener("statechange", onChange);
     onChange();
@@ -75,7 +76,7 @@ export function createPwa(emit: (event: PlatformEvent) => void): Pick<Platform, 
           let reg = await registration;
           if (reg && !reg.waiting) {
             await reg.update().catch(() => undefined);
-            if (reg.installing) await installed(reg.installing);
+            if (reg.installing) await reached(reg.installing, "installed");
             reg = await registration;
           }
           if (!reg?.waiting) {
@@ -83,7 +84,13 @@ export function createPwa(emit: (event: PlatformEvent) => void): Pick<Platform, 
             return;
           }
           applying = true;
-          reg.waiting.postMessage({ type: "skipWaiting" });
+          const worker = reg.waiting;
+          worker.postMessage({ type: "skipWaiting" });
+          // A hard-reloaded page has no controller, so `controllerchange` never fires for it.
+          if (container.controller === null) {
+            await reached(worker, "activated");
+            restart("update");
+          }
         })();
       },
     },

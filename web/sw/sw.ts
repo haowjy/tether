@@ -73,10 +73,13 @@ async function activate(): Promise<void> {
   await meta.put(ACTIVE, new Response(__BUILD__));
 }
 
-/** Cache only. The own build's copy wins; a page one build behind finds its own chunks in the other cache. */
+/**
+ * The own build's copy wins; a page one build behind finds its own chunks in the other cache.
+ * A file in neither (an evicted cache) goes to the network, which has the current build's.
+ */
 async function fromCache(request: Request): Promise<Response> {
   const own = await (await caches.open(CACHE)).match(request);
-  return own ?? (await caches.match(request)) ?? new Response("Not in the shell cache", { status: 404 });
+  return own ?? (await caches.match(request)) ?? fetch(request);
 }
 
 sw.addEventListener("install", (event) => {
