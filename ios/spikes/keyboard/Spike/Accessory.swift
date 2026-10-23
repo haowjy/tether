@@ -112,12 +112,6 @@ final class Accessory: UIInputView {
             return key
         }
         keyViews.append(makeKey("⌨︎↓", .hide))
-        // Keys share the width equally; the paste control gets a fixed, larger
-        // slot because iOS checks it is clearly visible before it pastes.
-        for key in keyViews.dropFirst() {
-            key.widthAnchor.constraint(equalTo: keyViews[0].widthAnchor).isActive = true
-        }
-        pasteControl.widthAnchor.constraint(equalToConstant: 44).isActive = true
         softOnlyKeys.append(pasteControl)
         for key in keyViews.dropLast() { keyRow.addArrangedSubview(key) }
         keyRow.addArrangedSubview(pasteControl)
@@ -125,6 +119,13 @@ final class Accessory: UIInputView {
 
         stack.addArrangedSubview(composeRow)
         stack.addArrangedSubview(keyRow)
+
+        // Keys share the width equally; the paste control gets a fixed, larger
+        // slot because iOS checks it is clearly visible before it pastes.
+        for key in keyViews.dropFirst() {
+            key.widthAnchor.constraint(equalTo: keyViews[0].widthAnchor).isActive = true
+        }
+        pasteControl.widthAnchor.constraint(equalToConstant: 44).isActive = true
     }
 
     private func makeKey(_ title: String, _ action: Action) -> UIButton {

@@ -6,25 +6,50 @@ decide; this README is how to build and drive the app.
 
 ## Build and run
 
-1. A Mac with Xcode 26 or later. The Xcode version must support the phone's iOS version
-   (Xcode → Settings → Components shows the platforms it supports). Then
-   `brew install xcodegen`.
+### Simulator
+
+On a Mac with Xcode and `xcodegen` (`brew install xcodegen`), build without signing:
+
+```sh
+cd ios/spikes/keyboard
+xcodegen
+xcodebuild -project KeyboardSpike.xcodeproj -scheme KeyboardSpike \
+  -sdk iphonesimulator -configuration Debug \
+  -derivedDataPath /tmp/keyboard-spike-build CODE_SIGNING_ALLOWED=NO build
+```
+
+Install and launch on a booted Simulator, replacing the placeholder with its UDID:
+
+```sh
+UDID="YOUR_SIMULATOR_UDID"
+xcrun simctl install "$UDID" /tmp/keyboard-spike-build/Build/Products/Debug-iphonesimulator/KeyboardSpike.app
+xcrun simctl launch "$UDID" dev.tether.spike.keyboard
+```
+
+The app starts with the keyboard hidden. Use its keyboard button to focus terminal
+input and show the software keyboard. In Simulator, Hardware → Keyboard can toggle
+the Mac keyboard connection or the software keyboard. Capture the current screen with
+`xcrun simctl io "$UDID" screenshot <path>`.
+
+### Physical iPhone
+
+1. Use Xcode new enough to support the phone's iOS version (Xcode → Settings →
+   Components shows the supported platforms).
 2. On the iPhone: Settings → Privacy & Security → Developer Mode → on. It restarts.
-3. Xcode → Settings → Accounts: add your Apple ID. The free Personal Team is enough.
-4. `cd ios/spikes/keyboard && xcodegen && open KeyboardSpike.xcodeproj`
+3. In Xcode → Settings → Accounts, add your Apple ID. The free Personal Team is enough.
+4. `cd ios/spikes/keyboard && xcodegen && open KeyboardSpike.xcodeproj`.
 5. Target KeyboardSpike → Signing & Capabilities: pick your team. If Xcode says the
    bundle id `dev.tether.spike.keyboard` is taken, change it there (or in
    `project.yml`). Each `xcodegen` run resets the team unless you set
    `DEVELOPMENT_TEAM` in `project.yml`.
-6. Plug in the phone (or pair it over Wi-Fi), pick it as the run destination, ⌘R.
+6. Plug in the phone (or pair it over Wi-Fi), pick it as the run destination, and ⌘R.
 7. First install only: on the phone, Settings → General → VPN & Device Management →
    trust your developer certificate, then ⌘R again.
 
-The Swift was written on a Linux box without Xcode. It was typechecked under Swift 6
-strict concurrency against stand-ins for UIKit and WebKit whose declarations were copied
-from Apple's documentation, so the code itself is consistent. What remains unchecked is
-whether the real SDK matches those declarations. If ⌘R stops on compile errors, paste
-them into the chat with the agent; expect at most one or two rounds.
+The spike compiles against the real iPhoneOS SDK with Xcode 27.1. A signed device build
+is blocked because Xcode has no Apple account configured. On the `tether-keyboard-p6`
+iOS 26.3.1 Simulator, the app launches and remains running; keyboard and accessory
+behavior are not verified. No real-device results are available yet.
 
 ## What's on screen
 

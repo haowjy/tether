@@ -137,12 +137,10 @@ also exercises the custom-scheme origin.
    trust your developer certificate, then ⌘R again.
 8. Have a Bluetooth or Magic Keyboard nearby for section 4, unpaired for now.
 
-The spike's Swift was written on the Linux dev box, which has no Xcode. It was
-typechecked there under Swift 6 strict concurrency against stand-ins for UIKit and
-WebKit whose declarations were copied from Apple's documentation, and the page was
-run in desktop Chrome under the same CSP with a stand-in for native. The first ⌘R can
-still stop where the real SDK differs from those declarations. Paste the errors into
-the chat with the agent that wrote the spike; expect at most one or two rounds.
+The spike compiles against the real iPhoneOS SDK with Xcode 27.1. A signed device build
+is blocked because Xcode has no Apple account configured. On the `tether-keyboard-p6`
+iOS 26.3.1 Simulator, the app launches and remains running; keyboard and accessory
+behavior are not verified. There are no real-device results yet.
 
 ### Run the checklist
 

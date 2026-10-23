@@ -160,7 +160,7 @@ final class TerminalInputView: UIView, UIKeyInput {
 
     // MARK: Paste (UIPasteControl and Cmd+V, without the "Allow Paste" prompt)
 
-    func paste(itemProviders: [NSItemProvider]) {
+    override func paste(itemProviders: [NSItemProvider]) {
         guard let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
             onLog?("pasteNoText", ["providers": "\(itemProviders.count)"])
             return
