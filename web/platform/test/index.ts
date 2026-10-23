@@ -177,7 +177,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
   const daemon = defaultDaemon();
   const listeners = new Set<(event: PlatformEvent) => void>();
   let viewport = options.viewport ?? DESKTOP;
-  let lifecycle = options.lifecycle ?? { visible: true, online: true, locked: false };
+  let lifecycle = options.lifecycle ?? { visible: true, online: true, locked: false, covered: false };
   const hosts = options.hosts ?? [{ handle: "h1", hostId: null, name: null, pageOrigin: PAGE_ORIGIN }];
 
   const uploadScript = new UploadScript();

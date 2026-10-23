@@ -2,7 +2,7 @@ import type { Lifecycle } from "../types";
 
 /** Page visibility and connectivity. A browser page is never locked. */
 export function readLifecycle(): Lifecycle {
-  return { visible: document.visibilityState === "visible", online: navigator.onLine, locked: false };
+  return { visible: document.visibilityState === "visible", online: navigator.onLine, locked: false, covered: false };
 }
 
 export function watchLifecycle(listener: (lifecycle: Lifecycle) => void): () => void {

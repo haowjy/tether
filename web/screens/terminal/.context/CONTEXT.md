@@ -1,6 +1,7 @@
 # screens/terminal
 
-The Terminal destination. The design is client-architecture.md §5.4, §6.4, §6.5, §7.1 to §7.5.
+The Terminal destination. The design is client-architecture.md §5.4, §5.5, §5.10, §6.1,
+§6.4, §6.5, §7.1 to §7.5.
 
 - **`terminals.ts` owns the terminal, not the component.** It is one object per app
   (`terminalsOf(app)`) that holds the renderer's element, every tab's `TabDriver`, tmux's size,
@@ -8,9 +9,10 @@ The Terminal destination. The design is client-architecture.md §5.4, §6.4, §6
   state, so the buffer and each tab's watch survive the screen unmounting (an admission problem
   replaces the shell) or a layout change.
 - **Nothing watches before the box is measured, and only the tab on screen watches.** Drivers
-  start covered. `sync()` runs on every app change and uncovers `shownTab(workspace)` once
-  `ready` (a renderer, a cell size and a tmux size), covering every other driver, so tmux never
-  sees the 80x24 placeholder. The reducer and the controller never address a driver. The first
+  start covered. `sync()` runs on every app change and uncovers `shownTab(workspace)` only when
+  ready (a renderer, a cell size and a tmux size) and `lifecycle.covered` is false; otherwise
+  every driver stays covered, so tmux never sees the 80x24 placeholder and releases the window
+  size beneath a native screen. The reducer and controller never address a driver. The first
   size is claimed by that `watch`; later ones go out 150 ms after the last change (`term/size.ts`).
 - **The surface hides until a tab's own snapshot has painted** (`data-blank`), so no tab shows
   another's content, and an empty terminal never looks live. Reconnecting keeps the last content.

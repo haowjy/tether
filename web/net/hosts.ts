@@ -42,6 +42,8 @@ export interface HostsOptions {
   now?: () => number;
 }
 
+type HostLifecycle = Pick<Lifecycle, "visible" | "online" | "locked">;
+
 interface Slot {
   client: HostClient;
   attempt: number;
@@ -72,7 +74,7 @@ async function readReply(res: Response): Promise<SessionReply> {
 export class HostRegistry {
   private readonly slots = new Map<string, Slot>();
   private readonly listeners = new Set<() => void>();
-  private lifecycle: Lifecycle = { visible: true, online: true, locked: false };
+  private lifecycle: HostLifecycle = { visible: true, online: true, locked: false };
   private readonly fetchFn: typeof fetch;
 
   constructor(private readonly opts: HostsOptions) {
@@ -115,7 +117,7 @@ export class HostRegistry {
     this.emit();
   }
 
-  setLifecycle(lifecycle: Lifecycle): void {
+  setLifecycle(lifecycle: HostLifecycle): void {
     const before = this.lifecycle;
     this.lifecycle = lifecycle;
     this.applyRunning();

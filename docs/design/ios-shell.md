@@ -425,7 +425,7 @@ a mismatch can only happen in dev mode and shows an error banner.
 
 | Web → native | Reply | Purpose |
 |---|---|---|
-| `ready` | `boot { bridgeVersion, hosts, tabs, active, viewport, locked }` | Start; restore the saved tabs and the active one ([payloads](#boot-and-host-payloads)) |
+| `ready` | `boot { bridgeVersion, hosts, tabs, active, viewport, locked, covered }` | Start; restore the saved tabs and the active one ([payloads](#boot-and-host-payloads)); `covered` is the initial native-screen coverage state |
 | `token { host }` | `{ token }`, `{ locked }` or `{ notEnrolled }` | WebSocket token ([auth.md](auth.md#carrying-the-token)) |
 | `hostRejected { host }` | | The host closed the socket with 4401: mark it "not enrolled" and show its Add host/enrolment screen. The web halts that host's tabs as unauthorized; a tap on its pill retries. In the browser lane, the daemon's `401 not_enrolled` response opens the browser enrolment screen |
 | `recreateWebView` | | Two consecutive connect timeouts on a host's socket ([plan.md](plan.md#reconnect)): discard the web view and load a fresh one. No data, no reply. All state that matters is on the server and in native's saved tabs |
@@ -443,6 +443,7 @@ a mismatch can only happen in dev mode and shows an error banner.
 | `input { events: InputEvent[] }` | Keystrokes, key row, compose |
 | `viewport { … }` | Geometry, including whether the keyboard shows |
 | `lifecycle { phase }` | `active`, `background` |
+| `lifecycle.covered { covered }` | A native screen covers or reveals Terminal; the web updates its lifecycle state and pauses or resumes the selected tab's watch |
 | `network { reachable, interface }` | Reconnect trigger |
 | `lock { locked }` | The app-wide lock: drop or fetch tokens |
 | `hosts { hosts: HostEntry[] }` | Host list or a host's enrolment changed |
@@ -468,7 +469,8 @@ SavedTab  = { id: string,        // the web's tab id, kept across launches
               name: string }     // the title; follows windowRenamed (plan.md)
 boot      = { bridgeVersion, hosts: HostEntry[], tabs: SavedTab[],
               active: string | null,   // the SavedTab id native last saw on screen
-              viewport, locked }
+              viewport, locked,
+              covered: bool }           // whether a native screen initially covers Terminal
 ```
 
 - **`baseURL` is explicit.** Native builds it when Add host takes the MagicDNS name
@@ -492,7 +494,7 @@ bridge.
 |---|---|
 | Launch | Load the UI from the bundle; `boot` restores tabs as "reconnecting", with the one last on screen active; the lock screen shows if needed ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)); once unlocked, the web connects every host with an open tab |
 | Background (`sceneDidEnterBackground`) | Native sends `lifecycle background` inside a short `beginBackgroundTask`; the web closes its sockets cleanly. The daemon ends the watches at once, so the laptop gets its window size back without waiting for the idle timeout ([daemon-core.md §3.6](daemon-core.md#36-sizing)) |
-| A native screen covers the terminal (host list, Add host, settings) | The web sends `unwatch` for the tab on screen and keeps the socket and its pings; it sends `watch` again when the terminal shows, and gets a fresh snapshot |
+| A native screen covers the terminal (host list, Add host, settings) | Native sends `lifecycle.covered { covered: true }`; the web sends `unwatch` for the tab on screen and keeps the socket and its pings. When Terminal shows again, native sends `covered: false`; the web sends `watch` and gets a fresh snapshot |
 | Foreground (`sceneDidBecomeActive`) | Lock check first; then `lifecycle active`; the web reconnects at once and sends `watch` for the tab on screen, which repaints from a snapshot; `FocusController` restores the keyboard |
 | Network change (`NWPathMonitor`: satisfied, or interface changed) | `network` → the web resets backoff and reconnects sockets that are closed or silent past a heartbeat |
 | Web content process killed (`webViewWebContentProcessDidTerminate`) | Native reloads the page; `boot` restores tabs from the native copy, which survives this; focus is restored |

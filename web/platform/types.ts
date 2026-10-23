@@ -44,6 +44,8 @@ export interface Lifecycle {
   visible: boolean;
   online: boolean;
   locked: boolean;
+  /** A native screen covers Terminal; browsers always report false. */
+  covered: boolean;
 }
 
 export type Unsubscribe = () => void;

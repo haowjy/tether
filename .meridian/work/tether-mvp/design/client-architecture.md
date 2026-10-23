@@ -552,12 +552,19 @@ needs no event reason. Only the adapters differ, in how they define `stableHeigh
 ### 5.5 Lifecycle
 
 ```ts
-interface Lifecycle { visible: boolean; online: boolean; locked: boolean }  // browser: never locked
+interface Lifecycle {
+  visible: boolean;
+  online: boolean;
+  locked: boolean;   // browser: false
+  covered: boolean;  // a native screen covers Terminal; browser: false
+}
 ```
 
-The browser listens to `visibilitychange`, `pagehide`/`pageshow` and `online`/`offline`.
-Native listens to `lifecycle`, `network` and its app lock. Each `lifecycle` event
-reaches the controller, which splits the work between two owners:
+The browser listens to `visibilitychange`, `pagehide`/`pageshow` and `online`/`offline`;
+it always reports `covered: false`. Native's boot result sets the initial `covered` value,
+and `lifecycle.covered` changes it as native screens cover or reveal Terminal. Native also
+listens to `lifecycle`, `network` and its app lock. Each lifecycle update reaches the
+controller, which splits the work between owners:
 
 - **Persistence** has one owner, `app/persist.ts`. Its `persistNow()` hands every
   pending draft write (`drafts/` debounces them) and the assembled workspace to
@@ -713,6 +720,7 @@ becomes 2.
 | "Project layout" | `web/native/bridge.ts` becomes `web/platform/native/bridge.ts`; the `--safe-*` tokens move to `ui/tokens/semantic.css` |
 | "Hosts" | `hostRejected` stays. The native transport turns it into a token refusal, which `net/admission.ts` maps to `notEnrolled` |
 | "The bridge": lock | the app lock state rides the `lifecycle` event as `locked` (§5.5) |
+| "The bridge": terminal coverage | `boot` includes the initial `covered` value; native sends `lifecycle.covered { covered }` on changes. It updates `Lifecycle.covered` (§5.5), which the terminal's one watch predicate combines with `shownTab(workspace)` |
 
 
 ### 5.11 Development without a shim
@@ -747,9 +755,11 @@ Consequences:
 `navigated`, `restored`, `watching`. State and effects come out: `save`, `navigate`,
 `focus`, `notice`. The controller in `app/` runs the effects against the router, the focus
 controller and persist now. `TabDriver` keeps owning its own watch and its connection states,
-`limited` included. The workspace only says which tab is on screen, through `shownTab(state)`;
-the terminal lane's `Terminals` owns every driver and covers or uncovers each from that, so
-there is no second copy of "which tab is shown" and no cover/uncover effect.
+`limited` included. The workspace only says which tab is selected for Terminal, through
+`shownTab(state)`; the terminal lane's `Terminals` owns every driver and uses one predicate
+for the watch: the shown tab only when `Lifecycle.covered` is false. It covers or uncovers
+every driver from that predicate, so no second copy owns which tab is shown or whether its
+watch is active.
 
 ```ts
 type TabKey = { host: string; window: WindowRef };   // WindowRef = { server, window }

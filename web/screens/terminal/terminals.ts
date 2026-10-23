@@ -88,7 +88,7 @@ export class Terminals extends Store<TerminalsView> {
       // Native's responder: only the tab on screen still takes input.
       if (event.type !== "input") return;
       const id = tabId(event.tab);
-      if (id === shownTab(this.app.snapshot.workspace)) this.drivers.get(id)?.input(event.events);
+      if (id === this.shownTerminalTab()) this.drivers.get(id)?.input(event.events);
     });
     this.sizer.setViewport(this.viewport);
     this.sync();
@@ -153,7 +153,7 @@ export class Terminals extends Store<TerminalsView> {
       this.update({ tabs: Object.fromEntries(Object.entries(this.snapshot.tabs).filter(([key]) => key !== id)) });
     }
     // The tab on screen watches once the box is measured; every other tab rests covered. Both calls are idempotent.
-    const shown = shownTab(workspace);
+    const shown = this.shownTerminalTab();
     for (const [id, driver] of this.drivers) {
       if (id === shown && this.snapshot.ready) driver.uncover();
       else driver.cover();
@@ -211,7 +211,7 @@ export class Terminals extends Store<TerminalsView> {
 
   /** Keystrokes for the tab on screen now, held for a few milliseconds to share a message. */
   private type(events: InputEvent[]): void {
-    const id = shownTab(this.app.snapshot.workspace);
+    const id = this.shownTerminalTab();
     if (id === null) return;
     if (this.batch && this.batch.id !== id) this.flushInput();
     if (this.batch) this.batch.events.push(...events);
@@ -229,8 +229,14 @@ export class Terminals extends Store<TerminalsView> {
   }
 
   private shownDriver(): TabDriver | undefined {
-    const id = shownTab(this.app.snapshot.workspace);
+    const id = this.shownTerminalTab();
     return id === null ? undefined : this.drivers.get(id);
+  }
+
+  /** The selected tab watches only while no native screen covers Terminal. */
+  private shownTerminalTab(): string | null {
+    const { workspace, lifecycle } = this.app.snapshot;
+    return lifecycle.covered ? null : shownTab(workspace);
   }
 
   /**
@@ -332,7 +338,7 @@ export class Terminals extends Store<TerminalsView> {
 
   private pasted(pasted: Pasted): void {
     // The tab is captured now: the upload below finishes later.
-    const id = shownTab(this.app.snapshot.workspace);
+    const id = this.shownTerminalTab();
     const driver = id === null ? undefined : this.drivers.get(id);
     if (pasted.kind === "empty" || id === null || !driver) return;
     this.flushInput(); // what was typed before the paste goes first

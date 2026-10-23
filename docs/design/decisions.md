@@ -2886,3 +2886,17 @@ the p61 review. The product calls behind it are Jimmy's
   would not load, so that check is not first-hand. Ctrl+Shift+C and V are copy and paste.
 - **Rejected:** Ctrl+Shift+L (Edge's paste and go), Ctrl+Shift+U and E (GTK's Unicode and
   emoji input on Linux), Ctrl+Shift+Y (Firefox downloads), Escape (a shell and vim need it).
+
+## Native screen coverage pauses the terminal watch
+
+- **Decided:** 2026-10-23, after the p104 round-2 review.
+- **What:** Native includes the initial `covered` state in `boot` and sends
+  `lifecycle.covered { covered }` whenever a native screen covers or reveals Terminal.
+  The web represents it in `Lifecycle.covered`; `Terminals` uses the selected tab only when
+  it is not covered, so the existing driver path sends `unwatch` and later a fresh `watch`.
+  Browsers always report `covered: false`.
+- **Why:** `ios-shell.md` already required the web to unwatch beneath native screens, but
+  client-architecture §6.1 said Swift kept that state and the bridge had no signal. Without
+  one, the web cannot release the tab's tmux size while native covers it.
+- **Rejected:** Swift-only cover state. It leaves the web's `Terminals` unaware, so its one
+  watch owner keeps the active tab watched beneath native UI.
