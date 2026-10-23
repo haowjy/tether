@@ -16,6 +16,8 @@ version section on release.
 - Files: browse folders, preview code, Markdown, images, video and audio, upload several
   files with progress, and "Insert path into <tab>" for an upload or an open file. Adding a
   root now means editing `config.toml` on the host.
+- PWA: install tether from Chromium or Safari, open Home offline from the cached shell, and
+  see "Update ready" on Home; a new version waits for your tap and only that window reloads.
 - The session-limit message says "1 tmux session" when the limit is one.
 - Show refused auth row names in device listing, list nodes by stored ID, and send
   the native welcome and manifest without waiting for a tailnet refresh.

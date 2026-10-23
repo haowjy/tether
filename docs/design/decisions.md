@@ -2723,3 +2723,30 @@ the p61 review. The product calls behind it are Jimmy's
   upload per pick; demoting Markdown heading levels, which changes the document; plain
   text for `.tsx` (the lead added the grammar, about 17 KB gzipped, loaded on demand);
   Shiki's `typescript` grammar on JSX, which mis-colours it.
+
+## The PWA is built by the Vite plugin
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** the service worker is built by the plugin's `closeBundle` with a nested
+  `vite build`. The cache name is `tether-shell-<12 hex of sha256 over every precached
+  file's path and bytes>`, which also makes `sw.js` byte-different per build, so the
+  browser's own update check needs no version endpoint. The build fails if `dist/` holds
+  a file the daemon does not route (`SERVED` in `sw/vite-plugin.ts` mirrors `routes()` in
+  `src/http/shell.rs`). `updates.apply()` checks for a new worker first and reloads when
+  there is none, so the protocol-mismatch screen's Update button needs no extra wiring. A
+  cache miss for a shell path answers 404, not the network. The worker looks in its own
+  cache first, then in every `tether-shell-*`. A failed install deletes its half-filled
+  cache. `createPwa(emit)` repeats the current state on every `check()`. A third update
+  state, `reload`, means another page applied an update while this one keeps the previous
+  build; its banner reads "Reload to finish updating" and is separate from the schema
+  upgrade banner. `install.installed()` is display-mode standalone or iOS
+  `navigator.standalone`. The icon is a blue `>_` prompt on the dark surface; its hex
+  colours copy the tokens because a manifest cannot read a CSS token.
+- **Why:** the worker needs the finished file list and its hash, which exist only after
+  the main bundle and `public/` are written; a precached path the daemon 404s would fail
+  every install; the schema banner's copy says changes are kept in memory, which is false
+  after a plain worker takeover.
+- **Rejected:** a second Rollup input (the list is not known yet); a post-build script
+  (preflight needs a second step to remember); the Vite manifest hash for the cache name,
+  which ignores an icon or manifest change; network fallback for a missing shell path; a
+  `clients.claim`; reusing the schema banner for `reload`.

@@ -116,6 +116,12 @@ When there is no eligible connected tab, insertion is disabled with “Open a te
 
 Browser image paste into a focused terminal follows the same upload pipeline. Capture the exact target tab/window identity at paste start, upload supported image bytes into the configured uploads folder, then insert the quoted absolute canonical path into that same tab without Enter. If the target is gone or disconnected when upload completes, keep the uploaded file available in Files and report the insertion failure; never redirect to a different active tab. Ordinary text paste remains terminal paste. Clipboard access depends on a user paste gesture and browser capabilities; unsupported image clipboard access gets an explanation and the Files upload route. This preserves the photo-paste MVP; actual clipboard handling remains a real-browser verification gate, not simulated by this mockup.
 
+## Offline and updates
+
+The service worker serves the shell from its cache, so an offline launch opens Home: the host banner says “Can't reach pop-os” (the name is the last one saved), open tabs read “Reconnecting…”, and the listing shows its offline state. Nothing shows a pretend live terminal and nothing typed is queued. The worker never intercepts `/ws`, `/auth`, `/fs`, `/complete`, `/debug` or a non-GET request.
+
+A new build installs in the background and waits. Home and Files show “Update ready” with Update, never over the terminal; only the window that taps Update reloads. Another window shows “Reload to finish updating” with Reload, and keeps running its own build until then. A window two builds behind fails to fetch a lazy chunk and shows the designed “Update required”.
+
 ## Keyboard ownership and navigation history
 
 Desktop terminal focus owns keys only while terminal input is focused. Home search, creation forms, and Files controls own their own input. Overlay handling intercepts Escape only while an overlay is open; otherwise Escape belongs to terminal input. Tab activation, terminal return, and overlay dismissal restore terminal focus on desktop. Focus must not steal input from a focused text field. Only focus that must raise the software keyboard needs to happen synchronously inside the user's gesture. Other focus transitions may wait until navigation or the dialog has rendered; a phone dialog must not focus a text field and unexpectedly raise its keyboard.

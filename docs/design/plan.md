@@ -682,8 +682,8 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
                   variant), Disclosure, Row, RovingList, TabStrip, Banner, Toast,
                   StatusBand, EmptyState, Spinner, Icon, DraftEditor
     store.ts, format.ts, theme.ts, hostProblem.ts
-  sw/             service worker, built as its own entry
-  public/         web app icons
+  sw/             service worker and the Vite plugin that builds it, after the main bundle
+  public/         manifest template and web app icons (render-icons regenerates the PNGs)
   harness/        test-mode entry, imports per-lane fixtures; never in production builds
   e2e/            Playwright specs against the harness
 ios/           Swift app (XcodeGen) and the TetherKit package (ios-shell.md)

@@ -52,6 +52,6 @@ export function createBrowserPlatform(): Platform {
     playVideo: () => "inline",
     haptic: () => undefined,
     restart,
-    ...createPwa(),
+    ...createPwa(emit),
   };
 }
