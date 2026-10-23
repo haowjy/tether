@@ -445,11 +445,12 @@ pub struct Location {
     pub found: Option<Found>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
     pub session: SessionId,
     pub pane: PaneId,
     pub size: Size,
+    pub session_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

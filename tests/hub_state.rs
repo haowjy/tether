@@ -651,7 +651,7 @@ fn daemon_limits_end_or_refuse_what_is_over_them() {
     assert_eq!(kinds(&ended), ["watchEnded"]);
     assert_eq!(
         ended[0]["data"]["message"],
-        "tether allows 3 tmux sessions at a time; open now: main:$0, main:$1, main:$2"
+        "tether on devbox allows 3 tmux sessions at a time; open now: session0, session1, session2"
     );
     assert_eq!(ended[0]["data"]["reason"], "limit");
     // Once one lingers, it makes room.
@@ -680,6 +680,7 @@ fn low_budget_limit_names_the_sessions_holding_the_slot() {
     let mut hub = Hub::new_with_max_clients(cap.control_clients);
     hub.add_window(1, 1, 1);
     hub.add_window(2, 2, 2);
+    hub.window(1).session_name = "work".to_owned();
     let conn = hub.connect();
     hub.open(conn, 1, 1);
     hub.take_json(conn);
@@ -690,7 +691,7 @@ fn low_budget_limit_names_the_sessions_holding_the_slot() {
     assert_eq!(ended[0]["data"]["reason"], "limit");
     assert_eq!(
         ended[0]["data"]["message"],
-        "tether allows 1 tmux session at a time; open now: main:$1"
+        "tether on devbox allows 1 tmux sessions at a time; open now: work"
     );
 }
 

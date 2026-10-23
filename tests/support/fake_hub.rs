@@ -37,6 +37,7 @@ pub(super) struct FakeWindow {
     pub(super) sessions: Vec<u32>,
     pub(super) pane: u32,
     pub(super) size: Size,
+    pub(super) session_name: String,
 }
 
 pub(super) struct FakeClient {
@@ -87,7 +88,12 @@ impl Hub {
         };
         let now = Instant::now();
         let mut hub = Self {
-            state: State::new(Endpoints { main: endpoint }, now, max_clients),
+            state: State::new(
+                Endpoints { main: endpoint },
+                now,
+                max_clients,
+                "devbox".to_owned(),
+            ),
             now,
             alive: true,
             sessions: BTreeSet::from([0]),
@@ -115,6 +121,7 @@ impl Hub {
                 sessions: vec![session],
                 pane,
                 size: Size { cols: 80, rows: 24 },
+                session_name: format!("session{session}"),
             },
         );
     }
@@ -331,6 +338,7 @@ impl Hub {
                 session: SessionId(session),
                 pane: PaneId(fake.pane),
                 size: fake.size,
+                session_name: fake.session_name.clone(),
             }
         });
         Location {
@@ -395,6 +403,7 @@ impl Hub {
                 "pane_id" => found.pane.to_string(),
                 "pane_width" => found.size.cols.to_string(),
                 "pane_height" => found.size.rows.to_string(),
+                "session_name" => found.session_name,
                 _ => panic!("#{{{name}}} of a window"),
             };
         }

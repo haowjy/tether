@@ -11,8 +11,8 @@ version section on release.
 - Add a startup memory budget (`memory_budget_mib`, default 72 MiB) that scales tmux
   session/socket caps and completion, plus a half-core CPU cap. Re-copy
   `contrib/tether.service` to apply `MemoryMax=72M`, no `MemoryHigh`, the 10 ms CPU
-  quota period and exit-78 restart prevention. Session-limit messages name the tmux
-  session IDs holding the slots; uploads to tmpfs/ramfs are refused.
+  quota period and exit-78 restart prevention. Session-limit messages name the host
+  and tmux sessions holding the slots; uploads to tmpfs/ramfs are refused.
 
 - Keep Meridian work notes and knowledge base in repo-local paths for cross-machine handoffs.
 

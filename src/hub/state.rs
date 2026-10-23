@@ -78,6 +78,8 @@ pub enum Effect {
 
 pub struct State {
     pub(super) endpoints: Vec<EndpointState>,
+    /// Name shown in session-limit messages.
+    pub(super) host_name: String,
     /// The budget tier's control-client cap.
     pub(super) max_clients: usize,
     pub(super) clients: BTreeMap<ClientId, Client>,
@@ -205,6 +207,7 @@ pub(super) struct Told {
 pub(super) struct Client {
     pub(super) endpoint: usize,
     pub(super) session: SessionId,
+    pub(super) session_name: String,
     pub(super) phase: ClientPhase,
     /// Votes and subscriptions sent, which count as applied.
     pub(super) votes: BTreeMap<WindowId, Size>,
@@ -286,6 +289,7 @@ pub(super) enum OneShotWork {
 pub(super) struct Exit {
     pub(super) endpoint: usize,
     pub(super) session: SessionId,
+    pub(super) session_name: String,
     /// tmux said `%exit` and the hub didn't kill it.
     pub(super) detached: bool,
     pub(super) at: Instant,
@@ -300,13 +304,14 @@ pub(super) struct ExitCheck {
 }
 
 impl State {
-    pub fn new(endpoints: Endpoints, now: Instant, max_clients: usize) -> Self {
+    pub fn new(endpoints: Endpoints, now: Instant, max_clients: usize, host_name: String) -> Self {
         Self {
             endpoints: vec![EndpointState {
                 name: "main",
                 endpoint: endpoints.main,
                 live: None,
             }],
+            host_name,
             max_clients,
             clients: BTreeMap::new(),
             windows: BTreeMap::new(),

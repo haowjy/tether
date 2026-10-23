@@ -270,7 +270,7 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 
 | Op | Command group | Kind |
 |---|---|---|
-| `Locate { window }` | `display-message -p -t @W '<pid, start_time, session_id, window_id, pane_id, pane_width, pane_height>'` | maint. |
+| `Locate { window }` | `display-message -p -t @W '<pid, start_time, session_id, window_id, pane_id, pane_width, pane_height, session_name>'` | maint. |
 | `LocateSession { session }` | `display-message -p -t '$S' '<pid, start_time, session_id>'` | maint. |
 | `Snapshot { pane }` | §3.5 | maint. |
 | `Release { pane }` | `refresh-client -A '%P:pause'` | maint. |
@@ -902,8 +902,8 @@ that left it has already returned the attempts' reservations.) A `Paste` the hub
   one exists, two briefly when switching sessions.
 - **Spawned** when a Locate names a session without one. At the cap (§6) the oldest
   lingering client closes first; with none lingering, the window's watches end with
-  `watchEnded { limit }` naming the control-client slots by endpoint and tmux `$N`
-  session ID, and the window is dropped.
+  `watchEnded { limit }` naming the host and the tmux session names holding the
+  control-client slots, and the window is dropped.
 - **`Ready`** requires the endpoint's known server instance, or records it when none
   is known; a different one means the server restarted. A window whose owner is still
   starting waits for it, and if that client exits first, the window locates again.
@@ -1361,9 +1361,9 @@ construction.
 | scratch sessions | 2 | `error { tooManySessions }` |
 
 A control-client cap refusal is `watchEnded { reason: "limit", message }`. Its message
-names the cap and the tmux session IDs holding it; for example, `tether allows 1 tmux
-session at a time; open now: main:$2`. The control client stores IDs, not display names,
-and does not run a one-shot just to render the refusal. A lingering client doesn't hold
+names the host, cap and tmux session names holding it; for example, `tether on devbox
+allows 1 tmux sessions at a time; open now: work`. The control client stores the session
+name from Locate, and does not run a one-shot just to render the refusal. A lingering client doesn't hold
 a slot, since the next watch closes it. After tabs showing the named sessions close, a
 retry succeeds. `busy` remains the short-lived refusal; the socket cap keeps close code
 4005.

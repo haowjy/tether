@@ -211,9 +211,13 @@ impl HubHandle {
 
 /// Starts the hub task. It runs until every `HubHandle` is dropped or one calls
 /// `stop`, then closes its control clients. Must be called inside the tokio runtime.
-pub fn spawn(endpoints: Endpoints, max_clients: usize) -> (HubHandle, JoinHandle<()>) {
+pub fn spawn(
+    endpoints: Endpoints,
+    max_clients: usize,
+    host_name: String,
+) -> (HubHandle, JoinHandle<()>) {
     let (inbox, receiver) = mpsc::channel(INBOX);
-    let state = State::new(endpoints, std::time::Instant::now(), max_clients);
+    let state = State::new(endpoints, std::time::Instant::now(), max_clients, host_name);
     let task = tokio::spawn(run::run(state, receiver, inbox.downgrade()));
     (HubHandle { inbox }, task)
 }

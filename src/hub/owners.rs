@@ -128,15 +128,26 @@ impl State {
             return;
         };
         if let Phase::Locating { after, .. } = &mut window.phase {
-            if let Some(exit) = after.take() {
+            if let Some(mut exit) = after.take() {
                 if exit.session == found.session {
+                    exit.session_name.clone_from(&found.session_name);
                     return self.after_exit(key, exit);
                 }
             }
         }
         let client = match self.client_for(key.endpoint, found.session) {
-            Some(client) => client,
-            None => match self.spawn_client(key.endpoint, found.session, None) {
+            Some(client) => {
+                if let Some(record) = self.clients.get_mut(&client) {
+                    record.session_name.clone_from(&found.session_name);
+                }
+                client
+            }
+            None => match self.spawn_client(
+                key.endpoint,
+                found.session,
+                found.session_name.clone(),
+                None,
+            ) {
                 Some(client) => client,
                 None => {
                     let message = self.session_limit_message();
@@ -170,7 +181,12 @@ impl State {
             Some(client) => client,
             None => {
                 let respawn = Some((exit.at + RESPAWN_DELAY, exit.at));
-                match self.spawn_client(exit.endpoint, exit.session, respawn) {
+                match self.spawn_client(
+                    exit.endpoint,
+                    exit.session,
+                    exit.session_name.clone(),
+                    respawn,
+                ) {
                     Some(client) => client,
                     None => {
                         let message = self.session_limit_message();
@@ -236,6 +252,7 @@ impl State {
         &mut self,
         endpoint: usize,
         session: SessionId,
+        session_name: String,
         respawn: Option<(Instant, Instant)>,
     ) -> Option<ClientId> {
         if !self.make_room() {
@@ -248,6 +265,7 @@ impl State {
             Client {
                 endpoint,
                 session,
+                session_name,
                 phase: ClientPhase::Delayed { until: self.now },
                 votes: BTreeMap::new(),
                 subscriptions: BTreeSet::new(),
@@ -303,30 +321,20 @@ impl State {
         }
     }
 
-    /// Names the live session slots using tmux's stable `$N` ids. The control-mode
-    /// client tracks ids, not display names, and this path must not issue a one-shot.
+    /// Names the live session slots using names from Locate. This path must not issue
+    /// a one-shot just to render the refusal.
     pub(super) fn session_limit_message(&self) -> String {
         let sessions = self
             .clients
             .values()
-            .map(|client| {
-                format!(
-                    "{}:{}",
-                    self.endpoints[client.endpoint].name, client.session
-                )
-            })
+            .map(|client| client.session_name.clone())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>()
             .join(", ");
-        let noun = if self.max_clients == 1 {
-            "session"
-        } else {
-            "sessions"
-        };
         cut(format!(
-            "tether allows {} tmux {noun} at a time; open now: {sessions}",
-            self.max_clients
+            "tether on {} allows {} tmux sessions at a time; open now: {sessions}",
+            self.host_name, self.max_clients
         ))
     }
 
@@ -387,6 +395,7 @@ impl State {
         let exit = Exit {
             endpoint: record.endpoint,
             session: record.session,
+            session_name: record.session_name,
             detached,
             at: self.now,
             last_crash: record.last_crash,

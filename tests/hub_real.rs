@@ -206,6 +206,7 @@ fn start(server: &Server) -> HubHandle {
             main: server.endpoint(),
         },
         DEFAULT_CAPS.control_clients,
+        "test-host".to_owned(),
     );
     hub
 }

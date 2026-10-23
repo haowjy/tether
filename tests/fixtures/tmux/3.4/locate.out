@@ -1,47 +1,55 @@
-%begin 1792642073 271 0
-%end 1792642073 271 0
+%begin 1792749649 272 0
+%end 1792749649 272 0
 %session-changed $0 fixture
-%begin 1792642073 276 1
-3.4	3819541	1792642073	80	24
-%end 1792642073 276 1
-%begin 1792642073 277 1
-%end 1792642073 277 1
+%begin 1792749649 277 1
+3.4	11856	1792749649	80	24
+%end 1792749649 277 1
+%begin 1792749649 278 1
+%end 1792749649 278 1
 %layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%extended-output %0 0 : $ 
 %unlinked-window-add @1
 %sessions-changed
+%unlinked-window-renamed @1 tmux
 %window-add @2
+%window-renamed @2 tmux
 %window-add @3
-%extended-output %2 0 : $ 
-%begin 1792642073 292 1
+%window-renamed @3 tmux
+%begin 1792749649 296 1
+%pause %0
+%end 1792749649 296 1
+%extended-output %2 0 : Jimmys-MacBook-Air:tether jimmyyao$ 
+%begin 1792749649 297 1
 %pause %2
-%end 1792642073 292 1
-%extended-output %3 0 : $ 
-%begin 1792642073 293 1
+%end 1792749649 297 1
+%extended-output %3 0 : Jimmys-MacBook-Air:tether jimmyyao$ 
+%begin 1792749649 298 1
 %pause %3
-%end 1792642073 293 1
-%begin 1792642074 294 1
-3819541	1792642073	$0	@0	%0	80	24
-%end 1792642074 294 1
-%begin 1792642074 295 1
-3819541	1792642073	$1	@1	%1	80	24
-%end 1792642074 295 1
+%end 1792749649 298 1
+%begin 1792749650 299 1
+11856	1792749649	$0	@0	%0	80	24	fixture
+%end 1792749650 299 1
+%begin 1792749650 300 1
+11856	1792749649	$1	@1	%1	80	24	other
+%end 1792749650 300 1
 %unlinked-window-close @2
 %unlinked-window-add @3
 %session-window-changed $1 @3
 %unlinked-window-close @3
-%begin 1792642074 304 1
-3819541	1792642073					
-%end 1792642074 304 1
-%begin 1792642074 305 1
-3819541	1792642073	$1	@3	%3	80	24
-%end 1792642074 305 1
-%begin 1792642074 306 1
-3819541	1792642073	$0
-%end 1792642074 306 1
+%begin 1792749650 309 1
+11856	1792749649						
+%end 1792749650 309 1
+%begin 1792749650 310 1
+11856	1792749649	$1	@3	%3	80	24	other
+%end 1792749650 310 1
+%begin 1792749650 311 1
+11856	1792749649	$0
+%end 1792749650 311 1
 %sessions-changed
 %unlinked-window-close @1
 %unlinked-window-close @3
-%begin 1792642074 312 1
-3819541	1792642073	
-%end 1792642074 312 1
+%window-renamed @0 bash
+%begin 1792749650 318 1
+11856	1792749649	
+%end 1792749650 318 1
 %exit

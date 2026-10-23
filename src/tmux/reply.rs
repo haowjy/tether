@@ -27,12 +27,22 @@ pub(super) fn startup(row: &[u8]) -> Option<(TmuxVersion, ServerInstance, Size)>
 }
 
 /// Where a window is: server instance, then its session, active pane and that pane's
-/// size. tmux leaves the target fields empty for a window that is gone.
-pub(super) const LOCATE_FORMAT: &str =
-    "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_width}\t#{pane_height}";
+/// size and session name. tmux leaves the target fields empty for a window that is
+/// gone.
+pub(super) const LOCATE_FORMAT: &str = "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{session_name}";
 
 pub(super) fn location(row: &[u8]) -> Option<Location> {
-    let [pid, start_time, session, _window, pane, cols, rows] = tab_fields(row)?[..] else {
+    let [
+        pid,
+        start_time,
+        session,
+        _window,
+        pane,
+        cols,
+        rows,
+        session_name,
+    ] = tab_fields(row)?[..]
+    else {
         return None;
     };
     let server = ServerInstance::from_fields(pid, start_time)?;
@@ -48,6 +58,7 @@ pub(super) fn location(row: &[u8]) -> Option<Location> {
             session: SessionId::parse(session.as_bytes())?,
             pane: PaneId::parse(pane.as_bytes())?,
             size: size(cols, rows)?,
+            session_name: session_name.to_owned(),
         }),
     })
 }

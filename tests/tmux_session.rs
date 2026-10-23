@@ -513,7 +513,8 @@ fn locate_reads_the_window_and_the_server_instance() {
         Some(Found {
             session: SessionId(0),
             pane: PaneId(0),
-            size: Size { cols: 80, rows: 24 }
+            size: Size { cols: 80, rows: 24 },
+            session_name: "fixture".to_owned(),
         })
     );
     assert_eq!(

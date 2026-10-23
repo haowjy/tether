@@ -170,6 +170,7 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
             main: endpoint.clone(),
         },
         budget.caps().control_clients,
+        name.clone(),
     );
     let hub_stop = hub.clone();
     let app = App {
