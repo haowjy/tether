@@ -23,7 +23,8 @@ export function Button({ variant = "secondary", icon, disabledReason, class: cla
         class={cx(styles.button, styles[variant], className as string | undefined)}
         aria-disabled={blocked || undefined}
         aria-describedby={blocked ? reasonId : undefined}
-        onClick={blocked ? undefined : onClick}
+        // A blocked button must not submit its form either: swallow the click's default.
+        onClick={blocked ? (e) => { e.preventDefault(); } : onClick}
       >
         {icon && <Icon name={icon} size={16} />}
         {children}

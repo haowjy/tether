@@ -21,6 +21,8 @@ export function Enrol({ host }: { host: HostClient }) {
 
   const submit = async (e: Event): Promise<void> => {
     e.preventDefault();
+    // Enter in a field submits too, whatever the button says.
+    if (busy || code.trim() === "") return;
     setBusy(true);
     setError(null);
     const result = await app.hosts.enrol(host.entry.handle, code.trim(), deviceName.trim() || nodeName);
