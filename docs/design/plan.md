@@ -685,7 +685,8 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
   sw/             service worker and the Vite plugin that builds it, after the main bundle
   public/         manifest template and web app icons (render-icons regenerates the PNGs)
   harness/        test-mode entry, imports per-lane fixtures; never in production builds
-  e2e/            Playwright specs against the harness
+  e2e/            Playwright specs against the harness; `*.real.ts` specs run a real daemon
+                  through shared/stack.ts
 ios/           Swift app (XcodeGen) and the TetherKit package (ios-shell.md)
 ```
 
@@ -748,7 +749,9 @@ slice they need and storage coalesces writes within a microtask.
   Playwright's WebKit cannot reproduce the iOS keyboard, so it cannot replace the phone.
   `TETHER_PREFLIGHT_E2E=1` opts the browser suite into `scripts/preflight.sh full`; it is
   otherwise run explicitly, since the preflight environment must have its browsers
-  installed.
+  installed. The `*.real.ts` specs (`pnpm --dir web run e2e:real`) run a real daemon on a
+  private tmux 3.4 and 3.7b; they need the tmux builds under `~/.cache/tether-tmux` and are
+  never part of preflight.
 
 ## Phases
 

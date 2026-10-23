@@ -2750,3 +2750,21 @@ the p61 review. The product calls behind it are Jimmy's
   (preflight needs a second step to remember); the Vite manifest hash for the cache name,
   which ignores an icon or manifest change; network fallback for a missing shell path; a
   `clients.claim`; reusing the schema banner for `reload`.
+
+## One real-daemon e2e stack
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** the real-daemon specs (`e2e/*/*.real.ts`) share `e2e/shared/stack.ts`: an
+  isolated daemon with `--allow-login e2e`, a private tmux, Vite's dev server with the dev
+  proxy, and a front proxy that stands in for Tailscale Serve and answers `/auth/info`
+  itself. They are opt-in: `pnpm e2e:real` needs tmux 3.4 and 3.7b under
+  `~/.cache/tether-tmux`. The harness suite's Playwright output goes to
+  `test-results/<port>`. The dev proxy's `/auth/info` request carries the token and the
+  caller's `Tailscale-User-Login`, which the daemon's Tailscale check requires.
+- **Why:** a browser cannot add `Tailscale-User-Login` to a WebSocket upgrade, so
+  something must stand in for Serve, and one stack serves every lane.
+- **Rejected:** a `TETHER_LOCALAPI_SOCKET` override in the daemon with a fake LocalAPI
+  (a test hook in the production identity path); a patched daemon copy; a separate
+  stack per lane; running the real specs in the default `pnpm e2e` (they fail on a
+  machine without the tmux builds); a shared `test-results/` that one run empties under
+  another.

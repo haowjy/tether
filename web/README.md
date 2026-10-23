@@ -11,6 +11,7 @@ needs to know before editing.
 pnpm --dir web install --frozen-lockfile
 pnpm --dir web run check     # typecheck, lint, source checks, unit tests, build, budgets
 pnpm --dir web run e2e       # Playwright (Chromium and WebKit) on the harness
+pnpm --dir web run e2e:real  # the same browsers against a real daemon and tmux (below)
 pnpm --dir web exec playwright install chromium webkit   # once
 ```
 
@@ -44,6 +45,47 @@ through Tailscale Serve.
    problems can't be reached this way; the harness drives them.
 
 Phone layouts are checked in a real phone browser or the iOS Simulator: there is no fake keyboard.
+
+## End to end against a real daemon
+
+The `*.real.ts` specs (`e2e/terminal/`, `e2e/home/`) run the app against a real tether daemon
+and a private tmux, each describe block on its own isolated stack (`e2e/shared/stack.ts`): a
+daemon started with `--allow-login e2e`, Vite's dev server with the dev proxy, and a small front
+proxy that stands in for Tailscale Serve and answers `/auth/info` itself, since a daemon on this
+machine has no tailscaled to ask. Nothing touches the installed service, Tailscale or your tmux
+sessions; everything lives under `<tmpdir>/e2e-<port>/`.
+
+They are opt-in, never part of preflight. They need a debug build of the daemon
+(`cargo build`) and tmux builds at `~/.cache/tether-tmux/3.4/bin/tmux` and
+`~/.cache/tether-tmux/3.7b/bin/tmux`:
+
+```bash
+cargo build
+pnpm --dir web run e2e:real                       # both tmux versions, both browsers
+TETHER_E2E_TMUX=3.4 pnpm --dir web run e2e:real   # one version
+TETHER_E2E_PORT=5220 TMPDIR=/tmp/some/dir pnpm --dir web run e2e:real   # keep a run's files elsewhere
+```
+
+`TETHER_E2E_KEEP=1` leaves a stack's directory (daemon, Vite and tmux logs) after the run.
+
+## PWA checks that need a real box
+
+`e2e/pwa/` runs the real service worker against a stand-in for the daemon's shell. What needs
+the daemon itself and Tailscale Serve's HTTPS origin, from a second enrolled machine, is by
+hand:
+
+1. `cargo build` embeds `web/dist`. Open the Serve URL in Chromium: `/sw.js` is `no-cache`, the
+   manifest `name` is "tether <host>", and DevTools > Application > Manifest shows no errors and
+   three icons.
+2. Install from the address-bar button; the installed window opens standalone at `/#/`.
+3. Stop the daemon and launch the installed app: Home opens from cache with the host banner.
+4. The precache against the daemon's real caps (4 at once, 16 queued, `503 Retry-After: 1`):
+   the first visit installs every file.
+5. Ship a second build in the daemon binary and tap Update in one of two windows; repeat for
+   two updates in a row.
+6. After a session with a terminal open, Cache Storage holds no `/auth`, `/ws` or `/fs` entry.
+7. iPhone Safari and the installed app: Add to Home Screen shows the icon and "tether <host>";
+   standalone launch; offline launch.
 
 ## Fonts
 
