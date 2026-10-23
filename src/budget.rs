@@ -7,7 +7,47 @@ use std::fmt;
 use tracing::{info, warn};
 
 const MIB: u64 = 1 << 20;
+#[cfg(test)]
+const KIB: u64 = 1 << 10;
+#[cfg(test)]
+const HEADROOM_KIB: u64 = 4 * KIB;
 pub const MINIMUM_MIB: u64 = 42;
+/// Fixed HTTP accept backstop, included in the ceiling and used by `http::server`.
+pub const ACCEPTED_CONNECTIONS: usize = 64;
+
+#[cfg(test)]
+struct MemoryCostTable {
+    daemon: u64,
+    one_shot: u64,
+    tmux_chunks: u64,
+    file_api: u64,
+    http_connection: u64,
+    kernel_socket_buffers: u64,
+    capture_replies: u64,
+    paste_files: u64,
+    raw_responses: u64,
+    control_client: u64,
+    socket: u64,
+    completion: u64,
+}
+
+/// MiB estimates from daemon-core §6.3, rounded up to KiB; HTTP state is 36 KiB per
+/// accepted connection which is not upgraded to a socket.
+#[cfg(test)]
+const COSTS_KIB: MemoryCostTable = MemoryCostTable {
+    daemon: 5 * KIB,
+    one_shot: 5_018, // 4.9 MiB
+    tmux_chunks: 2 * KIB,
+    file_api: 3_584, // 3.5 MiB
+    http_connection: 36,
+    kernel_socket_buffers: 3 * 256,
+    capture_replies: 2 * MIB / KIB,
+    paste_files: MIB / KIB,
+    raw_responses: MIB / KIB,
+    control_client: 5_428, // 5.3 MiB
+    socket: 4_414,         // 4.31 MiB
+    completion: 11_572,    // 11.3 MiB
+};
 
 /// The only memory-dependent daemon caps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +114,29 @@ pub const TIERS: [Tier; 5] = [
 ];
 
 pub const DEFAULT_CAPS: Caps = TIERS[0].caps;
+
+#[cfg(test)]
+fn ceiling_kib(caps: Caps) -> u64 {
+    let fixed = COSTS_KIB.daemon
+        + COSTS_KIB.one_shot
+        + COSTS_KIB.tmux_chunks
+        + COSTS_KIB.file_api
+        + COSTS_KIB.kernel_socket_buffers
+        + COSTS_KIB.capture_replies
+        + COSTS_KIB.paste_files
+        + COSTS_KIB.raw_responses;
+    let unupgraded = u64::try_from(ACCEPTED_CONNECTIONS - caps.sockets)
+        .expect("accepted connection count fits in KiB arithmetic")
+        * COSTS_KIB.http_connection;
+    let control_clients = caps.control_clients as u64 * COSTS_KIB.control_client;
+    let sockets = caps.sockets as u64 * COSTS_KIB.socket;
+    let completion = if caps.completion {
+        COSTS_KIB.completion
+    } else {
+        0
+    };
+    fixed + unupgraded + control_clients + sockets + completion
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budget {
@@ -343,7 +406,7 @@ fn parse_cgroup_limit(text: &str) -> Option<Option<u64>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Caps, DEFAULT_CAPS, MINIMUM_MIB, TIERS};
+    use super::{Caps, DEFAULT_CAPS, HEADROOM_KIB, KIB, MINIMUM_MIB, TIERS, ceiling_kib};
 
     #[test]
     fn tiers_keep_the_round_boundaries_and_caps() {
@@ -385,5 +448,29 @@ mod tests {
         assert_eq!(TIERS.map(|tier| (tier.minimum_mib, tier.caps)), rows);
         assert_eq!(MINIMUM_MIB, 42);
         assert_eq!(DEFAULT_CAPS, rows[0].1);
+    }
+
+    #[test]
+    fn each_tier_ceiling_plus_headroom_fits_only_its_range() {
+        for (index, tier) in TIERS.iter().enumerate() {
+            let budget_kib = tier.minimum_mib * KIB;
+            let ceiling = ceiling_kib(tier.caps);
+            assert!(
+                ceiling + HEADROOM_KIB <= budget_kib,
+                "{} ceiling {ceiling} KiB plus headroom exceeds {} MiB",
+                tier.label,
+                tier.minimum_mib
+            );
+
+            if let Some(higher) = index.checked_sub(1).map(|higher| &TIERS[higher]) {
+                let higher_ceiling = ceiling_kib(higher.caps);
+                assert!(
+                    higher_ceiling + HEADROOM_KIB > budget_kib,
+                    "{} caps unexpectedly fit in the {} MiB tier",
+                    higher.label,
+                    tier.minimum_mib
+                );
+            }
+        }
     }
 }

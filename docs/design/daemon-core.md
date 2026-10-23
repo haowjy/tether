@@ -1313,9 +1313,11 @@ snapshot. Small slots (capture 2, paste 4, raw responses 2), one-shots, scans an
 Blocking lanes and `TasksMax` bound threads, while deadlines and coalescing bound time.
 Completion's constants stay unchanged when it is on; below 53 the service is not
 constructed, `welcome.daemon.completion` is false and a stray `/complete` returns
-`200 {"chips":[]}` without building suggestions. The tier table is in
-`src/budget.rs`; `Caps` has only the three fields above and hub/socket/completion limits
-take their values at construction.
+`200 {"chips":[]}` without building suggestions. The tier table, per-item memory costs
+in KiB, and the test that recomputes each tier's ceiling plus 4 MiB against its range
+(including that the next-higher tier will not fit) live in `src/budget.rs`; `Caps` has
+only the three fields above and hub/socket/completion limits take their values at
+construction.
 
 ### 6.2 Limits
 

@@ -27,10 +27,10 @@ use tower::ServiceExt as _;
 use tracing::{debug, warn};
 
 use super::{App, Ctx, router, ws};
+use crate::budget::ACCEPTED_CONNECTIONS;
 use crate::complete::Completer;
 use crate::fs::Slots;
 
-const CONNECTIONS: usize = 64;
 const HYPER_BUFFER: usize = 16 * 1024;
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(100);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
@@ -55,7 +55,7 @@ pub async fn serve(
     let fs = Slots::new(app.lanes.fs.clone());
     let ctx = Arc::new(Ctx {
         app,
-        accepts: Arc::new(tokio::sync::Semaphore::new(CONNECTIONS)),
+        accepts: Arc::new(tokio::sync::Semaphore::new(ACCEPTED_CONNECTIONS)),
         conns: Arc::new(tokio::sync::Semaphore::new(caps.sockets)),
         pastes: Arc::new(tokio::sync::Semaphore::new(ws::PASTE_SLOTS)),
         fs,
@@ -121,7 +121,7 @@ pub async fn serve(
         }
     }
     // The permit travels through hyper's Upgraded transport, so this includes WebSockets.
-    let permits = u32::try_from(CONNECTIONS).unwrap_or(u32::MAX);
+    let permits = u32::try_from(ACCEPTED_CONNECTIONS).unwrap_or(u32::MAX);
     let _ = timeout_at(deadline, ctx.accepts.acquire_many(permits)).await;
     Ok(())
 }
