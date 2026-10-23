@@ -99,13 +99,10 @@ pub async fn serve(
         if let Err(error) = small_buffers(&stream) {
             debug!(%error, "can't size an accepted socket's buffers");
         }
-        connections.spawn(connection(
-            stream,
-            peer,
-            permit,
-            routes.clone(),
-            shutdown.clone(),
-        ));
+        spawn_and_reap(
+            &mut connections,
+            connection(stream, peer, permit, routes.clone(), shutdown.clone()),
+        );
     }
 
     drop(listener);
@@ -127,6 +124,15 @@ pub async fn serve(
     let permits = u32::try_from(CONNECTIONS).unwrap_or(u32::MAX);
     let _ = timeout_at(deadline, ctx.accepts.acquire_many(permits)).await;
     Ok(())
+}
+
+fn spawn_and_reap(connections: &mut JoinSet<()>, task: impl Future<Output = ()> + Send + 'static) {
+    connections.spawn(task);
+    while let Some(result) = connections.try_join_next() {
+        if let Err(error) = result {
+            warn!(%error, "HTTP connection task failed");
+        }
+    }
 }
 
 fn small_buffers(stream: &TcpStream) -> io::Result<()> {
@@ -222,5 +228,25 @@ impl AsyncWrite for AcceptedStream {
         bufs: &[IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.get_mut().stream).poll_write_vectored(cx, bufs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spawn_and_reap;
+    use tokio::task::JoinSet;
+
+    #[tokio::test]
+    async fn finished_connections_do_not_accumulate_in_the_join_set() {
+        let mut connections = JoinSet::new();
+        for _ in 0..10_000 {
+            spawn_and_reap(&mut connections, async {});
+            tokio::task::yield_now().await;
+            assert!(connections.len() <= 1);
+        }
+        spawn_and_reap(&mut connections, async {});
+        tokio::task::yield_now().await;
+        spawn_and_reap(&mut connections, async {});
+        assert_eq!(connections.len(), 1);
     }
 }
