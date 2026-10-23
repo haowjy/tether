@@ -44,11 +44,15 @@ fn main() {
             raw <= FILE_LIMIT,
             "embedded asset {name} is {raw} bytes (limit {FILE_LIMIT})"
         );
+        // Both copies live in OUT_DIR: web/dist is rewritten by any `npm run build`, which
+        // doesn't rerun this script, so the table must not point into it.
+        let copied = out.join(format!("asset-{index}.raw"));
+        fs::copy(path, &copied).expect("copy asset");
         let gzip = gzip(path);
         let compressed = out.join(format!("asset-{index}.gz"));
         fs::write(&compressed, gzip).expect("write compressed asset");
         let path_text = format!("{:?}", name);
-        let raw_path = format!("{:?}", path);
+        let raw_path = format!("{:?}", copied);
         let gzip_path = format!("{:?}", compressed);
         generated.push_str(&format!(
             "    Asset {{ path: {path_text}, raw: include_bytes!({raw_path}), gzip: include_bytes!({gzip_path}) }},\n"
