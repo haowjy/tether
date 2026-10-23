@@ -1,0 +1,38 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-3) var(--files-inset);
+  list-style: none;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-sunken);
+}
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.item > :first-child { margin-top: var(--space-1); }
+.text { display: flex; flex: 1; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.title { overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ok { color: var(--color-status-live); }
+.error { color: var(--color-status-error); }
+.progress {
+  width: 100%;
+  height: var(--space-1);
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-1);
+  overflow: hidden;
+  background: var(--color-bg-hover);
+  accent-color: var(--color-accent);
+}
+.progress::-webkit-progress-bar { background: var(--color-bg-hover); }
+.progress::-webkit-progress-value { background: var(--color-accent); transition: width var(--duration-2) var(--ease-out); }
+.progress::-moz-progress-bar { background: var(--color-accent); }

@@ -1,3 +1,44 @@
-.files { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.header { padding: var(--space-3) var(--space-gutter); border-bottom: 1px solid var(--color-border); }
-.title { font-size: var(--text-heading); font-weight: var(--weight-bold); }
+.files {
+  /* Content sits in the same centred column as Home on a wide screen; the header, the preview bar and the lists all start at it.
+     The % resolves where it is used: each of them is as wide as .files. */
+  --files-inset: max(var(--space-gutter), calc((100% - 720px) / 2));
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--files-inset);
+  border-bottom: 1px solid var(--color-border);
+}
+.heading { flex: 1; min-width: 0; }
+.title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-heading);
+  font-weight: var(--weight-bold);
+}
+.crumb {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-meta);
+  color: var(--color-text-muted);
+}
+.actions { display: flex; flex: none; align-items: center; gap: var(--space-2); }
+.scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--space-4) var(--files-inset); }
+.scroll[hidden] { display: none; }
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) 0;
+  color: var(--color-text-muted);
+}

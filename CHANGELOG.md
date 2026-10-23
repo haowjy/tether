@@ -13,6 +13,9 @@ version section on release.
 - Terminal: a tab strip and terminal surface sized from the window, desktop keyboard input
   by tmux key name (Shift+Enter, named keys, IME), paste and image paste, a status band
   with Retry, and a "session limit" state that shows the daemon's message and retries.
+- Files: browse folders, preview code, Markdown, images, video and audio, upload several
+  files with progress, and "Insert path into <tab>" for an upload or an open file. Adding a
+  root now means editing `config.toml` on the host.
 - The session-limit message says "1 tmux session" when the limit is one.
 - Show refused auth row names in device listing, list nodes by stored ID, and send
   the native welcome and manifest without waiting for a tailnet refresh.

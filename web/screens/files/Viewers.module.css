@@ -1,0 +1,85 @@
+.preview { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--files-inset);
+  border-bottom: 1px solid var(--color-border);
+}
+.facts { display: flex; flex: 1; flex-wrap: wrap; gap: var(--space-1) var(--space-3); font-size: var(--text-small); color: var(--color-text-muted); }
+.facts:empty { display: none; }
+.viewer { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.loading { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-8) 0; color: var(--color-text-muted); }
+.note { padding: var(--space-3) var(--files-inset) 0; font-size: var(--text-small); color: var(--color-text-muted); text-wrap: pretty; }
+.text { display: flex; flex-direction: column; min-width: 0; }
+
+/* Code. Shiki colours come from the terminal's theme tokens, so both themes work. */
+.code {
+  --shiki-foreground: var(--color-text);
+  --shiki-background: transparent;
+  --shiki-token-constant: var(--term-cyan);
+  --shiki-token-string: var(--term-green);
+  --shiki-token-string-expression: var(--term-green);
+  --shiki-token-comment: var(--color-text-muted);
+  --shiki-token-keyword: var(--term-magenta);
+  --shiki-token-parameter: var(--term-yellow);
+  --shiki-token-function: var(--term-blue);
+  --shiki-token-punctuation: var(--color-text-muted);
+  --shiki-token-link: var(--color-accent);
+  --shiki-token-inserted: var(--term-green);
+  --shiki-token-deleted: var(--term-red);
+  --shiki-token-changed: var(--term-yellow);
+  margin: 0;
+  padding: var(--space-3) var(--files-inset) var(--space-6);
+  overflow-x: auto;
+  font: var(--text-small) / 1.55 var(--font-mono);
+  color: var(--color-text);
+  tab-size: 4;
+}
+.code :global(.line) { display: block; min-height: 1.55em; white-space: pre; }
+.wrap :global(.line) { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Markdown, from a document that is untrusted: element styles only, since the sanitizer strips classes. */
+.md { padding: var(--space-3) var(--files-inset) var(--space-6); font-size: var(--text-body); line-height: 1.55; overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md h1, .md h2, .md h3, .md h4 { margin: 1.4em 0 0.5em; font-weight: var(--weight-bold); line-height: 1.25; text-wrap: balance; }
+.md h1 { font-size: var(--text-title); }
+.md h2 { font-size: var(--text-heading); padding-bottom: var(--space-2); border-bottom: 1px solid var(--color-border); }
+.md h3, .md h4 { font-size: var(--text-body); }
+.md p, .md ul, .md ol, .md pre, .md table, .md blockquote { margin: 0 0 0.9em; }
+.md ul, .md ol { padding-left: 1.4em; }
+.md a { color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px; }
+.md code { padding: 0.1em 0.35em; border-radius: var(--radius-1); background: var(--color-bg-hover); font: 0.86em var(--font-mono); }
+.md pre { padding: var(--space-4); border-radius: var(--radius-2); background: var(--color-bg-sunken); overflow-x: auto; }
+.md pre code { padding: 0; background: none; font-size: var(--text-small); line-height: 1.5; }
+.md blockquote { padding-left: var(--space-4); border-left: 3px solid var(--color-border); color: var(--color-text-muted); }
+.md table { display: block; overflow-x: auto; border-collapse: collapse; font-size: var(--text-small); }
+.md th, .md td { padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); }
+.md hr { margin: 1.5em 0; border: 0; border-top: 1px solid var(--color-border); }
+.md img { max-width: 100%; height: auto; }
+/* An image the document points outside this host loses its source: show nothing. */
+.md img:not([src]):not([data-src]) { display: none; }
+
+/* Images. */
+.image { position: relative; flex: 1; min-height: 12rem; overflow: hidden; background: var(--color-bg-sunken); touch-action: none; cursor: grab; }
+.image img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; }
+.shown { opacity: 1; }
+.pending { opacity: 0; }
+.status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--color-text-muted); }
+
+/* Video and audio. */
+.media { display: flex; flex: 1; align-items: center; justify-content: center; padding: var(--space-4) var(--files-inset); background: var(--color-bg-sunken); }
+.media video { width: 100%; max-height: 100%; border-radius: var(--radius-2); background: var(--color-bg-sunken); }
+.media audio { width: 100%; }
+
+/* Details, for what has no viewer. */
+.panel { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-4); padding: var(--space-4) var(--files-inset); }
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); width: 100%; font-size: var(--text-small); }
+.meta dt { color: var(--color-text-muted); }
+.meta dd { margin: 0; overflow-wrap: anywhere; }
+.mono { font-family: var(--font-mono); }
+
+/* A toggle button shows its state: the quiet button gains a fill while pressed. */
+.toggle[aria-pressed="true"] { background: var(--color-bg-selected); color: var(--color-text); }

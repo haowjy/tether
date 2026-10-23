@@ -1,0 +1,21 @@
+.wrap { display: flex; flex-direction: column; gap: var(--space-3); }
+/* One grouped list: the rows share a border and are told apart by hairlines, since a folder can hold 200. */
+.list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-bg-raised);
+  overflow: hidden;
+}
+.list .item {
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.list .item:last-child { border-bottom: 0; }
+.list .item:disabled { color: var(--color-text-muted); cursor: default; }
+.list .item:disabled:hover { background: var(--color-bg-raised); }
+.more { display: flex; justify-content: center; padding: var(--space-2) 0; }
+.note { font-size: var(--text-small); color: var(--color-text-muted); text-wrap: pretty; }
+.footer { display: flex; justify-content: center; padding-bottom: var(--space-3); }

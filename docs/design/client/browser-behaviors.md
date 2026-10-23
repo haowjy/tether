@@ -92,7 +92,11 @@ Initial entry opens Home. Sessions is the initial Home destination. Desktop Home
 - Files open a preview. Back from preview returns to its containing folder. The prototype includes sample folders and text previews, not real FS access or format rendering.
 - Matching navigation treatment: same row height, padding, leading icon position, text size, metadata alignment, trailing chevron, and hover/focus treatment as session rows.
 - Different semantics remain visible: session disclosure chevron rotates down when expanded; folder chevron points right to drill in. Both share aligned leading icon/text/metadata positions, while indented window rows use a terminal glyph and no chevron. Files/folders are not falsely presented as expandable trees.
-- Root selection, media/file viewing, permissions, size limits, and error handling remain governed by existing fs spec. Upload/path insertion route is specified below. They are not redesigned or claimed complete in these layout mockups. No delete/move/rename controls are added.
+- Roots are listed first. Adding or removing a root and moving the uploads folder happen in `config.toml` on the host; the roots list and its empty state say so. The Files rail button and Home's Files tab return to the last folder or preview; the in-app back button goes up one place, and the browser's Back returns to the previous one without a new request when its folder is still loaded.
+- Folder rows show an icon, name and chevron; file rows add a size. A link that cannot open says why (“Broken link”, “Not a file”) and is disabled. A folder past the daemon's scan cap says it is too big to list in full. Further pages load as the end of the list nears the screen, with “Show more” as the fallback. Hidden files are behind a quiet toggle under the list.
+- Previews: code (14 grammars, plain text for the rest), Markdown (relative links open the file here, web links go to the browser), images (zoom and pan), video and audio (inline in the browser; native keeps its own player), and binary files (“Open as text”).
+- Loading and failure never look like an empty list: a spinner with words, or the refusal in plain words with “Try again”.
+- Root selection, permissions, size limits, and error handling remain governed by existing fs spec. Upload/path insertion route is specified below. They are not redesigned or claimed complete in these layout mockups. No delete/move/rename controls are added.
 
 ## Persistence and input
 
@@ -106,7 +110,7 @@ Initial entry opens Home. Sessions is the initial Home destination. Desktop Home
 
 ## File upload and path insertion
 
-Keep the existing MVP outcome without adding Files to terminal +. In Files, upload uses the browser/native file picker into the configured uploads folder. Completion offers a preview and “Insert path into <active tab>”. A file preview has the same insert action for existing files. The action inserts a shell-escaped absolute canonical path into the named active tab without Enter, then returns to that terminal. It never executes the path.
+Keep the existing MVP outcome without adding Files to terminal +. In Files, upload uses the browser/native file picker into the configured uploads folder. Several files may be picked at once; one uploads at a time and at most four are held, and a fifth is refused with “Wait for the current uploads to finish”. Completion adds a row to the list, with progress while running, then the saved name, “Insert path into <active tab>” and Preview; the screen does not navigate away from the folder. A file preview has the same insert action for existing files. The action inserts a shell-escaped absolute canonical path into the named active tab without Enter, then returns to that terminal. It never executes the path.
 
 When there is no eligible connected tab, insertion is disabled with “Open a terminal tab first”; files still remain accessible. If the target disappears or disconnects, insertion fails visibly without sending into a different tab. The target ID is captured on click, not selected by matching its name. User can return to Terminal to select a different tab and return to Files; preview context remains. Upload itself and actual bytes/path insertion are not implemented in this mockup; the existing-file preview action demonstrates the return route and reports simulated insertion.
 

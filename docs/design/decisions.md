@@ -2695,3 +2695,31 @@ the p61 review. The product calls behind it are Jimmy's
   `visibility: hidden` for the blank surface (its input must stay focusable); clearing
   the buffer on a tab switch; treating `limited` as a halt; resetting the backoff on
   Retry; guessing wrap from row fullness.
+
+## Files details
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** the `FileBrowser` no longer has Settings or a `$HOME` picker, so adding or
+  removing a root and moving `uploads_dir` happen in `config.toml` on the host (the roots
+  list says so); the `/fs/roots/*`, `/fs/uploads-dir` and `/fs/dirs` client methods stay in
+  `files/api.ts`. The router owns the Files place and `FileBrowser` follows it, so Back from
+  a preview to a loaded folder makes no request; `go("files")` returns to the last place and
+  the in-app back button is `toParent(place)`. Files does not open at the active tab's
+  directory. An upload's completion shows a row in a panel above the list, with "Insert path
+  into <tab>" and Preview, and does not navigate. The browser picks several files; one
+  request runs at a time and four are held, and a fifth is refused with "Wait for the
+  current uploads to finish". Progress uses `XMLHttpRequest`, since `fetch` has no upload
+  progress in Safari. The insert target is the tab active when the action starts, and a
+  closed target disables the offer. Rows are one grouped list with hairlines. The hidden
+  files toggle sits under the list. A Markdown document keeps its heading levels. Syntax
+  colours reuse the `--term-*` tokens. The viewer ships 14 grammars: bash, c, diff, go,
+  javascript, json, markdown, python, rust, swift, toml, tsx, typescript and yaml; `.jsx`
+  uses javascript.
+- **Why:** the file manager is for browsing and getting a path into a terminal; a folder
+  can hold hundreds of rows; jumping to a preview would pull the user out of the folder
+  they were in.
+- **Rejected:** keeping root editing in the app for a Settings lane (unused code, no UI);
+  jumping to the preview on upload completion; bordered cards for file rows; a single
+  upload per pick; demoting Markdown heading levels, which changes the document; plain
+  text for `.tsx` (the lead added the grammar, about 17 KB gzipped, loaded on demand);
+  Shiki's `typescript` grammar on JSX, which mis-colours it.
