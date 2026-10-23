@@ -458,7 +458,13 @@ fn check_against_tmux(server: &Server, snap: &Snap, pane: &str) {
 /// The number of an `L<n>` line, `\r` and all.
 fn numbered(line: &[u8]) -> Option<u32> {
     let digits = line.strip_prefix(b"L")?;
-    let digits = digits.strip_suffix(b"\r").unwrap_or(digits);
+    // The pty sometimes delivers `\r\r\n` (pipe-pane sees it too, on 3.4 through 3.8);
+    // it renders like `\r\n`, so any run of CRs ends the line.
+    let end = digits
+        .iter()
+        .rposition(|b| *b != b'\r')
+        .map_or(0, |at| at + 1);
+    let digits = &digits[..end];
     if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
         return None;
     }
