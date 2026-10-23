@@ -1,27 +1,35 @@
-# browser-auth revision 4: edits other drafts need
+# browser-auth: edits other drafts need (revision 5)
 
-browser-auth.md revision 4 admits browsers as enrolled tailnet nodes and moves the
-daemon onto a Unix socket (its D1). These lines in sibling drafts in this directory
-then go stale. They were left unedited, because each draft has its own owner. The
-build that lands them should carry these changes.
+browser-auth.md revision 5 keeps the daemon on Unix sockets, but splits the one
+`http.sock` into two fronts (`serve.sock` for tailscaled, `local.sock` for the dev
+proxy and tests), chooses the lane by the socket instead of the peer's uid, adds a
+lock file and moves pastes to `paste/`. These lines in sibling drafts in this
+directory go stale. They were left unedited, because each draft has its own owner;
+the build that lands them should carry these changes.
 
-## resource-limits.md
+Revision 4's list for resource-limits.md (backlog, shell deadline, pass rule, whois
+row, units, accept loop, R3 wording) is done in resource-limits revision 2 and is
+dropped from here.
+
+## resource-limits.md (revision 2)
 
 | Line | Now | Becomes |
 |---|---|---|
-| 167, limits table, connection permits | "the kernel's backlog of 32 holds newcomers" | "the listen backlog (`somaxconn`; Unix socket) holds newcomers" |
-| 203, limits table, shell | "shell stall; response deadline† — 30 s; 60 s" | "shell stall† — 30 s" (no whole-response deadline: review 3 M3) |
-| 253 and 655 (R3), pass rule | `anon + kernel + sock − slab_reclaimable` | `anon + shmem + file_dirty + file_writeback + kernel + sock − slab_reclaimable` (review 3 M2: paste files on tmpfs and upload dirty pages can't be dropped) |
-| §6.3 ceiling table | no whois row | add "whois: 2 in flight × (64 KiB answer + parse)", about 0.2 MB, unreclaimable, every tier |
-| §6.3 and §1, units | ceiling in MB against a budget in MiB | state both in MiB, or convert the budget once (72 MiB = 75.5 MB) |
-| §6.2 route caps | no whois | "whois: 2 in flight, 16 waiting, the 17th `503 busy` at once" |
-| §3.6, "The accept loop" moved into daemon-core | `TcpListener`, `ConnectInfo<SocketAddr>`, hyper-util `GracefulShutdown` | the Unix-socket listener with `SO_PEERCRED` peer class; a per-connection `select!` calling `UpgradeableConnection::graceful_shutdown()` (review 3 M1); "waiters bounded by count" excepts the auth lane |
-| R3 | "the shell's two-profile cold load" | "two browsers' cold load" (one enrolment per machine now) |
+| 101, 634, 655 | "the Unix socket" | "the Unix sockets" (`serve.sock`, `local.sock`) |
+| 201, limits table, connection permits | "`somaxconn` on the Unix socket†" | "`somaxconn` on each Unix socket†"; both share the 64 permits |
+| 236 and 680, whois route cap | "16 waiting" | "16 distinct addresses waiting; a request joining an in-flight or queued call takes no slot" (review 4 L1) |
+| 267, ceiling table | "whois†: an answer and its parse — 2 in flight × (64 KiB + parse) — 0.2" | "LocalAPI answers†: 2 whois + 1 tailnet-state read, each 64 KiB + parse — 0.3"; the ceilings rise by about 0.1 MiB |
+| 696, §3.7 accept loop | "accepts on the daemon's Unix socket, `$XDG_RUNTIME_DIR/tether/http.sock`" | "accepts on the daemon's two Unix sockets, `serve.sock` and `local.sock` in `$XDG_RUNTIME_DIR/tether/`"; `serve.sock` closes a connection from any uid but tailscaled's at accept |
+| 709–710, §3.7 | "the `SO_PEERCRED` peer class (tailscaled peer or local peer)†" | "the front (`Front::Serve` or `Front::Local`)†" |
+| 906, disposition | "`SO_PEERCRED` peer class" | "front" |
+| "Still open", browser auth's startup refusals | open | answered: the runtime directory's refusals (no `XDG_RUNTIME_DIR` on Linux; wrong owner, mode or type) exit 78; "already running" (the lock is held) exits 1; Funnel is no longer a startup refusal |
+| §3.4 running.md, §3.6 CHANGELOG bullet | TCP publication | add browser-auth §5 "running.md": the `sudo tailscale serve … unix:…/serve.sock` command, the upgrade from loopback TCP, and that every later `tailscale serve` change needs sudo |
 
 ## Elsewhere in the work item
 
-- `checkpoint.md`: the open auth question moves from "cookie draft ready for decision"
-  to "node-identity draft (rev 4) awaiting Jimmy's D1–D3 and a review round".
-- Any implementation plan step that builds `__Host-tether`, sibling detection, or the
-  `/auth/browser/*` routes is replaced by `/auth/node/*` and the steps in
-  browser-auth.md §3.
+- `checkpoint.md`: the open auth question moves to "node-identity draft rev 5: D1–D3
+  settled by the tech lead (Unix sockets, Tailscale ≥ 1.100, sudo for serve
+  changes); awaiting review round 5".
+- Any implementation plan step that builds `__Host-tether`, sibling detection,
+  `browser_origin`, or the `/auth/browser/*` routes is replaced by `/auth/node/*` and
+  the steps in browser-auth.md §3.
