@@ -2664,3 +2664,34 @@ the p61 review. The product calls behind it are Jimmy's
   shifts every row on each Home entry; the large empty-state block for no open tabs, which
   pushed sessions down about 120 px; `<node>` copy that reads "this device" because the
   name was unavailable; a separate host record in storage for the offline name.
+
+## Terminal and desktop input details
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** the renderer, its element and every driver live in
+  `screens/terminal/terminals.ts`, outside Preact; the screen places the element and draws
+  state. Cmd combinations stay the browser's on every platform and Ctrl+Shift+C copies on
+  every platform, because telling macOS apart needs `navigator`, which only `platform/`
+  may read. Keystrokes batch for 8 ms into one `input` message. tmux is sized by one
+  formula over the stable box, the chrome measured from the surface only while no
+  software keyboard is up; the first `watch` waits for fonts and a measured box, so tmux
+  never sees 80x24. The surface stays hidden until the shown tab's own snapshot paints.
+  `limited` is a connection state: the reducer keeps the daemon's message, climbs the
+  backoff on each refusal, and Retry asks at once without resetting the count. A restored
+  tab reads "Checking…" in the reconnecting colour until a `watching` reply or the first
+  listing proves its window. The desktop toolbar ends with the host's name, coloured by
+  the active tab's connection. A paste is one `paste` message from a capture-phase
+  listener, refused over 256 KiB, and reported as "sent", never "inserted"; an image
+  paste uploads, then types the quoted path into the tab it was pasted in only if that tab
+  is live. `bufferText({ from, to })` joins rows by `isWrapped`.
+  `tests/fixtures/proto/keys.json` lists all 306 key names the handler can make.
+- **Why:** a screen that unmounts under an admission problem must not lose the buffer or
+  a watch (§6.5); the daemon answers a burst of inputs with a `busy` that names no
+  request, so characters vanished under load in WebKit; a native web view that shrinks
+  for the keyboard must never change tmux's size.
+- **Rejected:** a component that owns the renderer; a context provider in `app/` for state
+  one screen reads; a `mac` field on `Viewport` or a lint exemption for `navigator`; one
+  message per keystroke, and a longer batch window, which adds echo latency for nothing;
+  `visibility: hidden` for the blank surface (its input must stay focusable); clearing
+  the buffer on a tab switch; treating `limited` as a halt; resetting the backoff on
+  Retry; guessing wrap from row fullness.

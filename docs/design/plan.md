@@ -671,7 +671,8 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
     shell/        rail, destination frame and host banner
     home/         open tabs, sessions list, creation dialogs and phone bottom nav
     picker/       Open session picker
-    terminal/     tab strip, terminal surface, status band and draft slot
+    terminal/     tab strip, terminal surface, status band and draft slot; terminals.ts
+                  holds the renderer and every tab's driver outside Preact
     files/        folder list, preview, upload and path insertion
     enrol/        enrolment and admission-problem screens
     settings/     Remove this device, Clear local data, Add to Home Screen

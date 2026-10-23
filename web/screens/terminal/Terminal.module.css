@@ -1,0 +1,51 @@
+.terminal { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.terminal[hidden] { display: none; }
+.toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--toolbar-height);
+  padding: 0 var(--space-2);
+  background: var(--color-bg-raised);
+}
+.toolbar[data-layout="desktop"] { border-bottom: 1px solid var(--color-border); }
+.toolbar[data-layout="phone"] { border-top: 1px solid var(--color-border); padding-bottom: var(--safe-bottom); }
+
+/* The host's name, in the connection colour of the tab on screen: a label, never a dot. */
+.hostLabel {
+  flex: none;
+  margin-left: auto;
+  padding: 0 var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--color-text-muted);
+}
+.hostLabel[data-tone="live"] { color: var(--color-status-live); }
+.hostLabel[data-tone="reconnecting"] { color: var(--color-status-reconnecting); }
+.hostLabel[data-tone="error"] { color: var(--color-status-error); }
+
+.surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--term-bg);
+}
+/* The renderer's element, placed by terminals.ts. It is the stable box tmux is sized from: the
+   status band and the empty state float over it and reserve nothing, so showing either never
+   resizes tmux. The surface owns every touch (a recognizer decides tap, scroll and hold), and
+   iOS shows no callout or text selection of its own. */
+.host {
+  position: absolute;
+  inset: var(--space-2) var(--space-3);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--term-font-size);
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* Nothing of another tab, and no cursor on an empty screen, until this tab's snapshot lands. */
+.host[data-blank] { opacity: 0; } /* not visibility: its input must stay focusable */
+.empty { position: absolute; z-index: var(--z-band); inset: 0; display: grid; place-items: center; pointer-events: none; }

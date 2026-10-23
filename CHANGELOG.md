@@ -10,6 +10,9 @@ version section on release.
   (loading, offline, refused, no tmux server, stale with Retry), and Settings with Remove
   this device, Clear local data and Add to Home Screen steps. An offline launch says "Can't
   reach <host>" and its tabs read "Reconnecting…".
+- Terminal: a tab strip and terminal surface sized from the window, desktop keyboard input
+  by tmux key name (Shift+Enter, named keys, IME), paste and image paste, a status band
+  with Retry, and a "session limit" state that shows the daemon's message and retries.
 - The session-limit message says "1 tmux session" when the limit is one.
 - Show refused auth row names in device listing, list nodes by stored ID, and send
   the native welcome and manifest without waiting for a tailnet refresh.
