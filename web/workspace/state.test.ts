@@ -106,6 +106,15 @@ describe("what is on screen", () => {
     const s = open(initialWorkspace, 1).state;
     expect(reduce(s, { type: "navigated", onTerminal: true }).effects.some((e) => e.type === "save")).toBe(false);
   });
+
+  it("does not save when only what is not saved changed (restoring, index)", () => {
+    const restored = reduce(initialWorkspace, { type: "restored", saved: saved([1], 1) }).state;
+    const proven = reduce(restored, { type: "watching", id: tabId(key(1)) });
+    expect(proven.effects.some((e) => e.type === "save")).toBe(false);
+    const moved = reduce(proven.state, { type: "listing", hostId: "h1", listing: { ...listing("main:1-1", [1]), sessions: [{ id: 1, name: "s", attachedElsewhere: false, windows: [{ id: 1, index: 7, name: "w1", active: false, activity: 0 }] }] } });
+    expect(moved.state.tabs[0]?.index).toBe(7);
+    expect(moved.effects.some((e) => e.type === "save")).toBe(false);
+  });
 });
 
 describe("restore and pruning", () => {

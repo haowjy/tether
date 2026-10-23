@@ -40,6 +40,8 @@ export class TabDriver {
   private state: ConnectionState = initialState;
   private covered = false;
   private watchId: number | null = null;
+  /** The size the daemon last heard for the current watch (in `watch`, or a `resize`). */
+  private sentSize: Size | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly pendingInserts: string[] = [];
 
@@ -91,9 +93,9 @@ export class TabDriver {
     this.opts.host.nudge();
   }
 
-  /** Rotation or font change only. */
+  /** Rotation or font change only. A resize that finds the watch in flight is sent when it binds. */
   resize(size: Size): void {
-    if (this.bound) this.send({ type: "resize", data: { watch: this.watchId ?? 0, size } });
+    if (this.bound) this.sendSize(size);
   }
 
   /** Input goes only to a bound watch; otherwise it is dropped and `false` returned. */
@@ -103,14 +105,19 @@ export class TabDriver {
     return true;
   }
 
-  /** Types the path, quoted and without Enter: now if bound, else at the next `watching`. */
-  insertPath(path: string): void {
-    if (this.state.kind === "closed") {
+  /**
+   * Types the path, quoted and without Enter: now if bound, else at the next `watching`.
+   * Returns whether it was typed now. A path still waiting when the tab loses its
+   * connection or closes is dropped with a notice.
+   */
+  insertPath(path: string): boolean {
+    if (this.state.kind === "closed" || this.state.kind === "reconnecting" || this.state.kind === "limited") {
       this.dropInsert(path);
-      return;
+      return false;
     }
     this.pendingInserts.push(path);
     this.flushInserts();
+    return this.pendingInserts.length === 0;
   }
 
   /**
@@ -186,7 +193,7 @@ export class TabDriver {
     this.dispatch({ type: "windowClosed" });
   }
 
-  /** The user closed the tab. */
+  /** The user closed the tab. This ends its watch on the daemon, which caps watches per connection. */
   close(): void {
     this.dispatch({ type: "userClosed" });
   }
@@ -215,17 +222,21 @@ export class TabDriver {
         break;
       case "reconnecting":
         this.watchId = null;
+        this.dropInserts("the tab lost its connection");
         // With the socket down, the host is the one retrying; this timer is for a failed watch.
         if (next.retryInMs !== null && this.opts.host.ready) this.retryTimer = setTimeout(() => { this.dispatch({ type: "retry" }); }, next.retryInMs);
         break;
       case "limited":
         this.watchId = null;
+        this.dropInserts("the tab couldn't connect");
         this.retryTimer = setTimeout(() => { this.dispatch({ type: "retry" }); }, next.retryInMs);
         break;
       case "closed":
+        // Every way a tab ends comes through here: the daemon must hear it, or the watch and its tmux client leak.
+        if (this.watchId !== null) this.send({ type: "unwatch", data: { watch: this.watchId } });
         this.watchId = null;
         this.opts.host.leave(this.port);
-        for (const path of this.pendingInserts.splice(0)) this.dropInsert(path);
+        this.dropInserts("the tab closed");
         break;
       case "live":
         break;
@@ -235,7 +246,8 @@ export class TabDriver {
   private watchIfReady(): void {
     if (this.state.kind !== "connecting" || !this.opts.host.ready || this.covered || this.watchId !== null) return;
     this.watchId = this.opts.host.nextWatch();
-    this.send({ type: "watch", data: { watch: this.watchId, window: this.opts.window, size: this.opts.size() } });
+    this.sentSize = this.opts.size();
+    this.send({ type: "watch", data: { watch: this.watchId, window: this.opts.window, size: this.sentSize } });
   }
 
   private onMessage(msg: ServerMsg): void {
@@ -245,6 +257,8 @@ export class TabDriver {
       case "watching":
         if (msg.data.watch !== this.watchId) break;
         this.dispatch({ type: "bound" });
+        // The terminal may have changed size while the watch was in flight.
+        this.sendSize(this.opts.size());
         this.opts.onWatching?.(msg.data);
         this.flushInserts();
         break;
@@ -277,8 +291,18 @@ export class TabDriver {
     }
   }
 
-  private dropInsert(path: string): void {
-    this.opts.onNotice(`Could not insert ${path.split("/").pop() ?? path}: the tab closed.`);
+  private sendSize(size: Size): void {
+    if (this.watchId === null || (this.sentSize?.cols === size.cols && this.sentSize.rows === size.rows)) return;
+    this.sentSize = size;
+    this.send({ type: "resize", data: { watch: this.watchId, size } });
+  }
+
+  private dropInsert(path: string, why = "the tab isn't connected"): void {
+    this.opts.onNotice(`Could not insert ${path.split("/").pop() ?? path}: ${why}.`);
+  }
+
+  private dropInserts(why: string): void {
+    for (const path of this.pendingInserts.splice(0)) this.dropInsert(path, why);
   }
 
   private jitter(): number {

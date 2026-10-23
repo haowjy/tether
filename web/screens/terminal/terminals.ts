@@ -153,8 +153,10 @@ export class Terminals extends Store<TerminalsView> {
         output: (bytes) => { this.renderer?.output(bytes); },
         snapshot: async (snapshot) => {
           await this.renderer?.snapshot(snapshot);
+          // The surface now holds this tab's content, whichever tab is on screen by the time xterm finished parsing.
           this.painted = id;
-          this.element.removeAttribute("data-blank");
+          if (this.shown === id) this.element.removeAttribute("data-blank");
+          else this.element.dataset["blank"] = "true";
         },
       },
       host: client.socket,
@@ -169,7 +171,7 @@ export class Terminals extends Store<TerminalsView> {
     // `insertPath` is Files' way in (`AppController.insertPath`): the driver quotes the path, types it with
     // no Enter into this tab only once it is watching, and reports it if the tab closes first.
     const handle: TabHandle = {
-      insertPath: (path) => { driver.insertPath(path); },
+      insertPath: (path) => driver.insertPath(path),
       cover: () => {
         if (this.shown === id) this.shown = null;
         driver.cover();
@@ -193,6 +195,7 @@ export class Terminals extends Store<TerminalsView> {
       retryAt: state.kind === "reconnecting" && state.retryInMs !== null ? now + state.retryInMs : state.kind === "limited" ? now + state.retryInMs : null,
     };
     this.update({ tabs: { ...this.snapshot.tabs, [id]: status } });
+    this.app.setTabOffline(id, state.kind === "reconnecting" || state.kind === "limited");
     if (state.kind !== "closed") return;
     // A window or server that went away closes the tab; a tab the user closed already left.
     if (state.reason === "windowClosed") this.app.dispatch({ type: "windowClosed", id });
@@ -350,9 +353,10 @@ export class Terminals extends Store<TerminalsView> {
       } else if ("path" in event) {
         const name = event.path.split("/").pop() ?? event.path;
         // The tab may have closed or lost its connection: the file stays in Files.
-        if (this.connected(id)) {
-          this.drivers.get(id)?.insertPath(event.path);
-          this.app.notify(`Inserted ${shellQuote(name)}`);
+        const driver = this.drivers.get(id);
+        if (driver && this.connected(id)) {
+          // The tab may be covered: the path then waits for it to watch again.
+          this.app.notify(driver.insertPath(event.path) ? `Inserted ${shellQuote(name)}` : `Uploaded ${name}: its path will be inserted when you return to that tab`);
         } else {
           this.app.notify(`Uploaded ${name}, but the path wasn't inserted: the tab isn't connected. The file is in Files.`);
         }

@@ -24,7 +24,7 @@ export interface TabHandle {
   cover(): void;
   uncover(): void;
   /** The tab's driver quotes `path` and types it, with no Enter, once its watch is bound. */
-  insertPath(path: string): void;
+  insertPath(path: string): boolean;
 }
 
 export interface AppView {
@@ -36,6 +36,8 @@ export interface AppView {
   hosts: HostClient[];
   /** One message at a time, for the polite live region. */
   notice: string | null;
+  /** Tabs whose connection failed (reconnecting, or refused for the session limit): Insert path is not offered for them. */
+  tabsOffline: readonly string[];
   /** The database was closed for a newer build's schema upgrade: later writes stay in memory. */
   storageClosed: boolean;
   update: UpdateState;
@@ -75,6 +77,7 @@ export class AppController extends Store<AppView> {
       nav: { destination: router.entry.destination, entry: router.entry },
       hosts: [],
       notice: null,
+      tabsOffline: [],
       storageClosed: false,
       update: "none",
     });
@@ -143,6 +146,13 @@ export class AppController extends Store<AppView> {
     const handle = this.drivers.get(id);
     handle?.insertPath(path);
     return handle !== undefined;
+  }
+
+  /** The terminal lane reports each tab whose connection failed, and clears it when the tab recovers or closes. */
+  setTabOffline(id: string, offline: boolean): void {
+    const { tabsOffline } = this.snapshot;
+    if (tabsOffline.includes(id) === offline) return;
+    this.update({ tabsOffline: offline ? [...tabsOffline, id] : tabsOffline.filter((t) => t !== id) });
   }
 
   /** A message for the polite live region, replaced by the next. */

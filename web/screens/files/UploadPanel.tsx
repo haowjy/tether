@@ -49,7 +49,7 @@ function Item({ session, item, onPreview }: { session: FilesSession; item: Uploa
           <Button
             variant="primary"
             icon="terminal"
-            disabledReason={target ? undefined : item.target === null ? "Open a terminal tab first" : "That tab was closed"}
+            disabledReason={target ? (target.blocked ?? undefined) : item.target === null ? "Open a terminal tab first" : "That tab was closed"}
             onClick={() => { if (insertPath(app, item.target ?? "", item.path)) dismiss(); }}
           >
             {target ? `Insert path into ${target.label}` : "Insert path"}

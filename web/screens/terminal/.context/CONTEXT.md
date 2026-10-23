@@ -13,13 +13,16 @@ The Terminal destination. The design is client-architecture.md §5.4, §6.4, §6
   ones go out 150 ms after the last change (`term/size.ts`).
 - **The surface hides until a tab's own snapshot has painted** (`data-blank`), so no tab shows
   another's content, and an empty terminal never looks live. Reconnecting keeps the last content.
+  A snapshot that finishes parsing after the user switched tabs records `painted` (the surface
+  holds that tab's content) but unblanks only if its tab is still the one shown.
 - **Keystrokes are batched for 8 ms.** The daemon answers a burst of separate `input` messages
   with `busy` and, with no `req`, the client never learns: characters were lost under load. The
   batch goes to the tab that was shown when the keys were typed, in order, and before any paste.
 - **For other lanes.** Insert path reaches a tab through `TabHandle.insertPath`, which each driver
   registers with `attachDriver`: quoted, no Enter, into that tab only, once it is watching, with a
-  notice if the tab closes first. A screen that disables the action while no tab is connected reads
-  `connected(tabId)` through `useStore(terminalsOf(app), ...)`. P3 reads `term/index.ts`:
+  notice if the tab closes or loses its connection first. `Terminals` reports each tab whose
+  connection failed to `AppController.setTabOffline`; a screen that disables the action reads
+  `AppView.tabsOffline`. P3 reads `term/index.ts`:
   `bufferText`, `mouseMode`, `cellAt`, `setPanArea`; and `tabs/keymap.ts` (`decideKey(event, "owned")`).
 - **Cmd combinations are the browser's, everywhere, and Ctrl+Shift+C copies everywhere.** Telling
   macOS from the rest needs `navigator`, which only `platform/` may read; no terminal key is lost

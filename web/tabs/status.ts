@@ -61,7 +61,8 @@ export function describe(state: ConnectionState, downSince: number, retryAt: num
       break;
   }
   const unreachable = now - downSince >= UNREACHABLE_AFTER_MS;
-  const detail = unreachable ? hostProblem("unreachable", host).title : `Reconnecting to ${host}`;
+  // A failed watch on a live socket: the daemon's reason, not a network blame.
+  const detail = state.message ?? (unreachable ? hostProblem("unreachable", host).title : `Reconnecting to ${host}`);
   if (retryAt === null) return { tone: "waiting", short: "retry", detail, hint: null, action: "Retry" };
   const seconds = Math.max(0, Math.ceil((retryAt - now) / 1000));
   const when = seconds === 0 ? "now" : `${String(seconds)}s`;

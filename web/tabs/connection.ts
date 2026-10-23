@@ -15,7 +15,7 @@ export type ConnectionState =
   | { kind: "connecting"; attempt: number }
   | { kind: "live" }
   /** `retryInMs` is null when only a nudge (visible, online, pill tap) can resume. */
-  | { kind: "reconnecting"; attempt: number; retryInMs: number | null; halt: Halt | null }
+  | { kind: "reconnecting"; attempt: number; retryInMs: number | null; halt: Halt | null; message?: string }
   /** The daemon refused the watch for its session limit (resource-limits.md §3.6); `attempt` climbs the backoff. */
   | { kind: "limited"; attempt: number; retryInMs: number; message: string | undefined }
   | { kind: "closed"; reason: "windowClosed" | "serverExited" | "user" };
@@ -76,7 +76,10 @@ export function reduce(state: ConnectionState, event: ConnectionEvent): Connecti
         const attempt = state.kind === "connecting" ? state.attempt : 0;
         return { kind: "limited", attempt: attempt + 1, retryInMs: backoffMs(attempt, event.jitter), message: event.message };
       }
-      return event.reason === "detached" ? lost(0, null, "detached") : lost(0, backoffMs(0, event.jitter), null);
+      if (event.reason === "detached") return lost(0, null, "detached");
+      // A refused watch climbs the backoff like a refused socket, so a watch tmux keeps failing is not retried at 2 Hz forever.
+      const attempt = state.kind === "connecting" ? state.attempt : 0;
+      return { ...lost(attempt + 1, backoffMs(attempt, event.jitter), null), ...(event.message !== undefined && { message: event.message }) };
     case "retry":
       if (state.kind === "limited") return { kind: "connecting", attempt: state.attempt };
       return state.kind === "reconnecting" && state.retryInMs !== null

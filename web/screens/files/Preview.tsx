@@ -56,13 +56,14 @@ function InsertBar({ file, children }: { file: FileRef; children?: ComponentChil
   const active = useAppView((v) => v.workspace.active);
   // Re-read when tabs change: the label follows renames, and a closed tab disables the button.
   useAppView((v) => v.workspace.tabs);
+  useAppView((v) => v.tabsOffline);
   const target = insertTarget(app, active);
   return (
     <div class={styles.bar}>
       <Button
         variant="primary"
         icon="terminal"
-        disabledReason={target ? undefined : "Open a terminal tab first"}
+        disabledReason={target ? (target.blocked ?? undefined) : "Open a terminal tab first"}
         onClick={() => { if (target) insertPath(app, target.id, file.path); }}
       >
         {target ? `Insert path into ${target.label}` : "Insert path"}

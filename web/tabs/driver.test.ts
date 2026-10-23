@@ -17,11 +17,12 @@ function setup() {
     output: (b) => painted.push(`o:${dec.decode(b)}`),
     snapshot: (s: Snapshot) => { painted.push(`s:${dec.decode(s.restore)}`); return Promise.resolve(); },
   };
+  let size = { cols: 80, rows: 24 };
   const tab = new TabDriver({
     window: window1,
     renderer,
     host,
-    size: () => ({ cols: 80, rows: 24 }),
+    size: () => size,
     onState: (s) => states.push(s),
     onNotice: (n) => notices.push(n),
     random: () => 0.5,
@@ -33,7 +34,8 @@ function setup() {
   /** Welcome and bind watch 1. */
   const bind = (): FakeLink => { link().welcome(); link().say(watching(1)); return link(); };
   const state = (): ConnectionState => states[states.length - 1] as ConnectionState;
-  return { tab, links, link, events, painted, notices, watching, bind, state };
+  const resizeTo = (cols: number, rows: number): void => { size = { cols, rows }; };
+  return { tab, links, link, events, painted, notices, watching, bind, state, resizeTo };
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
@@ -83,6 +85,49 @@ describe("watching", () => {
   });
 });
 
+describe("ending a tab", () => {
+  it("tells the daemon when the user closes a bound tab, or one whose watch is still in flight", () => {
+    const t = setup();
+    const l = t.bind();
+    t.tab.close();
+    expect(l.sent.at(-1)).toEqual({ type: "unwatch", data: { watch: 1 } });
+    const u = setup();
+    u.link().welcome();
+    u.tab.close();
+    expect(u.link().sent.at(-1)).toEqual({ type: "unwatch", data: { watch: 1 } });
+  });
+
+  it("sends no unwatch for a covered tab, which has none", () => {
+    const t = setup();
+    const l = t.bind();
+    t.tab.cover();
+    t.tab.close();
+    expect(l.types()).toEqual(["watch", "unwatch"]);
+  });
+});
+
+describe("resizing", () => {
+  it("sends a size that changed while the watch was in flight, once it binds", () => {
+    const t = setup();
+    t.link().welcome();
+    t.resizeTo(60, 60);
+    t.tab.resize({ cols: 60, rows: 60 }); // dropped: not bound yet
+    expect(t.link().types()).toEqual(["watch"]);
+    t.link().say(t.watching(1));
+    expect(t.link().sent.at(-1)).toEqual({ type: "resize", data: { watch: 1, size: { cols: 60, rows: 60 } } });
+  });
+
+  it("sends nothing when the size is the one watched with", () => {
+    const t = setup();
+    const l = t.bind();
+    expect(l.types()).toEqual(["watch"]);
+    t.tab.resize({ cols: 80, rows: 24 });
+    expect(l.types()).toEqual(["watch"]);
+    t.tab.resize({ cols: 90, rows: 30 });
+    expect(l.types()).toEqual(["watch", "resize"]);
+  });
+});
+
 describe("losing the watch or the link", () => {
   it("waits for a tap after watchEnded detached, then watches again on the same socket", () => {
     const t = setup();
@@ -101,6 +146,19 @@ describe("losing the watch or the link", () => {
     expect(l.types()).toEqual(["watch"]);
     vi.advanceTimersByTime(500);
     expect(l.types()).toEqual(["watch", "watch"]);
+  });
+
+  it("a watch that keeps failing backs off and shows the daemon's message", () => {
+    const t = setup();
+    const l = t.bind();
+    l.say({ type: "watchEnded", data: { watch: 1, reason: "error", message: "boom" } });
+    expect(t.state()).toMatchObject({ kind: "reconnecting", message: "boom" });
+    vi.advanceTimersByTime(500);
+    l.say({ type: "watchEnded", data: { watch: 2, reason: "error", message: "boom" } });
+    vi.advanceTimersByTime(999);
+    expect(l.types()).toEqual(["watch", "watch"]);
+    vi.advanceTimersByTime(1);
+    expect(l.types()).toEqual(["watch", "watch", "watch"]);
   });
 
   it("keeps a tab the daemon refused for its session limit, with the daemon's message, and asks again on a growing backoff", () => {
@@ -216,5 +274,28 @@ describe("upload insertion", () => {
     expect(t.notices).toEqual(["Could not insert a.jpg: the tab closed."]);
     t.tab.insertPath("/up/b.jpg");
     expect(t.notices).toHaveLength(2);
+  });
+
+  it("is dropped with a notice when the watch fails before it binds, and refused outright while disconnected", () => {
+    const t = setup();
+    t.link().welcome();
+    expect(t.tab.insertPath("/up/a.jpg")).toBe(false);
+    t.link().say({ type: "watchEnded", data: { watch: 1, reason: "error" } });
+    expect(t.notices).toHaveLength(1);
+    expect(t.notices[0]).toContain("a.jpg");
+    expect(t.tab.insertPath("/up/b.jpg")).toBe(false);
+    expect(t.notices).toHaveLength(2);
+    vi.advanceTimersByTime(500);
+    t.link().say(t.watching(2));
+    expect(t.link().types()).not.toContain("input");
+  });
+
+  it("reports whether the path was typed now", () => {
+    const t = setup();
+    const l = t.bind();
+    expect(t.tab.insertPath("/up/a.jpg")).toBe(true);
+    t.tab.cover();
+    expect(t.tab.insertPath("/up/b.jpg")).toBe(false);
+    expect(l.types()).toEqual(["watch", "input", "unwatch"]);
   });
 });

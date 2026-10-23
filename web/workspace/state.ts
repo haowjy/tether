@@ -177,7 +177,7 @@ export interface Reduced {
 /**
  * One event in, the next state and the effects the controller runs out. `cover` and
  * `uncover` come from comparing which tab is on screen before and after; `save` follows
- * every change to the tabs or the active tab.
+ * every change to what {@link savedTabs} holds.
  */
 export function reduce(state: WorkspaceState, event: WorkspaceEvent): Reduced {
   const result = step(state, event);
@@ -189,7 +189,7 @@ export function reduce(state: WorkspaceState, event: WorkspaceEvent): Reduced {
     if (before !== null && next.tabs.some((t) => t.id === before)) effects.push({ type: "cover", id: before });
     if (after !== null) effects.push({ type: "uncover", id: after });
   }
-  if (next.tabs !== state.tabs || next.active !== state.active) effects.push({ type: "save" });
+  if (savedChanged(state, next)) effects.push({ type: "save" });
   if (result.navigate) effects.push({ type: "navigate", to: result.navigate });
   if (result.focus === "terminal" && next.active !== null) effects.push({ type: "focus", target: "terminal" });
   if (result.focus === "homeSearch") effects.push({ type: "focus", target: "homeSearch" });
@@ -203,4 +203,13 @@ export function savedTabs(state: WorkspaceState): Pick<SavedWorkspace, "tabs" | 
     tabs: state.tabs.map((t) => ({ key: t.key, session: t.session, window: t.window })),
     active: state.active,
   };
+}
+
+/** Whether the saved form differs: `restoring` and `index` are not saved, so changing only them writes nothing. */
+function savedChanged(a: WorkspaceState, b: WorkspaceState): boolean {
+  if (a.active !== b.active || a.tabs.length !== b.tabs.length) return true;
+  return a.tabs.some((t, i) => {
+    const u = b.tabs[i];
+    return u?.id !== t.id || u.session !== t.session || u.window !== t.window;
+  });
 }
