@@ -317,6 +317,7 @@ impl State {
             Ok(_) => return self.refuse_tmux(conn, Some(req), Some(watch), &TmuxError::BadReply),
         };
         let start = history.start;
+        let history_size = history.history_size;
         let rows = history.rows;
         let wraps = history.wraps;
         // Keep the rows that fit the reservation; the client asks again from there.
@@ -324,6 +325,7 @@ impl State {
             req,
             watch,
             start,
+            history_size: Some(history_size),
             lines,
             wraps: Base64(wraps),
         };

@@ -6,6 +6,7 @@ version section on release.
 ## [Unreleased]
 
 - Preserve trailing spaces at soft-wrap boundaries when copying scrollback.
+- Avoid joining scrollback chunks captured across a tmux history change.
 - Repaint soft-wrapped snapshot rows when tmux and xterm disagree on glyph width.
 - Add a startup memory budget (`memory_budget_mib`, default 72 MiB) that scales tmux
   session/socket caps and completion, plus a half-core CPU cap. Re-copy

@@ -395,6 +395,8 @@ pub enum Reply {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct History {
     pub start: i32,
+    /// Retained rows when tmux captured this chunk; a change breaks client joins.
+    pub history_size: u32,
     pub rows: Vec<Bytes>,
     /// Packed bits: row `i` wraps into row `i + 1`.
     pub wraps: Bytes,

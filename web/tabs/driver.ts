@@ -125,6 +125,7 @@ export class TabDriver {
     let parts: Uint8Array[] = [];
     let length = 0;
     let continues = false;
+    let historySize: number | undefined;
     const finishLine = (): void => {
       if (parts.length === 0) return;
       const line = new Uint8Array(length);
@@ -144,6 +145,13 @@ export class TabDriver {
         (req) => ({ type: "history", data: { req, watch, start: from, end } }),
         (reply) => (reply.type === "historyChunk" && reply.data.watch === watch ? reply.data : undefined),
       );
+      if (chunk.historySize !== undefined) {
+        if (historySize !== undefined && chunk.historySize !== historySize) {
+          finishLine();
+          continues = false;
+        }
+        historySize = chunk.historySize;
+      }
       const lines = chunk.lines.map(decodeBase64);
       if (lines.length === 0) {
         if (chunk.start > from) {
@@ -156,14 +164,12 @@ export class TabDriver {
           continues = false;
         }
         const wraps = decodeBase64(chunk.wraps);
-        for (let index = 0; index < lines.length; index++) {
-          const line = lines[index];
-          if (!line) continue;
+        lines.forEach((line, index) => {
           if (parts.length > 0 && !continues) finishLine();
           parts.push(line);
           length += line.length;
           continues = ((wraps[index >> 3] ?? 0) & (1 << (index & 7))) !== 0;
-        }
+        });
       }
       const after = chunk.start + chunk.lines.length;
       // tmux can move a request up to the oldest retained row. Follow that true

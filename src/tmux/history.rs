@@ -33,6 +33,7 @@ pub(crate) fn from_replies(
     if first > last {
         return Ok(History {
             start: first,
+            history_size,
             rows: Vec::new(),
             wraps: Bytes::new(),
         });
@@ -51,6 +52,7 @@ pub(crate) fn from_replies(
     };
     Ok(History {
         start: first,
+        history_size,
         rows: rows.into_iter().take(count).collect(),
         wraps: pair_map.truncate(count).into_bytes(),
     })

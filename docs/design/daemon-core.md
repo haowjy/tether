@@ -991,11 +991,12 @@ channel, in the outbox, and in the frame being written all count until then.
   the second watch's snapshot waits for credit to return. That is correct, not a stall.
 - **History is fit with its bitmap and oversized captures are retried smaller.**
   `Session` caps a group's replies at 1 MiB raw (§3.3), including the history-bounds
-  records and both extra wrap captures. The `historyChunk` carries rows and a packed
+  records, physical payload with one lookahead row, and joined-row alignment capture.
+  The `historyChunk` carries rows, the captured `historySize` and a packed
   wrap map as base64, and has to fit the 1 MiB reservation too. A 200-row bitmap is at
   most 25 bytes (about 36 base64 characters); the fitting loop counts the packed bitmap
   for each candidate prefix before admitting its next row, then slices rows and bits
-  together. The extra captures make the tmux reply cap normally bind before the socket
+  together. The two captures make the tmux reply cap normally bind before the socket
   reservation: the hub reissues an oversized capture with half the requested rows, and
   again with half of those, down to one. A single row that still exceeds the group cap
   ends with `error { tmux }`. The fit limit remains a second guard on encoded JSON and
@@ -1200,7 +1201,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `windowRenamed` | `window, name` | |
 | `sessionsChanged` | | the listing changed: tmux reported a session created, closed or renamed, or a window nobody watches was closed or moved. At most one per input the hub handles, however many changes it brought (§4.5). The web refetches the listing, debounced, which also prunes its tabs ([plan.md](plan.md#reconnect)) |
 | `sessions` | `req, tmux: TmuxListing \| null` | `null` when no tmux server is running. `TmuxListing` is `{ server, version, sessions: [{ id, name, attachedElsewhere, windows: [{ id, index, name, active, activity }] }] }`; `activity` in unix seconds |
-| `historyChunk` | `req, watch, start, lines: [base64], wraps: base64` | `capture-pane -e` bytes per physical row; `start` is the true tmux line number of `lines[0]`. Bit `i` of the packed bitmap says row `i` wraps to the next row. May hold fewer rows than asked (§4.6); the client follows the returned `start`, including an empty range that advanced to the retained-history top, and joins wrapped rows for copy |
+| `historyChunk` | `req, watch, start, historySize?, lines: [base64], wraps: base64` | `capture-pane -e` bytes per physical row; `start` is the true tmux line number of `lines[0]`. Bit `i` of the packed bitmap says row `i` wraps to the next row. May hold fewer rows than asked (§4.6); the client follows the returned `start`, including an empty range that advanced to the retained-history top, and joins wrapped rows for copy only while `historySize` stays unchanged |
 | `created` | `req, window, session` | |
 | `error` | `req?, watch?, code, message` | refuses one request; a watch it names stays as it was. `badRequest, noServer, tooManySessions, inputTooLarge, busy, tmux` |
 

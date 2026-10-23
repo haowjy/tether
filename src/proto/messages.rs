@@ -269,6 +269,10 @@ pub enum ServerMsg {
         req: u32,
         watch: u32,
         start: i32,
+        /// Retained row count at capture time; optional for protocol v1 compatibility.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        history_size: Option<u32>,
         lines: Vec<Base64>,
         /// Packed bits: line `i` wraps forward into line `i + 1`.
         wraps: Base64,

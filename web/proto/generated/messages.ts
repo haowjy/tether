@@ -57,7 +57,11 @@ cwd: string | null, } }
   | { "type": "windowRenamed", "data": { window: WindowRef, name: string, } }
   | { "type": "sessionsChanged" }
   | { "type": "sessions", "data": { req: number, tmux: TmuxListing | null, } }
-  | { "type": "historyChunk", "data": { req: number, watch: number, start: number, lines: Array<Base64>,
+  | { "type": "historyChunk", "data": { req: number, watch: number, start: number,
+/**
+ * Retained row count at capture time; optional for protocol v1 compatibility.
+ */
+historySize?: number, lines: Array<Base64>,
 /**
  * Packed bits: line `i` wraps forward into line `i + 1`.
  */
