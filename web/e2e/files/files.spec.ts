@@ -123,12 +123,18 @@ for (const [name, scenario] of SCREENS) {
       await expect(title(page, "Files")).toBeVisible();
     });
 
-    test("a reload returns to the folder and the preview", async ({ page }) => {
+    test("restores the preview and saves the browsed folder", async ({ page }) => {
       await openFixture(page, "filesMarkdown", scenario, "#/files");
       await expect(title(page, "README.md")).toBeVisible();
       await page.getByRole("button", { name: "Back to folder" }).click();
       await expect(title(page, "tether")).toBeVisible();
       await expect(page.getByRole("button", { name: "src" })).toBeVisible();
+      await page.getByRole("button", { name: "src" }).click();
+      await expect(title(page, "src")).toBeVisible();
+
+      await page.evaluate(() => window.__harness?.app.persist.persistNow());
+      const saved = await page.evaluate(() => window.__harness?.platform.savedWorkspaces.at(-1) ?? null);
+      expect(saved?.files).toEqual({ hostId: "h-pop", place: { kind: "dir", path: `${REPO}/src` } });
     });
 
     test("Insert path goes to the active tab, with no Enter, and opens Terminal there", async ({ page }) => {
