@@ -653,6 +653,9 @@ type UploadEvent =
 
 - **Browser.** `pick` calls `click()` on a hidden `<input type="file">` (owned by
   `platform/browser/uploads.ts`) inside the tap, and ends on the input's `cancel` event.
+  A new pick removes the superseded pick's listeners from the shared input first, so one
+  pick's files are never enqueued twice. A file over 128 MiB is refused before a byte is
+  sent.
   Both `pick` and `send` stream the upload to `/fs/upload`. The daemon takes one upload
   at a time, so the client sends one file at a time and queues at most four. A fifth is
   refused with "Wait for the current uploads to finish".
@@ -900,6 +903,13 @@ lost:
     app, to open this one." Then Retry.
   - Retries climb the backoff from the tab's attempt count (resource-limits.md §3.6).
     Nothing is closed for the user.
+- **Any other failed watch** (`watchEnded { reason: "error", message }`) climbs the same
+  backoff, and the status band shows the daemon's message instead of blaming the network.
+  A tab never retries a refused watch at a fixed rate.
+- **Requests.** A request waits 5 s for a socket to send it on, then up to 30 s for the
+  reply. Once sent, the daemon may already be acting on it (a create), so a short wait
+  only invites a duplicate; a dead socket is the link's to find (25 s silent) and fails
+  the request as `lost`.
 - **4005, the socket cap,** is a host problem, not a tab problem. The host banner says
   "Too many connections to pop-os. Close tether in another browser or the app, then
   Retry."
@@ -973,6 +983,9 @@ push, replace and `popstate`.
   leaves the destination. It never touches tmux.
 - **Closing an overlay by an action**, such as picking a window, is `history.back()`
   plus the tab activation. The activation writes no history, so the two can't race.
+  A finished Settings action closes its confirmation and Settings together with
+  `closeAllOverlays()`: one `history.go(-n)`, because a second `back()` issued before the
+  first pops is lost in WebKit.
 - **In-app back buttons go to the logical parent.** If the previous entry is that
   parent (recorded in `history.state.parent`), they call `history.back()`. Otherwise,
   after a reload or a deep link, they `replaceState` to the parent, so Back never leaves
@@ -1160,14 +1173,20 @@ it.
   the tab key and uploads the first image through `platform.uploads.send`. It then
   inserts the shell-quoted absolute path into that tab, with no Enter. If the tab has
   gone or disconnected by then, the file stays in Files and a notice says the path
-  wasn't inserted. A browser that exposes no image data shows "Paste images from Files
+  wasn't inserted. A tab that is not on screen (Files covers it) takes the path at its
+  next `watching`, and the notice says so. A browser that exposes no image data shows "Paste images from Files
   → Upload". W2 owns this route.
 - **Upload from Files.** When it completes, Files shows the preview and "Insert path
   into `<tab label>`" for the tab active when the upload started. With no connected
-  tab, the action is disabled with "Open a terminal tab first". Native's `upload` events
-  follow the same offer instead of inserting automatically.
+  tab, the action is disabled with "Open a terminal tab first", and with "That tab isn't
+  connected" while the target is reconnecting or refused for the session limit
+  (`AppView.tabsOffline`). A path waiting for its watch is dropped, with a notice, if the
+  watch fails first. Native's `upload` events follow the same offer instead of inserting
+  automatically.
 - **Insert path** from a preview uses the same rules. The target is captured on click,
-  the path is quoted, no Enter is sent, and then Terminal opens on that tab.
+  the path is quoted, no Enter is sent, and then Terminal opens on that tab. A path
+  holding a C0 control or DEL (CR, LF, ESC, ^C) is refused with a notice: typed into a
+  pane it would submit or act as a key, which quoting cannot prevent.
 
 **Protocol gap, for L4.** `paste` has refusals but no positive acknowledgement, and its
 refusals carry no `req`, so `Host` drops them today. L4 adds an optional `req` to
@@ -1376,7 +1395,7 @@ adapter registers it; the native app never does.
 | Request | Strategy |
 |---|---|
 | Navigation (`/`, `/index.html`) | Cache first, from the active worker's precache. The network is used only when nothing is cached. The worker's version *is* the page's version |
-| `/assets/*`, `/manifest.webmanifest`, icons | Cache only, looked up with `caches.match(request)` across every `tether-shell-*` cache, so a page still running the previous build finds its own chunks after a newer worker takes control |
+| `/assets/*`, `/manifest.webmanifest`, icons | Cache first, looked up with `caches.match(request)` across every `tether-shell-*` cache, so a page still running the previous build finds its own chunks after a newer worker takes control. A path in no cache (evicted storage) goes to the network, which has the current build's |
 | `/ws`, `/auth/*`, `/fs/*`, `/complete`, `/debug`, any non-GET | never intercepted (`respondWith` is not called) and never cached |
 
 - **The precache list** is generated at build time and holds the whole build: every JS
@@ -1415,7 +1434,8 @@ capability and the `update` event.
    Banner, never over the terminal, with an Update button.
 4. **Update.** The controller runs persist now, then `updates.apply()` tells the
    waiting worker to `skipWaiting`, and the tapping page reloads on
-   `controllerchange`. Every other page also sees `controllerchange`: it raises `update: reload`, which
+   `controllerchange` (a hard-reloaded page has no controller and never gets one, so it
+   reloads when the worker reaches `activated`). Every other page also sees `controllerchange`: it raises `update: reload`, which
    shows "Reload to finish updating" (a banner of its own, separate from the schema
    upgrade's) and keeps working on the previous build, whose cache the new
    worker kept. Activation doesn't touch another page's drafts, IME composition or
