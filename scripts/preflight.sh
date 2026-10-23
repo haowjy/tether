@@ -6,8 +6,9 @@
 # With --commit, the gate runs on a clean export of exactly that commit (`git archive`), so
 # another lane's uncommitted file can neither rescue a commit that depends on it nor block
 # one that doesn't. The export links this checkout's web/node_modules (it must match the
-# commit's lockfile) and shares this checkout's Cargo target directory, so builds stay
-# incremental. Set TETHER_PREFLIGHT_E2E=1 to add the Playwright suite to `full`.
+# commit's lockfile) and builds in its own target directory (target/preflight/), so it
+# neither rebuilds nor blocks the checkout's builds. Set TETHER_PREFLIGHT_E2E=1 to add
+# the Playwright suite to `full`.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,18 +37,34 @@ run_step() {
 
 if [[ -n "$COMMIT" ]]; then
   SHA="$(git -C "$ROOT_DIR" rev-parse --verify "${COMMIT}^{commit}")"
-  EXPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tether-preflight.XXXXXX")"
-  trap 'rm -rf "$EXPORT_DIR"' EXIT
+  # One fixed export path with its own Cargo target directory. Tests read fixtures through
+  # env!("CARGO_MANIFEST_DIR"), baked in at compile time, so a stable path keeps the build
+  # incremental (dependencies build once, only the tether crate rebuilds for a new export)
+  # without cleaning or disturbing the checkout's own target directory.
+  PREFLIGHT_DIR="${TETHER_PREFLIGHT_DIR:-$ROOT_DIR/target/preflight}"
+  EXPORT_DIR="$PREFLIGHT_DIR/export"
+  LOCK_DIR="$PREFLIGHT_DIR/lock"
+  mkdir -p "$PREFLIGHT_DIR"
+  # The fixed path is shared, so one preflight runs at a time; a lock left by a dead one is stale.
+  until mkdir "$LOCK_DIR" 2>/dev/null; do
+    holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    if [[ -z "$holder" ]] || ! kill -0 "$holder" 2>/dev/null; then
+      rm -rf "$LOCK_DIR"
+    else
+      printf 'preflight: another preflight is running (pid %s)\n' "$holder" >&2
+      exit 1
+    fi
+  done
+  echo $$ > "$LOCK_DIR/pid"
+  trap 'rm -rf "$EXPORT_DIR" "$LOCK_DIR"' EXIT
+  rm -rf "$EXPORT_DIR"
+  mkdir -p "$EXPORT_DIR"
   printf 'preflight: exporting %s to %s\n' "$SHA" "$EXPORT_DIR" >&2
   git -C "$ROOT_DIR" archive "$SHA" | tar -x -C "$EXPORT_DIR"
   if [[ -d "$ROOT_DIR/web/node_modules" ]]; then
     ln -s "$ROOT_DIR/web/node_modules" "$EXPORT_DIR/web/node_modules"
   fi
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
-  # Tests read fixtures through env!("CARGO_MANIFEST_DIR"), baked in at compile time. A
-  # build reused from another export would point at a directory that no longer exists, so
-  # the tether crate itself is rebuilt for each export; its dependencies stay incremental.
-  (cd "$EXPORT_DIR" && cargo clean -p tether --locked)
+  export CARGO_TARGET_DIR="$PREFLIGHT_DIR/target"
   TETHER_PREFLIGHT_EXPORT=1 "$EXPORT_DIR/scripts/preflight.sh" "$MODE"
   exit $?
 fi
@@ -66,7 +83,7 @@ case "$MODE" in
     if [[ -n "${TETHER_PREFLIGHT_EXPORT:-}" ]]; then
       # An export shares the checkout's node_modules, which `npm ci` would rewrite:
       # verify it matches this commit's lockfile instead.
-      run_step node web/scripts/check-install.mjs web/package-lock.json web/node_modules/.package-lock.json
+      run_step node web/scripts/check-install.mjs web/package-lock.json web/node_modules/.package-lock.json web/package.json
     elif [[ ! web/node_modules/.package-lock.json -nt web/package-lock.json ]]; then
       # npm ci only when the lockfile changed since the last install.
       run_step npm --prefix web ci
