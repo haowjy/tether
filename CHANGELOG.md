@@ -5,6 +5,11 @@ version section on release.
 
 ## [Unreleased]
 
+- Rebuild the web client's skeleton: one Platform interface with browser and test adapters,
+  admission read from the daemon at every launch, a design system of owned primitives with
+  light and dark themes, and Playwright with axe over every route. `scripts/preflight.sh full
+  --commit <sha>` now gates a clean export of exactly that commit, and the pre-push hook uses
+  it. The shell build is held to size budgets.
 - Preserve trailing spaces at soft-wrap boundaries when copying scrollback.
 - Avoid joining scrollback chunks captured across a tmux history change.
 - Repaint soft-wrapped snapshot rows when tmux and xterm disagree on glyph width.

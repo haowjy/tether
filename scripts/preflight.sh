@@ -1,14 +1,56 @@
 #!/usr/bin/env bash
 # Shared gate for CI, the pre-push hook, and release workflows.
+#
+#   preflight.sh [fast|full] [--commit <sha>]
+#
+# With --commit, the gate runs on a clean export of exactly that commit (`git archive`), so
+# another lane's uncommitted file can neither rescue a commit that depends on it nor block
+# one that doesn't. The export links this checkout's web/node_modules (it must match the
+# commit's lockfile) and shares this checkout's Cargo target directory, so builds stay
+# incremental. Set TETHER_PREFLIGHT_E2E=1 to add the Playwright suite to `full`.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MODE="${1:-full}"
+MODE=full
+COMMIT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    fast|full) MODE="$1" ;;
+    --commit)
+      COMMIT="${2:?--commit needs a sha}"
+      shift
+      ;;
+    *)
+      printf 'Usage: preflight.sh [fast|full] [--commit <sha>]\n' >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 run_step() {
   printf 'preflight: %s\n' "$*" >&2
   "$@"
 }
+
+if [[ -n "$COMMIT" ]]; then
+  SHA="$(git -C "$ROOT_DIR" rev-parse --verify "${COMMIT}^{commit}")"
+  EXPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tether-preflight.XXXXXX")"
+  trap 'rm -rf "$EXPORT_DIR"' EXIT
+  printf 'preflight: exporting %s to %s\n' "$SHA" "$EXPORT_DIR" >&2
+  git -C "$ROOT_DIR" archive "$SHA" | tar -x -C "$EXPORT_DIR"
+  if [[ -d "$ROOT_DIR/web/node_modules" ]]; then
+    ln -s "$ROOT_DIR/web/node_modules" "$EXPORT_DIR/web/node_modules"
+  fi
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
+  # Tests read fixtures through env!("CARGO_MANIFEST_DIR"), baked in at compile time. A
+  # build reused from another export would point at a directory that no longer exists, so
+  # the tether crate itself is rebuilt for each export; its dependencies stay incremental.
+  (cd "$EXPORT_DIR" && cargo clean -p tether --locked)
+  TETHER_PREFLIGHT_EXPORT=1 "$EXPORT_DIR/scripts/preflight.sh" "$MODE"
+  exit $?
+fi
 
 cd "$ROOT_DIR"
 case "$MODE" in
@@ -21,14 +63,17 @@ case "$MODE" in
     # Also fails while web/proto/generated/ is stale (src/proto/typescript.rs).
     run_step cargo test --locked
     run_step cargo build --release --locked
-    # npm ci only when the lockfile changed since the last install.
-    if [[ ! web/node_modules/.package-lock.json -nt web/package-lock.json ]]; then
+    if [[ -n "${TETHER_PREFLIGHT_EXPORT:-}" ]]; then
+      # An export shares the checkout's node_modules, which `npm ci` would rewrite:
+      # verify it matches this commit's lockfile instead.
+      run_step node web/scripts/check-install.mjs web/package-lock.json web/node_modules/.package-lock.json
+    elif [[ ! web/node_modules/.package-lock.json -nt web/package-lock.json ]]; then
+      # npm ci only when the lockfile changed since the last install.
       run_step npm --prefix web ci
     fi
     run_step npm --prefix web run check
-    ;;
-  *)
-    printf 'Usage: preflight.sh [fast|full]\n' >&2
-    exit 1
+    if [[ -n "${TETHER_PREFLIGHT_E2E:-}" ]]; then
+      run_step npm --prefix web run e2e
+    fi
     ;;
 esac

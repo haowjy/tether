@@ -4,6 +4,7 @@ set -euo pipefail
 ZERO_SHA="0000000000000000000000000000000000000000"
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 needs_full=0
+push_shas=()
 
 block_release_tag() {
   local message="$1"
@@ -28,7 +29,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   case "$remote_ref" in
     refs/heads/*)
       # Skip deletion pushes — preflight only matters when pushing code.
-      [[ "$local_sha" != "$ZERO_SHA" ]] && needs_full=1
+      if [[ "$local_sha" != "$ZERO_SHA" ]]; then
+        needs_full=1
+        push_shas+=("$local_sha")
+      fi
       ;;
     refs/tags/v*)
       check_release_tag_auth "$remote_ref" "$local_sha" "$remote_sha"
@@ -44,5 +48,9 @@ if [[ "$needs_full" = 1 ]]; then
   # those nested git commands operate on this checkout instead of their temp
   # repos.
   unset $(git rev-parse --local-env-vars)
-  exec "$ROOT_DIR/scripts/preflight.sh" full
+  # Each pushed tip is checked as a clean export of exactly that commit, never the working
+  # tree: another lane's uncommitted file can neither rescue a commit nor block one.
+  for sha in "${push_shas[@]}"; do
+    "$ROOT_DIR/scripts/preflight.sh" full --commit "$sha"
+  done
 fi
