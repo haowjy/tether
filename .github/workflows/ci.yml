@@ -32,7 +32,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep in sync with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@1.94.1
         with:
           components: rustfmt, clippy
 
@@ -47,6 +48,26 @@ jobs:
       - name: Shared preflight
         run: scripts/preflight.sh full
 
+  real-tmux:
+    name: Real tmux integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Keep in sync with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@1.94.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          tmux -V
+
+      - name: Real tmux suites
+        run: TETHER_TMUX_TESTS=1 cargo test --test tmux_real --test hub_real -- --test-threads=1
+
   msrv:
     name: Minimum Rust version
     runs-on: ubuntu-latest
@@ -59,4 +80,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Check
-        run: cargo check --locked --all-targets
+        # Explicitly bypass rust-toolchain.toml to exercise the crate's MSRV.
+        run: cargo +1.85 check --locked --all-targets

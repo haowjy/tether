@@ -148,14 +148,22 @@ impl Lane {
             return Ok(permit);
         }
         let cap = self.0.spec.waiters.unwrap_or(usize::MAX);
-        let admitted = self
-            .0
-            .waiting
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                (n < cap).then_some(n + 1)
-            });
-        if admitted.is_err() {
-            return Err(Busy);
+        // Reserve a waiter only while below the cap; the CAS keeps concurrent callers
+        // from admitting more than the lane allows.
+        let mut waiting = self.0.waiting.load(Ordering::Acquire);
+        loop {
+            if waiting >= cap {
+                return Err(Busy);
+            }
+            match self.0.waiting.compare_exchange_weak(
+                waiting,
+                waiting + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(current) => waiting = current,
+            }
         }
         let _waiting = Waiting(&self.0.waiting);
         match tokio::time::timeout(self.0.spec.wait, slots.clone().acquire_owned()).await {

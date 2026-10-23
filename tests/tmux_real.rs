@@ -1042,6 +1042,7 @@ async fn new_windows_and_sessions_take_names_and_directories_as_given() {
     let endpoint = server.endpoint();
     let dir = env::temp_dir().join(format!("{}-we ird'#{{pane_id}};", server.socket));
     std::fs::create_dir_all(&dir).expect("create the directory");
+    let dir = std::fs::canonicalize(dir).expect("canonical temporary directory");
     /// Removes the directory even if the test fails.
     struct Remove(PathBuf);
     impl Drop for Remove {

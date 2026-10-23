@@ -149,24 +149,39 @@ pub async fn send(
         head.push_str(&format!("Content-Length: {}\r\n", body.len()));
     }
     head.push_str("\r\n");
-    stream.write_all(head.as_bytes()).await.expect("sent");
-    stream.write_all(body).await.expect("sent");
+    let mut request = head.into_bytes();
+    request.extend_from_slice(body);
+    stream.write_all(&request).await.expect("sent");
     let mut response = Vec::new();
-    tokio::time::timeout(WAIT, stream.read_to_end(&mut response))
+    let reset = match tokio::time::timeout(WAIT, stream.read_to_end(&mut response))
         .await
         .expect("an answer in time")
-        .expect("read");
+    {
+        Ok(_) => false,
+        // Keep bytes already read: a rejected request may close with an unread body.
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => true,
+        Err(error) => panic!("read: {error}"),
+    };
     let split = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .expect("a head");
     let head = String::from_utf8(response[..split].to_vec()).expect("an ASCII head");
     let status = head[9..12].parse().expect("a status");
-    Reply {
+    let reply = Reply {
         status,
         head,
         body: response[split + 4..].to_vec(),
+    };
+    if reset {
+        let length = reply
+            .header("content-length")
+            .expect("a reset followed a complete HTTP response")
+            .parse::<usize>()
+            .expect("a content length");
+        assert_eq!(reply.body.len(), length, "response body truncated by reset");
     }
+    reply
 }
 
 /// A JSON request (or none, with an empty body): the status and the body as text.

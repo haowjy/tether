@@ -20,7 +20,7 @@ function devLogin(): string {
   throw new Error("Can't find the Tailscale login: set TETHER_DEV_LOGIN (web/README.md).");
 }
 
-export default defineConfig(({ command }) => ({
+export default defineConfig(({ command, mode }) => ({
   plugins: [preact()],
   // The iOS app loads the build from a custom scheme, so asset URLs are relative.
   base: "./",
@@ -30,7 +30,7 @@ export default defineConfig(({ command }) => ({
   // Dev server only: the daemon wants a loopback peer carrying the owner's login, which
   // `tailscale serve` adds in production. Nothing here reaches a build.
   server:
-    command === "serve"
+    command === "serve" && mode !== "test"
       ? {
           proxy: Object.fromEntries(
             // Keys are path prefixes, or a regex when they start with `^`: `/complete` alone

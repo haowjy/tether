@@ -5,8 +5,9 @@ Adapted from mars-agents' release model, without PyPI, npm, crates.io or Windows
 ## ci.yml
 
 Runs on PRs and pushes to `main`: `scripts/preflight.sh full` (fmt, clippy with
-`-D warnings`, test, release build). On PRs it also reports the release label, or
-warns that none is set.
+`-D warnings`, test, release build), plus the serial real-tmux suites on Ubuntu. The
+real-tmux job installs tmux and reports its version in the log. On PRs CI also reports
+the release label, or warns that none is set.
 
 ## release-on-main.yml
 

@@ -221,7 +221,11 @@ async fn a_watch_echoes_input_and_a_rewatch_snapshots_what_it_showed() {
     let (size, _) = conn.wait_snapshot(0, 1).await;
     assert_eq!(size, Size { cols: 80, rows: 24 });
     // The cwd subscription reports within about a second.
-    conn.wait_json(0, "watching", |value| value["data"]["cwd"] == "/tmp")
+    let temp = std::fs::canonicalize("/tmp")
+        .expect("canonical temporary directory")
+        .to_string_lossy()
+        .into_owned();
+    conn.wait_json(0, "watching", |value| value["data"]["cwd"] == temp)
         .await;
 
     let mark = conn.got.len();
