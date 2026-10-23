@@ -7,7 +7,6 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use clap::{Parser, Subcommand};
-use socket2::{Domain, Protocol, Socket, Type};
 use tether::auth::identity::{Node, ServeConfig};
 use tether::auth::{Auth, Store};
 use tether::blocking::{BLOCKING_THREADS, Lanes};
@@ -29,7 +28,7 @@ type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 /// How long shutdown waits for the hub to close its control clients.
 const HUB_WAIT: Duration = Duration::from_secs(2);
 /// TCP newcomers held by the kernel while the bounded HTTP accept loop is full.
-const HTTP_BACKLOG: i32 = 128;
+const HTTP_BACKLOG: u32 = 128;
 
 /// Phone-first client for tmux sessions on a dev server.
 #[derive(Parser)]
@@ -212,15 +211,12 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
     }
 }
 
-/// `TcpListener::bind` uses the platform's maximum backlog; keep the TCP bound at
-/// 128 until browser auth replaces it with the Unix listener.
+/// Keep the TCP bound at 128 until browser auth replaces it with the Unix listener.
 fn tcp_listener(port: u16) -> std::io::Result<TcpListener> {
-    let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
-    socket.set_reuse_address(true)?;
-    socket.bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, port)).into())?;
-    socket.listen(HTTP_BACKLOG)?;
-    socket.set_nonblocking(true)?;
-    TcpListener::from_std(socket.into())
+    let socket = tokio::net::TcpSocket::new_v4()?;
+    socket.set_reuseaddr(true)?;
+    socket.bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))?;
+    socket.listen(HTTP_BACKLOG)
 }
 
 /// The paste directory, 0700 and emptied: files left by a daemon that died are no

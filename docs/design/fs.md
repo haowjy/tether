@@ -402,13 +402,12 @@ raw stream then ends in 2.0 s with exit 0.
 | Item | Bound | MB |
 |---|---|---|
 | directory scan | 1 × (1 MiB of names + 5,000 × 32 B) | 1.2 |
-| raw responses | 2 × (64 KiB chunk + channel + hyper's write buffer, ≤ ~400 KiB) | 1.0 |
-| upload | 1 × (hyper's read buffer, ≤ ~400 KiB, + 64 KiB chunk + 2 MiB of dirty pages between flushes) | 2.5 |
+| raw responses | 2 × (64 KiB chunk + channel + 16 KiB hyper write buffer) | 1.0 |
+| upload | 1 × (16 KiB hyper read buffer + 64 KiB chunk + 2 MiB of dirty pages between flushes) | 2.2 |
 | listing JSON | one page, 200 entries | 0.1 |
-| **file API** | | **~5** |
+| **file API, excluding raw responses** | scan, upload and listing page | **3.5** |
 
-That row, and a row for kernel socket buffers that the socket-buffer constant bounds,
-join the daemon's ceiling in
+Raw responses and kernel socket buffers have separate rows in the daemon's ceiling in
 [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling). HTTP/1 buffers are
 bounded to 16 KiB each by its accept loop. Page cache is charged to the unit too. Clean
 pages are reclaimable, so they don't count toward the unreclaimable ceiling; at

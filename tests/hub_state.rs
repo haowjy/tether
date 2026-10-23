@@ -674,7 +674,7 @@ fn daemon_limits_end_or_refuse_what_is_over_them() {
 
 #[test]
 fn low_budget_limit_names_the_sessions_holding_the_slot() {
-    let cap = budget::resolve(58).expect("58 MiB is a valid tier").caps();
+    let cap = budget::TIERS[2].caps;
     assert_eq!(cap.control_clients, 1);
 
     let mut hub = Hub::new_with_max_clients(cap.control_clients);

@@ -280,7 +280,8 @@ binary was evicted from the page cache first:
 | `systemctl status ''` | 473 | 26 MB | 12 MB | 22 MB | 560 ms |
 
 Run inside tether's unit, one `docker` completion would add 43 MB of RSS, and up to
-74 MB on a cold cache, to a unit whose ceiling already reaches its 64 MB `MemoryMax`
+74 MB on a cold cache. The unit's 64.8 MiB ceiling leaves 7.2 MiB below its 72 MB
+`MemoryMax`
 ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
 Scoped, the cost to tether's unit is `systemd-run` before its exec: the unit's peak
 rose 1.1 MB for a `docker run --` completion. The scope adds about 27 ms (34 ms scoped
@@ -357,9 +358,10 @@ That row replaces the unmeasured carapace estimate (~15 MB) in
 The slab row is kernel memory the daemon doesn't hold: walking `PATH`'s directories and
 listing others leaves their dentries and inodes cached, and the cache is charged to the
 unit's cgroup. It is reclaimable, so the kernel gives it back under pressure before
-`MemoryMax` bites, but the idle drop does not free it, and it counts toward
-`MemoryHigh`, where the unit's tasks are throttled. It is in the ceiling so the table
-doesn't promise a margin the unit doesn't have.
+`MemoryMax` bites, but the idle drop does not free it. It is in the total ceiling, but
+not the unreclaimable ceiling used to size each tier. The unit sets no `MemoryHigh`:
+below the unreclaimable ceiling, reclaim cannot meet a soft limit and instead stalls
+allocation.
 
 **Freed memory must reach the kernel**, or the idle drop doesn't restore the ~5 MB
 idle budget. glibc mmaps the first large allocation, but after it is freed raises its
