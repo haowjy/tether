@@ -1,12 +1,13 @@
 # Browser and PWA authentication, first phase (draft for approval)
 
-Status: draft, revision 2, 2026-10-22. Nothing here is built. It specifies Option A
+Status: draft, revision 3, 2026-10-23. Nothing here is built. It specifies Option A
 (an enrolled, revocable `HttpOnly` browser device cookie) so that Option C (passkey
-unlock) adds to it without rework. Revision 2 answers the security review in
-[browser-auth-review-1.md](browser-auth-review-1.md). Each finding is either fixed
+unlock) adds to it without rework. Revision 3 answers the second security review in
+[browser-auth-review-2.md](browser-auth-review-2.md), on top of the first
+([browser-auth-review-1.md](browser-auth-review-1.md)). Each finding is either fixed
 or accepted, and the [Review disposition](#review-disposition) table at the end
-says which. Sections 3–5 are the text to land in the specs once Jimmy approves and
-the review passes.
+says which. Sections 3–5 are the text to land in the specs once Jimmy has answered
+§2. Where an answer changes the text, the text says so.
 
 ## 1. Summary
 
@@ -25,10 +26,10 @@ and mutations also need an exact `Origin`. `GET` and `HEAD` need `Sec-Fetch-Site
 same-origin`. Native requests keep today's rules unchanged.
 
 Before enrolment the daemon serves only the page shell: HTML, scripts, manifest,
-icons and the service worker. Those files are built into the binary and served
-under fixed caps on connections, concurrency, buffers and time. If the daemon finds
-another service published under its hostname, it **revokes every browser
-credential**, because that service may already have received the cookie.
+icons and the service worker. Those files are built into the binary, gzipped, and
+served under per-route caps that refuse at once when full, behind a connection cap
+that normal use never reaches. Another HTTPS service published under tether's
+hostname receives the cookie too; decision D2 chooses what the daemon does about it.
 
 The accepted risk: anyone holding Jimmy's unlocked laptop or phone can use the
 browser client, with no Face ID step, until the credential is revoked or expires. C
@@ -50,37 +51,106 @@ unlock window.
   *server* that the browser sends the cookie to directly: that server can log the
   cookie and replay it with `curl`, which forges `Origin`, `Host` and `Sec-Fetch-*`
   freely. The documented spike workflow (plan.md "Running the phone spikes",
-  `--https=8443` on tether's hostname) creates exactly that server. Decision D2
-  chooses what the daemon does about it. The recommendation is to revoke every
-  browser credential when a sibling is detected.
+  `--https=8443` on tether's hostname) creates exactly that server. tailscaled can't
+  tell the daemon when the serve config changes, so no option catches every such
+  server. D2 sets out each option's residual risk and workflow cost.
 - **Safari has a history of dropping `SameSite=Strict` `HttpOnly` cookies on
   WebSocket handshakes** (WebKit bug 232666, closed "configuration changed" with the
   fix unconfirmed in every case; an Apple forum report against HttpOnly). Probe gate
   G2 decides between `Strict` and a `Lax` fallback. The `Lax` fallback is safe
   because the Origin rules, not SameSite, carry the defence.
-- **The memory ceiling has no room for the shell.** daemon-core §6 is already about
-  1 MB over `MemoryMax`. Capping HTTP connections and the shell adds about 1.3 MB
-  net (§5, daemon-core). By daemon-core's existing rule, the third control client
-  goes first if the measured peak doesn't fit (gate G12).
+- **The memory ceiling no longer fits with three control clients.** Counting every
+  HTTP connection, the kernel buffers of shell responses and the shell's pages
+  takes the ceiling from about 65 MB to about 70 MB. The part the kernel can't
+  reclaim reaches about 64.3 MB, just over `MemoryMax` (64 MB). Two control
+  clients bring it to about 59 MB. D6 asks Jimmy to make that call.
 
 ## 2. Decisions that need Jimmy
 
 | # | Question | Recommended answer | Alternatives |
 |---|---|---|---|
 | D1 | Browser credential lifetime | **30 days from enrolment, absolute.** Nothing renews it in A. The UI warns from 3 days out. While the credential still works, re-enrolling takes a minute: run `tether enroll` in a tether terminal, in that same browser, and type the code. **Cost to accept knowingly:** once it has expired, a phone-only user needs another shell on the server (the native app, or SSH) to get a code. C will renew it after a passkey check | No expiry, as native has (native has Face ID to bound the unlocked-device threat; a browser has nothing else). 90 days (a weak bound on a copied cookie). Sliding idle expiry (needs a write to `auth.toml` on the check path, which is read-only today) |
-| D2 | A server on another port of tether's hostname (a **sibling**) | **(a) Revoke on detection.** When the daemon sees a sibling in the serve config, it deletes every browser device in one write, logs it, and refuses browser credentials and enrolment while the sibling stays. Native is unaffected. The spike workflow moves to another hostname, so detection means a mistake, and re-enrolling is its cost. **Residual, accepted:** a sibling published and torn down entirely between two of the daemon's checks (§3.6) goes unseen, and a cookie it received stays valid | **(b) A dedicated hostname for tether** (a Tailscale Service, or a second node name) as the plan of record. Nothing else is ever published on that name. G9 becomes a ship gate: if Serve doesn't add `Tailscale-User-Login` there, browsers can't ship. It also needs tailnet-admin setup, and a second node name means a second `tailscaled` on an already overloaded box. Detection stays as a backstop. **(c) A warning only:** the daemon logs and `tether enroll` prints the sibling, and admits as before. Residual: a cookie a sibling received stays valid for up to 30 days |
+| D2 | Another HTTPS server under tether's hostname (a **sibling**, defined in [D2 in detail](#d2-in-detail)) | **(a) Revoke on detection, with D5 = yes, and spikes moved to plain HTTP (G13).** The deciding question is in D2 in detail: if Jimmy keeps other HTTPS services on the dev box's own name, choose (b) instead | (b) a dedicated hostname for tether; (c) a warning only. Costs of all three in D2 in detail |
 | D3 | Logout and local drafts | **Logout revokes the credential and keeps the drafts on that browser.** A separate "Clear local data" action deletes them. The logout sheet says which one it does | Logout always clears drafts: it loses unsent text whenever the reason for logging out is "re-enrol" |
 | D4 | One pending code for both kinds | **Yes.** `tether enroll` prints one code. Native redeems it with `POST /auth/enroll`, a browser with `POST /auth/browser/enroll`. Both share the pending code, its 5-try counter and its expiry | `tether enroll --browser`: a second CLI mode for no security gain, since one code works for one device either way |
+| D5 | Under D2(a): also re-read the serve config on the live browser socket's 10 s re-check? | **Settled: yes** (decisions.md, "AGENTS.md states principles; the specs hold the rules"). It sends nothing over the network and adds no timer: at most one loopback LocalAPI read every 10 s, only while a browser socket is open | — |
+| D6 | The third control client, now that the ceiling is redone ([D6 in detail](#d6-in-detail)) | **Drop to 2 control clients when the browser shell lands.** With 3, the memory the kernel can't reclaim reaches about 64.3 MB at caps, against `MemoryMax` of 64 MB. With 2 it is about 59 MB. Raise it back if the budget measurement shows room | Keep 3 and let G12 and the budget measurement decide (daemon-core §6's existing rule). Shrink the new HTTP rows instead (a 48-connection backstop, or 8 KiB hyper buffers): each saves at most about 1 MB and gives up the headroom that review N3 asked for |
 
-**Why (a) over (b) for D2.** (a) can be built now and doesn't depend on G9. It makes
-a detected leak harmless instead of merely paused. (b) is cleaner, but whether it can
-work at all is unknown (G9), and it adds tailnet configuration and maybe a second
-`tailscaled`. If G9 passes, (b) can be adopted later without changing anything else
-in this spec: the canonical origin simply becomes the dedicated name. (c) leaves the
-review's scenario open: a third-party tool published at `:8443` logs the cookie,
-and the cookie keeps working after `serve off`.
+### D2 in detail
 
-**Next to D2, a separate dev-only hole (review L5).** `web/vite.config.ts` proxies to
+**What counts as a sibling.** It is anything else that tailscaled terminates TLS for
+under tether's hostname, because only TLS on that name makes a browser send the
+`Secure` cookie:
+
+- an HTTPS `Web` entry on another port of tether's hostname;
+- another handler or mount path inside tether's own `Web` entry;
+- a `TCP` entry with `TCPForward` **and** `TerminateTLS`, on another port;
+- the same in a foreground config, or in a Tailscale Service that shares the name.
+
+These are **not** siblings: a plain-HTTP `Web` entry (`--http`), because the browser
+never sends a `Secure` cookie over HTTP; and a `TCPForward` without `TerminateTLS`
+(`--tcp`, such as SSH or a database). A raw TCP forward only sees the cookie if its
+backend presents a valid certificate for tether's hostname, and getting one needs
+tailscaled operator rights, which only Jimmy has. A plain-HTTP page can still toss a
+duplicate cookie, and the ambiguity rule (§3.7) keeps that to denial of service.
+
+**Who could use a leaked cookie.** A sibling's copy matters only when something less
+trusted than Jimmy's own shell can read it: a backend running as another user or in
+a container, a backend on another machine, or logs that leave the box. Anything that
+runs as Jimmy on the server is out of scope already, since it can drive tmux
+directly. Replaying the copy then needs a device logged in to the tailnet as Jimmy,
+or a process on the dev box that can reach the daemon's loopback port.
+
+**Why no option is airtight.** tailscaled can't notify the daemon of a serve-config
+change: the IPN bus's `Notify` carries no serve config (review 2, upstream
+`ipn/backend.go`). The daemon only sees the serve config when it reads it.
+
+| | (a) Revoke on detection | (b) A dedicated hostname | (c) A warning only |
+|---|---|---|---|
+| What the daemon does | Deletes every browser device in one write when it sees a sibling, and refuses browsers while it stays | Serves browsers only on a name nothing else is published on; detection as in (a) stays as a backstop | Logs the sibling, and `tether enroll` prints it; browsers are admitted as before |
+| **Residual risk** | With D5: a sibling that is published and removed while no tether browser tab is connected, and before the next browser boot, goes unseen, and any cookie it received stays valid for up to 30 days. Without D5, the same holds for any sibling that comes and goes between two browser boots or socket upgrades, even with tether open in another tab | None from siblings while nothing else is published on tether's name. If something is, the backstop behaves as (a) | Any cookie a sibling receives stays valid for up to 30 days after the sibling is gone |
+| **Workflow cost** | Publishing any HTTPS service on the dev box's own name revokes every browser profile, so each re-enrols with a code (about a minute each), and browsers stay refused until it is removed | A one-time tailnet-admin setup, a new URL in every browser, and no browser client until G9 passes. The setup is a Tailscale Service, or a second node name, which means a second `tailscaled` on the overloaded box | None |
+| **Where spikes go** | Spikes 3–8 run inside the app: the app fetches the dev server's assets natively, and the page's origin stays `tether-app://ui` (ios-shell.md "Dev mode"). So they can publish on plain HTTP (`--http=8080`) at no cost to secure-context APIs. The traffic stays inside WireGuard. The cost is a Debug-only ATS exception for the dev host, and HMR over `ws:` or reloading (G13, unverified). If G13 fails, publish from the Mac's own tailnet name, or accept one revocation per spike session. Most spikes run before browsers ship anyway (plan.md: "The spikes come first") | Unchanged: `--https=8443` on the dev box's name | Unchanged |
+| Build cost | Sibling detection, the revocation write and its race guard (§3.5), plus D5's refresh | (a)'s backstop, plus deriving the canonical origin from a Service | Sibling detection and a log line |
+
+**Recommendation: (a), with D5.** A leaked cookie is a shell as Jimmy, and once
+plain-HTTP and raw TCP entries are no longer siblings, (a) costs something only when
+an HTTPS service is published on the dev box's own name. The spikes can avoid that.
+(b) is cleaner but blocked on G9 and on tailnet setup, and it can be adopted later
+without changing the rest of this spec: the canonical origin simply becomes the
+dedicated name. **The question that would change this:** if Jimmy keeps other HTTPS
+services on the dev box's name as a standing state, (a) means no browsers for as
+long as they run. Then choose (b), or (c) if every such service is his own code
+running as him.
+
+**D5's cost.** Settled as consistent with tether's principles: it sends nothing over
+the network and does no work while idle. D5 adds no timer: each browser socket already wakes every 10 s to re-check
+its credential, and that re-check reads `auth.toml` on the auth lane every time
+(`Auth::recheck`, `src/auth/mod.rs`). D5 makes the same wake-up also refresh browser
+state, reusing any result younger than 10 s. So the cost is at most one loopback
+`GET /localapi/v0/serve-config` per 10 s for the whole daemon, only while a browser
+socket is open, and none when only native or nobody is connected. What it buys: a
+sibling that is up for 10 s or more while tether is open in any browser tab, which
+is the review's own scenario, is now seen.
+
+### D6 in detail
+
+| Ceiling at every cap (daemon-core §6, rows redone in §5) | 3 control clients | 2 control clients |
+|---|---|---|
+| everything, reclaimable included (what `memory.peak` can reach) | ~69.8 MB | ~64.5 MB |
+| reclaimable: the shell's clean file pages (≤ 3.1 MB) and the completion slab (2.4 MB) | 5.5 MB | 5.5 MB |
+| **what the kernel can't reclaim, which must fit `MemoryMax` (64 MB)** | **~64.3 MB** | **~59.0 MB** |
+
+Both columns are above `MemoryHigh` (48 MB) at caps, where systemd throttles the
+unit. That was true before. Before this change, HTTP connections were unbounded and
+uncounted, so the old ceiling of ~65 MB was optimistic. What dropping a client costs
+the product: windows from at most two tmux sessions can be watched at once (a control
+client is attached to one tmux session), so watching a third gets `watchEnded {
+error }` after lingering clients are closed.
+
+### Next to D2: a separate dev-only hole (review L5)
+
+`web/vite.config.ts` proxies to
 the daemon and injects a fixed `Tailscale-User-Login` header on every request, for
 any caller that reaches the Vite port. Any tailnet peer that reaches a published
 spike therefore passes the login allowlist as Jimmy. It still needs a device token,
@@ -91,14 +161,18 @@ proxy holds a real token. Fix, outside this spec: the proxy forwards the incomin
 inventing one, and refuses requests that lack it. Tracked as a follow-up in the work
 item, not a ship gate.
 
-Settled without Jimmy, because the brief or the threat model fixes them: browser
+### Settled without Jimmy
+
+The brief or the threat model already settles these: browser
 credentials have native's full power (the WebSocket is the shell, so there is no
 narrower scope worth having); the native scheme is unchanged; and no credential ever
 appears in a URL, in JSON, or in JS storage.
 
 ## 3. Proposed text for `auth.md`
 
-The text below is written as the current rule, in auth.md's voice. It replaces
+The text below is written as the current rule, in auth.md's voice, for the
+recommended answers in §2 (D2 (a), D5 yes, D6 two control clients). A note in
+brackets says what changes under another answer. It replaces
 the summary paragraph, "Threat model", "Constants" (adds rows), "Carrying the token"
 → "No `Origin` check", "State on disk", "CLI" and "Endpoints". It also adds the new
 sections "Browser credentials", "Canonical origin", "Browser admission" and
@@ -130,8 +204,8 @@ native.
 >   machines in the tailnet (all of them are one "site", because `ts.net` is a public
 >   suffix), other ports on the same machine (the
 >   [browser admission](#browser-admission) rules);
-> - **another server under tether's hostname receiving the cookie**, which a browser
->   sends to every port of a host (revocation on detection,
+> - **another HTTPS server under tether's hostname receiving the cookie**, which a
+>   browser sends to every port of a host (revocation on detection,
 >   [Canonical origin](#canonical-origin));
 > - **script reading a browser credential** (`HttpOnly`), and a copied cookie used
 >   as a native token or the reverse (credential kinds);
@@ -140,10 +214,14 @@ native.
 > - a process on the server that forges Tailscale headers to enrol itself (the
 >   enrolment code, readable only from a shell as Jimmy);
 > - anything that passes the Tailscale check exhausting the daemon's memory through
->   the HTTP surface, the pre-enrolment shell included (the connection, header and
->   shell caps in [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
->   Such a client can still deny service by holding every connection. That is
->   accepted, since only Jimmy's own devices pass the check.
+>   the HTTP surface, the pre-enrolment shell included (the per-route caps, the
+>   connection backstop and the buffer limits in
+>   [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)). Such a
+>   client can still deny service: by holding every connection, or by filling the
+>   kernel receive buffers of connections the daemon isn't reading (up to 128 KiB
+>   each, which can push the unit to `MemoryMax`). That is accepted, since only
+>   Jimmy's own devices pass the check, and any other process able to reach the
+>   loopback port is local to the box.
 >
 > **Accepted for browsers:**
 >
@@ -151,8 +229,11 @@ native.
 >   no further check, until the credential is revoked or expires (30 days). A browser
 >   has no equivalent of the Keychain's Face ID gate. A lock screen drawn by the page
 >   would not protect a cookie the browser sends anyway, so the client draws none.
-> - A sibling server published and removed entirely between two of the daemon's
->   serve-config reads goes unseen, and a cookie it received stays valid.
+> - A sibling the daemon never sees keeps any cookie it received valid for up to
+>   30 days. A sibling is seen only when the daemon reads the serve config: at
+>   startup, at a browser's boot, enrolment or socket upgrade, and every 10 s while
+>   a browser socket is open. So a sibling published and removed while no browser
+>   tab is connected, before the next browser boot, goes unseen.
 > - An HTTP response already streaming when its credential is revoked or expires
 >   runs to its end (see [Logout](#logout)).
 >
@@ -222,10 +303,16 @@ native.
 >
 > 4b. The page sends `POST /auth/browser/enroll {code, deviceName}`. The request must
 >    pass the [browser admission rules](#browser-admission) for a mutation, except
->    that no credential is needed. The daemon first refreshes its
->    [browser state](#canonical-origin) and refuses with `503 browser_unavailable`
->    unless browsers are admitted. On the auth lane, `Store::enroll` runs with
->    `kind = Browser` and `expires_at = now + 30 days`. In the same write it also:
+>    that no credential is needed. Only then does the daemon refresh its
+>    [browser state](#canonical-origin), and it refuses with `503
+>    browser_unavailable` unless browsers are admitted. On the auth lane,
+>    `Store::enroll` runs with `kind = Browser` and `expires_at = now + 30 days`.
+>    **Under the store's write lock, it reads browser state again** and writes
+>    nothing, answering `503 browser_unavailable`, unless browsers are still
+>    admitted. A refresh that finds a sibling sets *revoking* before it queues the
+>    revocation write. So an enrolment either lands before the revocation write,
+>    which then removes it, or sees *revoking* and writes nothing: no browser device
+>    is ever created while a sibling is known. In the same write it also:
 >    - **replaces the browser's previous credential**: if the request carries a
 >      `__Host-tether` cookie that matches a browser device, that device is removed,
 >      so re-enrolling a browser leaves no orphan row;
@@ -250,11 +337,22 @@ native.
 >
 > **Browser state** is the cached result of one serve-config read: the canonical
 > origin, and whether browsers are *admitted*, *refused* (with a reason) or
-> *revoking*. HTTP requests only read the cache. The daemon re-reads the serve config
-> at startup and at three browser events: an enrolment, a WebSocket upgrade, and `GET
-> /auth/browser/session`, which the shell calls at every boot. These are events, not
-> a poll. Concurrent refreshes share one LocalAPI call, bounded by its 2 s timeout. A
-> read that fails or times out sets *refused*, so the daemon fails closed.
+> *revoking*. Every other request only reads the cache. tailscaled offers no
+> notification of serve-config changes, so the daemon re-reads it at startup and at
+> four points, **each on the browser lane only, and each after the pure admission
+> checks** (§ Browser admission), so a cross-origin flood causes no LocalAPI call:
+>
+> 1. `POST /auth/browser/enroll`;
+> 2. a browser-lane `/ws` upgrade, whose admission then uses the refreshed state;
+> 3. `GET /auth/browser/session`, which the shell calls at every boot;
+> 4. each open browser socket's 10 s re-check, reusing any result younger than 10 s,
+>    so the daemon makes at most one read per 10 s however many browser sockets are
+>    open. [Under D5 = no, this trigger is dropped.]
+>
+> Native requests and native upgrades never refresh browser state and never consult
+> it. Concurrent refreshes share one LocalAPI call, bounded by its 2 s timeout. A read
+> that fails or times out sets *refused*, so the daemon fails closed: browser sockets
+> close with 4503 at their re-check, and the client retries with its usual backoff.
 >
 > **Deriving the canonical origin.** Browsers are admitted only through publications
 > that put tether's proxy handler (`http://127.0.0.1:<port>` or `localhost`) at mount
@@ -267,27 +365,30 @@ native.
 > only under a non-root path (`not_at_root`): the shell, the API and the cookie's
 > `Path=/` all assume the root.
 >
-> **Siblings.** A sibling is anything else the serve config makes reachable under the
-> canonical hostname:
+> **Siblings.** A sibling is anything else for which tailscaled terminates TLS under
+> the canonical hostname, since only TLS on that name makes a browser send the
+> `Secure` cookie:
 >
-> - another `Web` key `<canonical host>:<other port>`;
+> - another HTTPS `Web` key `<canonical host>:<other port>`;
 > - another handler or mount path inside the canonical `Web` entry itself (the same
 >   origin as tether, the worst case);
-> - a `TCP` entry with `TCPForward` on a port other than the canonical one, with or
->   without `TerminateTLS`. `TCP` is keyed by port alone, so it applies to the node's
+> - a `TCP` entry with `TCPForward` **and** `TerminateTLS` on a port other than the
+>   canonical one. `TCP` is keyed by port alone, so it applies to the node's
 >   hostname; inside a Service it applies to the Service's hostname;
 > - the same, in any foreground config.
 >
-> `TCP` entries carrying only `HTTPS: true` or `HTTP: true` are markers that
-> tailscaled writes for every `Web` port, tether's own included. They are judged
-> through their `Web` entry and otherwise ignored. A plain-HTTP `Web` entry counts
-> as a sibling too. The cookie is `Secure` and never goes to it, but counting it
-> keeps the rule simple and fails closed. The parsed `ServeConfig` gains `HTTPS`,
-> `HTTP`, `TerminateTLS`, per-handler mount paths and `Services`.
+> Not siblings: a plain-HTTP `Web` entry, to which the browser never sends the
+> `Secure` cookie, and a `TCPForward` without `TerminateTLS`, whose backend would
+> need a certificate for the canonical hostname, which takes tailscaled operator
+> rights. `TCP` entries carrying only `HTTPS: true` or `HTTP: true` are markers that
+> tailscaled writes for every `Web` port, tether's own included; they are judged
+> through their `Web` entry and otherwise ignored. The parsed `ServeConfig` gains
+> `HTTPS`, `HTTP`, `TerminateTLS`, per-handler mount paths and `Services`.
 >
-> **On a sibling, the daemon revokes.** When a refresh finds a sibling, the state
-> becomes *revoking*. The auth lane deletes every browser device in one atomic write
-> and logs the sibling's `host:port` and the number of devices revoked at `warn`.
+> **On a sibling, the daemon revokes.** [Under D2 (c), it logs and prints the
+> sibling instead, and the rest of this paragraph doesn't apply.] When a refresh
+> finds a sibling, the state becomes *revoking* first, then the auth lane deletes
+> every browser device in one atomic write and logs the sibling's `host:port` and the number of devices revoked at `warn`.
 > Open browser sockets close with 4401 at their next re-check. Browser credentials
 > and enrolment are refused with `503 browser_unavailable` (reason `sibling`) for as
 > long as the sibling stays. If the write fails, the state stays *revoking* and the
@@ -300,11 +401,13 @@ native.
 > its host. The admission rules below stop a sibling *page* from using the cookie
 > through the browser. A sibling *server* receives the cookie itself and can replay
 > it with forged headers from any device logged in as Jimmy. Refusing only while the
-> sibling is up would leave that copy valid once it is gone. Revoking makes any copy
-> worthless. What remains is a sibling that came and went between two refreshes, an
-> accepted risk. HTTPS servers that fetch their own Tailscale certificate outside
-> `tailscale serve` are invisible to the check. Running one under tether's hostname
-> needs tailscaled operator rights, which belong to Jimmy.
+> sibling is up would leave that copy valid once it is gone. Revoking makes every
+> copy a *detected* sibling may hold unknown. It does nothing about a sibling the
+> daemon never reads: one published and removed while no browser socket is open,
+> before the next browser boot. That is an accepted risk (§ Threat model). HTTPS
+> servers that fetch their own Tailscale certificate outside `tailscale serve` are
+> invisible to the check. Running one under tether's hostname needs tailscaled
+> operator rights, which belong to Jimmy.
 >
 > `GET /auth/info` reports `browserOrigin`: the canonical origin when browsers are
 > admitted, otherwise `null`, with `browserRefused` set to the reason. The shell
@@ -323,8 +426,9 @@ native.
 >
 > On those routes, a request on the browser lane (below), and every browser enrolment
 > and logout, must show that tether's own page sent it. These checks are pure, on
-> headers alone, and they run before the auth lane reads `auth.toml`. A flood of
-> cross-origin requests therefore costs no file reads.
+> headers alone, and they run before any browser-state refresh and before the auth
+> lane reads `auth.toml`. A flood of cross-origin requests therefore costs no file
+> read and no LocalAPI call.
 >
 > | Check | Rule | Refusal |
 > |---|---|---|
@@ -379,8 +483,10 @@ native.
 > `503` or `4503` (`auth.toml` unreadable, auth lane busy, `browser_unavailable`)
 > means "can't decide now": the client keeps its cookie and retries with the usual
 > backoff. `4005` means over the connection cap. A credential's re-check on a live
-> socket is unchanged: every 10 s it finds the device by kind and hash and applies
-> `admit`. The codes `403 unlock_required` and close 4423 are reserved for C and are
+> socket keeps its 10 s timer: it finds the device by kind and hash and applies
+> `admit`, and for a browser socket it also refreshes browser state (§ Canonical
+> origin, trigger 4) and closes with 4401 or 4503 if browsers are no longer
+> admitted. The codes `403 unlock_required` and close 4423 are reserved for C and are
 > not sent in A.
 >
 > **`auth::admit(device, now)` is the one policy over a found device**, used by the
@@ -497,8 +603,9 @@ expires_at = "2026-11-21T08:00:00Z"
 >   `admission(method, upgrade, headers, &Origin) -> Result<(), Refused>`;
 >   `set_cookie(credential, max_age)` and `clear_cookie()`.
 > - `identity.rs`: `ServeConfig` parses `HTTPS`, `HTTP`, `TerminateTLS`, mount paths
->   and `Services`; the browser-state cell holds the last result and coalesces
->   refreshes.
+>   and `Services`; the browser-state cell holds the last result with its time,
+>   coalesces concurrent refreshes, and reuses a result younger than 10 s for
+>   socket re-checks. `Store::enroll` reads the cell under the write lock.
 > - `token.rs`: `generate(kind)`; `find(devices, kind, hash)` keeps its
 >   constant-time, no-early-exit scan with the kind in the mask.
 > - `store.rs`: `Device.kind` (serde default `Native`), `Device.expires_at:
@@ -510,12 +617,16 @@ expires_at = "2026-11-21T08:00:00Z"
 >   before the auth lane; `bad_origin` refusals never complete an upgrade. The
 >   `/auth/browser/*` routes sit outside the `devices` router, like `/auth/enroll`,
 >   and call the same admission. The shell router sits outside it too, behind the
->   Tailscale check, and never looks at a credential. `http::serve` runs its own
->   accept loop (daemon-core, "Static shell").
+>   Tailscale check, and never looks at a credential. `http::serve` owns its
+>   accept loop; `http/shell.rs` holds the embedded table and the shell slots
+>   (daemon-core, "Static shell").
 > - The log never carries `Cookie`, `Set-Cookie`, `Authorization` or
 >   `Sec-WebSocket-Protocol` values; refusals log the reason and the path.
 
 ## 4. `decisions.md` entry
+
+Written for the recommended answers in §2. Under another answer to D2, D5 or D6,
+the sibling and control-client bullets change to match.
 
 ```markdown
 ### Browsers authenticate with an HttpOnly device cookie, passkey-ready
@@ -531,21 +642,30 @@ expires_at = "2026-11-21T08:00:00Z"
   a cookie request needs an exact `Host`; upgrades and mutations need an exact
   `Origin` (and `Sec-Fetch-Site: same-origin` if sent); GET and HEAD need
   `Sec-Fetch-Site: same-origin`. All are checked against one canonical origin
-  derived from the serve config. When anything else is published under that
-  hostname, every browser device is revoked and browsers are refused while it
-  stays. Native admission is unchanged. Only the shell, embedded in the binary
-  and served under fixed caps, is served before enrolment.
+  derived from the serve config. When the daemon sees another HTTPS service
+  under that hostname (it reads the serve config at a browser's boot, enrolment
+  and upgrade, and every 10 s while a browser socket is open), every browser
+  device is revoked and browsers are refused while it stays. Plain-HTTP entries
+  and raw TCP forwards don't count. Native admission is unchanged. Only the
+  shell, embedded gzipped in the binary, is served before enrolment. Every HTTP
+  route bounds its own concurrency and refuses at once when full, behind a
+  64-connection backstop in an accept loop the daemon owns.
 - **Why:** media `Range` streaming, `<img>`, fetch and the WebSocket all carry a
   cookie without script handling a secret; reusing the device store keeps one
   enrolment, revocation and re-check path. `ts.net` is a public suffix, so every
   machine in the tailnet is same-site: `SameSite` can't separate them and the
   `Origin` and fetch-metadata checks are required controls. A sibling server
-  receives the cookie itself, so only revocation makes a leaked copy worthless.
+  receives the cookie itself, so revocation is what makes a detected sibling's
+  copy useless; tailscaled can't announce serve-config changes, so a sibling
+  that lives only while no browser is connected goes unseen, and that is
+  accepted.
   Jimmy accepts that an unlocked laptop or phone can use the browser client in
   this phase.
 - **Changes:** "No `Origin` check" and the invariant "tether never authenticates with
   a cookie" now hold for native credentials only. "The daemon serves no UI" no
-  longer holds. `http::serve` caps connections and header time for every client.
+  longer holds. `http::serve` owns its accept loop and bounds connections and
+  hyper's buffers for every client. The third control client goes (2 control
+  clients), to keep the unreclaimable ceiling under `MemoryMax`.
 - **Rejected:**
   - B, a token in browser JS storage sent as a bearer or subprotocol: readable by any
     injected script, and `<video src>` can't add a header, so media needs blob loading
@@ -575,6 +695,23 @@ expires_at = "2026-11-21T08:00:00Z"
   - Serving the shell from a directory on disk: a configurable root, fs-lane reads,
     and a daemon and shell that can drift apart during an upgrade. Sharing the 2 raw
     slots with the shell: a cold load or an update would starve the file viewer.
+  - Counting plain-HTTP entries and raw TCP forwards as siblings: neither can
+    receive the `Secure` cookie, and counting them would revoke browsers for every
+    `--tcp` forward on the box.
+  - Watching for serve-config changes: tailscaled's IPN bus carries none, and its
+    state file is root-only. The 10 s re-read rides the socket re-check that
+    already exists.
+  - A connection cap sized to the routes' sum (24): one cold load filled it and
+    queued the native app's reconnect behind it. A `Listener` wrapper for the cap
+    alone: it can't set hyper's buffer size, and at hyper's default (8 KiB +
+    400 KiB per buffer) 61 connections could hold about 25 MB.
+  - Time-bounded waits for the shell (503 after 10 s): a slow link failed the
+    same requests on every retry. Waiters are bounded by count instead.
+  - Serving the shell uncompressed: twice the transfer and twice the pages.
+  - A 10 s idle timeout: it races tailscaled's 90 s idle pool, and a POST sent on
+    a connection the daemon is closing gets a 502.
+  - Raising `MemoryMax` instead of dropping a control client (as in the earlier
+    caps decision).
 ```
 
 The C seam, recorded in the same entry or in auth.md "Open risks":
@@ -586,8 +723,9 @@ The C seam, recorded in the same entry or in auth.md "Open risks":
     device's credential hash to an instant, held by the auth lane, at most one entry
     per browser device. It is never written to `auth.toml`, so it costs no write on
     the check path, and a daemon restart locks every browser. A passkey assertion
-    with user verification opens it. Socket activity can slide it in memory, to
-    match native's 5-minute lock delay. A second short-lived cookie was rejected: it
+    with user verification opens it. User input slides it in memory, to match
+    native's 5-minute lock delay: only the `input` and `paste` messages count.
+    Ping, pong and output never do, or an open tab would never lock. A second short-lived cookie was rejected: it
     is another secret to protect and needs a signing key, which is more state.
   - Routes under `/auth/browser/passkey/*`, behind the same browser admission.
   - `Store::renew`, which rewrites `expires_at`: a renewal of the 30-day credential,
@@ -624,9 +762,18 @@ The C seam, recorded in the same entry or in auth.md "Open risks":
   every browser credential ([auth.md](auth.md#browser-admission))." Add: the
   browser shell is served by the daemon under the CSP in auth.md §Endpoints. That
   replaces "The daemon serves no UI", which ios-shell.md also states.
-- **Running the phone spikes**: step 2 must no longer publish on tether's hostname
-  (`--https=8443` on the same machine name). Publish spikes under another hostname.
-  Publishing one on tether's hostname revokes every browser credential (D2).
+- **Resource budget**, "Event-driven only": add "The one timed read is each live
+  socket's existing 10 s re-check, which also refreshes browser state, at most once
+  per 10 s for the daemon, while a browser socket is open (auth.md, D5)."
+  [Dropped under D5 = no.]
+- **Running the phone spikes** [under D2 (a); unchanged under (b) or (c)]: step 2
+  publishes on plain HTTP, `tailscale serve --bg --http=8080 http://127.0.0.1:5173`,
+  and step 3's URL becomes `http://<machine>.<tailnet>.ts.net:8080`. Add why:
+  publishing on HTTPS under tether's hostname revokes every browser credential
+  (auth.md "Canonical origin"), and plain HTTP stays inside WireGuard. HMR uses
+  `protocol: "ws"` and `clientPort: 8080`, or the documented reload fallback.
+  Teardown becomes `tailscale serve --http=8080 off`. If G13 fails, step 2
+  publishes from the Mac's own tailnet name instead.
 
 ### daemon-core.md
 
@@ -641,68 +788,147 @@ The C seam, recorded in the same entry or in auth.md "Open risks":
   (`src/proto/messages.rs`) has no catch-all, so a new `"browser"` value would make
   an older daemon refuse `hello` with 4003. The credential kind, not `hello`, is what
   the daemon trusts.
-- **New subsection, "Static shell"** (proposed text):
+- **New subsection, "Static shell"** (proposed text). It also sets the bounds for
+  every HTTP route, since the shell is what made them necessary:
 
-> **HTTP connections.** `http::serve` runs its own accept loop over hyper-util's
-> HTTP/1 connection builder, because `axum::serve` sets no header timeout and no
-> connection cap. Each accepted socket takes one of **24 connection permits** and
-> holds it until the socket closes, even after a WebSocket upgrade. With no permit
-> free, the loop stops accepting, and the kernel's listen backlog of 32 holds
-> newcomers. The builder sets a **10 s header-read timeout**, which applies to a
-> request's first byte and to an idle keep-alive connection (gate G12 confirms it),
-> a **16 KiB header limit**, and a **64 KiB maximum buffer** per connection, read
-> and write each. The 24 permits cover 3 WebSockets, 2 raw responses, 1 upload, the
-> 8 fs waiters, 4 shell responses, and 6 for JSON and the shell's waiting requests.
-> A request waiting for any slot holds its connection, so the permits also bound
-> every waiter that has no cap of its own.
+> **One rule bounds HTTP.** Each route caps its own concurrency and, when its
+> waiters are full, answers at once: `503 busy` with `Retry-After: 1`, or 4005 for a
+> socket. Waiters are bounded by count, never by a timer. A connection cap sits
+> behind them as a backstop, sized above their sum so that ordinary bursts never
+> reach it, and the native app's reconnect never queues behind a browser's page
+> load.
 >
-> **Packaging.** The release build embeds the shell: `build.rs` reads `web/dist` and
-> Vite's manifest and generates a static table of path, bytes, content type and hash.
-> The build fails if a file is missing or the manifest is stale. It also fails over
-> **8 MiB in total, 2 MiB for one file, or 128 files**. Today's build is 5.0 MiB in 52
-> files, the largest a 1.0 MiB font. Embedded bytes are the binary's read-only pages:
-> the daemon and shell always match, there is no configured root, and nothing reads
-> the disk on the fs lane. Debug builds may read `web/dist` instead.
+> | Route | Served at once | Waiting | When full |
+> |---|---|---|---|
+> | `/ws` | 3 sockets | — | close 4005 |
+> | file API | 1 scan, 2 raw, 1 upload | 8 on the fs lane | `503 busy` at once |
+> | `/complete` | 4 | — | `503 busy` at once |
+> | shell | 4 slots | 16, in arrival order, no deadline | `503 busy` at once |
+> | auth routes, and each device route's credential read | the auth lane's 2 threads | uncapped; a read takes milliseconds | `503 busy` after the lane's 10 s wait |
+>
+> Those caps add up to about 40 connections, plus a handful waiting on the auth lane
+> and the idle connections tailscaled
+> keeps pooled to the daemon: at most 2, held for 90 s (Go's default
+> `MaxIdleConnsPerHost`, which Serve doesn't change; `IdleConnTimeout: 90 *
+> time.Second` in its proxy transport). The backstop is **64 connections**, so
+> reaching it means a flood, and a flood only denies service.
+>
+> **The accept loop.** `http::serve` owns its accept loop rather than calling
+> `axum::serve`. A `Listener` wrapper could cap connections alone, but the memory
+> bound needs hyper's buffer size, and axum 0.8.9 builds each connection with
+> hyper's defaults and no hook (`serve/mod.rs`). At the default (8 KiB + 400 KiB per
+> buffer), 61 connections could hold about 25 MB. The loop:
+>
+> - takes one of the **64 connection permits** before each `accept`. With none
+>   free it stops accepting, and the kernel's listen backlog of 32 holds newcomers.
+>   The permit lives inside the connection's I/O wrapper, so it moves into an
+>   upgraded socket and is freed only when the socket closes. The wrapper forwards
+>   `poll_write_vectored` and `is_write_vectored`, so hyper keeps queueing body
+>   `Bytes` instead of copying them into its write buffer;
+> - sizes each socket's kernel buffers with `small_buffers`, as today;
+> - serves the connection with hyper's `http1::Builder`. The daemon has only ever
+>   spoken HTTP/1.1 (axum's `http1` feature), and tailscaled proxies plain-HTTP
+>   backends over HTTP/1.1. The builder gets a tokio timer, **`max_buf_size` of
+>   16 KiB** (it bounds the read and the write buffer alike, and a request head that
+>   doesn't fit is answered 431), a **100 s header-read timeout**, and
+>   `with_upgrades()` for `/ws`;
+> - inserts `ConnectInfo<SocketAddr>`, the accepted peer, into every request's
+>   extensions before the router, because the Tailscale check reads it.
+>
+> The header-read timeout also closes idle keep-alive connections, since hyper arms
+> it at every request head. 100 s is above tailscaled's 90 s idle timeout, so
+> tailscaled always closes an idle connection first and never sends a request on one
+> the daemon is closing. Go doesn't retry a POST on such a connection, so a shorter
+> timeout would turn a rare enrolment or upload into a 502. A slow sender can only be
+> a process on loopback, because tailscaled forwards complete heads at once, and the
+> permits bound how many such connections there can be.
+>
+> **Shutdown.** Each connection is spawned into a `JoinSet` and watched by
+> hyper-util's `GracefulShutdown`. On the signal the loop stops accepting, sets
+> `stop` (every socket closes with 4004, as today), and starts the graceful
+> shutdown. At the 2 s deadline it aborts every connection task still in the
+> `JoinSet`, so a stalled raw response is closed instead of outliving `serve`. It
+> then waits for the upgraded sockets' slots until the same deadline, as today.
+> axum spawns upgraded sockets outside the `JoinSet`, so one that misses the
+> deadline still holds a `Ctx`, and `main` keeps calling `HubHandle::stop`.
+>
+> **Packaging.** The release build embeds the shell. `build.rs` reads `web/dist` and
+> Vite's manifest, gzips every text asset (HTML, JS, CSS, the manifest, SVG) at level
+> 9, and generates a static table of path, bytes, content type, encoding and hash. It
+> embeds only the gzip bytes of a text asset; fonts (already woff2) and images are
+> embedded as they are. The build fails if a file is missing or the manifest is
+> stale. It also fails over **3 MiB embedded, 1.5 MiB for one file, or 128 files**.
+> Today's build embeds 2,623,604 bytes in 52 files, 2.1 MB of it the two 1.0 MiB
+> woff2 fonts. Embedded bytes are the binary's read-only pages: the daemon and shell
+> always match, there is no configured root, and nothing reads the disk on the fs
+> lane. Debug builds may read `web/dist` instead.
+>
+> **Encoding.** A request whose `Accept-Encoding` allows gzip, or that sends none
+> (RFC 9110 §12.5.3 then allows any coding), gets the gzip bytes with
+> `Content-Encoding: gzip` and `Vary: Accept-Encoding`. One whose `Accept-Encoding`
+> excludes gzip gets `406`. Every supported browser sends gzip, and Serve's proxy
+> passes both headers through untouched (G1). Shell paths ignore `Range` and answer
+> 200 with the whole file.
 >
 > **Serving.** A shell response takes one of **4 shell slots**, separate from the fs
-> raw slots, so a cold load or an update can't starve the file viewer. Waiting for a
-> slot is bounded at **10 s**, then `503 busy` with `Retry-After: 1`. The body is
-> **64 KiB slices of the embedded bytes**: `Bytes::from_static`, never copied, so a
-> response holds no heap beyond hyper's write buffer. Two deadlines bound a slow
-> reader: fs raw's **30 s stall deadline** for the socket to take the next slice, and
-> a **60 s deadline for the whole response**, well above the 17 s a 2 MiB file takes
-> at 1 Mbit/s. Either aborts the response and frees its slot. The shell is served
-> uncompressed; the fonts are already woff2. A cold load is about 10 requests, which
-> queue in the 4 slots. A service-worker update that meets 503 fails as a whole and
-> leaves the old version active (browser-setup "Offline shell and updates"), so a
-> burst degrades into a retry at the next update check.
+> raw slots, so a cold load or an update can't starve the file viewer. Up to **16
+> requests wait** for a slot, in arrival order and with no deadline; the 17th gets
+> `503 busy` with `Retry-After: 1` at once. A waiter's wait is bounded anyway,
+> because each slot holder is cut by the deadlines below. The body is **64 KiB
+> slices of the embedded bytes**: `Bytes::from_static`, never copied, so a response
+> holds no heap beyond hyper's buffers. Two deadlines bound a slow reader: fs raw's
+> **30 s stall deadline** for the socket to take the next slice, and a **60 s
+> deadline for the whole response**, well above the 13 s a 1.5 MiB file takes at
+> 1 Mbit/s. Either aborts the response and frees its slot.
+>
+> A cold load is about 10 requests: 4 served and 6 waiting, so two browser profiles
+> loading at once still fit. The service worker precaches only what opens Home
+> (browser-setup "Offline shell and updates"), about 2.3 MB with both fonts. At
+> 2 Mbit/s that takes about 9 s, and the requests behind it just wait: no request
+> fails for being on a slow link. A burst past 16 waiters gets 503, and a
+> service-worker update that meets it fails as a whole and leaves the old version
+> active, so it degrades into a retry at the next update check.
 
-- **§6 Limits** (rows added): connection permits 24 (stop accepting); header-read
-  timeout 10 s (connection closed); header size 16 KiB (431); hyper buffer per
-  connection 64 KiB, read and write; shell slots 4 (wait up to 10 s, then `503
-  busy`); shell stall 30 s and response deadline 60 s (aborted); shell size 8 MiB,
-  2 MiB per file, 128 files (build fails); browser credential lifetime 30 days
-  (auth.md). Note under the connection cap that browser tabs, the PWA and native all
-  count toward the 3 sockets. The cap is not raised here.
+- **§6 Limits** (rows added): connection permits 64, the backstop (stop accepting);
+  hyper buffer per connection 16 KiB, read and write each (a larger head is 431);
+  header-read and idle timeout 100 s (connection closed); shell slots 4 and shell
+  waiters 16 (the 17th: `503 busy` at once); shell stall 30 s and response deadline
+  60 s (aborted); shell size 3 MiB embedded, 1.5 MiB per file, 128 files (build
+  fails); browser credential lifetime 30 days (auth.md); browser-state refresh at
+  most once per 10 s while a browser socket is open (auth.md "Canonical origin").
+  Changed under D6: control clients 3 → 2. Note under the connection cap that
+  browser tabs, the PWA and native all count toward the 3 sockets. That cap is not
+  raised here.
 - **§6 Memory ceiling** (rows changed and added):
 
 | Item | Bound | MB |
 |---|---|---|
-| HTTP connections (new): those not upgraded and not in another row, waiting or idle | 24 permits − 3 WebSockets = 21 × (≤ 32 KiB read buffer under the 16 KiB header cap + 8 KiB header write buffer + task) | 1 |
-| shell responses (new) | 4 slots × (64 KiB write buffer; the body is static, uncopied) | 0.3 |
-| file API (changed: the 64 KiB hyper buffer replaces ~400 KiB in the raw and upload rows of fs.md) | raw 2 × (64 KiB chunk + channel + 64 KiB) + upload (64 KiB + 64 KiB chunk + 2 MiB dirty) + scan + listing | 4 (was 5) |
+| control clients (changed, D6) | 2 × 5.3 MB measured | 11 (was 16) |
+| HTTP connections (new): every accepted connection that isn't upgraded, the file API's and the shell's included | 64 permits − 3 sockets = 61 × (16 KiB read buffer + 16 KiB write buffer + ~4 KiB task and connection state) | 2.2 |
+| file API (changed: hyper's buffers move to the row above) | scan 1.2 + raw 2 × (64 KiB chunk + channel) + upload (64 KiB chunk + 2 MiB of dirty pages) + listing 0.1 | 4 (was 5) |
 | kernel socket buffers (changed) | as before, plus the 4 shell sockets × 256 KiB | 3 (was 2) |
-| **ceiling** | | **~66 (was ~65)** |
+| embedded shell pages (new; clean, file-backed, reclaimable) | the pages touched, at most the 3 MiB embedded (2.6 MB today) | 3.1 |
+| **ceiling** | | **~64.5 (was ~65); ~59 the kernel can't reclaim** |
 
-  Below the table: the embedded shell's pages (at most 8 MiB, only those touched)
-  are clean and file-backed, like page cache. They are reclaimable, so they stay out
-  of the ceiling, but they count toward `memory.current` and push toward
-  `MemoryHigh` while warm. **What gives:** the ceiling is now about 2 MB over
-  `MemoryMax`. By the rule §6 already states, the third control client goes first
-  (3 → 2 saves 5.3 MB, to about 61 MB), unless the budget measurement, which now
-  includes G12's shell burst, shows the peak fits. Before this change, HTTP
-  connections were unbounded and uncounted, so the ceiling was optimistic. The new
-  rows make it honest.
+  Below the table, replacing the paragraph after it:
+
+  > **What has to fit.** The ceiling counts every item, reclaimable ones included,
+  > as it already did for the completion slab. The rule it is held to is on the
+  > rest: what the kernel can't reclaim must fit `MemoryMax`, because the kernel
+  > drops clean file pages and reclaimable slab before the OOM killer runs. Here
+  > that is the ceiling minus the shell's pages (3.1 MB) and the slab (2.4 MB):
+  > about 59 MB, against 64 MB. With 3 control clients it was about 64.3 MB, with
+  > no margin, so the third went (decisions.md). The shell's warm pages and the slab
+  > still count toward `MemoryHigh` (48 MB), where systemd throttles the unit, so
+  > the throttle comes sooner while they are warm. The
+  > [budget measurement](plan.md#resource-budget) and gate G12 check it. During the
+  > load, sample the unit's `memory.stat` every 100 ms; the largest `anon + kernel
+  > + sock − slab_reclaimable` must be at most 64 MB. Record `memory.peak` beside
+  > it. The normal case is unchanged.
+
+  [Under D6 = keep 3: the control-client row stays 16, the ceiling is ~69.8 and the
+  unreclaimable part ~64.3 MB, and the paragraph says the budget measurement
+  decides, by the same pass rule, whether the cap drops to 2.]
 
 ### fs.md
 
@@ -716,8 +942,14 @@ The C seam, recorded in the same entry or in auth.md "Open risks":
   on its `Range` requests. `Content-Range` and `ETag` are readable without
   `Access-Control-Expose-Headers` because the request is same-origin. The "daemon
   sends no CORS headers" sentence stays.
-- "Limits and the memory ceiling": hyper's buffer is 64 KiB, not ~400 KiB, in the
-  raw and upload rows (daemon-core "Static shell"). The file API total becomes ~4 MB.
+- "Limits and the memory ceiling": hyper's buffers leave the raw and upload rows.
+  They are 16 KiB each now and counted per connection in daemon-core's "HTTP
+  connections" row. The file API total becomes ~4 MB.
+- "Shutdown must not wait on a stream": the accept loop now aborts a stalled raw
+  response's connection task at the 2 s deadline (daemon-core "Static shell"), so
+  "axum never force-closes a connection" no longer holds. `main` still calls
+  `HubHandle::stop`, because an upgraded socket that misses the deadline holds a
+  `Ctx`.
 - Errors: add `bad_origin` and `browser_unavailable` to the shared table, and to
   `HttpError` (generated for TypeScript).
 
@@ -731,7 +963,12 @@ The C seam, recorded in the same entry or in auth.md "Open risks":
   request that did would be refused as ambiguous (probe G6).
 - "Dev mode": the desktop dev shim and the Vite proxy remain dev-only, using a native
   token from `tether device add`. They are never a browser deployment, and the
-  release browser build contains neither.
+  release browser build contains neither. [Under D2 (a):] the *Dev server* URL is
+  `http://devbox.tail…ts.net:8080`, and HMR uses `ws:` on 8080.
+- "Info.plist" [under D2 (a)]: "no ATS exceptions" holds for Release only. The
+  Debug configuration adds an `NSExceptionDomains` entry allowing insecure HTTP
+  loads for the dev server's hostname, which G13 confirms is enough for the scheme
+  handler's fetch and for HMR. Release builds carry no exception.
 - The bridge: `Native.kind` gains a browser platform adapter, chosen at boot when no
   native bridge exists in a production build. It has no `token()` and passes no
   subprotocol token, `httpOrigin` is `location.origin`, and `hostRejected` shows the
@@ -746,12 +983,15 @@ The C seam, recorded in the same entry or in auth.md "Open risks":
   upgrades and `Sec-Fetch-Site: same-origin` on reads (no token), with the reason and
   the minimum browsers. Host validation is against the canonical origin from the
   serve config. Add CORP `same-origin` and `no-store` on every API response.
-- "Deployment trap": now enforced by revocation on detection. Add the same-site fact
-  (`ts.net` is a public suffix).
+- "Deployment trap": now enforced by revocation on detection, for HTTPS services
+  and TLS-terminated TCP forwards under tether's hostname. Plain HTTP and raw TCP
+  forwards are harmless. Add the same-site fact (`ts.net` is a public suffix).
 - "Packaging and static delivery": the static bounds this section asks for are set
-  in daemon-core "Static shell" (embedded; 24 connection permits; 4 shell slots;
-  64 KiB per-connection buffers; 10 s header, 30 s stall, 60 s response; 8 MiB
-  shell). Replace "still require a small build/resource spike" with G12.
+  in daemon-core "Static shell". The shell is embedded and gzipped, at most 3 MiB.
+  It has 4 shell slots and 16 waiters, refusing at once beyond them, under a
+  64-connection backstop. Buffers are 16 KiB per connection; deadlines are 30 s for
+  a stall and 60 s for a response; the idle timeout is 100 s. Replace "still require
+  a small build/resource spike" with G12.
 - "Threat-model decision required": resolved, Jimmy accepts reduced protection
   (no unlock) for the Tailscale phase; passkey unlock is the planned follow-up.
 - Logout: drafts kept; "Clear local data" is separate (D3). Live sockets close within
@@ -772,18 +1012,19 @@ None of these was run for this draft. Each names what it decides.
 
 | # | Gate | Decides |
 |---|---|---|
-| G1 | Through `tailscale serve`: on plain HTTP, on POST and on the WebSocket upgrade, the daemon receives `Cookie` (including HTTP/2 split cookie fields, and how they arrive), `Origin`, `Host` (exact value, with or without `:443`) and `Sec-Fetch-*` unchanged. `Set-Cookie` comes back to the browser unchanged, including on `204`. **Safari 26 sends WebSocket upgrades over HTTP/2** (extended CONNECT): Serve must turn them into HTTP/1.1 upgrades to the daemon with those headers intact, and the socket must work | Whether the Host and fetch-metadata rules can hold as written. If Serve rewrites `Host`, compare against what Serve sends and record it. If Safari 26's HTTP/2 upgrade fails through Serve, the browser client doesn't ship on it until it works |
+| G1 | Through `tailscale serve`: on GET, on POST and on the WebSocket upgrade, the daemon receives `Cookie` (including HTTP/2 split cookie fields, and how they arrive), `Origin`, `Host` (exact value, with or without `:443`) and `Sec-Fetch-*` unchanged. `Set-Cookie` comes back to the browser unchanged, including on `204`. **Safari 26 sends WebSocket upgrades over HTTP/2** (extended CONNECT): Serve must turn them into HTTP/1.1 upgrades to the daemon with those headers intact, and the socket must work | Whether the Host and fetch-metadata rules can hold as written. If Serve rewrites `Host`, compare against what Serve sends and record it. If Safari 26's HTTP/2 upgrade fails through Serve, the browser client doesn't ship on it until it works. Also: a `Content-Encoding: gzip` shell response reaches the browser unchanged, and `Accept-Encoding` arrives as the browser sent it. Record how many backend connections one Safari cold load opens through Serve |
 | G2 | Safari on macOS, Safari on iOS, and the installed iOS PWA send the `Strict` `HttpOnly` `__Host-tether` cookie on: the WebSocket handshake after a fresh load, a reload, a tab restored after quitting, history navigation, and a PWA cold launch; on `fetch`; and on `<img>` and `<video>` `Range` requests | `SameSite=Strict`, or the `Lax` fallback (safe because the Origin rules carry the defence) |
 | G3 | Fetch metadata on the same requests: GETs (`fetch`, `<img>`, `<video>` ranges) carry `Sec-Fetch-Site: same-origin`; upgrades and POSTs carry either `same-origin` or nothing. `<video>` loads in Safari especially, since WebKit may load media through AVFoundation | If media GETs omit it: allow a missing header on `GET /fs/raw` only, never a value other than `same-origin`. CORP alone then guards those responses. `SameSite` adds nothing, because the tailnet is one site. Recorded: a sibling page in a browser without CORP could embed raw media |
 | G4 | WebSocket upgrades and POSTs carry `Origin`, serialized exactly as the canonical origin (no `:443`) | Origin rule as written |
 | G5 | On the target iOS release, Safari and the installed PWA keep separate cookie jars; the cookie survives a PWA relaunch and a reboot; Web Inspector shows a 30-day expiry (no 7-day cap on a server-set `HttpOnly` cookie) | The separate-enrolment copy, and D1 holding in practice |
 | G6 | The iOS app's WKWebView WebSocket carries no tether cookie; the app's `URLSession` sends no `Origin` or `Sec-Fetch-*` on `POST /auth/enroll` | The ambiguity rule and the native-enrol refusal don't break native |
-| G7 | Browser-state derivation agrees with `tailscale serve status` for: Web, TCP and foreground entries; the `HTTPS: true` / `HTTP: true` markers tailscaled writes for every Web port (ignored); a `TCPForward` with and without `TerminateTLS` (sibling); a second mount path inside tether's own Web entry (sibling); tether at a non-root path (refused); tether in a Service; the documented `:8443` spike mapping (sibling, revokes) | D2's enforcement, and the canonical-origin derivation |
+| G7 | Browser-state derivation agrees with `tailscale serve status` for: Web, TCP and foreground entries; the `HTTPS: true` / `HTTP: true` markers tailscaled writes for every Web port (ignored); a `TCPForward` with `TerminateTLS` (sibling) and without it (not a sibling); a plain-HTTP Web entry on another port (not a sibling); a second mount path inside tether's own Web entry (sibling); tether at a non-root path (refused); tether in a Service; the documented `:8443` spike mapping (sibling, revokes) and the `--http=8080` one (not a sibling) | D2's enforcement, and the canonical-origin derivation |
 | G8 | A raw `.svg` and `.html` opened top-level from `/fs/raw` run no script in Safari or Chrome under `CSP: sandbox`; a raw `.js` (`text/plain` + `nosniff`) is refused both as `<script>` and by `serviceWorker.register` | That same-origin raw files can't run as tether |
 | G9 | Only if D2 chooses (b), and then **a ship gate**: Tailscale Services or a second node name still adds `Tailscale-User-Login`, and the Funnel and serve-config checks see it | Whether the dedicated hostname works at all; if it fails, D2 falls back to (a) |
 | G10 | From a page on a sibling tailnet machine, from another port of the same machine, and from a **plain-HTTP page** on a tailnet host (in a staging setup, not production): WebSocket hijack, `fetch` POST, form POST, and `<img>`/`<video>` of `/fs/raw` all fail (403 or blocked by CORP). A cookie set or **overwritten** from a sibling port, and a tossed duplicate from the plain-HTTP page, never admit anything | The cross-origin defence end to end, and L1's impact being denial of service only |
 | G11 | In Safari, iOS Safari, the installed PWA and Chrome, with a valid cookie: a typed URL, a bookmark, a PWA cold launch and a link from another app (`Sec-Fetch-Site: none` or `cross-site`) all load the shell, which then connects | The shell routes never judging credentials (M1) |
-| G12 | On the dev box, under the systemd unit: a burst of 24 connections fetching the whole shell at once, plus 3 sockets and a raw stream, with some readers throttled to 64 kbit/s. Record the unit's `memory.peak`, check that slow readers are cut at 30 s or 60 s, that a 25th connection waits and is then served, and that an idle keep-alive connection closes at 10 s | The new memory-ceiling rows, the header timeout's coverage of idle connections, and "what gives" in daemon-core §6 |
+| G12 | On the dev box, under the systemd unit, with every other cap held as in daemon-core §6: two browser profiles cold-loading at once and a service-worker precache, plus 3 sockets, a raw stream and an upload, with some readers throttled to 64 kbit/s; then a flood of 64 connections. Sample `memory.stat` every 100 ms. **Pass:** the largest `anon + kernel + sock − slab_reclaimable` is at most 64 MB; no shell request gets 503 in the two-profile load, however slow its link; with 64 connections held, a 65th waits in the backlog and is served when one closes; the native app reconnects during the two-profile load without waiting; slow readers are cut at 30 s or 60 s; an idle keep-alive connection closes at 100 s, after tailscaled has closed it at 90 s. Record `memory.peak`, the shell pages' share (`file`), and the backend connection count | The memory-ceiling rows, D6, the backstop's headroom, and the idle-timeout ordering (N8) |
+| G13 | Only under D2 (a): a spike published with `tailscale serve --http=8080`, loaded through the Debug app's dev-server switch on a real iPhone. The scheme handler's fetch works with only a Debug `NSExceptionDomains` entry for the dev host; HMR over `ws:` connects from `tether-app://ui`, or the reload fallback works; a keyboard spike behaves as it does over HTTPS | Whether spikes can stay on the dev box under (a). If not, they publish from the Mac's tailnet name, and that cost joins D2's table |
 
 ### Acceptance checks (automated in `tests/http_auth.rs` where a socket suffices)
 
@@ -813,31 +1054,46 @@ None of these was run for this draft. Each names what it decides.
   the shared counter and the fifth deletes it, whichever route took the tries; a
   right code is consumed for both routes; re-enrolling with a valid cookie removes
   the old device in the same write; expired browser rows are dropped; `POST
-  /auth/enroll` with `Origin` is 403.
+  /auth/enroll` with `Origin` is 403. **Race:** with the store paused after an
+  enrolment's first refresh saw *admitted*, a refresh that finds a sibling, then
+  the enrolment resumed, leaves no browser device in `auth.toml` and answers `503
+  browser_unavailable`; in the other order, the revocation write removes the new
+  device.
 - **Lifetime:** a browser device past `expires_at` is 401; a live socket closes 4401
   at the next re-check after expiry; a browser row with a bad `expires_at` is refused
   alone, and other devices keep working.
 - **Logout:** 204 and a clearing cookie; the device is gone from `auth.toml`; a
   second socket on the same credential closes 4401 within 10 s; an unknown cookie and
   no cookie at all both get 204 and clearing.
-- **Browser state:** from fixture serve configs. A sibling Web port, a second mount
-  path in tether's entry, or a `TCPForward` on another port revokes every browser
-  device in one write and gives `503 browser_unavailable` / 4503 until it is gone.
+- **Browser state:** from fixture serve configs. A sibling HTTPS Web port, a second
+  mount path in tether's entry, or a `TCPForward` with `TerminateTLS` on another
+  port revokes every browser device in one write and gives `503
+  browser_unavailable` / 4503 until it is gone. A plain-HTTP Web port and a
+  `TCPForward` without `TerminateTLS` revoke nothing.
   Native requests are unaffected throughout. A failed revocation write keeps
   browsers refused even after the sibling is removed. `HTTPS: true` markers alone
   admit. An unreadable config, two publications with no `browser_origin`, a
   `browser_origin` that tether doesn't publish, and tether at a non-root path are
   all refused, revoke nothing, and set `/auth/info.browserOrigin` to `null` with the
-  reason. Enrolment, an upgrade and `/auth/browser/session` each trigger a refresh;
-  other HTTP requests trigger none (count LocalAPI calls).
+  reason. Count LocalAPI calls: browser enrolment, a browser upgrade and
+  `/auth/browser/session` each trigger a refresh, after admission; a cross-origin
+  request on those routes, a native upgrade and every other request trigger none.
+  With two browser sockets open for 30 s, the re-checks make at most 3 or 4 reads;
+  with only native sockets, none. A sibling added while a browser socket is open
+  closes that socket with 4401 within 10 s.
 - **Static shell:** shell paths answer before enrolment with the CSP and cache
   headers above; `If-None-Match` on `/` gives 304; unknown `/fs/…`, `/auth/…` and
   `/ws…` paths are JSON 404, never HTML; a failed Tailscale check is 403 on shell
-  paths too. A fifth concurrent shell response waits, then gets `503 busy` after 10
-  s. A reader that stops reading is aborted at 30 s. A connection that sends no
-  complete header in 10 s is closed. A 25th connection isn't accepted until one
-  closes. The build fails on a missing asset, a stale manifest, or a shell over the
-  size limits.
+  paths too. With 4 shell responses held, 16 more wait for as long as it takes, and
+  the 17th gets `503 busy` at once; no shell request ever gets 503 for waiting. A
+  reader that stops reading is aborted at 30 s. A text asset comes back gzipped
+  with `Vary: Accept-Encoding`, with or without an `Accept-Encoding` header;
+  `Accept-Encoding: identity` gets 406. A request head over 16 KiB gets 431. A
+  connection that sends no complete head in 100 s is closed. A 65th connection
+  isn't accepted until one closes. The Tailscale check sees the peer address
+  (`ConnectInfo`) on every route. On shutdown, sockets get 4004 and a stalled raw
+  response is closed by the 2 s deadline. The build fails on a missing asset, a
+  stale manifest, or a shell over the size limits.
 - **Headers:** every API response has `no-store`, `nosniff` and CORP; nothing logs
   a cookie, bearer or subprotocol value (grep the test log for the credential).
 - **Build:** the release browser bundle contains neither `createDevShim`,
@@ -864,14 +1120,39 @@ None of these was run for this draft. Each names what it decides.
   `http1::Builder` offers `header_read_timeout` (needs a timer), `max_buf_size`
   (default 8 KiB + 400 KiB, used by both the read and the write buffer) and
   `max_header_size`.
-- Build measured: `web/dist` today, 52 files, 5,225,026 bytes (2.6 MB gzipped), the
-  largest two the 1.0 MiB JetBrains Mono woff2 fonts, then the 780 KiB `cpp`
-  grammar and the 552 KiB entry chunk.
+- Build measured (2026-10-23): `web/dist`, 52 files, 5,225,026 bytes raw. Embedded
+  as specified (text assets `gzip -9`, woff2 and images as they are): 2,623,604
+  bytes, the largest file the 1,062,428-byte JetBrains Mono Bold woff2. The two
+  fonts are 2.1 MB of it.
+- Library source, revision 3: hyper 1.12 `proto/h1/io.rs`. `max_buf_size` sets both
+  the read strategy's maximum and the write buffer's (`set_max_buf_size`), must be
+  at least 8 KiB, and a head that overflows it is `Parse::TooLarge`, which
+  `role.rs` answers 431. With vectored I/O, hyper queues body buffers instead of
+  flattening them. `http1::Builder` has `timer`, `header_read_timeout`,
+  `max_buf_size` and `max_headers`. hyper-util 0.1.21 has `server::graceful`.
+  `Cargo.toml` enables only axum's `http1`.
+- Upstream tailscale `ipn/ipnlocal/serve.go` (fetched 2026-10-23): the proxy
+  transport sets `MaxIdleConns: 100`, `MaxIdleConnsPerHost` from a debug envknob
+  (default 0, which is Go's 2), `IdleConnTimeout: 90 * time.Second`, and no
+  `MaxConnsPerHost` or `DisableCompression`. It doesn't touch `Accept-Encoding` or
+  `Content-Encoding`. Plain-HTTP backends get HTTP/1.1, except gRPC, which gets h2c.
+- Code, revision 3: `Auth::recheck` (`src/auth/mod.rs`) reads `auth.toml` on every
+  10 s re-check; `http::serve` (`src/http/mod.rs`) uses `tap_io` for
+  `small_buffers`, `into_make_service_with_connect_info`, a 2 s `SHUTDOWN_WAIT`, and
+  4004 on stop. Client messages that carry user input are `input` and `paste`
+  (`src/proto/messages.rs`).
+- ios-shell.md "Dev mode" (the scheme handler fetches dev-server assets; the origin
+  stays `tether-app://ui`) and "Info.plist" (no ATS exceptions); plan.md "Spikes"
+  ("The spikes come first") and "Resource budget" ("no polling timers"), and the
+  lane table (auth waiters uncapped).
 - Docs: `docs/design/auth.md`, `plan.md` "Security", "Resource budget" and "Running
   the phone spikes" (the `:8443` mapping), `daemon-core.md` §5.1–5.2 and §6 (the
   ~65 MB ceiling and the control-client rule), `fs.md` "Constants" and "Limits and the
   memory ceiling", `ios-shell.md`, `client/browser-setup.md` (the static-load gate),
   `client/connection-roadmap.md`, `decisions.md` "Auth".
+- [Security review 2](browser-auth-review-2.md): the IPN bus has no serve-config
+  notification; Serve preserves `Host` for TCP backends; hyper's
+  `header_read_timeout` covers idle keep-alive.
 - [Security review 1](browser-auth-review-1.md), and the sources it cites: WebKit
   bug 237550 (fetch metadata on WebSocket handshakes), the Apple forum thread on
   Safari 26 WebSockets, WebKit bug 260284, and the report on Serve's `Host` header.
@@ -890,8 +1171,9 @@ None of these was run for this draft. Each names what it decides.
 
 | Finding | Disposition | Landed in |
 |---|---|---|
-| H1 refusing protects nothing already leaked | **Fixed.** D2 offers (a) revoke on detection, (b) a dedicated hostname with G9 as a ship gate, (c) a warning. It recommends (a). The rationale now separates a sibling page (stopped by admission) from a sibling server (handled by revocation). The between-refreshes gap is accepted | §1, §2 D2, §3.2, §3.6, §4, G7, G9 |
-| H2 static HTTP unbounded | **Fixed.** Shell embedded with build-time size limits; 24 connection permits; 4 shell slots; 64 KiB buffers; 10 s header, 30 s stall, 60 s response timeouts; ceiling rows, and the third control client as what gives | §5 daemon-core "Static shell" and §6, fs.md, browser-setup; G12; static-shell checks |
+| **Round 1** | | |
+| H1 refusing protects nothing already leaked | **Fixed; reworked in round 2 (N1, N2).** D2 offers (a) revoke on detection, (b) a dedicated hostname with G9 as a ship gate, (c) a warning. It recommends (a). The rationale now separates a sibling page (stopped by admission) from a sibling server (handled by revocation). The between-refreshes gap is accepted | §1, §2 D2, §3.2, §3.6, §4, G7, G9 |
+| H2 static HTTP unbounded | **Fixed; the bounding scheme was redesigned in round 2 (N3–N5, N10).** Shell embedded with build-time size limits; per-route caps behind a connection backstop; 4 shell slots; bounded buffers; stall and response deadlines; ceiling rows, and the third control client as what gives | §5 daemon-core "Static shell" and §6, fs.md, browser-setup; G12; static-shell checks |
 | M1 shell contradicts §3.7 | **Fixed.** Credentials are parsed only on the device and `/auth/browser/*` routes | §3.7, §3.11; G11; "Shell never judges credentials" check |
 | M2 `Sec-Fetch-Site` with no fallback | **Fixed.** Exact Origin is required on upgrades and mutations, with `Sec-Fetch-Site` checked only if present; it is required on GET/HEAD; minimum browsers stated; G3 relies on CORP alone; Safari 26 HTTP/2 added to G1 | §3.3, §3.7, §4; G1, G3 |
 | M3 serve-config rule unbuildable | **Fixed.** Cached browser state with named refresh events; sibling rules ignore `HTTPS: true` markers; new fields parsed; root mount required; `browser_origin` validated | §3.6, §3.12; G7; "Browser state" check |
@@ -904,3 +1186,14 @@ None of these was run for this draft. Each names what it decides.
 | L5 Vite proxy forges the login header | **Accepted for this spec, follow-up recorded.** Predates the draft and is dev-only; the fix (forward the incoming header) is described next to D2 | §2 |
 | L6 phone-only re-enrol every 30 days | **Fixed.** D1 states the cost, and the in-browser re-enrol path before expiry | §2 D1 |
 | Probe-gate changes | **Fixed.** G1, G3, G7, G9 and G10 changed; G11 (shell navigation) and G12 (measured static load) added | §6 |
+| **Round 2** | | |
+| N1 D2(a)'s protection overstated | **Fixed.** The claim now matches what revocation does: it makes a *detected* sibling's copies unknown. The residual is stated per option in one sentence each. Refreshing on the 10 s re-check is its own decision (D5), with its cost against "no polling" spelled out: at most one loopback read per 10 s, only while a browser socket is open, riding a timer that already reads `auth.toml` | §1, §2 D2 and D5, §3.2, §3.6, §3.7, §4, plan.md "Resource budget" |
+| N2 spike workflow contradicts the (b) rejection | **Fixed.** Plain-HTTP entries and `TCPForward` without `TerminateTLS` are no longer siblings. Each option states its workflow cost and where spikes go. Under (a), spikes publish on `--http` (they run inside the app, so the page keeps its secure origin), with a Debug-only ATS exception; G13 checks it, and the Mac's own name is the fallback. The question that would flip the recommendation to (b) is stated | §2 D2, §3.6, §5 plan.md and ios-shell.md, G7, G13 |
+| N3 accept cap blocks native behind bursts | **Fixed by the redesign.** Per-route caps refuse at once; the connection cap is a 64-connection backstop above their sum (~40, plus the auth lane's handful and tailscaled's ≤ 2 idle). The daemon owns its accept loop, because the memory bound needs `max_buf_size`, which a `Listener` wrapper can't set. `ConnectInfo`, `small_buffers`, graceful shutdown and 4004 are specified | §5 daemon-core "Static shell" and §6, §3.12, §4, G12, static-shell checks |
+| N4 10 s shell wait fails slow links | **Fixed by the redesign.** 16 shell waiters bounded by count, no deadline, the 17th refused at once. The shell is embedded gzipped (2.6 MB, from 5.2 MB) | §5 daemon-core "Static shell", browser-setup, G12, static-shell checks |
+| N5 shell pages left out of the ceiling | **Fixed.** A reclaimable row for the shell's pages, at the 3 MiB build cap. The accounting rule is stated: everything counts, and the part the kernel can't reclaim must fit `MemoryMax`. G12's pass rule is written down from `memory.stat`. The result, ~64.3 MB with 3 control clients and ~59 MB with 2, is decision D6 | §1, §2 D6, §5 daemon-core §6, G12 |
+| N6 enrolment races revocation | **Fixed.** The enrol write re-reads browser state under the store's write lock, and a refresh sets *revoking* before queueing the revocation write, so neither order leaves a browser device behind | §3.5, §3.12, "Enrolment" check |
+| N7 refresh triggers ambiguous | **Fixed.** Every trigger is on the browser lane only and after admission. A browser upgrade admits on the refreshed state, and native never refreshes or consults it | §3.6, §3.7, "Browser state" check |
+| N8 10 s idle close races tailscaled's pool | **Fixed.** The header-read (and idle) timeout is 100 s, above tailscaled's 90 s `IdleConnTimeout`, so tailscaled always closes first. Slow heads can only come from loopback, and the permits bound them | §5 daemon-core "Static shell" and §6, G12 |
+| N9 unlock slides on pings | **Fixed.** Only `input` and `paste` messages slide the unlock window | §4 C seam |
+| N10 connection row assumed a 32 KiB read buffer | **Fixed.** `max_buf_size` is 16 KiB and bounds both buffers, and the row counts both at their maximum for every non-upgraded connection | §5 daemon-core §6 |
