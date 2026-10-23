@@ -3,7 +3,7 @@
 // a phone. The router owns when it is open, so Back, Escape and the backdrop all close it the
 // same way, leaving the active tab as it was.
 import { useState } from "preact/hooks";
-import { useApp, useAppView } from "../../app/context";
+import { useApp, useAppView, useOverlay } from "../../app/context";
 import { Dialog } from "../../ui/primitives/Dialog";
 import { SearchField } from "../../ui/primitives/TextField";
 import { HostSessionLists } from "../sessions/HostSessionLists";
@@ -23,8 +23,7 @@ function PickerBody() {
 }
 
 export function Picker() {
-  const app = useApp();
-  const open = useAppView((v) => v.nav.entry.overlay?.screen === "picker");
+  const { open, close } = useOverlay("picker");
   const phone = useAppView((v) => v.viewport.layout === "phone");
   const touch = useAppView((v) => v.viewport.density === "touch");
   const noTabs = useAppView((v) => v.workspace.tabs.length === 0);
@@ -34,9 +33,7 @@ export function Picker() {
       title="Open session"
       variant={phone ? "sheet" : "dialog"}
       returnFocusTo={noTabs || touch ? "plus" : "terminal"}
-      // A fine pointer starts in the search; a phone never does, so the keyboard stays down.
-      initialFocus={() => document.querySelector<HTMLElement>("[role='searchbox'][data-initial-focus='']")}
-      onClose={() => { app.router.closeOverlay(); }}
+      onClose={close}
     >
       {open && <PickerBody />}
     </Dialog>

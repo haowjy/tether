@@ -1,9 +1,8 @@
 // Add folder and Remove (fs.md "The picker"): two overlays on the Files destination, so Back, Escape
 // and the backdrop close them like every other overlay. Adding browses `/fs/dirs` from $HOME one
 // folder at a time; the daemon's refusals (`outside_home`, a read-only config.toml) show in the dialog.
-import type { RefObject } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { useApp, useAppView } from "../../app/context";
+import { useApp, useAppView, useOverlay } from "../../app/context";
 import type { Entry } from "../../files/api";
 import { describeError, join, parentOf } from "../../files/browser";
 import { HttpRefusal } from "../../net/http";
@@ -129,26 +128,27 @@ function AddBody({ session, home }: { session: FilesSession; home: string }) {
   );
 }
 
-export function AddFolderDialog({ session, opener }: { session: FilesSession; opener: RefObject<HTMLElement | null> }) {
-  const app = useApp();
-  const open = useAppView((v) => v.nav.entry.overlay?.screen === "files" && v.nav.entry.overlay.name === "addFolder");
+export function AddFolderDialog({ session }: { session: FilesSession }) {
+  const { open, close } = useOverlay("files", "addFolder");
   const phone = useAppView((v) => v.viewport.layout === "phone");
   const home = useStore(session.browser, (s) => s.roots?.home ?? null);
   return (
-    <Dialog open={open} title="Add a folder" variant={phone ? "sheet" : "dialog"} returnFocusTo={opener.current} onClose={() => { app.router.closeOverlay(); }}>
+    <Dialog open={open} title="Add a folder" variant={phone ? "sheet" : "dialog"} onClose={close}>
       {open && home !== null && <AddBody session={session} home={home} />}
     </Dialog>
   );
 }
 
-export function RemoveFolderDialog({ session, opener }: { session: FilesSession; opener: RefObject<HTMLElement | null> }) {
+export function RemoveFolderDialog({ session }: { session: FilesSession }) {
   const app = useApp();
-  const overlay = useAppView((v) => v.nav.entry.overlay);
-  const open = overlay?.screen === "files" && overlay.name === "removeFolder";
-  const path = open ? String(overlay.params?.["path"]) : null;
+  const { open, params, close } = useOverlay("files", "removeFolder");
+  const path = open ? String(params?.["path"]) : null;
   const roots = useStore(session.browser, (s) => s.roots);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A removed row's button is gone by the time the dialog closes: focus goes to Add folder instead.
+  const [removed, setRemoved] = useState(false);
+  useEffect(() => { if (open) setRemoved(false); }, [open]);
   const label = path === null ? "" : shorten(roots?.roots.find((r) => r.path === path)?.canonical ?? path, roots?.home ?? null);
 
   const remove = async (): Promise<void> => {
@@ -158,23 +158,22 @@ export function RemoveFolderDialog({ session, opener }: { session: FilesSession;
     try {
       await session.browser.removeRoot(path);
       app.notify(`Removed ${label}`);
-      app.router.closeOverlay();
+      setRemoved(true);
+      close();
     } catch (e) {
       setError(describeError(refusal(e), session.hostName));
     }
     setBusy(false);
   };
 
-  // The removed row's button is gone by now: focus goes to Add folder instead.
-  const back = opener.current?.isConnected ? opener.current : document.querySelector<HTMLElement>("[data-add-folder]");
   return (
-    <Dialog open={open} title="Remove this folder?" returnFocusTo={back} onClose={() => { app.router.closeOverlay(); }}>
+    <Dialog open={open} title="Remove this folder?" returnFocusTo={removed ? "addFolder" : null} onClose={close}>
       {open && (
         <div class={styles.body}>
           <p>{label} will no longer show in Files on {session.hostName}. Nothing in the folder is deleted.</p>
           {error && <p class={styles.error} role="alert">{error}</p>}
           <div class={styles.actions}>
-            <Button variant="quiet" onClick={() => { app.router.closeOverlay(); }}>Cancel</Button>
+            <Button variant="quiet" onClick={close}>Cancel</Button>
             <Button variant="secondary" class={styles.danger} disabledReason={busy ? "Removing" : undefined} onClick={() => { void remove(); }}>{busy ? "Removing…" : "Remove folder"}</Button>
           </div>
         </div>

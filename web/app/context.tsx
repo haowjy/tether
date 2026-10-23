@@ -26,6 +26,14 @@ export function useApp(): AppController {
   return app;
 }
 
+/** Whether the overlay `screen` (and `name`, when given) is open, with its params and the way to close it. */
+export function useOverlay(screen: string, name?: string): { open: boolean; params: Record<string, unknown> | undefined; close: () => void } {
+  const app = useApp();
+  const overlay = useAppView((v) => v.nav.entry.overlay);
+  const shown = overlay?.screen === screen && (name === undefined || overlay.name === name) ? overlay : null;
+  return { open: shown !== null, params: shown?.params, close: () => { app.router.closeOverlay(); } };
+}
+
 /** A slice of the app's view state (viewport, workspace, navigation, hosts), re-rendering only when that slice changes. */
 export function useAppView<S>(select: (view: AppView) => S, equal?: (a: S, b: S) => boolean): S {
   return useStore(useApp(), select, equal);

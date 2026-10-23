@@ -12,15 +12,13 @@ interface DialogProps {
   title: string;
   /** `sheet` is the same dialog styled as a tall bottom sheet with safe-area padding. */
   variant?: "dialog" | "sheet";
-  /** Where focus returns on close: an element or a registered name. Default: the control that opened it. */
+  /** Where focus returns on close: an element or a registered name. Default: the control `app.openOverlay` was given, else the one focused at opening. A field marked `data-initial-focus=""` takes focus on opening with a fine pointer. */
   returnFocusTo?: HTMLElement | FocusTarget | null;
-  /** The field a fine pointer starts in; in `touch` density focus never starts in a field. */
-  initialFocus?: () => HTMLElement | null;
   children: ComponentChildren;
 }
 
 /** `<dialog>.showModal()`: top layer, modal focus containment, Escape. Safari lacks `closedby`, so Escape and the backdrop are handled here. */
-export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo, initialFocus, children }: DialogProps) {
+export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const focus = useFocus();
@@ -30,7 +28,7 @@ export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo
   useLayoutEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) focus.openDialog(dialog, initialFocus?.() ?? null);
+    if (open && !dialog.open) focus.openDialog(dialog);
     else if (!open && dialog.open) focus.closeDialog(dialog, returnFocusTo ?? null);
   }, [open]);
 

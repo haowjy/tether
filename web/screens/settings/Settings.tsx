@@ -3,7 +3,7 @@
 // that hasn't installed the app, how to Add to Home Screen. Each destructive action confirms in
 // its own overlay, so Back from the confirmation returns here.
 import { useState } from "preact/hooks";
-import { useApp, useAppView } from "../../app/context";
+import { useApp, useAppView, useOverlay } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
 import { Button } from "../../ui/primitives/Button";
 import { Dialog } from "../../ui/primitives/Dialog";
@@ -20,7 +20,7 @@ function Confirm({ name, title, confirmLabel, run, children }: {
   children: string;
 }) {
   const app = useApp();
-  const open = useAppView((v) => v.nav.entry.overlay?.screen === "settings" && v.nav.entry.overlay.name === name);
+  const { open, close } = useOverlay("settings", name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const confirm = async (): Promise<void> => {
@@ -32,13 +32,13 @@ function Confirm({ name, title, confirmLabel, run, children }: {
     else app.router.closeAllOverlays(); // a finished action leaves nothing open
   };
   return (
-    <Dialog open={open} title={title} onClose={() => { app.router.closeOverlay(); }}>
+    <Dialog open={open} title={title} onClose={close}>
       {open && (
         <div class={styles.confirm}>
           <p>{children}</p>
           {error && <p class={styles.error} role="alert">{error}</p>}
           <div class={styles.actions}>
-            <Button variant="quiet" onClick={() => { app.router.closeOverlay(); }}>Cancel</Button>
+            <Button variant="quiet" onClick={close}>Cancel</Button>
             <Button variant="primary" disabledReason={busy ? "Working" : undefined} onClick={() => { void confirm(); }}>
               {busy ? "Working…" : confirmLabel}
             </Button>
@@ -56,10 +56,9 @@ function removable(hosts: HostClient[]): HostClient[] {
 
 export function Settings() {
   const app = useApp();
-  const overlay = useAppView((v) => v.nav.entry.overlay);
+  const { open, close } = useOverlay("settings");
   const hosts = useAppView((v) => v.hosts);
   const phone = useAppView((v) => v.viewport.layout === "phone");
-  const open = overlay?.screen === "settings";
   const canRemove = removable(hosts);
   // The one host this device would be removed from. The browser has exactly one.
   const target = canRemove[0];
@@ -68,11 +67,11 @@ export function Settings() {
   const install = app.platform.install;
   const showInstall = phone && install !== undefined && !install.installed();
 
-  const ask = (name: Confirmation): void => { app.router.openOverlay({ screen: "settings", name }); };
+  const ask = (name: Confirmation, from: Element): void => { app.openOverlay({ screen: "settings", name }, from); };
 
   return (
     <>
-      <Dialog open={open} title="Settings" onClose={() => { app.router.closeOverlay(); }}>
+      <Dialog open={open} title="Settings" onClose={close}>
         {open && (
           <div class={styles.sections}>
             {target && (
@@ -81,13 +80,13 @@ export function Settings() {
                 <p class={styles.detail}>
                   Every browser and app on {device} uses tether on {hostName}. Removing it signs them all out; enrol again with <code>tether enroll</code>.
                 </p>
-                <Button variant="secondary" class={styles.danger} onClick={() => { ask("removeDevice"); }}>Remove this device</Button>
+                <Button variant="secondary" class={styles.danger} onClick={(e) => { ask("removeDevice", e.currentTarget); }}>Remove this device</Button>
               </section>
             )}
             <section class={styles.section} aria-labelledby="settings-data">
               <h3 id="settings-data" class={styles.heading}>Local data</h3>
               <p class={styles.detail}>Drafts and the saved tabs on this device. Nothing on {hostName} changes, and tmux keeps running.</p>
-              <Button variant="secondary" class={styles.danger} onClick={() => { ask("clearData"); }}>Clear local data</Button>
+              <Button variant="secondary" class={styles.danger} onClick={(e) => { ask("clearData", e.currentTarget); }}>Clear local data</Button>
             </section>
             {showInstall && (
               <section class={styles.section} aria-labelledby="settings-install">

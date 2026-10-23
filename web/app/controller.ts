@@ -12,7 +12,7 @@ import { reduce, initialWorkspace, savedTabs, type WorkspaceEffect, type Workspa
 import { FocusController } from "./focus";
 import { ListingFetcher } from "./listing";
 import { Persist } from "./persist";
-import { browserHistory, Router, type HistoryPort, type Navigated } from "./router";
+import { browserHistory, Router, type HistoryPort, type Navigated, type Overlay } from "./router";
 
 const NOTICE_MS = 5_000;
 /** The update check on becoming visible runs at most this often. */
@@ -121,6 +121,12 @@ export class AppController extends Store<AppView> {
     if (state !== this.snapshot.workspace) this.update({ workspace: state });
     for (const effect of effects) this.run(effect);
     this.syncListing();
+  }
+
+  /** Opens an overlay from `opener`, the control that asked: closing the dialog returns focus to it. */
+  openOverlay(overlay: Overlay, opener?: Element): void {
+    this.focus.noteOpener(opener ?? null);
+    this.router.openOverlay(overlay);
   }
 
   /** A message for the polite live region, replaced by the next. */

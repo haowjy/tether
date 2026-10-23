@@ -1,7 +1,7 @@
 // Home (client-architecture.md §6.3, browser-behaviors.md "Home: Sessions"): the open tabs,
 // a search over the host's sessions, and the creation actions. On a phone, Files is its second
 // pane behind the bottom navigation, and fills the screen above it.
-import { useRef, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import { useApp, useAppView } from "../../app/context";
 import { Row } from "../../ui/primitives/Row";
 import { SearchField } from "../../ui/primitives/TextField";
@@ -33,11 +33,8 @@ function Sessions() {
   const host = hosts[0];
   const tone = !host || host.admission.kind === "unreachable" || host.admission.kind === "deciding" ? "reconnecting" : host.admission.kind === "admitted" ? "live" : "error";
 
-  // The control that opened the creation dialog gets focus back on close (Safari leaves a clicked button unfocused).
-  const opener = useRef<HTMLElement | null>(null);
   const create = (from: HTMLElement, name: "newSession" | "newWindow", params: CreateParams): void => {
-    opener.current = from;
-    app.router.openOverlay({ screen: "home", name, params });
+    app.openOverlay({ screen: "home", name, params }, from);
   };
 
   return (
@@ -60,11 +57,11 @@ function Sessions() {
               },
             }}
           />
-          <Row icon="settings" label="Settings" trailing="chevron" onClick={() => { app.router.openOverlay({ screen: "settings", name: "settings" }); }} />
+          <Row icon="settings" label="Settings" trailing="chevron" onClick={(e) => { app.openOverlay({ screen: "settings", name: "settings" }, e.currentTarget); }} />
         </div>
       </div>
       {phone && <HomeNav pane="sessions" />}
-      <CreateDialog opener={opener} />
+      <CreateDialog />
     </div>
   );
 }

@@ -1,6 +1,5 @@
-import type { RefObject } from "preact";
 import { useState } from "preact/hooks";
-import { useApp, useAppView } from "../../app/context";
+import { useApp, useOverlay } from "../../app/context";
 import type { SessionRef } from "../../proto/generated/messages";
 import { parseCreation } from "../../sessions/creation";
 import { Button } from "../../ui/primitives/Button";
@@ -53,18 +52,13 @@ function Form({ params }: { params: CreateParams }) {
   );
 }
 
-/** New session and New window: one dialog, two titles. Closing returns focus to `opener`, the control that asked. */
-export function CreateDialog({ opener }: { opener: RefObject<HTMLElement | null> }) {
-  const app = useApp();
-  const overlay = useAppView((v) => v.nav.entry.overlay);
-  const open = overlay?.screen === "home" && (overlay.name === "newSession" || overlay.name === "newWindow");
-  const params = open ? (overlay.params as CreateParams) : null;
+/** New session and New window (the only overlays of Home): one dialog, two titles. */
+export function CreateDialog() {
+  const { open, params: overlayParams, close } = useOverlay("home");
+  const params = open ? (overlayParams as CreateParams) : null;
   const title = params?.session ? `New window in ${params.sessionName ?? "session"}` : "New session";
   return (
-    <Dialog open={open} title={title} returnFocusTo={opener.current}
-      // The close button also carries data-initial-focus (for touch) and comes first: pick the field by its exact value.
-      initialFocus={() => document.querySelector<HTMLElement>("[data-initial-focus='']")}
-      onClose={() => { app.router.closeOverlay(); }}>
+    <Dialog open={open} title={title} onClose={close}>
       {params && <Form key={`${params.handle}/${String(params.session?.session)}`} params={params} />}
     </Dialog>
   );

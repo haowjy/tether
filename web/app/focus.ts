@@ -20,6 +20,8 @@ export function restingMode(destination: Destination, overlay: boolean, keyboard
 export class FocusController implements FocusPort {
   private readonly targets = new Map<FocusTarget, HTMLElement>();
   private readonly openers = new Map<HTMLDialogElement, Element | null>();
+  /** The control the next dialog is opened from. */
+  private opener: Element | null = null;
   private mode: FocusMode | null = null;
 
   constructor(
@@ -54,16 +56,22 @@ export class FocusController implements FocusPort {
     element.focus();
   }
 
+  /** The tap that opens a dialog notes its control here: Safari leaves a clicked button unfocused, so `document.activeElement` is not it. */
+  noteOpener(opener: Element | null): void {
+    this.opener = opener;
+  }
+
   /**
-   * Shows a modal dialog and sets its initial focus: a text field on a fine pointer if
-   * `initial` names one; in `touch` density never a field (the dialog itself or its close
+   * Shows a modal dialog and sets its initial focus: the field marked `data-initial-focus=""`
+   * on a fine pointer, else the close button; in `touch` density never a field (the close
    * button), so opening the picker on a phone doesn't raise the keyboard.
    */
-  openDialog(dialog: HTMLDialogElement, initial?: HTMLElement | null): void {
-    this.openers.set(dialog, document.activeElement);
+  openDialog(dialog: HTMLDialogElement): void {
+    this.openers.set(dialog, this.opener ?? document.activeElement);
+    this.opener = null;
     if (!dialog.open) dialog.showModal();
-    const touch = this.viewport().density === "touch";
-    const first = touch ? dialog.querySelector<HTMLElement>("[data-initial-focus='touch']") : (initial ?? dialog.querySelector<HTMLElement>("[data-initial-focus]"));
+    const mark = (value: string): HTMLElement | null => dialog.querySelector<HTMLElement>(`[data-initial-focus='${value}']`);
+    const first = this.viewport().density === "touch" ? mark("touch") : (mark("") ?? mark("touch"));
     (first ?? dialog).focus();
   }
 

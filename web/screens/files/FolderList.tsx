@@ -36,7 +36,7 @@ export interface RootsListProps {
   roots: Roots;
   hostName: string;
   onOpen: (place: FilesPlace) => void;
-  /** The button that asked is passed back, so the dialog returns focus to it. */
+  /** The button that asked is passed along, so the dialog returns focus to it. */
   onAdd: (from: HTMLElement) => void;
   onRemove: (path: string, from: HTMLElement) => void;
 }
@@ -48,7 +48,7 @@ export function RootsList({ roots, hostName, onOpen, onAdd, onRemove }: RootsLis
   ];
   const usable = rows.filter((r) => r.entry.ok && r.entry.canonical !== null);
   const add = (
-    <Button icon="plus" data-add-folder="" onClick={(e) => { onAdd(e.currentTarget); }}>Add folder…</Button>
+    <Button icon="plus" focusTarget="addFolder" onClick={(e) => { onAdd(e.currentTarget); }}>Add folder…</Button>
   );
   return (
     <div class={styles.wrap}>

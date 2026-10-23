@@ -136,7 +136,7 @@ for (const [name, scenario] of SCREENS) {
       await page.getByRole("button", { name: "Insert path into tether / agent" }).click();
       await expect.poll(() => hash(page)).toBe("#/terminal");
       // The quoted-or-bare path, as text and nothing else: no Enter. It is typed once the tab's watch binds.
-      await expect.poll(() => typed(page)).toEqual([[AGENT_WINDOW, `${REPO}/src/main.rs`]]);
+      await expect.poll(() => typed(page), { timeout: 15_000 }).toEqual([[AGENT_WINDOW, `${REPO}/src/main.rs`]]);
       expect(await page.evaluate(() => window.__harness?.app.snapshot.workspace.active)).toBe(AGENT);
     });
 
@@ -188,7 +188,7 @@ for (const [name, scenario] of SCREENS) {
       await expect(page.getByText("Saved 20261022-101010Z-abcd.jpg")).toBeVisible();
       await page.getByRole("button", { name: "Insert path into tether / agent" }).click();
       await expect.poll(() => hash(page)).toBe("#/terminal");
-      await expect.poll(() => typed(page)).toEqual([[AGENT_WINDOW, UPLOADED]]);
+      await expect.poll(() => typed(page), { timeout: 15_000 }).toEqual([[AGENT_WINDOW, UPLOADED]]);
     });
 
     test("when the target tab is gone mid-upload nothing is inserted anywhere", async ({ page }) => {

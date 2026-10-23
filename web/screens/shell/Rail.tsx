@@ -17,7 +17,7 @@ export function Rail({ destination }: { destination: Destination }) {
         onClick={() => {
           app.router.go("terminal");
           // With no tab, the Terminal destination opens the picker (browser-behaviors.md "Terminal").
-          if (app.snapshot.workspace.tabs.length === 0) app.router.openOverlay({ screen: "picker", name: "open" });
+          if (app.snapshot.workspace.tabs.length === 0) app.openOverlay({ screen: "picker", name: "open" });
         }}
       />
       <IconButton icon="folder" label="Files" placement="right" current={destination === "files"} onClick={() => { app.router.go("files"); }} />

@@ -930,7 +930,12 @@ only code that calls `.focus()` or `.blur()` (lint rule 2). Elements that can ho
 focus register with it: each primitive's field or dialog on mount, the direct-input
 element once (`term/xterm-input.ts` hands over xterm's textarea, `touch/owned-input.ts`
 its own). A dialog's initial focus and its focus return are the controller's, run in
-the same dispatch that called `showModal()` or closed it. In native the controller
+the same dispatch that called `showModal()` or closed it. The field a fine pointer starts
+in is the one marked `data-initial-focus=""` (else the close button); no screen queries the
+page for it. The control that opened an overlay is recorded by `app.openOverlay(overlay,
+opener)` (Safari leaves a clicked button unfocused, so `document.activeElement` is not it)
+and gets focus back on close; `useOverlay(screen, name?)` gives a dialog its `open`, params
+and `close`. In native the controller
 remains Swift's `FocusController`, which `app/focus.ts` reaches through
 `platform.input.setFocus`; in the browser that call is a no-op.
 

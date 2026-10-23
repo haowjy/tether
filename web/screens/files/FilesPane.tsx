@@ -26,8 +26,6 @@ export function FilesPane({ session }: { session: FilesSession }) {
   const wanted = useAppView((v) => v.nav.entry.files);
   const { place, pages, roots, loading, error } = view;
   const scroller = useRef<HTMLDivElement>(null);
-  // The control that opened a folder dialog gets focus back on close (Safari leaves a clicked button unfocused).
-  const asked = useRef<HTMLElement | null>(null);
 
   useEffect(() => { void browser.follow(wanted); }, [browser, wanted]);
 
@@ -65,8 +63,8 @@ export function FilesPane({ session }: { session: FilesSession }) {
         roots={roots}
         hostName={session.hostName}
         onOpen={open}
-        onAdd={(from) => { asked.current = from; app.router.openOverlay({ screen: "files", name: "addFolder" }); }}
-        onRemove={(path, from) => { asked.current = from; app.router.openOverlay({ screen: "files", name: "removeFolder", params: { path } }); }}
+        onAdd={(from) => { app.openOverlay({ screen: "files", name: "addFolder" }, from); }}
+        onRemove={(path, from) => { app.openOverlay({ screen: "files", name: "removeFolder", params: { path } }, from); }}
       />
     ) : <Loading what="Loading folders" />;
   } else if (place.kind === "dir") {
@@ -118,8 +116,8 @@ export function FilesPane({ session }: { session: FilesSession }) {
         <Preview session={session} file={place.file} onLink={onLink} />
       )}
       {body && <div class={styles.scroll}>{body}</div>}
-      <AddFolderDialog session={session} opener={asked} />
-      <RemoveFolderDialog session={session} opener={asked} />
+      <AddFolderDialog session={session} />
+      <RemoveFolderDialog session={session} />
     </div>
   );
 }

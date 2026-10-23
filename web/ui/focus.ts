@@ -5,13 +5,13 @@ import { createContext } from "preact";
 import { useCallback, useContext, useRef } from "preact/hooks";
 
 /** Elements the app moves focus to by name. */
-export type FocusTarget = "terminal" | "draft" | "homeSearch" | "plus";
+export type FocusTarget = "terminal" | "draft" | "homeSearch" | "plus" | "addFolder";
 
 export interface FocusPort {
   register(target: FocusTarget, element: HTMLElement): void;
   withdraw(target: FocusTarget, element: HTMLElement): void;
   focusElement(element: HTMLElement): void;
-  openDialog(dialog: HTMLDialogElement, initial?: HTMLElement | null): void;
+  openDialog(dialog: HTMLDialogElement): void;
   closeDialog(dialog: HTMLDialogElement, returnTo?: HTMLElement | FocusTarget | null): void;
 }
 

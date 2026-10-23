@@ -65,7 +65,7 @@ export function TerminalScreen({ active }: { active: boolean }) {
         }}
         onClose={(id) => { app.dispatch({ type: "closed", id }); }}
       />
-      <IconButton icon="plus" label="Open another session" focusTarget="plus" onClick={() => { app.router.openOverlay({ screen: "picker", name: "open" }); }} />
+      <IconButton icon="plus" label="Open another session" focusTarget="plus" onClick={(e) => { app.openOverlay({ screen: "picker", name: "open" }, e.currentTarget); }} />
       {/* Raised by the phone input lane. */}
       {phone && <IconButton icon="keyboard" label="Show keyboard" disabled />}
       {!phone && current && look && <span class={styles.hostLabel} data-tone={look.tone}>{hostName(current.key.host)}</span>}
