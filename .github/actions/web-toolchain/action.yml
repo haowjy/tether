@@ -1,0 +1,20 @@
+name: Web toolchain
+description: >-
+  Node, pnpm and an installed web/node_modules. build.rs builds the embedded browser
+  shell with pnpm, so every job that compiles tether needs this before cargo runs.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: web/package.json
+        cache: true
+        cache_dependency_path: web/pnpm-lock.yaml
+
+    - name: Install web dependencies
+      shell: bash
+      run: pnpm --dir web install --frozen-lockfile
