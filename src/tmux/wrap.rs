@@ -31,10 +31,11 @@ impl WrapMap {
     pub(crate) fn truncate(&mut self, rows: usize) {
         self.rows = rows.min(self.rows);
         self.bits.truncate(self.rows.div_ceil(8));
-        if let Some(last) = self.bits.last_mut()
-            && self.rows % 8 != 0
-        {
-            *last &= (1 << (self.rows % 8)) - 1;
+        let partial = self.rows % 8;
+        if partial != 0 {
+            if let Some(last) = self.bits.last_mut() {
+                *last &= (1 << partial) - 1;
+            }
         }
     }
 
@@ -56,11 +57,11 @@ pub(crate) fn align(physical: &[Bytes], logical: &[Bytes]) -> WrapMap {
         let start = flat.len();
         let mut at = 0;
         while at < row.len() {
-            if row[at] == 0x1b
-                && let Some(end) = escape_end(row, at)
-            {
-                at = end;
-                continue;
+            if row[at] == 0x1b {
+                if let Some(end) = escape_end(row, at) {
+                    at = end;
+                    continue;
+                }
             }
             flat.push(row[at]);
             at += 1;
