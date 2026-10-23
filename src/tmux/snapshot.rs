@@ -155,7 +155,8 @@ fn paint(out: &mut Vec<u8>, captured: &[Bytes], rows: u32, wraps: Option<&WrapMa
             out.extend_from_slice(b"\x1b[?7h");
             out.extend_from_slice(&row[prefix_end..character_end]);
             out.extend_from_slice(b"\x1b[?7l");
-            out.extend_from_slice(&row[character_end..]);
+            cup(out, line, 0);
+            out.extend_from_slice(row);
         } else {
             cup(out, line, 0);
             out.extend_from_slice(row);

@@ -417,9 +417,10 @@ terminal of `cols × rows`, so the clients carry no restore logic:
 3. The saved primary grid is painted with CUPs and no wrap map. The active grid stays
    under `CSI ?7l`; hard boundaries use CUP as before. At a mapped soft boundary, do
    not CUP: emit the continuation row's leading CSI/OSC styling with wrap off, enable
-   `CSI ?7h` for its first printable UTF-8 scalar, then turn wrap off and paint the rest
-   of the row. That single character lets xterm set `isWrapped` on the previous row;
-   wrap stays off for the rest so width drift cannot scroll or shift the screen. Empty
+   `CSI ?7h` for its first printable UTF-8 scalar, then turn wrap off and repaint the row
+   from its start. That single character lets xterm set `isWrapped` on the previous row
+   when its width agrees with tmux; repainting protects the continuation when widths
+   differ, though a misplaced first glyph can remain at the previous row's end. Empty
    rows are skipped. The final painted row's bit is ignored because there is no
    continuation to paint. `-e` SGR state carries across rows, so nothing resets between
    them.
