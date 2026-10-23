@@ -644,22 +644,64 @@ src/auth/      LocalAPI identity, native/node devices, admission and enrolment (
 src/runtime.rs private runtime directory, single-instance lock, serve/local Unix sockets
 src/fs/        the only place paths are resolved and checked against roots
 src/complete/  /complete: history, PATH index, carapace runner (bounded, cached; complete.md)
-web/           Vite app, embedded by the daemon and bundled into the iOS app:
-  native/      the bridge to the Swift shell: one method per message, a host's HTTP origin
-  proto/       generated wire types, binary frames, HostLink (one WebSocket), window identity
-  net/         Host: a host's shared socket, its reconnect, watch routing and requests
-  tabs/        per-tab state machine and TabDriver (watch, input, scrollback)
-  term/        xterm.js wrapper, the serialized write pipeline, sizing, the prompt line
-  app/         App (tabs, focus, sheet routing), the host registry, the window sheets
-  files/       the file manager: the /fs client, FileBrowser, viewers
-  complete/    the suggestion strip: the /complete client, Suggester
-  ui/          tokens, Tappable, Sheet, icons, Store
-  dev/         the desktop dev shim standing in for native; never in a build
+web/           one Preact app embedded by the daemon and bundled into the iOS app:
+  main.tsx, index.html pick the Platform, boot it and render App
+  platform/
+    types.ts      Platform interface and every type it names; no implementation
+    browser/      index.ts assembles and boots the Platform; transport.ts, viewport.ts,
+                  lifecycle.ts, storage.ts, uploads.ts, clipboard.ts, links.ts,
+                  restart.ts, pwa.ts (updates and install)
+    native/       bridge v2 and adapter for the Swift shell
+    test/         in-memory Platform for vitest and the Playwright harness
+  proto/          generated wire types, binary frames, HostLink and window identity
+  net/            host.ts, http.ts, hosts.ts (registry), admission.ts (pure)
+  tabs/           connection.ts, driver.ts, input.ts, keymap.ts, status.ts
+  term/           pipeline.ts, size.ts, prompt.ts, xterm.ts, xterm-input.ts
+  touch/          phone-owned input, gesture recognizer and selection
+  workspace/      pure tab state, active tab, restore, pruning and labels
+  sessions/       per-host listing cache, search, expansion and creation requests
+  drafts/         local draft records, Insert state machine and eviction
+  files/          /fs client and FileBrowser; render/ holds markdown and code viewers
+  app/            App context, controller, router.ts, focus.ts, listing.ts, persist.ts
+  screens/
+    shell/        rail, destination frame and host banner
+    home/         open tabs, sessions list, creation dialogs and phone bottom nav
+    picker/       Open session picker
+    terminal/     tab strip, terminal surface, status band and draft slot
+    files/        folder list, preview, upload and path insertion
+    enrol/        enrolment and admission-problem screens
+    settings/     Remove this device, Clear local data, Add to Home Screen
+  ui/
+    tokens/       primitives.css, semantic.css, components.css, fonts.css
+    primitives/   Button, IconButton, Tooltip, TextField, SearchField, Dialog (sheet
+                  variant), Disclosure, Row, RovingList, TabStrip, Banner, Toast,
+                  StatusBand, EmptyState, Spinner, Icon, DraftEditor
+    store.ts, format.ts, theme.ts, hostProblem.ts
+  sw/             service worker, built as its own entry
+  public/         web app icons
+  harness/        test-mode entry, imports per-lane fixtures; never in production builds
+  e2e/            Playwright specs against the harness
 ios/           Swift app (XcodeGen) and the TetherKit package (ios-shell.md)
 ```
 
 Dependency rules: `hub/` never sees HTTP, `http/` never talks to tmux, and
 `complete/` never touches tmux. The renderer stays behind `term/`.
+
+The web `workspace/` is a pure reducer over tabs, not the navigation owner. It handles
+`hostsKnown`, `opened`, `closed`, `activated`, `listing`, `windowClosed`, `serverExited`,
+`renamed`, `restored`, `watching` and `navigated` events. It emits `cover`, `uncover`,
+`save`, `navigate`, `focus` and `notice`;
+the controller applies navigation through the router before focus effects. The terminal
+lane registers each driver with `attachDriver(id, { cover, uncover })`; a newly
+registered driver is covered unless it is the tab already shown. The router alone owns
+destinations, overlays and Files places. `Platform.subscribe` is one change channel:
+`app/controller.ts` handles app, host, viewport, lifecycle, storage and update changes,
+and deliberately leaves input, compose and draft events to their lane owners' direct
+subscriptions. Those consumers are added with the terminal and draft lanes. Screens
+call their own cores through `useApp()`; each screen owns a CSS module beside it. In
+`platform/browser/`, `index.ts` also owns boot: there is no separate `boot.ts` module.
+No-op workspace events preserve the same state, so they do not save; views select the
+slice they need and storage coalesces writes within a microtask.
 
 ### Standards
 
@@ -676,12 +718,32 @@ Dependency rules: `hub/` never sees HTTP, `http/` never talks to tmux, and
   as an error rather than a silently dead tab.
 - **Protocol types defined once in Rust** and generated for TypeScript (ts-rs);
   terminal output in binary frames, control messages as JSON.
-- **Frontend:** no element takes focus except the v2 editor; a lint rule bans
-  `<input>`, `<textarea>` and `contenteditable` elsewhere, and short text entry asks
-  native for a prompt. Tab state is an explicit state machine. TypeScript strict.
-- **Tests:** recorded fixtures (3.4 and 3.7b) for the tmux side, pure state-machine
-  tests for the hub, and a manual checklist on the phone. Playwright's WebKit doesn't
-  reproduce the iOS keyboard, so it can't stand in for the phone.
+- **Frontend:** TypeScript strict. Five lint-enforced rules keep ownership clear:
+  1. Raw `<button>`, `<input>`, `<textarea>`, `<select>` and `contenteditable` elements
+     live only in `ui/primitives/`, `term/xterm-input.ts`, `touch/owned-input.ts` and the
+     browser upload picker. Screens use primitives.
+  2. Only `app/focus.ts` calls `.focus()` or `.blur()`; focusable elements register with
+     its `ui/focus.ts` port. A focus that must raise the software keyboard happens
+     synchronously in the user's gesture; other focus can follow render/navigation.
+  3. Browser globals are confined to `platform/`: `webkit`, `visualViewport`,
+     `indexedDB`, `localStorage`, `sessionStorage`, `navigator`, `open`, `matchMedia`,
+     `BroadcastChannel`, `document.visibilityState` and `document.hasFocus`, whether
+     accessed bare or through `window`, `globalThis` or `self`.
+  4. Only `main.tsx` imports browser/native implementations; tests and `harness/` alone
+     import `platform/test/`; only `term/` imports xterm; screens do not import adapters.
+  5. `workspace/`, `sessions/`, `drafts/`, `tabs/`, `net/admission.ts` and
+     `touch/gesture.ts` are sans-IO: no Preact, `window` or `document`. `proto/link.ts`
+     may use `WebSocket`; `files/render/` may use the DOM.
+- **Tests:** recorded fixtures for tmux 3.4 and 3.7b, pure hub state-machine tests, and
+  a manual real-phone checklist. The web client has unit tests plus Playwright on
+  Chromium and WebKit against `web/harness/` (`npm --prefix web run e2e`); axe checks
+  every route in both themes and densities. `web/scripts/checks.mjs` enforces source
+  rules and shell budgets. Vite's production build plugin rejects test/harness modules
+  in the module graph; a manifest-only check cannot detect those transitive imports.
+  Playwright's WebKit cannot reproduce the iOS keyboard, so it cannot replace the phone.
+  `TETHER_PREFLIGHT_E2E=1` opts the browser suite into `scripts/preflight.sh full`; it is
+  otherwise run explicitly, since the preflight environment must have its browsers
+  installed.
 
 ## Phases
 

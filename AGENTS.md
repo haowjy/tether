@@ -20,9 +20,10 @@ review ceremony; the rigor stays:
   before moving on.
 - **Probe the real thing.** Verify against real tmux (3.4 and 3.7b), a real iPhone,
   and the resource budget measured on the dev box. Passing tests is not enough.
-- **Coherent commits.** One change per commit; `scripts/preflight.sh full` passes
-  before every push (the pre-push hook enforces it). Keep `docs/design/` and any
-  `.context/` notes accurate in the same commit as the code they describe.
+- **Coherent commits.** One change per commit; the lead preflights each commit on a
+  clean export before pushing. The pre-push hook runs `scripts/preflight.sh full` on
+  each pushed branch tip only, not every commit in the range. Keep `docs/design/` and
+  any `.context/` notes accurate in the same commit as the code they describe.
 
 Direct pushes to `main` never release. Cut a release only when Jimmy asks, with
 `scripts/manually-release.sh`. The PR-and-label release flow in `docs/releasing.md`
@@ -40,7 +41,7 @@ applies once tether switches to PRs.
 ## Dev Commands
 
 ```bash
-scripts/setup-hooks.sh        # once per clone: pre-push runs the full preflight
+scripts/setup-hooks.sh        # once per clone: pre-push runs full preflight on pushed tips
 scripts/preflight.sh full     # fmt, clippy -D warnings, test, release build
 cargo run -- --version
 ```

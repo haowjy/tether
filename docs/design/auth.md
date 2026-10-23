@@ -121,7 +121,7 @@ The cell retry starts at 2 s and doubles up to 30 s after failures.
 | LocalAPI timeout; answer limit | 2 s; 64 KiB (a real whois answer is 1.5–2.5 KB) |
 | tailnet-state cell | a value at most 10 s old is used; after a failed read the held value is used until it is 30 s old, with a background retry starting at 2 s and doubling to 30 s |
 | live-socket re-check | the existing 10 s re-check; 3 consecutive whois failures close with 4503 |
-| minimum browsers | Safari and iOS 16.4, Chrome 76, Firefox 90: the first versions that send `Sec-Fetch-Site` |
+| minimum browsers | Safari and iOS 17.5, Chrome 123, Firefox 120: the minimums support `light-dark()` and send `Sec-Fetch-Site` |
 | minimum Tailscale on the server | 1.94, the first with `unix:` proxy targets |
 
 ## Sockets and the Tailscale check

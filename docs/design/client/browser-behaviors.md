@@ -1,6 +1,6 @@
 # Tether browser and mobile interaction contract
 
-Status: layout approved; interaction implementation provisional, not production implementation. This contract supersedes conflicting navigation/layout rules in the earlier plan. The local compose requirement is recorded; its visual design and touch implementation remain to prototype. See [README.md](README.md) for precedence and Mac setup.
+Status: approved interaction contract; implementation is staged across browser and native lanes, and the device-specific gates below remain. This contract supersedes conflicting navigation/layout rules in the earlier plan. The local compose requirement is recorded; its visual design and touch implementation remain to prototype. See [README.md](README.md) for precedence and Mac setup.
 
 Interactive mockup: [mockups/index.html](mockups/index.html). All sessions, terminal text, files, and creation are fictional; reload resets mock data. This mockup never connects to tmux. Do not use a live server with personal sessions for input probes.
 
@@ -26,6 +26,27 @@ Interactive mockup: [mockups/index.html](mockups/index.html). All sessions, term
 
 Safe areas and browser chrome are real platform constraints, not fake padding or simulated keyboards. Production must use measured visible viewport and prevent controls from being obscured. The mockup shows keyboard-hidden layout only. Mobile controls target at least 44px; current terminal row is 53px before device safe-area allowance. Names truncate rather than widening the screen; tab row scrolls horizontally.
 
+## Visual treatment
+
+- Semantic colours provide light and dark values. Dark is the default; light follows
+  `prefers-color-scheme` unless the platform sets an explicit scheme on the document.
+- Blue is the selection/accent channel; green is reserved for connected status. Selected
+  navigation and rows use a blue-tinted fill and weight, not green text. Connection
+  state remains visible on its own label and never relies on selection color.
+- The phone picker sheet uses the current theme's raised surface: dark with the dark
+  theme and light with the light theme. It is not permanently light.
+- The phone toast floats above the bottom toolbar so it cannot cover the tabs.
+- On desktop, Home is a centered column with width `min(720px, 100% - 2 gutters)`.
+- Tab labels preserve the window portion before the session portion; a fade at the
+  scrolling edge signals clipped content. Icon-only rail and toolbar controls have
+  accessible names and tooltips on hover and keyboard focus.
+- Interactive controls share a 2 px focus ring with a 2 px offset. Spacing, type,
+  radii and icon sizes use one scale per property; icons are 16, 20 or 24 px.
+- Loading, empty, offline, error, refused-session, enrolment and permission states are
+  distinct; failures must not look like empty content. Reduced motion shortens the
+  duration tokens. Do not globally force transitions to 1 ms, which animates theme
+  changes and makes contrast checks timing-dependent.
+
 ## Home: Sessions
 
 Initial entry opens Home. Sessions is the initial Home destination. Desktop Home icon selects this screen; mobile back from terminal selects it.
@@ -38,7 +59,7 @@ Initial entry opens Home. Sessions is the initial Home destination. Desktop Home
 
 ## Terminal
 
-- Selecting a tab activates it; other tabs remain open. Opening a window already represented by a tab activates that tab. Implementation identity must use server/window IDs, not mutable display names.
+- Selecting a tab activates it; other tabs remain open. Opening a window already represented by a tab activates that tab. Implementation identity must use server/window IDs, not mutable display names. Opening or activating a tab enters Terminal through the router; desktop focus lands on the terminal after that screen is rendered.
 - Closing an inactive tab leaves the active tab unchanged. Closing the active tab activates its right-hand neighbour, or the left-hand neighbour if it was last. Only the active terminal pill shows a close icon; all tabs can also be closed from Home. Active pill is scrolled into view when activated. Closing the last tab returns Home. The close icon never sends a kill command. Closing the last tab focuses the Home search on desktop; creation-dialog cancellation/Escape restores focus to the exact control that opened it.
 - Desktop Terminal rail icon returns to the last active tab. With none, it opens the session picker; dismissing leaves an explicit empty terminal state with the toolbar/+ still visible, and Home remains available. Empty copy says “Open a window with + or from Home.”
 - Mobile back returns to Home, preserving open tabs and active selection. There is no desktop back arrow because the rail already provides Home.
@@ -70,7 +91,7 @@ Initial entry opens Home. Sessions is the initial Home destination. Desktop Home
 ## Persistence and input
 
 - Navigation between Home/Terminal/Files, sheets, and tabs preserves open tabs and process state. File context is retained within the preview session.
-- Home/list refresh runs on entry and on debounced sessionsChanged while visible; there is no polling or network search per keystroke. Fetch on picker open and reconnect, and prune tabs only from authoritative server-identity-checked listings. Explicit user retry handles list errors.
+- Home/list refresh runs on entry and on debounced sessionsChanged while visible; there is no polling or network search per keystroke. Fetch on picker open and reconnect, and prune tabs only from authoritative listings for the matching host and tmux endpoint. A listing from the same endpoint decides all that endpoint's tabs, including live tabs: matching windows from the same tmux run remain; a different run at that endpoint closes the old run's tabs. A scratch endpoint is never touched by the main-endpoint listing, and a null listing (no server) decides nothing. One notice reports closures. The hub serializes one-shot requests and answers an overlapping request with `busy`, so a listing cannot straddle a window-creation reply. Explicit user retry handles list errors.
 - Production restores tabs after reload using validated window identities. An unavailable window must not be silently replaced with a same-named window from another server.
 - Mockup state is deliberately in-memory. Changing preview-platform selector is a presentation-only reset to Home, not a production control. Full reload returns fictional defaults.
 - Mobile browser keyboard button focuses browser terminal input, relying on the ordinary keyboard. It does not add a custom keyboard, voice/AI controls, Esc/Ctrl/Alt, or shortcut rows. A separate ordinary multiline local draft editor is available while the software keyboard is open, in both mobile browser and native app. Enter edits the draft; explicit Insert sends it through the terminal paste route without an added Enter. Hiding the keyboard preserves the local draft. Native app keyboard ownership remains native. See terminal-interaction-design.md for persistence, target identity, focus, and device-verification requirements; the current mockup still shows keyboard-hidden layout only.
@@ -87,7 +108,7 @@ Browser image paste into a focused terminal follows the same upload pipeline. Ca
 
 ## Keyboard ownership and navigation history
 
-Desktop terminal focus owns keys only while terminal input is focused. Home search, creation forms, and Files controls own their own input. Overlay handling intercepts Escape only while an overlay is open; otherwise Escape belongs to terminal input. Tab activation, terminal return, and overlay dismissal restore terminal focus on desktop. Focus must not steal input from a focused text field.
+Desktop terminal focus owns keys only while terminal input is focused. Home search, creation forms, and Files controls own their own input. Overlay handling intercepts Escape only while an overlay is open; otherwise Escape belongs to terminal input. Tab activation, terminal return, and overlay dismissal restore terminal focus on desktop. Focus must not steal input from a focused text field. Only focus that must raise the software keyboard needs to happen synchronously inside the user's gesture. Other focus transitions may wait until navigation or the dialog has rendered; a phone dialog must not focus a text field and unexpectedly raise its keyboard.
 
 Accept browser-reserved shortcuts rather than adding a custom shortcut system or promising interception. Which combinations reach the page must be probed in Jimmy’s browsers before shipping; this contract does not claim an exhaustive reserved-key list. Browser/site navigation must never be intentionally hijacked to mimic a native terminal.
 
@@ -99,9 +120,17 @@ Proposed browser history rule: Home/Terminal/Files transitions, folder drill-in,
 
 Review the whole proposed interaction system, including usefulness, visual consistency, accessibility, naming, navigation state, missing behavior, and conformance to Jimmy's reference screenshots. Do not mistake mockup code for the proposed production architecture.
 
-This contract changes the original native-only product direction. The direction is indexed in plan.md and decisions.md. Before production changes: review browser input/auth/asset serving and resize ownership with the existing bridge/protocol; run pre-dev and structural plan review. Browser auth must not ship the dev proxy's injected owner identity as production access control. Never expose the current dev harness as a released browser client.
+This contract changes the original native-only product direction; plan.md and
+decisions.md record the current direction. Browser admission and static-shell rules are
+specified in [auth.md](../auth.md) and [browser setup](browser-setup.md). The web client
+is being implemented in stages, so a mockup or skeleton does not certify production
+behavior. Keep the dev proxy's injected owner identity out of production auth, and never
+expose the test harness as a released client.
 
-Production integration is not approved by a mockup review alone. Test real desktop input, phone browser keyboard/viewport, and native app on hardware separately. No PR is planned during initial build; coherent reviewed commits go directly to main after full preflight. No production code has changed in this UX session.
+Mockup approval is not production verification. Test real desktop input, phone-browser
+keyboard/viewport behavior, and the native app on hardware separately. Coherent reviewed
+commits go directly to `main` after the required preflight; there is no PR flow during
+the initial build.
 
 ## Visual copy rule
 

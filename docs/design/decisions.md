@@ -2530,3 +2530,55 @@ the p61 review. The product calls behind it are Jimmy's
   snapshot frame or in the terminal pipeline; mapping the saved primary screen after
   an alternate-screen resize, where its old width is unavailable; leaving xterm wrap
   enabled for a whole row, which can scroll when cell widths drift.
+
+## Browser theme tokens set the minimum browser floor
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** semantic colour tokens use one `light-dark()` value with dark and light
+  colours; `color-scheme` selects the value, and the platform's `data-scheme` on
+  `<html>` overrides the system preference. The supported floor is Safari/iOS 17.5,
+  Chrome 123 and Firefox 120. The browser minimums in [auth.md](auth.md) reflect this
+  floor as well as the required `Sec-Fetch-Site` request metadata.
+- **Why:** the only target device runs current iOS, and one token block avoids a flash
+  while the scheme is applied.
+- **Rejected:** separate dark and light scheme blocks, which would preserve Safari/iOS
+  16.4 but double the token file and need careful handling to prevent flashes.
+
+## W0 design-system refinements
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** blue, not green, is the accent and selection channel. Selected rows use a
+  blue-tinted fill and weight; green remains connected status. The phone picker follows
+  the active theme; phone toasts sit above the bottom toolbar. The design uses one scale
+  per property for spacing, type, radii and icon sizes (16, 20 or 24 px); touch targets
+  are at least 44 px. Tab labels keep the window portion before the session portion and
+  fade at the scrolling edge. Interactive primitives share a tokenized focus ring;
+  rail and toolbar icons have tooltips on hover and keyboard focus. Desktop Home is a
+  centered `min(720px, 100% - 2 gutters)` column. Loading, empty, offline, error,
+  refused-session, permission and Enrol states are distinct.
+- **Why:** connection status and selection use separate visual channels; theme surfaces
+  remain coherent, and the chosen scales and states make the controls consistent and
+  usable across density and viewport changes.
+- **Rejected:** green selection, which conflates selection and connected status; a
+  permanently light picker sheet; toasts over phone tabs; per-element unscaled values;
+  labels that hide the window name first; unnamed focus rings and title-only icons; a
+  fixed 640 px Home column; or using empty-list appearance for loading and failures.
+
+## Pre-push preflight checks pushed tips
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** the pre-push hook runs the full preflight on each pushed branch tip only.
+  The lead separately preflights each commit on a clean export before pushing.
+- **Why:** this keeps the hook's guarantee tied to the code that would land while
+  preserving a check of every coherent commit in the initial-build workflow.
+- **Rejected:** running a full release build for every commit in the push range inside
+  the hook, which repeats the expensive gate for every commit on every push.
+
+## Reduced motion shortens duration tokens
+
+- **Decided:** 2026-10-23, tech lead.
+- **What:** `prefers-reduced-motion` shortens the duration tokens; there is no global
+  transition override.
+- **Why:** the global override also animated scheme changes and made the accessibility
+  contrast gate flaky.
+- **Rejected:** a blanket reduced-motion rule forcing every transition to 1 ms.
