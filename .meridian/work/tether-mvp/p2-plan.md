@@ -49,3 +49,19 @@ Then G2: per-lane reviewers + structural + browser prober.
   picker (fs.md picker scope) that calls POST /fs/roots/add; remove from roots too
   (/fs/roots/remove). Follow-up lane after p95, with the two tests. Log in decisions.md
   (reverses the §3.1 removal, by Jimmy's call).
+- 13:47 G2 started at d051e21: correctness W1+W2 p96, W3+W4 p97, browser probe p98. Follow-up lane p99 (Add folder, listing coalescing, keyboard walk + bufferText tests). Thermo after fixes.
+- Jimmy (2026-10-23), client-architecture §14 resolved: drafts of closed tabs are KEPT (at most
+  32, back when that window is opened again); rejected: deleting with the tab (loses text).
+  Fold into decisions.md and §14 after p99 lands (it is editing both); P3a builds it.
+- Serve gates: proposed running real tailscaled + tether in a Linux container on the Mac (Docker
+  installed, not running) joined as its own ephemeral untagged node; awaiting Jimmy (start Docker,
+  auth key at ~/.config/tether-test/ts-authkey).
+- p97 (W3+W4) request changes: H1 double upload on re-pick (uploads.ts listener), H2 markdown <area> off-site nav (deny-list sanitizer -> allowlist; click handler a,area), M3 insert path passes C0 controls (refuse), L4 insert to disconnected tab, L5 sw no network fallback for missing hashed asset, L6 cached CSP/origin frozen at install, L7 update after hard reload, L8 refuse >128 MiB client-side, L9 mailto, L10 multi-host note. Fix lane after p99 lands (it owns files/ now).
+- p96 (W1+W2) request changes: H1 close never sends unwatch -> MAX_WATCHES=2 leak, new tabs stuck
+  reconnecting (fix in TabDriver.close; class), M1 resize during in-flight watch lost, M2 watch
+  error retries ~2 Hz forever and hides message (attempt+1, keep message), M3 Settings closeAll
+  double back fails in WebKit, M4 snapshot callback un-blanks a superseded tab; L1 saves on
+  unsaved fields, L2 image-paste "Inserted" when queued, L3 storage banner resizes tmux.
+- p98 probe: mostly pass; DEFECT attachedElsewhere warning missing on Home (both browsers, 3.4 and
+  3.7b; p95 had reported it passing). WebKit vim/less flaky under load.
+- Next: one G2 fix lane for p96+p97+p98 after p99; then thermo lane on P2; then push.

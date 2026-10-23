@@ -151,7 +151,7 @@ means kept with its tests; "Revise" names the change.
 | (new) `net/admission.ts` | **New**: pure. `/auth/info`, the session reply, close codes and native token refusals in; `Admission` out (§4.2) | Admission is daemon protocol, the same in every environment, so it is unit-tested once |
 | `app/app.ts`, `app/windows.ts` | **Delete**. Their logic moves into `workspace/` and `sessions/` | Sheet routing, native `prompt` for names, and `typeChip` all go |
 | `app/Chrome.tsx`, `Sheets.tsx`, `TabBar.tsx`, `app.css` | **Delete** | Old views |
-| `files/api.ts`, `browser.ts`, `kinds.ts`, `images.ts`, `fakes.ts` | **Keep**. `browser.ts` drops its Settings and root-picker places, which are outside the minimal pass. `FileBrowser` is the only holder of the Files place; it follows `navigated` (§6.6) | Tested `/fs` client and navigation state |
+| `files/api.ts`, `browser.ts`, `kinds.ts`, `images.ts`, `fakes.ts` | **Keep**. `browser.ts` drops its Settings and root-picker places as navigation places; adding and removing a root is a pair of router overlays on Files (`screens/files/FolderDialogs.tsx`) over `FileBrowser.addRoot` and `removeRoot` (decisions.md "Add folder in Files"). `FileBrowser` is the only holder of the Files place; it follows `navigated` (§6.6) | Tested `/fs` client and navigation state |
 | `files/markdown.ts`, `files/code.ts` | **Keep**, moved to `files/render/`, which may use the DOM | They build DOM and run DOMPurify |
 | `files/FilesSheet.tsx`, `Viewers.tsx`, `files.css` | **Delete**. The viewers are rebuilt in `screens/files/` on `files/render/` | Old views |
 | `complete/` (strip, suggester, its test) | **Delete** | The suggestion strip is deferred (client README). Git keeps it |
@@ -1639,9 +1639,8 @@ Spec edits that land with the code (the lead applies them in the owning lane's c
 
 ## 14. Open questions for Jimmy
 
-1. **Drafts of closed tabs.** Proposed: kept, and back when the window is opened again,
-   at most 32 drafts. Alternative: deleted with the tab, which is simpler but loses
-   text.
+None open. **Drafts of closed tabs** (settled by Jimmy, 2026-10-23): kept, and back
+when the window is opened again, at most 32 drafts; not deleted with the tab.
 
 Settled by the tech lead on 2026-10-23, and logged with the decisions: the phone picker
 sheet follows the theme (§8.5), and each server's installed PWA is named

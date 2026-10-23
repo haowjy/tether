@@ -2786,3 +2786,13 @@ the p61 review. The product calls behind it are Jimmy's
   stack per lane; running the real specs in the default `pnpm e2e` (they fail on a
   machine without the tmux builds); a shared `test-results/` that one run empties under
   another.
+
+## Drafts of closed tabs are kept
+
+- **Decided:** 2026-10-23, Jimmy.
+- **What:** closing a tab keeps its unsent local draft. The draft comes back when that
+  window is opened again, on the same device. At most 32 drafts are kept; the oldest
+  goes first.
+- **Why:** closing a tab is often a tidy-up, not a decision to throw away text; losing
+  a half-written prompt costs more than a bounded record in local storage.
+- **Rejected:** deleting the draft with its tab, which is simpler but loses text.
