@@ -52,8 +52,10 @@ flowchart LR
 | **pane stream** | The hub's state for the pane a watched window shows: whether its output is live, its size and its snapshot in flight (§4.3). Part of the window; it exists while the window has a watch. |
 | **snapshot** | A pane's size plus **restore bytes** that rebuild it in a freshly reset xterm.js. |
 | **boundary** | Where a snapshot's replies sit in the control client's byte stream: pane output before it is inside the snapshot, output after it is live. |
-| **size vote** | A per-window size set with `refresh-client -C '@W:CxR'`; it caps that window (§3.6). |
-| **desired state** | What tmux should be doing for the current watches: wanted panes, votes, cwd subscriptions, needed snapshots and Locates (§4.4). |
+| **size vote** | A per-window size set with `refresh-client -C '@W:CxR'`; it caps that window. Cast only for a claimed window (§3.6). |
+| **claim** | A window's claim names the watch that acted on it last, when no other tmux client has acted there since; its owner votes that watch's size. Another client acting **yields** the window: the claim and the vote go, the watch stays (§3.6). |
+| **window subscription** | The owner's `w<W>` subscription on a watched window: its cwd and the other clients acting on it (§3.7). |
+| **desired state** | What tmux should be doing for the current watches: wanted panes, votes, window subscriptions, needed snapshots and Locates (§4.4). |
 | **credit** | The bytes the hub may still have outstanding to one connection: sent on `ToConn` and not yet returned as written or discarded (§4.6). |
 | **linger** | The time (§6) a control client stays attached after it owns no watched window. Nothing else lingers. |
 
@@ -259,7 +261,8 @@ Its rules:
   its full window size. `%window-add`, `%unlinked-window-add`, `%sessions-changed` and
   `%session-renamed` all become `SessionsChanged`.
 - **Startup order** (§3.1): `Ready` follows the client-size line, so no vote reaches
-  tmux first. `%subscription-changed` for a `w<W>` subscription becomes `Cwd` (§3.7).
+  tmux first. `%subscription-changed` for a `w<W>` subscription becomes `Acted`, `Cwd`,
+  both or neither (§3.7).
 - **`%exit`** ends a control client whether tmux detached it, the server was killed
   or its stdin closed, so `exit_seen()` alone doesn't say why it ended (§4.5).
 
@@ -275,7 +278,7 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 | `Snapshot { pane }` | §3.5 | maint. |
 | `Release { pane }` | `refresh-client -A '%P:pause'` | maint. |
 | `Vote { window, size }` / `ClearVote { window }` | `refresh-client -C '@W:CxR'` / `refresh-client -C '@W:'` | maint. |
-| `Subscribe { window }` / `Unsubscribe { window }` | `refresh-client -B 'w<W>:@W:#{pane_current_path}'` / `refresh-client -B 'w<W>'` | maint. |
+| `Subscribe { window }` / `Unsubscribe { window }` | `refresh-client -B 'w<W>:@W:<acts>\|#{pane_current_path}'` (§3.7) / `refresh-client -B 'w<W>'` | maint. |
 | `History { pane, start, end }` | §3.4 history capture group | user |
 | `Input { window, items }` | text and bytes: `send-keys -t @W -H 68 69 …`, ≤ 512 bytes per command; a key: `send-keys -t @W <name>` | user |
 | `Paste { window, path, enter }` | `load-buffer -b tether-<tag> '<path>' ; paste-buffer -p -d -b tether-<tag> -t @W`, then `; send-keys -t @W Enter` when `enter` | user |
@@ -466,52 +469,121 @@ Not restorable from 3.4:
 
 ### 3.6 Sizing
 
-**tmux 3.4's rules**
-([probe-control-client.md](research/probe-control-client.md#sizing-the-part-that-shapes-the-resize-policy)):
+**tmux's rules**
+([probe-control-client.md](research/probe-control-client.md#sizing-the-part-that-shapes-the-resize-policy),
+[probe-latest-activity.md](research/probe-latest-activity.md)):
 a control client counts for sizing only once it sets a size, then for every window in
 its session; attaching makes it `latest` for the session's current window; under
-`window-size latest` a window takes `latest`'s size, and a size vote replaces the
-client size for that window and **caps** it, whoever is `latest`.
+`window-size latest` a window takes `latest`'s size. A client becomes `latest` for
+its session's current window by its own key, mouse or focus-in input, by attaching or
+switching to it, or by resizing its terminal; a control client's `send-keys` never
+makes it `latest`. A size vote replaces the client size for that window and **caps**
+each dimension, whoever is `latest`.
 
-**Policy: while the phone watches a window, the phone's size wins there; otherwise
-tether leaves sizes alone.**
+**Policy: a window takes the size of the client that acted on it last.** That is
+tmux's `latest`, extended to tether's clients, which tmux can't see. tether can't make
+its control client `latest` for a watched window (only the session's current window,
+which the laptop shares, can be), so it holds a vote while a watch has the claim and
+clears it the moment another client acts there.
 
-- **Client size = the session's current window size at attach** (§3.1). For windows it
-  doesn't watch, the control client acts like a laptop-sized client, so nothing
+- **Client size = the session's current window size at attach** (§3.1). For windows
+  with no vote, the control client acts like a laptop-sized client, so nothing
   shrinks where it is `latest` or alone.
-- **A vote on each watched window**, from the size in `watch` and each `resize`. It
-  wins even when the laptop is `latest`. The keyboard never resizes. Two watches on
-  one window: the last `watch` or `resize` wins (two phones aren't designed for).
-- **A window with no watch left has its vote cleared** and returns to `latest`'s
-  size, or the client size where the control client is `latest`. Leaving the screen,
-  backgrounding and a dropped connection all end watches.
+- **A watch claims its window** with every `watch`, `resize`, `input` and `paste` on
+  it, and the owner votes that watch's size (from its `watch` and latest `resize`).
+  Bringing the tab on screen claims (opening it, switching to it, returning from Home
+  or Files, unlocking the phone into it), and so do rotating, typing, pasting and the
+  client's **Fit** tap (a `resize` with its unchanged size). A `watch` with `claim:
+  false` doesn't: the client sends it when it re-watches by itself (a reconnect, a
+  retry) a tab that didn't hold the window when its watch ended. A tab that simply
+  stays on screen claims nothing, nor do `history` and `resync`, so a phone propped on
+  the desk never takes the window back while the laptop is in use, network blips
+  included. The keyboard never resizes. Two watches on one window: the one that acted
+  last holds the claim (two phones aren't designed for).
+- **Another client acting yields the window.** The owner's window subscription (§3.7)
+  reports `Acted` when a tmux client other than a control client acts on the window
+  as tmux counts it for `latest`: a key, mouse or focus-in event while it is that
+  client's current window, switching to it, attaching onto it, or resizing its
+  terminal. The hub drops the claim and clears the vote; the watch stays. tmux then
+  sizes the window by `latest`, which that act almost always just made the other
+  client (a script's `select-window` moves a client onto the window without making it
+  `latest`; the window then goes to whoever is).
+- **A window without a claim has no vote:** the claim yielded, or the claiming watch
+  ended (leaving the screen, backgrounding, a dropped connection), even if another
+  watch remains, which claims with its own next act. The window returns to `latest`'s
+  size, or the client size where the control client is `latest`.
 - Verified on 3.4 with a 200×50 pty client: unwatching the laptop's current window
   restored it to 200×49; when the laptop grew, unwatched windows followed to 220×59.
-- **Accepted costs:** the laptop can't grow a window the phone watches (the vote is
-  a cap); a cleared window on which no client is `latest` keeps the phone's size
-  until the laptop types in it; a phone suspended without closing its socket keeps
-  its vote until the idle timeout (§6).
+  On 3.4 and 3.7b: a vote cleared after the laptop typed returned the window to the
+  laptop's size, and the subscription reported each act 0.55–0.97 s after it.
+- **Accepted costs:**
+  - A claim is still a cap. Where the window's `latest` has fewer rows or columns than
+    the phone, the phone gets the smaller dimension (a 200×30 laptop and a 60×45 vote
+    gave 60×29), and the client letterboxes it.
+  - Yielding takes up to about a second, tmux's subscription check, and a key in the
+    same second as that client's last reported act shows only with its next one. The
+    laptop's first keys land at the phone's size.
+  - A laptop act just before a claim can be reported just after it and yield the
+    claim; the phone's next act claims again.
+  - A dropped connection ends its watches, so a window the phone held returns to
+    `latest`'s size until the re-watch claims it again.
+  - Each claim or yield that changes the size reflows the pane and breaks its stream
+    (§4.3): one snapshot per change.
+  - A cleared window on which no client is `latest` keeps the phone's size until
+    another client acts in it.
+  - A phone suspended without closing its socket keeps its claim until another client
+    acts or the idle timeout (§6) ends the connection.
 - A watched pane's size change arrives as `%layout-change` in stream order and
   breaks its stream (§4.3).
 
-### 3.7 cwd subscription
+### 3.7 Window subscription
 
-Completion and the file manager need the watched pane's cwd. The owner subscribes per
-watched window:
+The owner subscribes once per watched window. The value carries two facts: which other
+clients are acting on the window (§3.6), and the watched pane's cwd, which completion
+and the file manager need.
 
 ```text
-refresh-client -B 'w<W>:@W:#{pane_current_path}'
-→ %subscription-changed w<W> $S @W <index> - : <path>
+refresh-client -B 'w<W>:@W:<acts>|#{pane_current_path}'
+→ %subscription-changed w<W> $S @W <index> - : <acts>|<path>
+
+<acts> = #{L:#{?client_control_mode,,#{?#{m:*#,#{client_name}#,*,#,#{window_active_clients_list}#,},#{client_name}.#{client_activity}.#{client_width}x#{client_height}.#{client_flags};,}}}
 ```
+
+`<acts>` has one entry, `name.activity.WxH.flags;`, for each tmux client that isn't a
+control client and whose current window is `@W`, in any session the window is linked
+into. `L:` loops over clients; inside it the format keeps the outer window, so `#{window_active_clients_list}` still names `@W`'s viewers,
+and the comma-wrapped `m:` tests exact membership (`/dev/pts/1` is not in
+`/dev/pts/12`). Verified on 3.4 and 3.7b ([probe](research/probe-latest-activity.md)).
 
 On 3.4 ([probe](research/probe-locate-subscriptions.md)) the first value arrives within
 about a second, then one per change; tmux checks once a second, so faster changes
 collapse into the last. A window subscription follows the **active pane**, and
 reports only while the window is in the client's own session, which is the owner's.
-The value is the foreground process's cwd, read by tmux from `/proc`: no shell
-snippet needed, and it works inside TUIs. Cost: one format evaluation per watched
-window per second inside tmux; tmux drops its timer with the last subscription. The
-hub sends the value in `watching` (§5.3).
+The path is the foreground process's cwd, read by tmux from `/proc`: no shell snippet
+needed, and it works inside TUIs.
+
+`Session` keeps each subscription's last entries and splits a value at its first `|`
+(client names, tty paths or `client-<pid>`, hold none; the path, which may, is last):
+
+- **`Acted { window }`** when a client's entry is new or changed: new activity (a key,
+  even into an unfocused terminal, such as a mouse wheel), a new size, or a client
+  arriving on the window. Not acts: a client leaving, which drops its entry; a
+  focus-out, the one change that only drops `focused` from the flags at the same size
+  (tmux advances the activity but doesn't count it for `latest`); and any entry whose
+  flags include `ignore-size`, which tmux doesn't size by. Entries split at `;`, and
+  each from the right at its last three `.` into name, activity, size and flags (only
+  the name may hold a `.`).
+- **The baseline** is the first value after the `Subscribe`'s reply. A value for that
+  name between an `Unsubscribe` and the next `Subscribe`'s reply is dropped: tmux runs
+  commands and its subscription check on one loop, so nothing of the old subscription
+  follows the `Unsubscribe`'s reply.
+- **`Cwd { window, path }`** when the path changed. The hub sends it in `watching`
+  (§5.3).
+
+Cost: one format evaluation per watched window per second inside tmux, whose client loop
+walks every tmux client; tmux drops its timer with the last subscription. A line
+reaches the daemon only on a change: at most one a second per watched window while
+another client types in it.
 
 ### 3.8 One-shots and endpoints (`oneshot.rs`)
 
@@ -614,6 +686,7 @@ pub enum Event {
     WindowUnlinked { window: WindowId },                   // closed *or moved*
     WindowRenamed { window: WindowId, name: String },
     SessionsChanged,                                       // also a session rename
+    Acted { window: WindowId },                            // another client acted on it (§3.7)
     Cwd { window: WindowId, path: String },
     Fatal(SessionError),
 }
@@ -739,10 +812,11 @@ State:
   `Starting` with its `tmux::Session`, or `Ready` with the server instance), applied
   votes and subscriptions, `pending` (each tag in flight and what its reply is for),
   when a group last completed, linger deadline, last crash.
-- `windows`: the watches on it, the vote (the latest `watch` or `resize` size), its
-  phase and Locate state (§4.2), its stream (§4.3) and cwd.
+- `windows`: the watches on it, its claim (the watch that acted last, or none: §3.6),
+  its phase and Locate state (§4.2), its stream (§4.3) and cwd.
 - `conns`: credit outstanding and reserved (§4.6) and the connection's watches: window,
-  whether it awaits a snapshot, when it last had one, what its last `watching` said.
+  its size (from `watch` and the latest `resize`), whether it awaits a snapshot, when
+  it last had one, what its last `watching` said.
 - `exits`: exited clients whose session is being checked (§4.5).
 - The one in-flight one-shot and what its answer is for; the live server instance per
   endpoint.
@@ -822,14 +896,17 @@ stateDiagram-v2
    answer names another owner or pane. For a window the hub doesn't hold, which no watch
    is on, there is nothing to locate: a `WindowUnlinked` from the endpoint's reporter
    (§4.5) asks for a relisting instead, and `sessionsChanged` is broadcast (§5.3).
-7. **Only the owner counts:** `Output`, `ActivePane`, `Layout` and `Cwd` are taken
+7. **Only the owner counts:** `Output`, `ActivePane`, `Layout`, `Acted` and `Cwd` are taken
    from the owner only. Other sessions' clients see a linked window's output too, but
    don't want the pane and pause it (§3.3); a former owner that still wants it gets
    `Release` from reconciliation.
 8. **`ActivePane`** changes the window's pane and breaks its stream; **`Cwd`** updates
-   the cwd. Both re-send `watching`.
+   the cwd. Both re-send `watching`. **`Acted`** yields the window's claim (§3.6).
 
-A moved window keeps its tab: new owner, fresh snapshot.
+A moved window keeps its tab: new owner, fresh snapshot. A window keeps its claim
+whenever it rebinds (moved, or its owner respawned after a crash), and the new owner
+votes it. Its new subscription starts a fresh baseline, so another client's act during
+the gap is seen at that client's next act.
 
 ### 4.3 Pane streams
 
@@ -871,8 +948,8 @@ far as capacity allows. It walks a handful of windows.
 | Desired, per control client C | Derived from | Sent as |
 |---|---|---|
 | wanted panes | the panes of the bound windows C owns | `Snapshot` when one is needed; `Release` for a wanted pane C owns no bound window for |
-| size votes | bound windows C owns: the latest `watch` or `resize` size | `Vote`; `ClearVote` once C owns no bound window for it |
-| cwd subscriptions | bound windows C owns | `Subscribe`; `Unsubscribe` once it owns none |
+| size votes | claimed bound windows C owns: the claiming watch's size (§3.6) | `Vote`; `ClearVote` once C owns no claimed bound window for it |
+| window subscriptions | bound windows C owns | `Subscribe`; `Unsubscribe` once it owns none |
 | snapshots | bound windows with awaiting watches, nothing in flight, and at least one awaiting watch whose connection can reserve credit (§4.6) | `Snapshot` |
 | Locates | windows needing one, none in flight | `Locate` on the window's owner or the client it will bind to (§4.2), else on any `Ready` client, else a one-shot |
 | session checks | exited clients (§4.5) | `LocateSession`, the same way |
@@ -1203,12 +1280,12 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 |---|---|---|
 | `hello` | `protocol, client` | §5.2 |
 | `ping` | `t` | on the ping interval (§6) while connected |
-| `watch` | `watch: u32, window: WindowRef, size: Size` | the tab came on screen (§4.2). A reused active id gets `error { badRequest }`; a `server` that can't be a server of this daemon gets `serverExited` |
+| `watch` | `watch: u32, window: WindowRef, size: Size, claim?: bool` | the tab came on screen (§4.2); claims the window unless `claim` is `false` (§3.6). A reused active id gets `error { badRequest }`; a `server` that can't be a server of this daemon gets `serverExited` |
 | `unwatch` | `watch` | the tab left the screen or closed |
-| `resize` | `watch, size` | rotation or font change only |
+| `resize` | `watch, size` | rotation or font change, or the Fit tap re-sending the same size; claims the window (§3.6) |
 | `resync` | `watch` | fresh snapshot needed (renderer recreated) |
-| `input` | `watch, items: [{text} \| {key} \| {bytes: base64}]` | to the window's active pane, in order. Before `watching` it gets `error { busy }`, so the client sends input only to a bound watch |
-| `paste` | `req, watch, text, enter?: bool` | through `paste-buffer -p`; with `enter`, then Enter in the same tmux group, skipped if the paste fails (§3.4). Answered exactly once: `pasted`, or `error` with this `req` (§4.4) |
+| `input` | `watch, items: [{text} \| {key} \| {bytes: base64}]` | to the window's active pane, in order; claims the window (§3.6). Before `watching` it gets `error { busy }`, so the client sends input only to a bound watch |
+| `paste` | `req, watch, text, enter?: bool` | claims the window (§3.6); through `paste-buffer -p`; with `enter`, then Enter in the same tmux group, skipped if the paste fails (§3.4). Answered exactly once: `pasted`, or `error` with this `req` (§4.4) |
 | `history` | `req, watch, start, end` | scrollback rows by tmux line number (negative is history) |
 | `listSessions` | `req: u32` | the session sheet |
 | `newWindow` | `req, session: SessionRef, name?, dir?` | tmux refuses a `session` from another server instance, a restarted server or an earlier run of the daemon, on a hub that has never seen the live instance too (§3.8): the hub broadcasts `serverExited` for that instance and answers `error { noServer }`; no window is created. The connection checks `dir` with `fs::check_dir` (absolute, an existing directory; not the file roots) and passes it as given; a refusal is `error { badRequest }` ([fs.md](fs.md#path-resolution-fsopen)) |
@@ -1591,7 +1668,8 @@ How each failure ends; §4.5 has the control-client details.
 | control client exits with a paste unanswered | its exit, the tag still in `pending` | `error { req, watch, tmux }` saying it may have been sent; never resent |
 | control-client cap full | the budget-tier cap, with no lingering client to close | `watchEnded { limit }` naming sessions holding slots |
 | socket cap full | the upgrade-time socket permit | close 4005; client reconnects with its host backoff |
-| connection socket dies | `FromConn::Closed` | `DropConn`; its watches end; votes and subscriptions clear if no watch remains |
+| another client acts on a claimed window | `Acted` from the owner's window subscription (§3.7) | the claim yields and the vote clears; the watch stays; tmux sizes the window by `latest` (§3.6) |
+| connection socket dies | `FromConn::Closed` | `DropConn`; its watches and their claims end, so those votes clear; subscriptions clear if no watch remains |
 | connection wedged | control JSON past the overdraft, or its channel full | close 4002; the client reconnects |
 | hub panics | `main` awaits it | exit 1; systemd restarts; clients reconnect and resync |
 | device removed | the 10 s re-check | close 4401 |
@@ -1619,7 +1697,7 @@ an alternate screen, of styled text (SGR carried across rows, wide and combining
 characters, an OSC 8 link, custom tab stops, wrap off, hidden cursor), of a scroll
 region under origin mode, and of an alternate-screen TUI; a pane that is gone; hooks;
 a Gap, with a terminal client attached through `script`; splits and layout changes;
-window add, rename, kill, move and link; cwd subscriptions; Locate on live, killed and
+window add, rename, kill, move and link; window subscriptions (cwd, and a terminal client typing, switching away and back, and resizing); Locate on live, killed and
 moved windows; paste, including a missing file, and paste with `enter`, whose Enter must not run when the paste fails; `send-keys` of `C-b` and of `Escape`
 then a key; history; detach from outside; kill-server. 3.4 is recorded on the dev
 box, 3.7b on the Mac, both committed (3.7b: `src/tmux/.context/TODO`).
@@ -1629,7 +1707,12 @@ box, 3.7b on the Mac, both committed (3.7b: `src/tmux/.context/TODO`).
   must not depend on chunking. Targeted tests cover startup order, pausing on the first
   unwanted output (new panes included), the
   pause at the cap, boundary continuity over 3000 numbered lines, failure causes, torn
-  retries, a Gap, notifications and Locate. Unit tests cover what no recording reaches
+  retries, a Gap, notifications and Locate, and window-subscription values: the first
+  only a baseline, a new or changed entry `Acted`, a focus-out alone and an
+  `ignore-size` client nothing, a key while unfocused `Acted`, a removed entry nothing,
+  a path change
+  `Cwd` alone, a `|` in the path, a value queued before an `Unsubscribe` arriving
+  before the next `Subscribe`'s reply. Unit tests cover what no recording reaches
   cheaply: `TooLarge` with the client surviving, `TmuxTooOld`, and a reply with nothing
   pending. Pausing, gaps, torn snapshots and startup order are tested without real tmux.
 - **`snapshot::compose`:** the recorded snapshots' restore bytes are fed to `vt100`
@@ -1674,7 +1757,13 @@ box, 3.7b on the Mac, both committed (3.7b: `src/tmux/.context/TODO`).
   standing in for the Tick, and a spent deadline not reported again; a closed
   connection and an exited client each emitting `DropConn` and `CloseClient`; every
   paste path deleting its file and answering its `req` exactly once (`pasted`, a
-  refusal, a tmux error, its control client exiting).
+  refusal, a tmux error, its control client exiting); claims: `watch`, `resize`,
+  `input` and `paste` each claim and vote, `history`, `resync` and `watch { claim:
+  false }` don't, a claim surviving an owner crash and respawn is voted on the new
+  client, `Acted` clears
+  the vote and keeps the watch, the next `input` votes again, `Acted` from a client that
+  isn't the owner changes nothing, and the claiming watch leaving clears the vote while
+  a second watch on the window stays unclaimed.
 - **`proto`:** the golden frames in `tests/fixtures/proto/frames.json` (shared with
   `web/proto/frames.test.ts`), unknown message types against bad known ones, and the
   generated-TypeScript staleness test (§5.5).
@@ -1695,7 +1784,13 @@ with the replay tests and the recorder in `tests/support/`):
   shorter than `pause-after`, no Gap arrives and no line is lost; a longer stall can
   Gap there too, though not every time, so the Gap scenario uses the terminal client.
 - **Sizing:** a 200×50 pty client plus a control client leave the sizes §3.6
-  promises through watch, switch, unwatch and the laptop growing.
+  promises through watch, switch, unwatch and the laptop growing. Claim and yield, on
+  3.4 and 3.7b: a watch shrinks the pty's current window to its size; the pty typing
+  there returns it to the pty's size within 2 s while the watch stays live; the
+  watch's `input` shrinks it again; the pty resizing its terminal yields it; a second
+  pty attaching onto the window, and a pty in another session the window is linked
+  into, each yield it; with `focus-events on`, the pty's focus-out yields nothing and
+  its focus-in yields; the pty typing in another window or session yields nothing.
 - **Lifecycle:** kill-server, kill-session, `detach-client`, `move-window` (including
   a session's last window) and SIGKILL of `tmux -C` each end as §7 says: whether `%exit`
   arrived, and what a `LocateSession` one-shot then answers. With no server, for a
@@ -1723,10 +1818,12 @@ with the replay tests and the recorder in `tests/support/`):
 
 1. **The boundary is proven on 3.4 only.** The boundary test must pass on 3.7b before
    release and on every tmux upgrade.
-2. **Sizing rests on `resize.c` internals**, verified for one laptop plus one control
-   client; `aggressive-resize on` is untested. "The laptop can't grow a window the
-   phone watches" needs Jimmy's confirmation; the alternative is dropping the vote
-   after N idle minutes.
+2. **Sizing rests on `resize.c` internals and a format trick**, verified for one
+   laptop plus one control client on 3.4 and 3.7b; `aggressive-resize on` is untested.
+   Yielding depends on the window subscription's client loop (§3.7): a tmux that
+   renames `L:`, `window_active_clients_list` or `client_activity` leaves claims
+   unyielded, so the laptop can't take a watched window back (the cost before
+   2026-10-24). The real-tmux sizing test catches it.
 3. **Unicode width drift** between tmux and xterm.js can misplace cells; `resync`
    repaints.
 4. **Every tab switch repaints from a snapshot.** Whether reset-and-write flashes in
@@ -1738,7 +1835,8 @@ with the replay tests and the recorder in `tests/support/`):
    screen, and no pending-wrap state (§3.5). The application's next redraw fixes both.
 7. **`pause-after=3` is a guess**; measure it in the budget run.
 8. **Opening a tab may snapshot twice:** the vote's `%layout-change` can land after
-   the first snapshot and break the stream. Correct but wasteful; measure first.
+   the first snapshot and break the stream, and so can a claim or yield later (§3.6).
+   Correct but wasteful; measure first.
 9. **tmux master (after 3.7c, commit 19ec0de) delays notifications until a reply block
    closes.** A `%pause` that tether requested then lands outside its block, and
    `Session` reads it as tmux's own: a Gap. A `Release` quickly followed by a
@@ -1751,6 +1849,7 @@ with the replay tests and the recorder in `tests/support/`):
   [probe-snapshot.md](research/probe-snapshot.md),
   [probe-tmux.md](research/probe-tmux.md),
   [probe-locate-subscriptions.md](research/probe-locate-subscriptions.md),
+  [probe-latest-activity.md](research/probe-latest-activity.md),
   [tmux-control-mode.md](research/tmux-control-mode.md).
 - libtmux-rs (`~/.meridian/ref/libtmux-rs`): byte-oriented reading, FIFO reply slots,
   the `%end`-position snapshot boundary.

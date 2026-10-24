@@ -57,8 +57,11 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
   first responder owning the keyboard ([ios-shell.md](ios-shell.md)). Installed from
   Xcode until a paid Apple account brings TestFlight.
 - **tmux:** 3.4 on the server, 3.7b on the Mac, `window-size latest`, default prefix
-  `C-b`, the laptop sometimes attached at the same time. tether resizes a window only
-  when a tab opens and on rotation or font change, never for the keyboard.
+  `C-b`, the laptop sometimes attached at the same time. A window takes the size of
+  the client that acted on it last, as tmux's `latest` does: opening a tab, typing,
+  pasting, rotating, a font change or Fit sizes it to the phone, and the laptop typing
+  takes it back ([daemon-core.md §3.6](daemon-core.md#36-sizing)). The keyboard
+  never resizes it.
 - **Tabs:** 1 tab = 1 tmux window, showing its active pane full screen. Jimmy doesn't
   split panes; a split window shows its active pane and follows it. Tabs never close
   on network loss.
@@ -395,7 +398,7 @@ after Tab, ↑ or readline edits.
   ([complete.md](complete.md#request-and-response)) through its host's scheme-handler
   origin. `cwd` is the snippet's OSC 7 path when the prompt sent one, else the tab's
   current directory from `watching`
-  ([daemon-core.md §3.7](daemon-core.md#37-cwd-subscription)), which needs no snippet.
+  ([daemon-core.md §3.7](daemon-core.md#37-window-subscription)), which needs no snippet.
   `/complete` is plain HTTP in `src/complete/` and never touches tmux.
 
 ### The key row
@@ -877,8 +880,6 @@ Mac), on its own `-L` socket.
 
 ## Still open
 
-- **Jimmy's calls:** whether "the laptop can't grow a window the phone watches" is
-  acceptable ([daemon-core.md §9](daemon-core.md#9-open-risks)).
 - **Spike outcomes:** the boundary on 3.7b and the measured memory ceiling (spike 2), and the repaint on
   tab switch (spike 3).
 - **Touch, copy and phone dock gates:** see [the client research](client/terminal-interaction-design.md).

@@ -131,7 +131,7 @@ One name per concept. The code, the specs and the UI copy use these.
 | **overlay** | A modal surface stacked on a destination: the picker, the switcher, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files; the **status band** |
 | **navigation stack** | The browser history entries tether pushes: destination, overlay, Files folder and preview (§6.6). Its only writer is the router | The tab strip, which never enters history |
 | **listing** | One host's tmux sessions and windows, from `listSessions`. One fetcher gets it (§6.3) | |
-| **status band** | The band on the terminal's top edge that says a tab is reconnecting, limited or failed, with Retry (§8.2) | an overlay |
+| **status band** | The band on the terminal's top edge that says a tab is reconnecting, limited or failed, with Retry, or that its window is sized for another terminal, with Fit (§5.4, §8.2) | an overlay |
 | **persist now** | `app/persist.ts`: hand every pending draft and workspace write to storage at once (§5.5) | |
 | **picker** | The desktop's session picker behind terminal `+`. It only attaches existing windows | Home's creation actions; the switcher |
 | **switcher** | The phone's session sheet behind the tab chip: Home, the open tabs, every session, search and New session. The phone's only picker; the phone's Terminal has no tab strip | the picker |
@@ -551,9 +551,49 @@ needs no event reason. Only the adapters differ, in how they define `stableHeigh
   number, not `container.clientHeight`, which in the browser never shrinks. Native keeps
   passing its shrunken web view's height, as today.
 - **Applying a size.** Only the trailing size is sent, 150 ms after the last change, so
-  dragging a window edge doesn't resize tmux for every cell. A tab's first `watch` waits
+  dragging a window edge doesn't resize tmux for every cell. Fit (below) re-sends the
+  current size at once. A tab's first `watch` waits
   until the font is loaded and the box has been measured once, so tmux never sees the
   80×24 placeholder.
+- **The pane keeps tmux's size, whatever the box.** A window takes the size of the
+  client that acted on it last ([daemon-core.md §3.6](../../../../docs/design/daemon-core.md#36-sizing)):
+  `watch`, `resize`, `input` and `paste` claim it for this tab, and the laptop typing
+  takes it back. So the pane can be larger than the tab's own size (another terminal
+  has it) or smaller (that terminal has fewer rows or columns, or the window is
+  split). The renderer takes the pane's size from the snapshot and `Layout` and draws
+  it at the tab's own font. The font never scales to fit, so the sizer's inputs, and
+  the size the tab claims with, stay the tab's own.
+  - **Larger:** the pane is anchored to the left edge and clipped at the right, with no
+    horizontal pan (horizontal swipes stay the system's, §7.6). Rows below the box are
+    reached by the cursor pan, which already keeps the cursor row above the dock: the
+    terminal element is the pane's height, and the pan area is what is visible of it.
+    While the buffer is scrolled into history the pan anchors to the top, so no row is
+    skipped; back at the bottom it follows the cursor again. While larger, the tab
+    renders with xterm's DOM renderer and drops the WebGL addon, which returns once the
+    pane fits: a WebGL canvas is the pane's size in device pixels, so a 250×70 laptop
+    window at the phone's font and 3× density would be about 17 M pixels, past
+    WebKit's canvas limit and mostly clipped.
+  - **The band.** The status band says "Sized for another terminal" with **Fit**, which
+    sends `resize` with the tab's own size at once and so claims the window; typing,
+    pasting and rotating claim it as well. It shows once the pane has been wider or
+    taller than the size the tab last sent for one second, so a rotation's debounce,
+    a claim's round trip and a first snapshot that predates the vote don't flash it,
+    and hides as soon as the pane fits. The tab knows this without the daemon: a
+    window the tab holds is never larger than the size it sent. Reconnecting, limited
+    and failed replace it.
+  - **Smaller:** drawn from the top-left corner on the terminal background, with no
+    band: a claim caps the window and never grows it past the size of the client tmux
+    sizes it by. With two tether tabs on one window, the smaller holds it until the
+    other acts (two phones aren't designed for).
+  - **Re-watching by itself.** A tab that comes on screen through the user (opened,
+    switched to, back from Home, Files or a native screen, the app unlocked or brought
+    forward) sends `watch` as a claim. A re-watch the client makes by itself (a
+    reconnect while visible, a daemon restart, a backoff retry) sends `claim: false`
+    unless the tab held the window when its watch ended, which it knows from the band
+    rule: its pane was no larger than the size it sent. A network blip therefore never
+    takes a window the laptop holds.
+  - Taps, selection and `cellAt` already map through measured cells and the pan, so
+    they hold at any pane size.
 - **Keyboard detection (browser).** `keyboard` is true when all of these hold: a text
   owner is focused (`platform/browser/viewport.ts` tracks `focusin` and `focusout`),
   `directInput` is `owned` (in either layout: an iPad without a
@@ -1448,7 +1488,7 @@ densities, and keyboard-only Playwright walks of Home, the picker, Terminal and 
 | `TabStrip` | buttons with `aria-current`, a separate close button on the active pill, horizontal scroll, the active pill scrolled into view | terminal tabs. Not an ARIA `tablist`: the tabs carry their own close buttons and share one panel |
 | `Banner` | a `role="status"` region | host problems, offline, Update ready |
 | `Toast` | one polite live region, one message at a time | "2 tabs closed", insertion results |
-| `StatusBand` | a band over the terminal's top edge | reconnecting, limited, failed, with Retry |
+| `StatusBand` | a band over the terminal's top edge | reconnecting, limited, failed, with Retry; sized for another terminal, with Fit |
 | `EmptyState`, `Spinner` | | no tabs, no matches, empty folder, loading |
 | `Icon` | inline SVG from one owned set (a Lucide subset, ISC licence), sizes 16, 20 and 24 | everywhere |
 | `LineInput` | `<input type="text">`, styled | the dock's line field, §7.4 |

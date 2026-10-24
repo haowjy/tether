@@ -63,6 +63,31 @@ P3  mobile input against real tmux:
       P3a the phone dock (one row at rest: tab chip, line field, keyboard toggle; key row
          while the keyboard is up), owned input, focus cues, the session switcher
       P3b gestures (long-press arrow pad, word selection, edit menu), touch scroll
+      PS window size follows the client that acted last (daemon-core.md §3.6, §3.7;
+         client-architecture.md §5.4; decisions.md "Window size follows the client that
+         acted last"). Two commits:
+         PS-web first, harmless alone: the pane drawn at tmux's size (left-anchored,
+           clipped right, the cursor pan for taller rows and top-anchored in history,
+           top-left when smaller), the DOM renderer while larger, the "Sized for another
+           terminal" status band (1 s debounce) with Fit re-sending `resize`, and
+           `watch { claim }` on the client's own re-watches (`term/`,
+           `screens/terminal/` StatusBand, `tabs/`, `net/`). Rename
+           `TerminalSizer.claim()` (and its `.context` mention), which would collide
+           with the daemon's claim. After P3a, which owns `TerminalScreen.tsx` and the
+           pan area; P3b's coordinate checks add a pane wider and taller than the tab.
+           Real-iPhone item for Jimmy's checklist: a 250×70 laptop window on the phone
+           renders and scrolls, with Web Content memory noted.
+         PS-daemon after PC is committed: both edit `src/hub/requests.rs` (PC's paste
+           handling; PS's claims on watch/resize/input/paste) and the recorded tmux
+           fixtures. Claims and yields in `src/hub/` (state, requests, reconcile: the
+           desired votes become claimed bound windows, so `withdraw` must clear a vote
+           on a window the client still owns but nobody claims), `claim?` on `watch`
+           in `src/proto/` and the generated TypeScript,
+           `Event::Acted` and the subscription format and parsing in `src/tmux/`
+           (command, session), fixtures re-recorded on 3.4 and 3.7b, the real-tmux
+           sizing test (§8) with a pty laptop on both, CHANGELOG bullet.
+         Gate: hub unit tests from §8; real tmux 3.4 and 3.7b; Playwright for the band,
+           Fit and both pane shapes.
     gate G3: Simulator probes; real-iPhone checklist queued for Jimmy
 P4  native iOS shell (Simulator only; the physical iPhone is in use elsewhere)
 P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, docs,

@@ -411,7 +411,7 @@ inherits its nice level 10.
   A response for a `before` other than the current one is dropped.
 - **Sends `cwd`** as the path of the OSC 7 that followed the current prompt's OSC 133
   A mark, else the tab's cwd from `watching`
-  ([daemon-core.md §3.7](daemon-core.md#37-cwd-subscription)), which lags a `cd` by
+  ([daemon-core.md §3.7](daemon-core.md#37-window-subscription)), which lags a `cd` by
   up to a second. The host part of the OSC 7 URL is ignored.
 - **On a tap,** sends `insert` as typed text; the changed line triggers the next
   request.

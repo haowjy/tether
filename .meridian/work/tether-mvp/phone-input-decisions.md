@@ -71,3 +71,7 @@ only with keyboard up), 3 smart keys (key row follows the pane's program: shell 
   blue send key (returnKeyType send / enterkeyhint="send"). Same key row in both.
 - Jimmy confirmed (2026-10-24): variant 2 (one row at rest) is the arrangement. Line field
   auto-capitalization off; Jimmy: dictation's own capitalization can't be controlled, so accept it.
+- Window size (closes plan.md "Still open" / daemon-core §9): Jimmy, 2026-10-24: "just whoever
+  has the last focus gets the focus and the size of the screen". Replaces the rule where a
+  watching phone's size vote caps a window even when the laptop is latest. Also: Files in
+  landscape hides the keyboard like portrait (Jimmy: yes).

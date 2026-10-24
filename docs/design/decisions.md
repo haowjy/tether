@@ -3208,3 +3208,110 @@ variations canvas.
   editor (zle, readline); "compose", tied to the removed multiline editor; "picker" for
   the phone sheet, whose contents (tabs, creation) differ from the desktop picker's.
 
+
+## Window size follows the client that acted last
+
+Jimmy was asked whether "the laptop can't grow a window the phone watches" was
+acceptable (plan.md "Still open"). The calls below are his; the mechanism and the
+client display are design (spawn p115), probed on tmux 3.4 and 3.7b
+([probe-latest-activity.md](research/probe-latest-activity.md)).
+
+### Whoever acted last gets the window's size
+
+- **Decided:** 2026-10-24, Jimmy ("just whoever has the last focus gets the focus and
+  the size of the screen").
+- **What:** tmux's `window-size latest`, extended to tether. A watch **claims** its
+  window with `watch`, `resize`, `input` and `paste`, and its owner votes that watch's
+  size; when another tmux client acts there, the window **yields**: the vote clears,
+  the watch stays, and tmux sizes the window by `latest`
+  ([daemon-core.md §3.6](daemon-core.md#36-sizing)).
+- **Changes:** "Sizing: client size at attach, a vote per watched window" above, whose
+  vote stood for as long as the tab was on screen and capped the window whoever was
+  `latest`, and "The cwd subscription's shape", whose `@W:#{pane_current_path}` value
+  gains the other clients' acts (below). The client size at attach stays.
+- **Rejected:** keeping the cap (the laptop could never take back a window the phone
+  had on screen); `window-size smallest` (the laptop would always be phone-sized while
+  the phone watched); `largest` (the phone would always get the laptop's size, the
+  opposite of "whoever I'm using"); dropping the vote after N idle minutes (a timer
+  where an act is the signal).
+
+### "Acts" means input or bringing the tab on screen, not looking
+
+- **Decided:** 2026-10-24, design (p115).
+- **What:** the phone claims when the user brings a tab on screen (opening, switching
+  to it, returning from Home or Files, unlocking into it), on rotation or a font
+  change, on every keystroke and paste, and on Fit. A tab that stays on screen claims
+  nothing, nor do scrolling the history and `resync`. A re-watch the client makes by
+  itself (a reconnect, a retry) sends `watch { claim: false }` unless the tab held the
+  window when its watch ended.
+- **Why:** coming on screen is the phone's attach or `switch-client`, which tmux itself
+  counts as making a client `latest`. Opening the app is the moment Jimmy picks up the
+  phone to use it; making him type a key to read the screen would put junk in the
+  shell. A phone propped on the desk with the tab open sends nothing, so it never
+  takes the window back while he types on the laptop.
+- **Rejected:** input only (opening the phone would show a laptop-sized window until a
+  key); any message on the watch, `history` included (scrolling back to read would
+  shrink the laptop's layout); a `claim` message (`resize` already says "this is my
+  size", and Fit re-sends it); every `watch` claiming, reconnects included (review
+  p119: on a spotty link each blip would shrink the laptop's window mid-command, though
+  nobody touched the phone).
+- **Cost:** `watch` carries a flag, and the client must tell a user's re-watch from its
+  own.
+
+### The other client's act is seen through the window subscription
+
+- **Decided:** 2026-10-24, design (p115). Probe:
+  [probe-latest-activity.md](research/probe-latest-activity.md).
+- **What:** the `w<W>` subscription, which carried only the cwd, becomes the window
+  subscription: it also lists, with tmux's client loop `L:`,
+  each non-control client whose current window is `@W`, with its activity time, size
+  and flags. A new or changed entry is an act, except a focus-out alone and a client
+  with `ignore-size`; the first value is the baseline
+  ([daemon-core.md §3.7](daemon-core.md#37-window-subscription)).
+- **Why:** it catches every act that makes a client `latest` (key, mouse, focus,
+  switching to the window, attaching, a terminal resize), costs nothing while nobody
+  else types, adds no op, and reuses a subscription with the same lifetime. tmux
+  already checks it once a second.
+- **Rejected:** tether becoming `latest` itself (only the session's current window can
+  be made `latest`, by switching the control client, which the laptop's session
+  shares; other windows can't, and a vote still caps); a `client-active` hook
+  (`set-hook` changes Jimmy's tmux config and can't reach the daemon); polling
+  `list-clients` (a timer in the daemon); one session-wide subscription (inside `L:` a
+  client's window is the outer one, so it can't say which window a client is on, and
+  its value would change whenever anyone typed anywhere); a separate `a<W>`
+  subscription (a second op pair with the same lifetime); comparing activity times with
+  the claim's time (one-second resolution; the phone's next act fixes a stale yield).
+- **Cost:** yielding lags the other client's act by up to about a second; a claim
+  still caps, so the phone gets the smaller dimension when the laptop's window has
+  fewer rows. Flags in the entry (review p119): without them, a focus-out, which
+  updates a client's activity but not `latest`, would yield.
+
+### A window sized for another terminal is clipped, not scaled
+
+- **Decided:** 2026-10-24, design (p115).
+- **What:** the client draws the pane at tmux's size and its own font, from the left
+  edge. Wider content is cut off at the right; taller content follows the cursor
+  through the existing cursor pan, or anchors to the top while scrolled into history.
+  While the pane is larger the tab uses xterm's DOM renderer. After a second larger
+  than the size the tab sent, the status band says "Sized for another terminal" with
+  Fit, which re-sends the tab's size and so claims. A smaller pane sits in the
+  top-left corner with no band (client-architecture.md §5.4).
+- **Why:** a window sized for another terminal is for glancing: the left of each line
+  and the cursor area stay readable, and Fit is one tap away when Jimmy wants the whole
+  screen. The band needs nothing from the daemon: a claimed window is never larger
+  than the tab.
+- **Rejected:** scaling the font down to fit (200 columns on a 56-column phone is
+  unreadable at any floor, and a font change would feed the sizer and claim the window);
+  CSS scaling (blurs the WebGL renderer and breaks cell mapping); horizontal panning
+  (horizontal swipes belong to the system back gesture); centring a smaller pane
+  (text moves away from where the eye expects it); keeping WebGL at any pane size
+  (review p119: its canvas grows with the other terminal, about 17 M device pixels for
+  250×70 at 3×, past WebKit's canvas limit); a band shown the moment the pane is larger
+  (it would flash on every rotation, Fit and tab open).
+
+### Files in landscape lowers the keyboard, as in portrait
+
+- **Decided:** 2026-10-24, Jimmy ("yes").
+- **What:** leaving Terminal for Files lowers the keyboard in landscape as in portrait
+  ([browser-behaviors.md](client/browser-behaviors.md#phone-dock)); no layout keeps it
+  up over Files.

@@ -387,8 +387,9 @@ Native sizes the web view, so the web never measures the keyboard.
   layout and sets its padding from `safeArea` (`--safe-*` in `web/ui/tokens.css`).
   Native therefore sends the insets of the full-screen layout in every message, so a
   rotation while the keyboard is up gives the rows the collapsed layout has.
-- The web computes the tmux size from `collapsedHeight` and width only, and resizes
-  tmux only on `initial`, `rotation` and font-size changes. A `keyboard` change never
+- The web computes the tmux size from `collapsedHeight` and width only, and sends a
+  new size only on `initial`, `rotation` and font-size changes (Fit re-sends the same
+  one, [daemon-core.md §3.6](daemon-core.md#36-sizing)). A `keyboard` change never
   resizes tmux, and neither does the suggestion strip appearing or going. The columns
   come from `width` minus the left and right insets, each side at least a 4 px edge
   inset (`--term-edge`) so text never touches the glass; the rows from
