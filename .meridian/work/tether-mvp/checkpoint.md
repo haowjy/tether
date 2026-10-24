@@ -1,18 +1,20 @@
 # Client implementation checkpoint
 
-## Current state (2026-10-24, late) — read this first
+## Current state (2026-10-24, evening) — read this first
 
-Pushed to main: 7372e37 dock design, e334e0e window-size design, 96216b1 PC paste confirmation,
-7073a33 PS-daemon, 2a5c401 P3a dock/line field/switcher, a098d17 macOS Serve note,
-2456488 PS-web (window sized by last activity, band + Fit, DOM renderer while larger).
-Decisions: [phone-input-decisions.md](phone-input-decisions.md). Plan: [build-plan.md](build-plan.md).
-Jimmy asked to push through P5 autonomously.
+Pushed to main through 71944d7: dock design, window-size design, PC paste confirmation,
+PS-daemon, P3a dock/line field/switcher, PS-web (2456488), systemd 254 note (2b668f8),
+native iOS shell bridge v2 native side (ab61cd5, reviews p142/p148 closed), P3b touch
+gestures (71944d7, reviews p141/p144/p147 closed). Decisions: [phone-input-decisions.md](phone-input-decisions.md).
+Plan: [build-plan.md](build-plan.md). Jimmy asked to push through P5 autonomously.
 
-In flight: p138 P3b gestures (brief prompts/p-lane-p3b.md); p139 Linux-in-Docker probe
-(build/test, tmux 3.4/3.7b, systemd caps, resource budget; brief prompts/probe-linux-docker.md).
-Next: review P3b, G3 (Simulator + Jimmy's g3-iphone-checklist.md), P4 native shell, P5.
-Docker works on the Mac now; `ssh pop-os` still fails host-key verification, and the tailnet
-gates (auth.md G1–G12) need the real Linux box. macOS Serve is blocked (no LocalAPI socket).
+In flight: p152 P4b (web half of the native bridge, W5; brief prompts/p-lane-p4b.md);
+p153 resource budget probe (Docker Linux + macOS; brief prompts/probe-budget.md).
+Next: review P4b; G3 Simulator probe of the native app; P5 (end-to-end on isolated tmux
+3.4/3.7b, docs, CHANGELOG, @kb-lead capture, /post-dev). Jimmy's device checklists:
+g3-iphone-checklist.md and ios-shell.md §Device checklist.
+Blocked on Jimmy: `ssh pop-os` host key (tailnet gates auth.md G1–G12 need the real box);
+macOS Serve can't reach Tailscale identity. Docker works for Linux checks.
 
 Everything below is the historical log; where it conflicts with the above, the above wins.
 
