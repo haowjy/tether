@@ -10,7 +10,9 @@ import { IconButton } from "../../ui/primitives/IconButton";
 import { StatusBand } from "../../ui/primitives/StatusBand";
 import { TabStrip } from "../../ui/primitives/TabStrip";
 import { useStore } from "../../ui/store";
+import { Button } from "../../ui/primitives/Button";
 import { Dock } from "./dock/Dock";
+import { EditMenu } from "./selection/EditMenu";
 import { bandTone, lookOf, tabPills } from "./tabView";
 import { terminalsOf } from "./terminals";
 import styles from "./Terminal.module.css";
@@ -32,6 +34,8 @@ export function TerminalScreen({ active }: { active: boolean }) {
   const terminals = terminalsOf(app);
   const slot = useRef<HTMLDivElement>(null);
   const statuses = useStore(terminals, (s) => s.tabs);
+  const scrolled = useStore(terminals, (s) => s.scrolled);
+  const menu = useStore(terminals, (s) => s.menu);
   const workspace = useAppView((v) => v.workspace);
   const layout = useAppView((v) => v.viewport.layout);
   const phone = layout === "phone";
@@ -51,7 +55,8 @@ export function TerminalScreen({ active }: { active: boolean }) {
   const status = look?.status;
 
   const tools = (
-    <div class={styles.toolbar} data-layout={layout}>
+    // On a touch screen with a desktop layout (an iPad), a press on the tools must not take the keyboard's focus from the owned input (§6.5).
+    <div class={styles.toolbar} data-layout={layout} onPointerDown={(e) => { if (dock) e.preventDefault(); }}>
       {phone && <IconButton icon="back" label="Back to Home" onClick={() => { app.router.toParent(); }} />}
       <TabStrip
         pills={pills}
@@ -65,7 +70,7 @@ export function TerminalScreen({ active }: { active: boolean }) {
   );
 
   return (
-    <div class={styles.terminal} hidden={!active} data-layout={layout}>
+    <div class={styles.terminal} hidden={!active} data-layout={layout} data-dock={active && dock && phone ? "" : undefined}>
       <h1 class="sr-only">Terminal</h1>
       {!phone && tools}
       <div class={styles.surface} ref={slot}>
@@ -74,6 +79,12 @@ export function TerminalScreen({ active }: { active: boolean }) {
             <EmptyState icon="terminal" title={dock && phone ? "Open a window from Sessions." : "Open a window with + or from Home."} />
           </div>
         )}
+        {scrolled && (
+          <Button variant="secondary" class={styles.latest} onPointerDown={(e) => { e.preventDefault(); }} onClick={() => { terminals.toLatest(); }}>
+            Jump to latest
+          </Button>
+        )}
+        {menu && <EditMenu menu={menu} onCopy={() => { terminals.pastes.copySelection(); }} onPaste={() => { terminals.pastes.pasteFromMenu(); }} />}
         {current && !status?.detail && statuses[current.id]?.state.kind === "live" && statuses[current.id]?.sizedForOther && (
           <StatusBand tone="notice" text="Sized for another terminal" action={{ label: "Fit", onAction: () => { terminals.fit(current.id); } }} />
         )}

@@ -88,7 +88,7 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
         if (pasted.kind === "image" || (pasted.kind === "text" && hasInnerBreak(pasted.text))) {
           // The field is one line: more than a line goes to the terminal as one paste, without Enter.
           e.preventDefault();
-          terminals.paste(pasted);
+          terminals.pastes.paste(pasted);
           app.notify(pasted.kind === "image" ? "Image sent to the terminal, not the line" : "Pasted text has several lines: sent to the terminal as one paste, without Enter");
         }
       }}

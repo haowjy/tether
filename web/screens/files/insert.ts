@@ -41,7 +41,7 @@ export function insertPath(app: AppController, id: string, path: string): boolea
     app.notify("This name has control characters, so its path wasn't inserted. Open it in the terminal instead.");
     return false;
   }
-  if (terminalsOf(app).insertPath(id, path) === "refused") return false;
+  if (terminalsOf(app).pastes.insertPath(id, path) === "refused") return false;
   // Activating a tab opens Terminal on it.
   app.dispatch({ type: "activated", id });
   return true;

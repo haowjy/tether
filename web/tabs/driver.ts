@@ -10,6 +10,13 @@ import { sameWindow } from "../proto/window";
 /** What became of a path: typed now, waiting for the watch, or refused (the tab can't take it, and nothing was kept). */
 export type InsertResult = "typed" | "queued" | "refused";
 
+/** One physical row of scrollback as `capture-pane -e` printed it. */
+export interface HistoryRow {
+  bytes: Uint8Array;
+  /** The next row continues this one: a soft wrap. */
+  continues: boolean;
+}
+
 type Watching = Extract<ServerMsg, { type: "watching" }>["data"];
 
 export interface TabOptions {
@@ -156,29 +163,16 @@ export class TabDriver {
 
   /**
    * Scrollback rows `start..=end` (tmux line numbers, negative is history), one entry per
-   * logical line. Wrapped physical rows are joined for copy. A chunk may hold fewer rows
-   * than asked, so this follows its true start; an empty chunk can advance to tmux's top
-   * before the range ends. Rejects when the watch goes away.
+   * physical row, in order, each saying whether the next row continues it (a soft wrap). A
+   * chunk may hold fewer rows than asked, so this follows its true start; an empty chunk can
+   * advance to tmux's top before the range ends, and fewer rows than the range means the top
+   * was reached. A gap or a change of tmux's history size breaks the continuation. Rejects
+   * when the watch goes away.
    */
-  async history(start: number, end: number): Promise<Uint8Array[]> {
+  async history(start: number, end: number): Promise<HistoryRow[]> {
     const watch = this.watchId;
-    const rows: Uint8Array[] = [];
-    let parts: Uint8Array[] = [];
-    let length = 0;
-    let continues = false;
+    const rows: HistoryRow[] = [];
     let historySize: number | undefined;
-    const finishLine = (): void => {
-      if (parts.length === 0) return;
-      const line = new Uint8Array(length);
-      let offset = 0;
-      for (const part of parts) {
-        line.set(part, offset);
-        offset += part.length;
-      }
-      rows.push(line);
-      parts = [];
-      length = 0;
-    };
     for (let next = start; next <= end; ) {
       if (!this.bound || watch === null || this.watchId !== watch) throw new Error("watch ended");
       const from = next;
@@ -186,39 +180,23 @@ export class TabDriver {
         (req) => ({ type: "history", data: { req, watch, start: from, end } }),
         (reply) => (reply.type === "historyChunk" && reply.data.watch === watch ? reply.data : undefined),
       );
+      let broken = chunk.start !== from;
       if (chunk.historySize !== undefined) {
-        if (historySize !== undefined && chunk.historySize !== historySize) {
-          finishLine();
-          continues = false;
-        }
+        broken ||= historySize !== undefined && chunk.historySize !== historySize;
         historySize = chunk.historySize;
       }
-      const lines = chunk.lines.map(decodeBase64);
-      if (lines.length === 0) {
-        if (chunk.start > from) {
-          finishLine();
-          continues = false;
-        }
-      } else {
-        if (chunk.start !== from) {
-          finishLine();
-          continues = false;
-        }
-        const wraps = decodeBase64(chunk.wraps);
-        lines.forEach((line, index) => {
-          if (parts.length > 0 && !continues) finishLine();
-          parts.push(line);
-          length += line.length;
-          continues = ((wraps[index >> 3] ?? 0) & (1 << (index & 7))) !== 0;
-        });
-      }
+      const last = rows[rows.length - 1];
+      if (broken && last) last.continues = false;
+      const wraps = decodeBase64(chunk.wraps);
+      chunk.lines.forEach((line, index) => {
+        rows.push({ bytes: decodeBase64(line), continues: ((wraps[index >> 3] ?? 0) & (1 << (index & 7))) !== 0 });
+      });
       const after = chunk.start + chunk.lines.length;
       // tmux can move a request up to the oldest retained row. Follow that true
       // position, including an empty range above the top, but never retry no progress.
       if (after <= from) break;
       next = after;
     }
-    finishLine();
     return rows;
   }
 

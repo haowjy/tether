@@ -3320,6 +3320,27 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
   ([browser-behaviors.md](client/browser-behaviors.md#phone-dock)); no layout keeps it
   up over Files.
 
+### Touch scroll is JS momentum over xterm and a DOM history view
+
+- **Decided:** 2026-10-24, P3b build.
+- **What:** one recognizer owns every touch on the terminal and a release coasts with an
+  exponential decay (time constant 500 ms). The normal screen scrolls xterm's buffer by rows,
+  then slides the terminal down onto a DOM view of tmux's older rows fetched on demand;
+  full-screen and mouse-mode applications get wheel events or ↑/↓. A long-press hold with a
+  drag is the arrow pad; a release without moving selects the word in an immutable snapshot
+  of one DOM row per grid row.
+- **Why:** the recognizer must tell a tap, a scroll and a hold apart before anything reaches
+  tmux, which a native scroller cannot do; rows of fixed height keep the snapshot, the history
+  and the canvas on one grid however the text wraps, and joining them at the wrap flags the daemon
+  sends keeps copy logical.
+- **Rejected:** a native `overflow: auto` scroller (it owns the touch, so long-press and
+  taps cannot be arbitrated, and it cannot reach rows xterm does not hold); tmux copy-mode
+  (the plan's fallback: every scroll would change the pane's state, and tmux's own state is
+  what tether must not disturb); CSS-wrapped logical lines in the snapshot (wide characters
+  and fractional cell widths misalign it); custom selection handles (the spec chose the system's;
+  the device check decides whether they appear on a programmatic selection).
+
+
 ### iOS Link resolves the socket without exposing host routing in page state
 
 - **Decided:** 2026-10-24, tech lead (P4a review, p142).
@@ -3399,6 +3420,24 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
   CSP check; desktop browser/Vite remains available for iteration.
 - **Rejected:** shipping an unverified dev-server route and broader CSP with the shell.
 
+### P3b touch state is per shown tab, in one object
+
+- **Decided:** 2026-10-24, tech lead, after the P3b reviews (p141 correctness, p144 structure).
+- **What:** the recognizer shell, scroll with momentum, history view and selection snapshot
+  live in `screens/terminal/view.ts`, which is told the shown tab and resets all of it when
+  that changes, on a snapshot, on `visibilitychange` and on a lost pointer capture. Its sends
+  are bound to the tab id they began on. Touches on the selection layer are left to the system
+  (handles, scrolling). History chunks overlap the oldest known row by one and restart the view
+  on a mismatch; wrap flags are carried across chunk and buffer seams; rows are dropped on return
+  to the newest line; a refused chunk waits 1.5 s. `Row` carries cells (exact for xterm rows).
+  The desktop wheel continues past xterm's top into the history; `scrolled` follows the renderer.
+  `term/buffer.ts` and `bufferText` are deleted (the touch copy path joins `Row`s).
+- **Why:** a coast or held pad is state of one tab on a surface every tab shares; resetting only
+  on the next snapshot let it type into the next tab. Resetting at the one place the shown tab
+  changes ends the class.
+- **Rejected:** capturing the tab id in the scroll control alone (patches one instance); keeping
+  a second logical-text path in `term/`; guessing cell widths from text for xterm rows.
+
 ### Native lifecycle messages are full snapshots
 
 - **Decided:** 2026-10-24, P4a review (p142).
@@ -3440,3 +3479,9 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 - **Rejected:** restoring only the focus saved when the cover first appeared (it loses
   requests made under the cover); accepting unvalidated named keys; deleting by host id
   alone; and asking page JavaScript for its active tab a second time.
+
+### P3b round 2: the snapshot window, anchors, one shown rule
+- **Decided:** 2026-10-24, tech lead, after review p147.
+- **What:** the selection snapshot holds `[viewTop − 2,000, viewBottom]` rows with the 512 KiB budget counted up from the view's bottom, so a long-press works wherever the view is in a 5,000-row buffer (`renderer.rows(from, to)`). A history chunk is asked for with up to 8 rows already known (the oldest fetched, or xterm's first rows for the first chunk) and `anchor.ts` finds them in it, nearest to where they should be; the rows before them are the new ones. Only a later chunk that does not contain them restarts the view. `ScrollControl.scrolledChanged()` is the one place `scrolled` is reported and fetched rows are dropped on the way back to the newest line. The paste, copy and inserted-path concern is `Pastes` in `paste.ts`. The view resets on `shownTerminalTab` (selected and not covered by a native screen), the same rule its sends use.
+- **Why:** the window was anchored on the newest rows, so a view more than 2,000 rows up found nothing. One byte-row compare at a seam passed on blank or repeated rows and hid a shift; a run found nearest the expectation does not, and recovers a shift instead of discarding the history.
+- **Rejected:** the daemon's `historySize` for re-anchoring (it says the size, not where the known rows moved to, and the first chunk would still need xterm's rows); keeping two "shown" rules (a coast kept ticking under a native cover, every send dropped).

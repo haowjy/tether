@@ -3,25 +3,24 @@
 // the screen only places the element, so a screen that unmounts (an admission problem
 // replaces the shell) never loses the buffer or a tab's watch. It runs the pieces no
 // component should: one `TabDriver` per open tab, tmux's size from the stable box, desktop
-// direct input, and paste.
+// direct input, and (in `Pastes`) paste.
 import type { AppController } from "../../app/controller";
-import type { PasteResult } from "../../net/host";
 import type { HostClient } from "../../net/hosts";
 import { tabId } from "../../platform/tabKey";
 import type { InputEvent, Viewport } from "../../platform/types";
 import { acceptsInsert, type ConnectionState } from "../../tabs/connection";
-import { TabDriver, type InsertResult } from "../../tabs/driver";
-import { cannotInsert, shellQuote } from "../../tabs/input";
-import { createXtermRenderer, type TerminalRenderer } from "../../term";
+import { TabDriver } from "../../tabs/driver";
+import { createXtermRenderer, type PromptLine, type TerminalRenderer } from "../../term";
 import { TerminalSizer } from "../../term/size";
 import { ArmedModifiers } from "../../touch/armed";
 import { createOwnedInput } from "../../touch/owned-input";
 import { Store } from "../../ui/store";
 import { terminalTheme } from "../../ui/theme";
-import { tabLabels } from "../../workspace/labels";
 import { shownTab } from "../../workspace/state";
-import { interceptClipboard, pasteRefusal, type Pasted } from "./paste";
+import { interceptClipboard, Pastes } from "./paste";
+import type { MenuState } from "./selection/control";
 import styles from "./Terminal.module.css";
+import { TerminalView } from "./view";
 
 /** What the pill and the status band read for a tab. */
 export interface TabStatus {
@@ -38,6 +37,10 @@ interface TerminalsView {
   tabs: Readonly<Record<string, TabStatus>>;
   /** The terminal has a renderer, a cell size and a tmux size: tabs can watch. */
   ready: boolean;
+  /** The view is above the newest line (in the buffer or the history): the jump-to-latest control shows. */
+  scrolled: boolean;
+  /** The edit menu, while a long-press selection or a press on a blank cell has one open. */
+  menu: MenuState | null;
 }
 
 /** A few frames for xterm to paint and the cell to become measurable. */
@@ -84,13 +87,17 @@ export class Terminals extends Store<TerminalsView> {
   private panArea: number | null = null;
   /** The timers that will say in the band that a tab's pane is larger than its size. */
   private readonly bandTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Takes a paste's answer if it is for a line the dock sent; what it declines becomes a notice. */
-  private claimPasteResult: (id: string, result: PasteResult) => boolean = () => false;
+  /** The shell's command line under the cursor, for a tap on the prompt row. */
+  private promptLine: PromptLine | null = null;
+  /** The touch side of looking at the shown tab: scroll, history, selection, gestures. */
+  private readonly view: TerminalView;
+  /** Paste, copy and inserted paths. */
+  readonly pastes: Pastes;
   /** The armed ctrl or alt of the touch sources; it types through this surface. */
   readonly modifiers = new ArmedModifiers((events) => { this.type(events); });
 
   constructor(private readonly app: AppController) {
-    super({ tabs: {}, ready: false });
+    super({ tabs: {}, ready: false, scrolled: false, menu: null });
     this.viewport = app.snapshot.viewport;
     this.element.className = styles.host ?? "";
     this.element.dataset["blank"] = "true"; // until the first snapshot: no pretend-live empty terminal
@@ -98,13 +105,33 @@ export class Terminals extends Store<TerminalsView> {
       cell: () => this.renderer?.cellSize() ?? null,
       onChange: (size) => { this.shownDriver()?.resize(size); },
     });
+    this.pastes = new Pastes({
+      app,
+      driver: (id) => this.drivers.get(id),
+      shown: () => this.shownTerminalTab(),
+      flushInput: () => { this.flushInput(); },
+      takeSelection: () => this.view.takeSelection(),
+      dismissSelection: () => { this.view.dismissSelection(); },
+    });
     interceptClipboard(this.element, {
-      onPaste: (pasted) => { this.paste(pasted); },
+      onPaste: (pasted) => { this.pastes.paste(pasted); },
       selectionText: () => this.renderer?.selectionText() ?? "",
     });
-    // Until the touch recognizer (P3b) owns every tap, a touch must not move focus: a tap on the
-    // surface would blur whichever input holds the keyboard (§6.5).
-    this.element.addEventListener("pointerdown", (event) => { if (this.viewport.directInput !== "xterm") event.preventDefault(); });
+    this.view = new TerminalView({
+      element: this.element,
+      renderer: () => this.renderer,
+      theme: terminalTheme,
+      fetchHistory: (start, end) => this.shownDriver()?.history(start, end) ?? null,
+      send: (id, events) => { this.typeTo(id, events); },
+      haptic: (kind) => { this.app.platform.haptic(kind); },
+      directInput: () => this.viewport.directInput,
+      focusTerminal: () => { this.app.focus.focusTarget("terminal", true); },
+      prompt: () => this.promptLine,
+      keyboardHeld: () => this.app.focus.snapshot.owner === "terminal",
+      selecting: (on) => { this.app.focus.selecting(on); },
+      onScrolled: (scrolled) => { this.update({ scrolled }); },
+      onMenu: (menu) => { this.update({ menu }); },
+    });
     new ResizeObserver(() => { this.measure(); }).observe(this.element);
     app.subscribe(() => { this.sync(); });
     app.focus.subscribe(() => { this.drawCursor(); });
@@ -148,21 +175,9 @@ export class Terminals extends Store<TerminalsView> {
   }
 
   /**
-   * The one way a path reaches a tab (Files' Insert path, an uploaded image): quoted, no
-   * Enter, into that tab only, once it is watching. A refusal is reported here, once;
-   * a path that is later dropped is reported by the driver.
-   */
-  insertPath(id: string, path: string): InsertResult {
-    const driver = this.drivers.get(id);
-    const result = driver?.insertPath(path) ?? "refused";
-    if (result === "refused") this.app.notify(cannotInsert(path, driver ? "the tab isn't connected" : "that tab is closed") + " The file is still in Files.");
-    return result;
-  }
-
-  /**
    * The line field's Return: one paste with Enter, run in the same tmux group by the daemon
    * (daemon-core.md §3.4). Returns the paste's `req`, or null, with nothing sent, when the tab
-   * isn't live. Its one answer goes to {@link claimPasteResults}' claimant, not to a notice.
+   * isn't live. Its one answer goes to {@link Pastes.claim}' claimant, not to a notice.
    */
   sendLine(id: string, text: string): number | null {
     this.flushInput(); // what was typed before goes first
@@ -175,25 +190,9 @@ export class Terminals extends Store<TerminalsView> {
     return this.drivers.get(id)?.input(events) ?? false;
   }
 
-  /** The one claimant of paste answers (the dock's line drafts). */
-  claimPasteResults(claim: (id: string, result: PasteResult) => boolean): void {
-    this.claimPasteResult = claim;
-  }
-
-  /** A paste into the tab on screen: text goes as one paste without Enter, an image is uploaded and its path typed. */
-  paste(pasted: Pasted): void {
-    // The tab is captured now: the upload below finishes later.
-    const id = this.shownTerminalTab();
-    const driver = id === null ? undefined : this.drivers.get(id);
-    if (pasted.kind === "empty" || id === null || !driver) return;
-    this.flushInput(); // what was typed before the paste goes first
-    if (pasted.kind === "text") {
-      const refusal = pasteRefusal(pasted.text);
-      if (refusal) this.app.notify(refusal);
-      else if (driver.paste(pasted.text) === null) this.app.notify("Not sent: the tab isn't connected");
-      return;
-    }
-    void this.pasteImage(id, pasted.file);
+  /** The jump-to-latest control. */
+  toLatest(): void {
+    this.view.scroll.toLatest();
   }
 
   /** What remains visible of the terminal above the dock, for the cursor pan; null follows the surface. */
@@ -234,6 +233,8 @@ export class Terminals extends Store<TerminalsView> {
       else driver.cover();
     }
     this.showPainted();
+    // What one tab had going on the surface (a coast, a held pad, a selection) is not the next tab's.
+    this.view.show(shown);
   }
 
   private paneLarger(id: string, larger: boolean): void {
@@ -273,6 +274,8 @@ export class Terminals extends Store<TerminalsView> {
           if (large) this.renderer?.setWebgl(false);
           await this.renderer?.snapshot(snapshot);
           if (!large) this.renderer?.setWebgl(true);
+          // What was fetched or selected sat above the buffer this snapshot replaced.
+          this.view.reset();
           // The surface now holds this tab's content, whichever tab is on screen by the time xterm finished parsing.
           this.painted = id;
           this.showPainted();
@@ -286,7 +289,7 @@ export class Terminals extends Store<TerminalsView> {
       onLarger: (larger) => { this.paneLarger(id, larger); },
       onWatching: () => { this.app.dispatch({ type: "watching", id }); },
       onNotice: (text) => { this.app.notify(text); },
-      onPasteResult: (result) => { this.pasteResult(id, result); },
+      onPasteResult: (result) => { this.pastes.result(id, result); },
     });
     this.drivers.set(id, driver);
   }
@@ -308,10 +311,17 @@ export class Terminals extends Store<TerminalsView> {
     else if (state.reason === "serverExited") this.app.dispatch({ type: "serverExited", hostId, server });
   }
 
-  /** Keystrokes for the tab on screen now, held for a few milliseconds to share a message. */
+  /** Keystrokes for the tab on screen now. */
   private type(events: InputEvent[]): void {
     const id = this.shownTerminalTab();
-    if (id === null) return;
+    if (id !== null) this.typeTo(id, events);
+  }
+
+  /** Keystrokes for tab `id`, held for a few milliseconds to share a message; dropped if it is not the tab on screen any more. */
+  private typeTo(id: string, events: InputEvent[]): void {
+    if (id !== this.shownTerminalTab()) return;
+    // Typing returns to the newest line.
+    if (!this.view.scroll.atLatest) this.view.scroll.toLatest();
     if (this.batch && this.batch.id !== id) this.flushInput();
     if (this.batch) this.batch.events.push(...events);
     else this.batch = { id, events: [...events] };
@@ -385,6 +395,8 @@ export class Terminals extends Store<TerminalsView> {
     });
     this.renderer = renderer;
     renderer.setPanArea(this.panArea);
+    renderer.onPromptLine((line) => { this.promptLine = line; });
+    renderer.onScrolledUp(() => { this.view.scroll.scrolledChanged(); });
     // The symbols fallback arrives after first paint: its glyphs draw once the atlas is cleared.
     document.fonts.addEventListener("loadingdone", () => { renderer.refreshGlyphs(); });
     this.applyInput();
@@ -455,41 +467,5 @@ export class Terminals extends Store<TerminalsView> {
     const holder = document.activeElement;
     if (nav.destination !== "terminal" || nav.entry.overlay !== null || (holder && holder !== document.body)) return;
     this.app.focus.focusTarget("terminal");
-  }
-
-  private pasteResult(id: string, result: PasteResult): void {
-    if (this.claimPasteResult(id, result) || result.type === "pasted") return;
-    const tabs = this.app.snapshot.workspace.tabs;
-    const tab = tabLabels(tabs, (hostId) => this.app.hosts.byHostId(hostId)?.name ?? hostId)
-      .find((label) => label.id === id)?.full ?? "the closed tab";
-    if (result.type === "pasteLost") {
-      this.app.notify(`May not have been sent to ${tab}: the connection was lost before tmux confirmed the paste`);
-      return;
-    }
-    const label = result.data.code === "tmux" ? "May not have been sent" : "Not sent";
-    this.app.notify(`${label} to ${tab}: ${result.data.message}`);
-  }
-
-  /** Uploads the pasted image, then types its quoted path into the tab it was pasted in. */
-  private async pasteImage(id: string, file: File): Promise<void> {
-    const { platform } = this.app;
-    const tab = this.app.snapshot.workspace.tabs.find((t) => t.id === id);
-    const client = tab && this.app.hosts.byHostId(tab.key.host);
-    if (!platform.uploads.send || !client) {
-      this.app.notify("Paste images from Files → Upload");
-      return;
-    }
-    this.app.notify("Uploading image…");
-    for await (const event of platform.uploads.send(client.entry.handle, file, new AbortController().signal)) {
-      if ("error" in event) {
-        this.app.notify(`Upload failed: ${event.error}`);
-      } else if ("path" in event) {
-        const name = event.path.split("/").pop() ?? event.path;
-        // The tab may be covered or still connecting: the path then waits for its watch. A refusal says so itself.
-        const result = this.insertPath(id, event.path);
-        if (result === "typed") this.app.notify(`Inserted ${shellQuote(name)}`);
-        else if (result === "queued") this.app.notify(`Uploaded ${name}: its path will be inserted when that tab is on screen and connected`);
-      }
-    }
   }
 }

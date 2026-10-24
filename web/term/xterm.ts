@@ -4,7 +4,8 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import type { CellSize, RendererOptions, TerminalRenderer } from ".";
-import { bufferText } from "./buffer";
+import { bufferRows } from "./lines";
+import type { MouseEncoding } from "./mouse";
 import { WritePipeline, type Snapshot } from "./pipeline";
 import { PromptTracker } from "./prompt";
 import { cursorPan } from "./size";
@@ -55,10 +56,23 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
   };
   attachWebgl();
 
+  // xterm keeps the report format private; the parser sees the same DECSET that sets it.
+  let encoding: MouseEncoding = "x10";
+  const encodingMode = (set: boolean) => (params: (number | number[])[]): boolean => {
+    for (const param of params) {
+      if (param === 1006) encoding = set ? "sgr" : "x10";
+      else if (param === 1005 && encoding !== "sgr") encoding = set ? "utf8" : "x10";
+    }
+    return false; // xterm still applies it
+  };
+  term.parser.registerCsiHandler({ prefix: "?", final: "h" }, encodingMode(true));
+  term.parser.registerCsiHandler({ prefix: "?", final: "l" }, encodingMode(false));
+
   const prompt = new PromptTracker(term);
   const pipeline = new WritePipeline({
     write: (data, callback) => { term.write(data, callback); },
     reset: () => {
+      encoding = "x10";
       prompt.reset();
       term.reset();
     },
@@ -134,8 +148,24 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     setInput: setDesktopInput,
     inputElement: () => term.textarea ?? null,
     selectionText: () => term.getSelection(),
-    bufferText: (rows) => bufferText(term.buffer.active, rows),
     mouseMode: () => term.modes.mouseTrackingMode,
+    mouseEncoding: () => encoding,
+    altScreen: () => term.buffer.active.type === "alternate",
+    cursor: () => ({ col: term.buffer.active.cursorX, row: term.buffer.active.cursorY }),
+    scrollback: () => {
+      const buffer = term.buffer.active;
+      return { rows: buffer.baseY, up: buffer.baseY - buffer.viewportY };
+    },
+    scrollRows: (rows) => {
+      const before = term.buffer.active.viewportY;
+      term.scrollLines(rows);
+      return term.buffer.active.viewportY - before;
+    },
+    shift: (px) => {
+      if (term.element) term.element.style.translate = px === 0 ? "" : `0 ${String(px)}px`;
+    },
+    rows: (from, to) => bufferRows(term.buffer.active, from, to),
+    viewportTop: () => term.buffer.active.viewportY,
     cellAt: (x, y) => {
       const screen = term.element?.querySelector(".xterm-screen");
       const cell = cellSize();
@@ -145,6 +175,10 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
       const col = Math.floor((x - rect.left) / cell.width);
       const row = Math.floor((y - rect.top) / cell.height);
       return col < 0 || row < 0 || col >= term.cols || row >= term.rows ? null : { col, row };
+    },
+    screenOrigin: () => {
+      const rect = term.element?.querySelector(".xterm-screen")?.getBoundingClientRect();
+      return rect ? { left: rect.left, top: rect.top } : null;
     },
     setPanArea: (px) => {
       panArea = px;

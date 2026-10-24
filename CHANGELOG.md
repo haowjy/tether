@@ -10,6 +10,15 @@ version section on release.
 - Native focus and terminal input stay gated behind lock/native covers; hardware-key
   names follow the daemon's allowlist, Option punctuation maps to terminal Meta bytes,
   and stale auth refusals cannot revoke a newly enrolled token.
+- Touch gestures on the phone terminal. A swipe scrolls with momentum, through tmux's history
+  past what the phone holds, with a "Jump to latest" button; in `less`, `vim` and other
+  full-screen applications it sends ↑/↓ or mouse wheel events. A tap clicks in an application
+  that asked for the mouse and otherwise does nothing (it never raises or lowers the keyboard).
+  Press and hold buzzes: keep holding and drag for an arrow pad that repeats while held, or let
+  go to select the word under your finger, drag its handles further, and Copy (the lines you
+  copied, not the screen's wraps) or Paste from the menu. Horizontal swipes are left to the
+  system back gesture. On a desktop the mouse wheel carries on past the top of what the browser
+  holds into tmux's history, and "Jump to latest" shows there too.
 - Phone dock and session switcher: on a touch phone Terminal ends in one row (tab chip, line
   field, keyboard toggle) with a key row (esc, arrows, ^R, ^C, tab, ctrl, alt, | ~ / -) above
   it while the keyboard is up. Return in the line field sends the line and Enter together,

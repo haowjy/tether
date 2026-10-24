@@ -1,0 +1,20 @@
+/* The immutable text snapshot (client-architecture.md §7.6): selectable DOM text laid exactly over
+   the terminal, opaque so output streaming underneath cannot move the highlight. It scrolls
+   itself, by touch, through the rows above the screen. */
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-term-selection);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  background: var(--term-bg);
+  color: var(--term-fg);
+  touch-action: pan-y;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+.layer::-webkit-scrollbar { display: none; }
+.layer ::selection { background: var(--term-selection); color: inherit; }

@@ -52,3 +52,52 @@ scratch tmux session with two windows, not your own. Portrait first, then landsc
     rotating also take the window. Lock the phone and unlock it on that tab: it claims again. Airplane
     mode off/on while the laptop holds the window: the window stays at the laptop's size and the
     band stays.
+
+# G3 real-iPhone checklist: touch gestures (P3b)
+
+Safari and the installed PWA, then the app. A scratch session with `cat -vt` (shows every byte
+the pane gets), `less` on a long file, `vim -c 'set mouse=a'`, and a shell with a few hundred lines
+of output (`seq 1 500`). Playwright covers the logic with injected touches; these are the
+things only a finger shows.
+
+18. **Haptic.** Press and hold on the terminal: a firm tap-like buzz as the ring appears, about
+    a third of a second in, and not before. Scrolling or a quick tap never buzzes.
+19. **Arrow pad feel.** In `cat -vt`, hold, then drag: the first arrow comes the moment the
+    finger leaves the ring's centre, repeats faster the further out you push, changes direction at
+    once when you swing across, and stops the instant you lift. In a shell prompt it moves the
+    cursor along the line; in `vim` it moves vim's. No mouse bytes (`^[[<`) ever appear. Compare it
+    with Termius's motion pad: say what feels slower, faster or sticky.
+20. **Release selects a word.** Hold and lift without moving: the word under the finger is
+    highlighted, the system's selection handles appear on it (they must; if only the highlight
+    shows, native handles don't work on a programmatic selection and the design needs its own
+    handles), and tether's menu shows Copy and Paste above (below, near the top edge). Drag a
+    handle past the word, across a soft-wrapped line and above the screen: the highlight follows,
+    the menu follows or hides, and the snapshot scrolls near an edge. iOS's own Copy / Look Up
+    callout must not appear on top of tether's menu: note if it does.
+21. **Copy keeps logical lines.** Select a long command that wraps, tap Copy, paste into Notes:
+    one line, no breaks at the wrap. Select across a hard break and a blank line: breaks kept.
+    The toast says "Copied". Paste (menu) into `cat -vt`: one paste, no Enter. A long-press on a
+    blank cell: Paste alone, no highlight.
+22. **Selection while output streams.** Run `yes | head -n 100000`-style output, long-press a word:
+    the snapshot stays put under the handles while the terminal changes beneath.
+23. **Mouse-mode apps.** In `vim` with the mouse on, a tap moves the cursor to that cell; a hold-
+    and-release selects text and sends no click; a hold-and-drag sends arrows, no mouse. In a shell,
+    a tap does nothing and never raises or lowers the keyboard (with it up or down).
+24. **Momentum.** In the shell with 500 lines, flick: the output keeps coasting after the finger
+    lifts, slows smoothly and stops without a jerk; a touch while it coasts stops it and does not
+    count as a tap or a click. A slow drag follows the finger one-to-one. Scroll past what the phone
+    holds (a session opened after the output): older rows appear as you go, with at most a short
+    pause at the top of what was loaded, in colour, and Jump to latest returns.
+25. **Full-screen scroll.** `less` on a long file: a swipe scrolls it with momentum, ↑/↓ sent;
+    with mouse reporting (Claude Code, `htop`) it sends wheel events. Check it is not too fast or too slow.
+26. **System back gesture.** A horizontal swipe from the left edge on the terminal goes back as
+    usual and sends nothing (look at `cat -vt`); a horizontal swipe inside the terminal does nothing.
+    A vertical scroll that drifts sideways keeps scrolling.
+27. **Cancel.** Start a hold and pull the notification shade or switch app mid-hold: nothing is
+    sent, no menu is left behind, the ring is gone on return.
+28. **Keyboard untouched.** With the keyboard up, none of the above lowers it (except tapping in
+    the snapshot to dismiss, which may); with it down, none raises it.
+29. **Pan.** With the keyboard up (terminal panned to the cursor), a long-press selects the word
+    under the finger, not one a pan's distance away; the same in history, and with a window sized for
+    another terminal (wider and taller than the phone).
+

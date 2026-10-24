@@ -9,7 +9,7 @@ The Terminal destination. The design is client-architecture.md §5.4, §5.5, §5
   state, so the buffer and each tab's watch survive the screen unmounting (an admission problem
   replaces the shell) or a layout change.
 - **Nothing watches before the box is measured, and only the tab on screen watches.** Drivers
-  start covered. `sync()` runs on every app change and uncovers `shownTab(workspace)` only when
+  start covered. `sync()` runs on every app change and uncovers the shown tab only when
   ready (a renderer, a cell size and a tmux size) and `lifecycle.covered` is false; otherwise
   every driver stays covered, so tmux never sees the 80x24 placeholder and releases the window
   size beneath a native screen. The reducer and controller never address a driver. The first
@@ -36,9 +36,30 @@ The Terminal destination. The design is client-architecture.md §5.4, §5.5, §5
   and closed refuse), the result is `typed`, `queued` or `refused`, and a refusal gets one
   notice. A screen that disables the action selects `canInsert` from the `terminalsOf(app)`
   store. P3 reads `term/index.ts`:
-  `bufferText`, `mouseMode`, `cellAt`, `setPanArea`; and `tabs/keymap.ts` (`decideKey(event, "owned")`).
+  `selectionText`, `mouseMode`, `cellAt`, `setPanArea`; and `tabs/keymap.ts` (`decideKey(event, "owned")`).
 - **Ctrl+Shift+F leaves the terminal** (`decideKey` returns `leave`; the sink focuses the `tabs` target, the active pill's select button). Cmd combinations are the browser's, everywhere, and Ctrl+Shift+C copies everywhere.** Telling
   macOS from the rest needs `navigator`, which only `platform/` may read; no terminal key is lost
   by this (nobody sends Super+key to a shell, and `^C` still is Ctrl+C).
 - `e2e/terminal/` runs a real daemon, isolated, on `e2e/shared/stack.ts`: see it for why a front proxy
   answers `/auth/info` and why the daemon runs with `--allow-login`. `pnpm e2e:real` runs it.
+- **Touch looking is one object per shown tab: `view.ts`.** `TerminalView` builds the recognizer
+  shell (`touchControl.ts`), `scroll.ts` (momentum, wheel and arrows, the slide onto the history,
+  the desktop wheel past xterm's top), `history.ts` (tmux's older rows as DOM, chunked with a
+  a run of overlap rows that the chunk is searched for, `anchor.ts`; the first chunk's against xterm's own first rows) and `selection/` (the immutable row snapshot, the
+  menu). `Terminals` tells it the shown tab; a tab change, a snapshot, `visibilitychange` and a
+  lost pointer all end in `reset()`, and its sends are bound to the tab they began on. Add new
+  per-tab touch state there, never on `Terminals`. "Shown" is one rule: selected and not
+  covered by a native screen (`shownTerminalTab`); the view resets when it changes. Touch `pointerdown` is cancelled on the surface
+  (no focus change, no xterm mouse event) except on the selection layer, whose touches are the
+  system's. A mouse pointer is xterm's. Mouse input comes from `term/mouse.ts` (`mouseInput`
+  holds the per-mode policy) with the encoding `term/xterm.ts` saw in DECSET.
+- **Rows carry cells.** `term/rows.ts` `Row`: xterm rows get exact cells from `getWidth()`
+  (`term/lines.ts`); history rows work them out from the text. Words and the prompt-row tap use
+  cells, never `String.length`.
+- **The grid is the contract.** History rows, the selection snapshot and the canvas are each
+  one cell tall per row; copy joins rows at wrap flags, never by length. Change the font or cell
+  size and all three follow `renderer.cellSize()`.
+- **The terminal may be slid and panned.** `renderer.shift` (history slide, `translate`) and the
+  cursor pan (`transform`) both move the screen; coordinates come from `renderer.cellAt` and
+  `screenOrigin`, which read the screen's rectangle, so neither is ever added by hand.
+

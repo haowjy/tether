@@ -24,9 +24,12 @@ interface FocusView {
   owner: Owner;
 }
 
-/** The mode native rests in for a screen: `webText` wherever a web field may take the keyboard. */
-export function restingMode(destination: Destination, overlay: boolean, keyboardWasUp: boolean): FocusMode {
-  if (destination === "terminal" && !overlay) return keyboardWasUp ? "terminal" : "hidden";
+/**
+ * The mode native rests in for a screen: `webText` wherever a web field may take the keyboard;
+ * on Terminal, `select` while the selection snapshot holds the touch, so native lets the web view's text selection work.
+ */
+export function restingMode(destination: Destination, overlay: boolean, keyboardWasUp: boolean, selecting = false): FocusMode {
+  if (destination === "terminal" && !overlay) return selecting ? "select" : keyboardWasUp ? "terminal" : "hidden";
   return "webText";
 }
 
@@ -40,6 +43,8 @@ export class FocusController extends Store<FocusView> implements FocusPort {
   /** The control the next dialog is opened from. */
   private opener: Element | null = null;
   private mode: FocusMode | null = null;
+  private screen: { destination: Destination; overlay: boolean } | null = null;
+  private isSelecting = false;
 
   constructor(
     private readonly input: InputPlatform,
@@ -154,12 +159,24 @@ export class FocusController extends Store<FocusView> implements FocusPort {
     if (back instanceof HTMLElement && back.isConnected) back.focus();
   }
 
+  /** The selection snapshot holds the touch (§7.6) while `on`: native's mode follows it. */
+  selecting(on: boolean): void {
+    this.isSelecting = on;
+    this.rest();
+  }
+
   /** Whenever the destination or overlay changes: native learns the mode the screen needs. */
   screenChanged(destination: Destination, overlay: boolean): void {
+    this.screen = { destination, overlay };
     const { owner } = this.snapshot;
     // Leaving Terminal lowers the keyboard (the dock is hidden there, which would drop it only later).
     if (destination !== "terminal" && owner !== "none") this.targets.get(owner)?.blur();
-    const mode = restingMode(destination, overlay, owner !== "none");
+    this.rest();
+  }
+
+  private rest(): void {
+    if (!this.screen) return;
+    const mode = restingMode(this.screen.destination, this.screen.overlay, this.snapshot.owner !== "none", this.isSelecting);
     if (mode === this.mode) return;
     this.mode = mode;
     this.input.setFocus(mode);

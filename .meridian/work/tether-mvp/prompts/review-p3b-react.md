@@ -1,0 +1,3 @@
+# Structural review of P3b (touch gestures), uncommitted in web/
+
+Same change as `.meridian/work/tether-mvp/prompts/review-p3b.md` (read it for the file list and spec). Lens: component and state architecture, ownership and boundaries, the sans-IO cores (`touch/gesture.ts`, `momentum.ts`, `selection.ts`) versus the I/O shells, whether `terminals.ts` is turning into a god module, duplicated mechanisms (two scroll paths? two snapshot-of-rows paths: `term/rows.ts`, `term/lines.ts`, `selection/rowsDom`?), tokens in CSS. Name the simplification that would most reduce concepts. Edit nothing; findings with severity and file:line.

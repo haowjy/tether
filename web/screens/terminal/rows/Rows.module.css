@@ -1,0 +1,17 @@
+/* Rows drawn as DOM at the terminal's grid: each is exactly one cell tall, however wide its
+   text, so the history view and the selection snapshot line up with the canvas. */
+.row {
+  height: var(--cell-height);
+  line-height: var(--cell-height);
+  white-space: pre;
+  overflow: hidden;
+  font-variant-ligatures: none;
+}
+
+/* The history view: placed above the terminal by `translate`, shown only while the terminal is slid down onto it. */
+.history {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}

@@ -250,7 +250,7 @@ describe("losing the watch or the link", () => {
 });
 
 describe("history", () => {
-  it("follows the true start after clamping, asks again after a short chunk, and stops at the end", async () => {
+  it("follows the true start after clamping, asks again after a short chunk, and keeps each row's wrap", async () => {
     const t = setup();
     const l = t.bind();
     const b64 = (s: string): string => btoa(s);
@@ -263,7 +263,7 @@ describe("history", () => {
     await Promise.resolve();
     expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 3, watch: 1, start: -2, end: -1 } });
     l.say({ type: "historyChunk", data: { req: 3, watch: 1, start: -2, lines: [b64("c"), b64("d")], wraps: b64("") } });
-    expect((await rows).map((r) => new TextDecoder().decode(r))).toEqual(["a", "bc", "d"]);
+    expect((await rows).map((r) => [new TextDecoder().decode(r.bytes), r.continues])).toEqual([["a", false], ["b", true], ["c", false], ["d", false]]);
   });
 
   it("rejects when the watch ends, without asking for the rest", async () => {

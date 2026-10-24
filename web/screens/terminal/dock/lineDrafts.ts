@@ -48,7 +48,7 @@ export class LineDrafts extends Store<DraftsState> {
       for (const line of Object.values(this.snapshot.pending)) if (!open.has(line.id)) this.dispatch({ type: "tabClosed", id: line.id, open });
     });
     // The one sink for paste answers is the terminal's: what this has no pending line for falls through to its notice.
-    terminalsOf(app).claimPasteResults((id, result) => this.claim(id, result));
+    terminalsOf(app).pastes.claim((id, result) => this.claim(id, result));
   }
 
   private openTabs(): ReadonlySet<string> {

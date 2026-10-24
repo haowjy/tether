@@ -1,16 +1,14 @@
 // The renderer boundary: nothing outside term/ imports xterm.js, so ghostty-web could
 // replace it (plan.md "Layout").
 import type { Snapshot } from "./pipeline";
-import type { RowRange } from "./buffer";
 import type { CellSize } from "./size";
+import type { Row } from "./rows";
+import type { MouseEncoding, MouseMode } from "./mouse";
 import type { InputSink } from "./xterm-input";
 import { createXtermRenderer } from "./xterm";
 
-export type { CellSize, InputSink, RowRange, Snapshot };
+export type { CellSize, InputSink, MouseEncoding, MouseMode, Row, Snapshot };
 export { createXtermRenderer };
-
-/** xterm's mouse tracking mode: `none` until the application asks for reports (seeded by the snapshot). */
-export type MouseMode = "none" | "x10" | "vt200" | "drag" | "any";
 
 /** A cell in the visible screen, zero-based from its top-left. */
 export interface CellPosition {
@@ -75,12 +73,35 @@ export interface TerminalRenderer {
   inputElement(): HTMLElement | null;
   /** The selection's logical text: soft wraps joined, as xterm marks them. Empty with no selection. */
   selectionText(): string;
-  /** The rows' logical text, joined by `isWrapped` and not by length (P3b's selection and copy). */
-  bufferText(rows: RowRange): string;
   /** Whether the application asked for mouse reports. */
   mouseMode(): MouseMode;
+  /** The report format the application selected (DECSET 1006 and 1005). */
+  mouseEncoding(): MouseEncoding;
+  /** The alternate screen is showing: a full-screen application, which has no scrollback. */
+  altScreen(): boolean;
+  /** Where the cursor is on the visible screen. */
+  cursor(): CellPosition;
+  /** Scrollback rows above the visible screen, and how many of them the view is scrolled up by. */
+  scrollback(): { rows: number; up: number };
+  /** Scrolls the buffer by whole rows, negative toward older ones, and returns the rows it moved: fewer than asked at either end. */
+  scrollRows(rows: number): number;
+  /**
+   * Slides the whole terminal down by `px`, to make room above it for the history view. The
+   * terminal stays where the pan puts it otherwise; `0` puts it back.
+   */
+  shift(px: number): void;
+  /**
+   * The buffer's rows from the row `from` (moved up to its line's start, and returned as
+   * `from`) up to the row `to` exclusive (default: the end; run on to finish a wrapped line),
+   * styled: the selection snapshot's text and the history seam's anchor.
+   */
+  rows(from: number, to?: number): { rows: Row[]; from: number };
+  /** The buffer row at the top of the visible screen. */
+  viewportTop(): number;
   /** The cell under a client point, from measured cell metrics and the screen's position, pan included; null outside the screen. */
   cellAt(x: number, y: number): CellPosition | null;
+  /** The screen's top-left corner in client px, the pan and the history slide included; null before the first paint. */
+  screenOrigin(): { left: number; top: number } | null;
   /** What remains visible of the terminal, in CSS pixels, for the cursor pan; null follows the container (the default). */
   setPanArea(px: number | null): void;
   /**

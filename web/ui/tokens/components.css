@@ -32,13 +32,21 @@
   --sheet-radius: var(--radius-4);
   --band-bg: var(--color-bg-raised);
 
-  /* The phone toast sits above the bottom toolbar (or the dock's row), never over its tabs. */
+  /* The phone toast sits above the bottom bar (Home and Files' nav, the tools row, or the dock's row), never over its tabs. */
   --toast-offset: 0px;
+
+  /* The terminal surface's own stacking, inside its host: the long-press ring, then the selection snapshot over it. */
+  --z-term-ring: 2;
+  --z-term-selection: 3;
+  --touch-ring-size: 64px;
+  /* Half the edit menu's widest form (Copy and Paste), so it never leaves the surface. */
+  --edit-menu-half: 88px;
 
   --z-band: 20;
   --z-toast: 40;
 }
 
-:root[data-layout="phone"] { --toast-offset: var(--dock-height); }
+:root[data-layout="phone"] { --toast-offset: var(--toolbar-height); }
+:root[data-layout="phone"]:has([data-dock]) { --toast-offset: var(--dock-height); }
 /* The dock's key row, shown while an input holds the keyboard, is above its row. */
 :root[data-layout="phone"]:has([data-keyboard]) { --toast-offset: calc(var(--dock-height) + var(--dock-keys-height)); }

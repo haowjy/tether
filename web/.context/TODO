@@ -10,9 +10,6 @@ Must-do (client-architecture.md §11):
 - W5 (native dock): the keyboard toggle does nothing in native (no `terminal` element is
   registered, so `FocusController.toggleKeyboard` has nothing to focus and the key row never
   shows), and native must report `Viewport.keyboardInset` (the keyboard frame's height).
-- P3b: delete the `pointerdown` guard in `screens/terminal/terminals.ts` once the recognizer owns taps.
-- P3b (iPad, touch mode, desktop layout): the top tools row (TabStrip pills, the "+" IconButton) uses
-  ordinary buttons, so a tap blurs the owned input before `openDialog` runs, `held` is null and the
-  keyboard does not return when the picker closes. Cancel `pointerdown` there when `directInput !== "xterm"`.
-- P3b (nit): phone toasts rise by `--dock-height` on every phone screen; on Home and Files the bottom
-  nav is `--toolbar-height`, so the toast-to-nav gap shrinks from about 16px to about 5px.
+- P3b (device, W5): native must honour `setFocus("select")` (the web view's text selection while
+  the selection layer is up) and the web view's long-press must not show iOS's own callout over
+  tether's menu; both and the handles on a programmatic selection are on the checklist (18 to 29).
