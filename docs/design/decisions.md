@@ -3485,3 +3485,22 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 - **What:** the selection snapshot holds `[viewTop − 2,000, viewBottom]` rows with the 512 KiB budget counted up from the view's bottom, so a long-press works wherever the view is in a 5,000-row buffer (`renderer.rows(from, to)`). A history chunk is asked for with up to 8 rows already known (the oldest fetched, or xterm's first rows for the first chunk) and `anchor.ts` finds them in it, nearest to where they should be; the rows before them are the new ones. Only a later chunk that does not contain them restarts the view. `ScrollControl.scrolledChanged()` is the one place `scrolled` is reported and fetched rows are dropped on the way back to the newest line. The paste, copy and inserted-path concern is `Pastes` in `paste.ts`. The view resets on `shownTerminalTab` (selected and not covered by a native screen), the same rule its sends use.
 - **Why:** the window was anchored on the newest rows, so a view more than 2,000 rows up found nothing. One byte-row compare at a seam passed on blank or repeated rows and hid a shift; a run found nearest the expectation does not, and recovers a shift instead of discarding the history.
 - **Rejected:** the daemon's `historySize` for re-anchoring (it says the size, not where the known rows moved to, and the first chunk would still need xterm's rows); keeping two "shown" rules (a coast kept ticking under a native cover, every send dropped).
+
+### Guard the client subscription against unidentified tmux clients
+
+- **Decided:** 2026-10-24, investigation of the scratch-server crash.
+- **What:** the `L:` subscription checks `client_height` before expanding `client_name`.
+  On tmux 3.4, an accepted socket is visible to `L:` before IDENTIFY finishes and
+  before `client_name` exists; its format callback calls `xstrdup(NULL)`. An initialized
+  terminal client has a height, so this guard keeps the same entries for every attached
+  non-control client while skipping the transient state. Keep the gated real-tmux test
+  that holds an unidentified Unix-socket client through the subscription timer.
+- **Why:** the exact subscription crashed an isolated tmux 3.4 server with the same
+  `format_find → xstrdup(NULL)` stack as the reports. The raw-socket repro also passes
+  on 3.7b and 3.8, but tether cannot rely on a tmux version's incidental client-list
+  filtering to keep the server alive. Evidence and the minimal repro are in
+  [tmux-subscription-format-crash.md](research/tmux-subscription-format-crash.md).
+- **Rejected:** changing only `client_control_mode` or the membership match (the crash
+  happens when the selected format looks up `client_name`); requiring a newer tmux
+  (3.4 is a supported server version); or omitting client names/activity and losing
+  the act detection behavior.

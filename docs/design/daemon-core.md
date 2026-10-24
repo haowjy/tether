@@ -548,14 +548,20 @@ and the file manager need.
 refresh-client -B 'w<W>:@W:<acts>|#{pane_current_path}'
 → %subscription-changed w<W> $S @W <index> - : <acts>|<path>
 
-<acts> = #{L:#{?client_control_mode,,#{?#{m:*#,#{client_name}#,*,#,#{window_active_clients_list}#,},#{client_name}.#{client_activity}.#{client_width}x#{client_height}.#{client_flags};,}}}
+<acts> = #{L:#{?client_height,#{?client_control_mode,,#{?#{m:*#,#{client_name}#,*,#,#{window_active_clients_list}#,},#{client_name}.#{client_activity}.#{client_width}x#{client_height}.#{client_flags};,}},}}
 ```
 
 `<acts>` has one entry, `name.activity.WxH.flags;`, for each tmux client that isn't a
 control client and whose current window is `@W`, in any session the window is linked
-into. `L:` loops over clients; inside it the format keeps the outer window, so `#{window_active_clients_list}` still names `@W`'s viewers,
-and the comma-wrapped `m:` tests exact membership (`/dev/pts/1` is not in
-`/dev/pts/12`). Verified on 3.4 and 3.7b ([probe](research/probe-latest-activity.md)).
+into. `L:` loops over clients; inside it the format keeps the outer window, so
+`#{window_active_clients_list}` still names `@W`'s viewers, and the comma-wrapped `m:`
+tests exact membership (`/dev/pts/1` is not in `/dev/pts/12`). The outer
+`client_height` condition is deliberate: tmux 3.4 puts a newly accepted but
+unidentified client into `L:` before assigning its name, and expanding
+`#{client_name}` in that state dereferences NULL. An initialized tty has a height;
+clients without one cannot be a terminal client acting on this window. See
+[the subscription format crash probe](research/tmux-subscription-format-crash.md).
+Verified on 3.4 and 3.7b ([probe](research/probe-latest-activity.md)).
 
 On 3.4 ([probe](research/probe-locate-subscriptions.md)) the first value arrives within
 about a second, then one per change; tmux checks once a second, so faster changes

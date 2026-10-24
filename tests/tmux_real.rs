@@ -12,6 +12,7 @@ mod tmux_server;
 
 use std::env;
 use std::io::Write as _;
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -1272,6 +1273,46 @@ async fn window_size_yields_to_the_last_acting_pty_client() {
         let _ = child.kill();
         let _ = child.wait();
     }
+}
+
+/// A client that has connected to the socket but has not sent IDENTIFY can have no
+/// client name on older tmux. Subscriptions must not expand client_name for it.
+#[tokio::test]
+async fn window_subscription_survives_an_unidentified_socket_client() {
+    let Some((_serial, server)) = setup("unidentified-subscription-client").await else {
+        return;
+    };
+    let mut client = Client::attach(&server, SessionId(0)).await;
+    client
+        .run(Op::Subscribe {
+            window: WindowId(0),
+        })
+        .await;
+    client
+        .wait_for("the subscription baseline", |event| {
+            matches!(
+                event,
+                Event::Cwd {
+                    window: WindowId(0),
+                    ..
+                }
+            )
+        })
+        .await;
+
+    let socket_path = server
+        .run(&["display-message", "-p", "#{socket_path}"])
+        .expect("read the private socket path");
+    let socket_path = socket_path.trim();
+    let _unidentified = UnixStream::connect(socket_path)
+        .unwrap_or_else(|error| panic!("connect to private tmux socket {socket_path:?}: {error}"));
+
+    // tmux evaluates refresh-client subscriptions on a timer, not on connect.
+    tokio::time::sleep(Duration::from_millis(1250)).await;
+    assert!(
+        server.run(&["display-message", "-p", "alive"]).is_ok(),
+        "the private tmux server died while expanding its subscription"
+    );
 }
 
 async fn locate_session(endpoint: &Endpoint, session: SessionId) -> Result<Reply, TmuxError> {
