@@ -123,6 +123,121 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   client was a web app, where each `*.ts.net` origin needed its own install, cookies
   and passkey); one app per host.
 
+### A Mac can host tether, behind a path secret
+
+- **Decided:** 2026-10-24, Jimmy, choosing among the options p170 laid out. Supersedes
+  "`tether serve` is Linux-only for now".
+- **What:** on a Mac with the standalone Tailscale app, Serve reaches tether on a
+  loopback TCP port, and tether publishes itself at a random **path secret** that
+  Serve adds to every request. A request without it is dropped before anything else
+  runs; then the `Host` rule, the Tailscale check and the existing lanes apply
+  unchanged ([auth.md](auth.md#the-mac-front)). This is documented as a weaker local
+  boundary than Linux and supported only on a Mac whose one user account is Jimmy's
+  (below).
+- **What the Mac trusts that Linux doesn't:** that copies of the path secret leaving
+  the Mac (a sysdiagnose, backups) are harmless, with Tailscale's log upload off; that
+  nothing binds tether's port in the moments after a deliberate stop; that nothing
+  binds LocalAPI's port while Tailscale is stopped; and that no local process fills the
+  64 connection permits ([auth.md](auth.md#threat-model)).
+- **Why:** the Tailscale app's extension can't connect to a Unix socket (it logs
+  `connect: operation not permitted`, even in a directory its sandbox may write), so
+  the Linux front can't exist on a Mac. Serve keeps a target's path on every request
+  and a client can't strip it, so a path only Serve's config holds is a secret Serve
+  presents for us.
+- **Rejected:**
+  - Verifying that each loopback connection comes from Tailscale's root-owned, signed
+    extension (Jimmy's first choice): an unprivileged daemon can't see a root process's
+    sockets on macOS 27. `LOCAL_PEERCRED` is Unix-only; libproc gives `EPERM`; the
+    `pcblist_n` sysctl and NetworkStatistics return only the caller's own flows; LocalAPI
+    whois doesn't know Serve's loopback ports. Evidence:
+    `.meridian/work/tether-mvp/mac-host-peer-provenance.md` (p170).
+  - A root helper (a launchd daemon that reports which process owns a loopback
+    connection): a root component in a tool that is meant to stay light and never own
+    anything, a sudo install step, and new attack surface; that root can see the flows
+    on macOS 27 is itself unverified.
+  - Homebrew's standalone `tailscaled` instead of the app: keeps the Linux model, but
+    replaces the Tailscale app Jimmy uses on the Mac; Jimmy rejected it earlier.
+  - A bare loopback TCP front with no secret: any local process, and any page in a
+    browser on the Mac that rebinds DNS to loopback, could forge `Tailscale-User-Login`
+    and `X-Forwarded-For` and reach the node lane as any enrolled node.
+  - Trusting whois on `X-Forwarded-For` alone: the header is whatever the connecting
+    process writes, so it identifies a node only when the connection is known to be
+    Serve's, which is the question.
+  - Keeping the Mac a client only: Jimmy wants to host on it.
+
+### A Mac host has one user account, Jimmy's
+
+- **Decided:** 2026-10-24, Jimmy, answering p171.
+- **What:** tether supports a Mac host only when Jimmy's is its one user account,
+  now and as planned. It is the Mac host's stated precondition
+  ([auth.md](auth.md#threat-model)), and the Mac design defends against no other login
+  account.
+- **Why:** every other account was the reason for most of p171's Mac machinery: a
+  LaunchDaemon so the port stays held while Jimmy is logged out or switched away,
+  `tether unpublish` and an unpublish on every stop, pinning LocalAPI's endpoint
+  against an account squatting its port, and a gate that needed a second account.
+  With one account, the secret's only readers are root and Jimmy, and the processes
+  left to keep out are sandboxed apps and macOS's role accounts.
+- **Rejected:**
+  - Supporting a Mac with other accounts: the machinery above, plus trusting every
+    other admin, for a Mac that has none.
+  - Defending against role accounts too: they run Apple's services, and a compromise
+    of one is a compromise of macOS, which tether trusts like root.
+
+### tether runs from a LaunchAgent on a Mac
+
+- **Decided:** 2026-10-24, Jimmy, answering p171.
+- **What:** a LaunchAgent in Jimmy's login session, installed without sudo. launchd
+  binds `127.0.0.1:7851` at login and holds it across crashes; tether stops at logout,
+  and while Jimmy is logged out the phone can't reach it on that Mac.
+- **Why:** socket activation works the same in a LaunchAgent (probed: after `kill -9`
+  the port can't be rebound, and the next connection relaunches the job). What the
+  LaunchDaemon added, running while Jimmy is logged out, mattered only for other
+  accounts or a Mac reached while nobody is logged in. The agent also runs in his GUI
+  session, so TCC can ask about `~/Documents` instead of refusing silently.
+- **Rejected:**
+  - A LaunchDaemon with `UserName` (p171): a sudo install, a job whose groups,
+    environment and TCC behaviour were untested, and no GUI session.
+  - The daemon binding the port itself: every crash frees it while Serve points at it.
+
+### Tailscale's log upload is off on a Mac host
+
+- **Decided:** 2026-10-24, Jimmy, after p174 showed the extension uploads the Serve
+  handler line (`ipn/ipnlocal/serve.go:1450` at v1.104.2, through the logtail-backed
+  `b.logf`), path secret included.
+- **What:** the Mac setup puts `TS_NO_LOGS_NO_SUPPORT=true` in the extension's
+  `tailscaled-env.txt` (sudo) and restarts Tailscale ([running.md](../running.md#host-on-a-mac)).
+  tether doesn't check it, warn about it or refuse without it.
+- **Why:** a secret Tailscale's log servers hold is outside Jimmy's control, even if it
+  is useless without code on the Mac and stale at the next start. tether can't see the
+  setting reliably: LocalAPI's status has no `Hostinfo`, whois strips the self node's
+  to `Hostname` and `Services` (probed), the env file is under root's `0750` home, and
+  the one signal, `tailscale bugreport`'s marker, comes from sending a bug report.
+- **Costs:** Tailscale support can't use the Mac's logs; a tailnet that requires
+  network flow logs stops Tailscale on that Mac (`ipn/ipnlocal/local.go:2048`).
+- **Rejected:**
+  - Leaving upload on and relying on rotation: Jimmy chose not to send the secret out.
+  - Warning at `--publish` through `bugreport`: it uploads a bug report and flushes
+    logs exactly when upload is on.
+  - Refusing to publish without the setting: no reliable signal to refuse on.
+  - Keeping the secret out of the logged target: a Serve target is a URL and the
+    extension logs it whole, and Serve can't add a header.
+
+### launchd's socket is taken by a local module, not the `raunch` crate
+
+- **Decided:** 2026-10-24, Jimmy, after review p175.
+- **What:** `src/launchd.rs` (macOS only, about 24 lines) calls
+  `launch_activate_socket` and returns `io::Result<Vec<OwnedFd>>`. It is the one module
+  allowed `unsafe`: `lib.rs` goes from `forbid(unsafe_code)` to `deny(unsafe_code)` so
+  the module's `allow` can override it, and `main.rs` keeps `forbid`. `libc` becomes a
+  macOS-only direct dependency; it is already in the lockfile.
+- **Why:** raunch 1.0.1 returns `Vec<RawFd>`, so turning its fds into an `OwnedFd` or
+  a listener needs `unsafe { from_raw_fd }` in tether anyway (p175 compiled it under
+  `forbid` and it was rejected). The crate doesn't save the lint exception, and it is
+  dormant since 2024. The local module owns its fds, returns an empty list for a null
+  array instead of raunch's undefined-behaviour edge, and passes errno through.
+- **Rejected:** raunch, pinned to `=1.0.1` (the above).
+
 ### AGENTS.md states principles; the specs hold the rules
 
 - **What (2026-10-23):** AGENTS.md lists the principles behind tether's constraints,
@@ -3525,3 +3640,171 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 - **What:** `FocusController.nativeTerminal()` returns a hidden element whose `focus()` and `blur()` announce themselves as DOM focus events (so owner tracking, dialog returns and the viewport's keyboard-drop rule work unchanged) and ask native for the resting mode. There is no separate native branch in `toggleKeyboard`.
 - **Why:** the keyboard toggle, leaving Terminal and returning from a dialog had one path in the browser and a special case in the app, which missed the dialog return.
 - **Rejected:** a `directInput === "native"` branch in the controller.
+
+## The Mac front
+
+Decided 2026-10-24 by design (p171), within Jimmy's decisions above, revised after
+reviews p172 and p173, and simplified for Jimmy's answers (one account, a LaunchAgent,
+log upload off). Probe results: `.meridian/work/tether-mvp/mac-front-probes.md`.
+
+### tether writes its own Serve entry and picks a new path secret at each start
+
+- **What:** `tether serve --publish` reads the serve config and its `Etag` through
+  LocalAPI, changes only `Web["<MagicDNS name>:443"]`, `TCP["443"]` and its own earlier
+  handlers (tether-shaped: `http://127.0.0.1:<its port>/tether-<43 chars>`), and writes
+  it back with `If-Match`. It publishes once per start and never unpublishes.
+  Another app's handler, a TCP forward on 443 or Funnel refuses without writing.
+- **Why:** the macsys proof token, which tether already needs to read LocalAPI, can
+  write the serve config, and `If-Match` turns the write into a compare-and-swap
+  (probed: a wrong `Etag` gets `412`). The extension logs the full target at every
+  write, so a secret that never changes would stay valid in every log copy forever;
+  a new one each start makes those copies stale.
+- **Rejected:**
+  - Jimmy running a publish command with a secret stored in `config.toml`: one more
+    copy of the secret on disk, no rotation, and a step to repeat by hand.
+  - Rotating on a timer: each rotation is another write and log line, and live sockets
+    would need both secrets for a while; the threat it shortens needs local code on
+    the Mac.
+  - Re-publishing whenever the config loses tether's entry: it would undo Jimmy's own
+    `tailscale serve reset`.
+  - Removing tether-shaped handlers for any port: a handler for another port isn't
+    this front's publication, and tether changes only what it published.
+  - Putting the secret somewhere the extension doesn't log: a Serve target is a URL
+    and the extension logs it whole, userinfo included; Serve can't add a header.
+
+### Publishing needs `--publish`
+
+- **What:** without it a Mac daemon binds only `local.sock` and never touches the
+  serve config. On Linux the flag is a configuration error (exit 78).
+- **Why:** the real-daemon e2e stack and dev runs start `tether serve` on the Mac; a
+  daemon that published on every start would overwrite Jimmy's Serve entry during
+  tests.
+- **Rejected:** always publishing on macOS (the above); a `config.toml` key (it would
+  apply to every daemon that reads Jimmy's config, including one he starts by hand to
+  debug; the flag puts publishing in the command, which the LaunchAgent carries); a separate `tether publish` command (the publication must follow the
+  daemon's life, which only the daemon knows).
+
+### launchd holds the Mac front's socket
+
+- **What:** the LaunchAgent's `Sockets` entry `Listener` binds `127.0.0.1:7851` when
+  Jimmy logs in; the daemon takes it through `src/launchd.rs`, sets it non-blocking and
+  hands it to tokio. `--publish` without it exits 78 with "no launchd socket
+  `Listener`", since launchd's `ESRCH` means either "not a launchd job" or "no such
+  socket" (p175). The front is published on the MagicDNS name's port 443 only.
+- **Why:** the publication must not point at a port something else can bind while
+  Jimmy uses it. If the daemon owned its listener, every crash, `kill -9`, jetsam kill
+  or hub failure would free the port while Serve still pointed at it, and whatever
+  bound it would receive the iOS app's device token (review p172). launchd keeps the
+  port bound across all of those (probed). The iOS app adds a host by its MagicDNS
+  name, so 443 is the port it uses.
+- **A socket launchd couldn't bind:** if a process holds the port when the agent
+  loads, launchd's bind fails silently and the job gets one unbound fd (probed, p177),
+  while Serve's entry from the last session points at that process. The daemon
+  requires the socket at `127.0.0.1` with a non-zero port; otherwise it withdraws
+  every tether-shaped handler (any port) from `Web["<name>:443"]`, trying for 2 s, and
+  exits 78. launchd's 10 s restarts retry it. Rejected: exiting without withdrawing
+  (the phone's device token keeps going to that process); checking only in gate M0
+  (a login item can race launchd at any login).
+- **Costs:** a fixed port that something else may hold (the plist's to change); the
+  plist must carry `PATH`; one module with `unsafe`.
+- **Rejected:**
+  - A port the daemon binds itself, kernel-picked or fixed: freed by every crash. A
+    probe showed a wildcard bind with `SO_REUSEADDR` on the same port can even
+    pre-position while tether's own listener runs, and receive Serve's connections
+    the moment tether stops.
+  - A watchdog parent process holding the socket: dies with the daemon under `kill
+    -9` of the process group or jetsam.
+  - A wildcard or tailnet address: tailnet clients would reach tether without Serve.
+  - A configurable HTTPS port: the app can't use it.
+
+### The path secret is checked first, in constant time, and answers an empty 404
+
+- **What:** before any header is read, the raw path must start with
+  `/<path secret>/`, compared with `subtle`; a mismatch is a `404` with no body and no
+  log above `debug`. A match strips the secret from the URI, so no later layer or log
+  sees it. The check runs in the accept loop's per-request service, before the
+  router: axum routes before `Router::layer` middleware runs, so a gate there would
+  see paths already routed as `/<secret>/…` (review p172).
+- **Why:** everything after the gate trusts headers that only Serve should be able to
+  write. An empty 404 tells a local prober nothing about what listens.
+- **Rejected:** checking `Host` or the Tailscale headers first (they are forgeable,
+  and judging them costs a tailnet-state read); `403` with tether's JSON error body
+  (identifies tether to a prober).
+
+### The Mac front's `Host` rule uses the authority tether published
+
+- **What:** `Host` must equal `<MagicDNS name>` (`:443` optional) and exactly one
+  `X-Forwarded-Host` must equal it, both held in memory from the publication; before
+  a publication, `503 identity_unavailable`.
+- **Why:** Serve passes a TCP target the browser's `Host` and sets `X-Forwarded-Host`
+  to the same value (probed by p170). The rule is a cheap filter like `serve.sock`'s
+  `localhost` check; the node lane still compares `X-Forwarded-Host` with the canonical
+  origin. Holding it in memory keeps the native lane free of a LocalAPI read it
+  doesn't otherwise need.
+- **Rejected:** no `Host` rule (a misdirected publication would go unnoticed); comparing
+  with the canonical origin on every lane (a handler added beside tether would refuse
+  the native app too, which on Linux keeps working).
+
+### The LocalAPI transport is chosen at startup and its endpoint found per connection
+
+- **What:** Linux keeps its Unix-socket search. macOS uses the proof-token TCP
+  transport: the macsys files first (`/Library/Tailscale/ipnport`,
+  `sameuserproof-<port>`), then the App Store app's `lsof` lookup. The endpoint is
+  looked up again whenever a connection opens. Failures stay `503
+  identity_unavailable`, never a startup refusal.
+- **Why:** the extension's port and token change when it restarts. The macsys lookup is
+  two system calls; `lsof` spawns a process, so it goes second, unlike Tailscale's CLI.
+- **Rejected:** a `TETHER_LOCALAPI` override (a test hook in the production identity
+  path, rejected before for the e2e stack); resolving once at startup (a Tailscale
+  restart would need a tether restart); the App Store lookup first (a process spawn on
+  every reconnect on the common install); verifying who listens on LocalAPI's port
+  (an unprivileged process can't see root's sockets, p170); re-reading `ipnport`
+  before every request, reconnecting on `401`/`403`, and exiting when the endpoint
+  the daemon published through changes (reviews p172, p173): they shortened another
+  account's hold on LocalAPI's old port, and a one-account Mac accepts the window
+  ([auth.md](auth.md#threat-model)).
+
+### macOS binds no `serve.sock`
+
+- **What:** a Mac daemon binds `local.sock`, plus the Mac front with `--publish`. The
+  Unix Serve front stays in the code, and integration tests build it on any platform.
+- **Why:** the extension can't connect to it, so it would be a front nothing can use,
+  and the canonical-origin rule would point Jimmy at a `sudo tailscale serve unix:…`
+  command that gives 502.
+- **Rejected:** keeping it for a Homebrew `tailscaled` setup (rejected as a setup;
+  the macOS transport doesn't look for its socket).
+
+### The publication has one owner, and `tether enroll` asks the daemon on a Mac
+
+- **What:** one task owns the publication's state. Publishing removes every
+  tether-shaped handler that targets the front's port, wherever it is, and drops
+  entries and plain-HTTPS `TCP` ports it leaves unused. Refusal text comes from each
+  serve target, so a Mac never shows the Linux `sudo tailscale serve` command. On a
+  Mac `tether enroll` prints what the running daemon's `GET /auth/info` says over
+  `local.sock`.
+- **Why (review p172):** a handler left under an old MagicDNS name would make the
+  serve target appear twice and refuse browsers; only the daemon knows its secret, so
+  a separate computation in `tether enroll` couldn't apply the "named exactly once"
+  rule.
+- **Rejected:** a file in the runtime directory recording the published origin for
+  `tether enroll` (a second copy of state the daemon already serves).
+
+### tether never removes its Serve entry
+
+- **What:** no exit path unpublishes. The next start replaces a stale handler; in
+  between Serve answers `502`. To stop tether, Jimmy runs `launchctl bootout` and then
+  `tailscale serve --https=443 off`, which removes tether's entry: tether refuses to
+  share it, so the whole entry is tether's. Stopping for good also removes the plist.
+  The one removal tether makes is the withdrawal below, at a start whose socket
+  launchd couldn't bind.
+- **Why:** unpublishing guarded the port from other accounts after a stop (reviews
+  p172, p173). On a one-account Mac, while Jimmy is logged out only trusted processes
+  run; after a deliberate stop, Tailscale's own command closes the window. A crash
+  needs nothing (launchd holds the port), and a logout needs only the next login's
+  start, which replaces the entry or withdraws it.
+- **Rejected:**
+  - Unpublishing on `SIGTERM`, with the publication task cancelled and joined first and
+    a 2 s compare-and-swap retry (p171–p173): a shutdown path, its race with a late
+    publish write, and a deadline, for no account that needs it.
+  - `tether unpublish [--port]` as the stop's second step: duplicates `tailscale serve
+    --https=443 off` for an entry that is tether's alone.

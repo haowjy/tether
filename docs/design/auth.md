@@ -12,6 +12,13 @@ the tailnet node it runs on, which the daemon learns from tailscaled, is in
 `tether enroll` and revoked with `tether device remove`. tether never authenticates
 with a cookie.
 
+Serve reaches the daemon through a **front**, which differs by host. On Linux it is
+`serve.sock`, a Unix socket in a `0700` directory that only root and Jimmy can open.
+On a Mac, which tether supports only when Jimmy's is its one user account, the
+Tailscale app's sandboxed extension can't connect to Unix sockets, so the front is a loopback TCP port that any local process can open. The **path secret**
+guards it: tether publishes itself at a random path that Serve adds to every request
+([The Mac front](#the-mac-front)). Everything after the front is the same on both.
+
 ## Threat model
 
 One user, a tailnet with only his own devices, tailnet-only hosts. The dev box may
@@ -26,11 +33,13 @@ execution for whoever passes it, so the checks guard against:
   browser**: other sites, pages served by other machines in the tailnet (all one
   "site", since `ts.net` is a public suffix), other ports on the dev box, another
   user's tether ([Browser admission](#browser-admission));
-- **anything else served at tether's origin, or anything else reaching
-  `serve.sock`**: another app mounted beside tether in its Serve entry, or a Serve
-  TCP forward to the socket ([Canonical origin](#canonical-origin));
-- **another Unix user on the dev box** forging Tailscale headers or reaching the
-  daemon from the box's own node (the socket directory, the self-node rule);
+- **anything else served at tether's origin, or anything else reaching the
+  front**: another app mounted beside tether in its Serve entry, or a Serve TCP
+  forward to the front ([Canonical origin](#canonical-origin));
+- **another Unix user on the dev box** forging Tailscale headers, and any local
+  user or process reaching the daemon from the host's own node (on Linux the socket
+  directory; on a Mac, which has no other user, the path secret keeps out sandboxed
+  apps; the self-node rule);
 - machines that only *look* like a tailnet node: devices behind a subnet router,
   tagged servers, nodes shared in from another tailnet, Funnel traffic from the
   internet ([Node identity](#node-identity));
@@ -42,11 +51,11 @@ execution for whoever passes it, so the checks guard against:
   per-route caps, the connection backstop and the buffer limits in
   [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
 
-**Who can hold connections.** Only root and Jimmy's processes can connect to the
-sockets. But tailscaled opens a backend connection for each in-flight request from
+**Who can hold connections.** On Linux only root and Jimmy's processes can connect to
+the sockets; on a Mac any local process can connect to the front. But tailscaled opens a backend connection for each in-flight request from
 any tailnet node the ACLs let reach port 443, including nodes the Tailscale check
 then refuses. So whoever the ACLs let reach the box's port 443 can deny service by
-holding the 64 connection permits; other Unix users on the box can't.
+holding the 64 connection permits; other Unix users on a Linux box can't.
 
 **Accepted:**
 
@@ -67,11 +76,59 @@ holding the 64 connection permits; other Unix users on the box can't.
 
 **Trusted, out of scope:** root and the Tailscale operator (they can write the
 serve config, or drive tmux directly; [running.md](../running.md) says how to keep the
-operator out), processes on the server that run as Jimmy,
-a jailbroken phone, malware on an enrolled device, browser extensions granted
-access to `*.ts.net`, and script injected into tether's own page. The last is kept
-small by the CSP, DOMPurify, and raw files that never run
+operator out), processes on the server that run as Jimmy (on a Mac, those outside an
+app sandbox), on a Mac macOS's own role accounts (`_www`, `nobody` and the rest, which
+run Apple's services), a jailbroken phone, malware on an enrolled device, browser
+extensions granted access to `*.ts.net`, and script injected into tether's own page.
+The last is kept small by the CSP, DOMPurify, and raw files that never run
 ([fs.md](fs.md#get-fsrawpath)).
+
+**A Mac host has one user account, Jimmy's.** That is its precondition: tether
+supports no Mac with another login account, and the Mac defences below assume none.
+On Linux the kernel keeps every other account off `serve.sock` and off LocalAPI's
+socket, and Serve's target carries no secret. On a Mac the front is a loopback port
+any local process can open, so a request is admitted past it only with the path
+secret. Only root and the `admin` group (Jimmy and macOS's `_mbsetupuser` role
+account) can read the secret: it is in the serve config, which LocalAPI serves to
+whoever can read the proof token file (`root:admin 0640`), in `tailscale serve
+status`, in the extension's keychain item, in the unified log, which only admins can
+read, and possibly in Tailscale's root-only log files under `/Library/Tailscale`. What it keeps out are local
+processes that can connect but can't read it: apps in a sandbox running as Jimmy, and
+anything else on the Mac that isn't root or Jimmy. A browser page on the Mac that
+rebinds DNS to loopback has neither the secret nor the published `Host`.
+
+So the Mac host also trusts:
+
+- **that copies of the secret leaving the Mac stay harmless.** Tailscale's log upload
+  would carry it (the extension logs every handler's target through its uploading
+  logger), so the Mac setup turns log upload off ([running.md](../running.md#host-on-a-mac)),
+  and tether can't check that it did. What remains is a sysdiagnose Jimmy sends and the
+  Mac's backups. A copy is useless without code running on the Mac, and goes stale at
+  tether's next start, which picks a new secret;
+- **that nothing binds tether's port while the agent is unloaded.** While tether's
+  LaunchAgent is loaded and its socket bound, launchd holds the port across crashes
+  and restarts. tether never removes its Serve entry, so whenever the agent is
+  unloaded (logout, `launchctl bootout`, or turning it off under Login Items) Serve
+  still points at the port, now free, and a process that binds it receives Serve's
+  requests, among them the iOS app's device token, which it can replay through Serve
+  from the Mac's own node on the native lane: code execution as Jimmy. While Jimmy is
+  logged out only root, the role accounts and processes of his that survive logout run,
+  all trusted. While he is logged in, the window lasts from an unload until he runs
+  `tailscale serve --https=443 off`, which every documented stop includes. At the
+  next load, if something already holds the port, launchd's bind fails silently and
+  hands tether an unbound socket (probed, p177); the daemon then withdraws its old
+  handler and exits ([The listener](#the-mac-front)), so the window lasts from that
+  process's bind until the withdrawal lands;
+- **that nothing binds LocalAPI's port while the Tailscale extension is stopped.**
+  `/Library/Tailscale/ipnport` may keep naming the old port (gate M5). A process that
+  binds it receives a proof token that is already dead (the extension picks a new one
+  at each start) and answers tether's LocalAPI reads, and it receives the path secret
+  if tether publishes then. Turning that into access still needs an enrolled node's
+  stable ID and login. A publication to it also costs availability: tether counts
+  itself published and never writes again, so the real Serve keeps the previous
+  start's handler and answers `404` until tether restarts;
+- **that no local process fills the 64 connection permits.** Any process can connect
+  to the front and hold a connection without the secret, so any can deny service.
 
 The node lane exists only on the tailnet: off it there is no Serve, no
 `X-Forwarded-For` from tailscaled and no whois. **A public origin admits browsers
@@ -111,13 +168,15 @@ the auto-detected allowlist; an open native WebSocket does not refresh it.
 
 | Constant | Value |
 |---|---|
-| tether's runtime directory | `$XDG_RUNTIME_DIR/tether/` on Linux, `$TMPDIR/tether/` on macOS; `0700`, owned by the daemon's user. Holds `lock`, `serve.sock`, `local.sock` (both `0600`) and `paste/` |
+| tether's runtime directory | `$XDG_RUNTIME_DIR/tether/` on Linux, `$TMPDIR/tether/` on macOS; `0700`, owned by the daemon's user. Holds `lock`, `serve.sock` (Linux only), `local.sock` (both `0600`) and `paste/` |
 | whois calls in flight | 2 daemon-wide; up to 16 distinct addresses waiting, the 17th `503 busy` |
 | LocalAPI timeout; answer limit | 2 s; 64 KiB (a real whois answer is 1.5–2.5 KB) |
 | tailnet-state cell | a value at most 10 s old is used; after a failed read the held value is used until 30 s old; background retry starts at 2 s and doubles to 30 s |
 | live-socket re-check | the existing 10 s re-check; 3 consecutive whois failures close with 4503 |
 | minimum browsers | Safari and iOS 17.5, Chrome 123, Firefox 120: the minimums support `light-dark()` and send `Sec-Fetch-Site` |
-| minimum Tailscale on the server | 1.94, the first with `unix:` proxy targets |
+| minimum Tailscale on the server | Linux: 1.94, the first with `unix:` proxy targets. Mac: the standalone app (macsys) 1.104 |
+| the Mac front | `127.0.0.1:7851` by default, a socket launchd binds when Jimmy logs in and holds across restarts until he logs out; published on `<MagicDNS name>:443` |
+| the path secret | `tether-` followed by 43 base64url characters (256 bits from `getrandom`), new at each start, held only in memory |
 
 ## Sockets and the Tailscale check
 
@@ -135,7 +194,9 @@ the auto-detected allowlist; an open native WebSocket does not refresh it.
    this one exits with "tether is already running". The kernel drops the lock when
    its holder dies, so a crash leaves nothing to clean up.
 3. **The sockets**, only once the lock is ours: unlink a stale `serve.sock` and
-   `local.sock`, and bind both.
+   `local.sock`, and bind both. On macOS, bind `local.sock` alone, and with
+   `--publish` take the Mac front's socket from launchd ([The Mac front](#the-mac-front));
+   the extension couldn't reach a `serve.sock`.
 4. **Leftovers**, once the lock is ours: empty `tether/paste/` (a subdirectory,
    never the runtime directory itself) and delete stale upload part files.
 
@@ -148,15 +209,39 @@ proxy target.
 **Startup needs no LocalAPI.** The daemon starts even when tailscaled is down, so a
 boot that starts tether first costs no restart loop. It starts one background fill
 of the tailnet-state cell, retrying with backoff from 2 s to 30 s until it succeeds, then logs the
-canonical origin or the refusal message; it logs again whenever that changes.
+canonical origin or the refusal message; it logs again whenever that changes. On a
+Mac with `--publish`, the publication waits for LocalAPI the same way.
+
+**Reaching LocalAPI.** How the daemon reaches LocalAPI is chosen at startup by
+platform, and the endpoint is found again each time a connection opens, so a Tailscale
+restart that moves it costs one reconnect:
+
+| Platform | Transport | Found by |
+|---|---|---|
+| Linux | Unix socket | the first of `/var/run/tailscale/tailscaled.sock` and `/var/run/tailscaled.socket` that exists |
+| macOS, standalone app (macsys) | TCP `127.0.0.1:<port>`, HTTP Basic auth with an empty user and the token | `readlink /Library/Tailscale/ipnport` gives the port; `/Library/Tailscale/sameuserproof-<port>` holds the token (`root:admin 0640`, so the daemon's user must be an admin) |
+| macOS, App Store app (unverified) | as macsys | when `ipnport` is missing: `lsof -n -a -u<uid> -c IPNExtension -F`, taking the port and token from the open file named `….tailscale.ipn.macos/sameuserproof-<port>-<token>`, as Tailscale's CLI does |
+
+Every request carries `Host: local-tailscaled.sock`. A failure to find or open the
+endpoint is a LocalAPI failure like any other: `503 identity_unavailable` and the
+cell's retry, never a refusal to start. A permission error on the token file names
+the cause ("the daemon's user must be an admin"). The macsys lookup is tried first
+because it costs two system calls, while `lsof` spawns a process; `lsof` runs only
+when a connection must open, under the 2 s LocalAPI timeout. The token never leaves
+the transport and is never logged.
 
 **Fronts.** Each socket is a **front**, and the front decides what a connection may
 do:
 
 | Front | Who connects | Lanes | Host |
 |---|---|---|---|
-| `serve.sock` | Serve's HTTP proxy, through tether's one HTTPS entry ([Canonical origin](#canonical-origin)) | node and native | must be `localhost` |
+| `serve.sock` (Linux) | Serve's HTTP proxy, through tether's one HTTPS entry ([Canonical origin](#canonical-origin)) | node and native | must be `localhost` |
+| the Mac front (macOS, `--publish`) | Serve's HTTP proxy; any local process can connect, and only a request carrying the path secret goes further ([The Mac front](#the-mac-front)) | node and native | the published authority |
 | `local.sock` | Jimmy's dev proxy, tests, Playwright | native only | not checked |
+
+Each front carries its own gate, which runs before the Tailscale check: the `Host`
+rule on `serve.sock`, and the path secret and then the `Host` rule on the Mac front.
+After the gate, a request is judged the same way on every front.
 
 On `serve.sock`, every request's `Host` must be exactly `localhost`, because Serve
 rewrites it to that for every `unix:` target; the browser's host travels in
@@ -167,7 +252,7 @@ anything that reaches the socket can write `localhost`. What establishes that
 canonical-origin rule. On `local.sock`, a request that presents no token is `401
 auth_required`: the node lane doesn't exist there.
 
-**The Tailscale check, on every route of both fronts, before anything else:**
+**The Tailscale check, on every route of every front, after the front's gate:**
 
 - `Tailscale-Funnel-Request` is absent. Serve sets it on Funnel traffic and strips
   a spoofed copy.
@@ -181,9 +266,160 @@ A failure is `403 forbidden`. The daemon doesn't refuse to start when Funnel is 
 the Funnel header refuses each such request, and the canonical origin refuses an
 entry with Funnel on ([canonical origin](#canonical-origin)).
 
+## The Mac front
+
+**The trust rule.** A request on the Mac front goes further only if its path starts
+with `/<path secret>/`, checked in constant time before anything else is read. Then
+the front's `Host` rule applies, then the Tailscale check and the lanes, exactly as
+on `serve.sock`. Serve adds the path secret to every request it proxies, and a client
+can't remove it: a client that sends `/<secret>/x` reaches tether as
+`/<secret>/<secret>/x`. So a request that carries it came through Serve, or from
+something that read the secret ([Threat model](#threat-model)).
+
+```mermaid
+flowchart LR
+  A[accept on 127.0.0.1:port] --> B{path starts with /secret/?}
+  B -- no --> X[404, empty body]
+  B -- yes --> C[strip the secret]
+  C --> D{Host and X-Forwarded-Host = published authority?}
+  D -- no --> F[403 forbidden]
+  D -- yes --> E[routing, Tailscale check, then native or node lane]
+```
+
+**The listener is launchd's.** The daemon runs from a LaunchAgent in Jimmy's login
+session, whose `Sockets` entry `Listener` binds `127.0.0.1:7851` (the port is the
+plist's to change). launchd binds it when Jimmy logs in, before it starts the daemon,
+and keeps it bound while the daemon crashes, is killed or restarts; connections that
+arrive meanwhile wait in its backlog. So once launchd has bound it, the publication
+points at a socket only tether accepts from until Jimmy logs out: a second bind of the port,
+wildcard or not, with any `SO_REUSEADDR`/`SO_REUSEPORT` combination, fails while
+launchd holds it (probed). At logout launchd sends the daemon `SIGTERM` and closes the
+socket; while Jimmy is logged out tether doesn't run and the phone can't reach it on
+this Mac. The daemon takes the socket from launchd at startup (`src/launchd.rs`,
+[Module shape](#module-shape)) and reads the port from it. `tether serve --publish`
+without that socket, run by hand or from a plist without `Sockets`, exits 78 with "no
+launchd socket `Listener`": the daemon publishes only a socket launchd holds. launchd
+gives the same error when the process isn't one of its jobs and when the plist names
+no such socket, so the message claims neither.
+
+**A socket launchd couldn't bind.** If another process holds the port when the agent
+loads, launchd's bind fails without an error: the job runs and gets one fd that is
+neither bound nor listening, while the other process takes the connections (probed,
+p177). So the daemon requires the socket's address to be `127.0.0.1` with a non-zero
+port. Otherwise it **withdraws**, then exits 78 with "launchd couldn't bind the Mac
+front's port; another process holds it": for at most 2 s it tries to remove every
+handler in `Web["<MagicDNS name>:443"]` whose proxy is
+`http://127.0.0.1:<any port>/tether-<43 base64url characters>`, by the publication's
+plan and compare-and-swap, so Serve stops sending the phone's requests to that
+process. The entry is tether's alone by the publication rule, so this removes nothing
+of another app's. launchd restarts the daemon every 10 s, and each start tries again. Without `--publish` a Mac daemon has no
+Serve front, only `local.sock`; the e2e stack and dev runs use that, and never touch
+the serve config. On Linux `--publish` is a configuration error (exit 78): Linux
+publishes with `tailscale serve`.
+
+**The path secret check runs before routing.** It runs in the accept loop's
+per-request service, before the router, because axum routes before any
+`Router::layer` middleware runs. The daemon compares the first `len + 2` bytes of the
+request target's raw path, before any percent-decoding, with `/<path secret>/`, using
+`subtle`'s constant-time equality; a shorter path fails. The secret's length is
+public; its bytes are not. A mismatch answers `404` with an empty body and nothing
+else: no headers beyond the status, no Tailscale check, no LocalAPI read, no log line
+above `debug`. A match rewrites the request's URI to the rest of the path, keeping
+the query, and hands it to the router, so every layer, log line and route sees `/ws`,
+`/fs/raw` or `/` and never the secret. The daemon never logs the secret, never writes
+it to disk, and never returns it in a response; refusal and publication messages name
+Serve entries by `host:port` and mount, never by proxy URL, and the serve-config
+types redact the proxy in `Debug`.
+
+**The `Host` rule.** Serve passes a TCP target the browser's own `Host`, and sets
+`X-Forwarded-Host` to the same value. The **published authority** is the entry the
+daemon published, `<MagicDNS name>:443`. Every request on the Mac front must carry a
+`Host` equal to it (case-insensitive, `:443` optional) and exactly one
+`X-Forwarded-Host` equal to `Host`; anything else is `403 forbidden`. The rule is
+held in memory from the publication, so it costs no LocalAPI read. Before a
+publication succeeds, every request past the path secret is `503
+identity_unavailable`. Like the `localhost` rule on `serve.sock`, it catches a
+misdirected publication and proves nothing alone. The node lane goes on to compare
+`X-Forwarded-Host` with the canonical origin, as on Linux. Renaming the Mac's
+MagicDNS name needs a daemon restart: Serve keys entries by name, so the old
+publication stops matching.
+
+**Publishing.** On a Mac the daemon writes its own Serve entry through LocalAPI, so
+the path secret can change at every start. The proof token can write the serve config,
+and `If-Match` makes the write a compare-and-swap. One task owns the publication and
+its state (waiting, published, refused). Once LocalAPI answers, it:
+
+1. reads `GET /localapi/v0/serve-config` with its `Etag`, and the self node's
+   MagicDNS name from the tailnet-state read;
+2. plans the new config with a pure function over the config's JSON, preserving every
+   field it doesn't change, including fields tether doesn't know. A handler is
+   **tether-shaped** when its proxy is `http://127.0.0.1:<the front's port>/tether-<43
+   base64url characters>`: a publication of this front by an earlier start. The plan
+   touches only the background config:
+   - it removes every tether-shaped handler, wherever it is (one under an old MagicDNS
+     name after a rename, say), drops a `Web` entry left with no handler, and drops a
+     `TCP` port entry that is exactly `{HTTPS: true}` when no `Web` entry uses that
+     port any more;
+   - then, for `<name>:443`: Funnel on refuses; `TCP["443"]` present and not exactly
+     `{HTTPS: true}` (a TCP forward, or HTTP) refuses; any handler left in
+     `Web["<name>:443"]` refuses;
+   - otherwise `Web["<name>:443"]` becomes `{Handlers: {"/": {Proxy: "http://127.0.0.1:<port>/<path secret>"}}}`
+     and `TCP["443"]` becomes `{HTTPS: true}`;
+3. writes it with `POST /localapi/v0/serve-config` and `If-Match`. A `412` means the
+   config changed under it: it reads and plans again, up to 3 times, then waits for
+   the next retry;
+4. sets the published authority and refreshes the tailnet-state cell, which logs the
+   canonical origin.
+
+A refused plan is logged once, naming the entry it found and how to clear it, and
+reported in `/auth/info`'s `browserRefused`; the daemon doesn't publish again until it
+restarts. LocalAPI being unavailable is retried with the cell's backoff, 2 s to 30 s,
+until the publication succeeds. After that the daemon never writes the config again
+while it runs: if Jimmy resets Serve to take tether off the tailnet, it stays off
+until the next start. The canonical-origin rule judges whatever the config holds from
+then on.
+
+**No unpublishing.** Apart from a withdrawal at a socket launchd couldn't bind, the
+daemon never removes its Serve entry, on any exit. A crash or
+restart leaves the socket with launchd, and the next start replaces the stale handler
+with one carrying a new secret. Logout, or unloading the agent, leaves the entry
+pointing at a closed port, and Serve answers `502` until Jimmy logs in again; the next
+start replaces it the same way. To stop tether, Jimmy unloads the agent and runs
+`tailscale serve --https=443 off`, which removes the whole entry: tether refuses to
+share it, so the entry is tether's alone ([Threat model](#threat-model)). To stop it
+for good he also removes the plist, which launchd otherwise loads at the next login.
+
+**WebSockets.** An upgrade is an HTTP request like any other, so the path secret,
+the `Host` rule and the lanes judge the upgrade request; Serve gives each upgrade its
+own backend connection. After the upgrade no HTTP is parsed.
+
+**The native app.** Nothing changes for the iOS app. It reaches
+`https://<MagicDNS name>` like any host; Serve adds the path secret, the daemon strips
+it, and the device token is judged on the native lane.
+
+**The unified log, and Tailscale's log upload.** The Tailscale extension logs the
+full target, path secret included, when a handler is created ("serve: creating a new
+proxy handler for …") and when it is removed ("serve: closing idle connections to
+…"). tether can't avoid the line: a Serve proxy target is a URL, and the extension
+logs it. Only admins can read the unified log. The same logger uploads to Tailscale's
+log servers unless `TS_NO_LOGS_NO_SUPPORT` is set for the extension, which the Mac
+setup does ([running.md](../running.md#host-on-a-mac)). tether can't see whether it
+is set, so it neither warns nor refuses: LocalAPI reports it nowhere (status has no
+`Hostinfo`, and whois strips the self node's down to `Hostname` and `Services`), the
+extension's environment file is in root's `0750` home, and the one signal, the marker
+`tailscale bugreport` prints, comes from sending a bug report. Writing a new secret at
+each start makes every logged copy stale once the daemon that published it stops.
+
+**`tether enroll` on a Mac** asks the running daemon: `GET /auth/info` over
+`local.sock`, with the owner login from LocalAPI's status as `Tailscale-User-Login`.
+It prints the daemon's `browserOrigin` or `browserRefused`, or says that tether isn't
+running. Only the daemon knows its secret, so only it can apply the canonical-origin
+rule.
+
 ## Node identity
 
-**Resolving the node.** A node-lane request must arrive on `serve.sock`. It must
+**Resolving the node.** A node-lane request must arrive on a Serve front
+(`serve.sock`, or the Mac front). It must
 carry exactly one `X-Forwarded-For` field holding exactly one address, with no
 comma, and the address must be a Tailscale address (`100.64.0.0/10` or
 `fd7a:115c:a1e0::/48`). Anything else is `403 forbidden`: Serve always writes one
@@ -200,7 +436,7 @@ answer.
 | `UserProfile.LoginName` equals the decoded `Tailscale-User-Login` | Both come from the same netmap; disagreement means the two lookups saw different nodes, so neither is trusted |
 | `Sharer` is zero | A node shared in from another tailnet is someone else's machine, whatever user it shows |
 | `AllowedIPs` holds only the node's own `Addresses`, apart from the exit-node routes `0.0.0.0/0` and `::/0` | A subnet router masquerades every host on its LAN as itself, so its identity says nothing about which device sent the request. An exit node forwards only outbound traffic, so it can't do that |
-| the stable ID isn't the box's own (`Self.StableID` in the tailnet-state cell) | Every local user on the dev box reaches Serve from the box's own node. Admitting it would let any of them in, through the front door |
+| the stable ID isn't the box's own (`Self.StableID` in the tailnet-state cell) | Every local user on the host, Linux or Mac, reaches Serve from the host's own node. Admitting it would let any of them in, through the front door |
 
 Then, on the auth lane, the device lookup: a `node` device whose `node_id` equals
 the stable ID **and** whose `login` equals the node's login. No match is `401
@@ -229,7 +465,7 @@ routes and `GET /auth/info` never call whois.
 retryable, never as "not enrolled". A whois that answers "no such peer" is `403
 node_refused` (`unknown_node`).
 
-**Order, and what a flood costs.** For a node-lane request: the `Host` rule, the
+**Order, and what a flood costs.** For a node-lane request: the front's gate, the
 canonical origin, the pure [admission rules](#browser-admission) on headers alone,
 the `X-Forwarded-For` parse, whois, the node rules, then the auth lane's read of
 `auth.toml`. A cross-origin request is refused before any whois or file read; it
@@ -240,26 +476,37 @@ costs at most a shared read of the tailnet-state cell.
 Browsers are admitted from exactly one origin per daemon, the **canonical origin**:
 `https://<host>` or `https://<host>:<port>`, lowercase, no trailing dot or path.
 
-**The rule.** The daemon finds every reference to its `serve.sock` anywhere in the
-serve config: every `TCP` forward and every `Web` handler, in the background config,
-every foreground config and every Tailscale Service. A `unix:` target names
-`serve.sock` when it is the same file by `stat` identity (device and inode), not by
-string, as tailscaled's own `isTailscaledSocket` does; the daemon `stat`s
-`serve.sock` once, at bind. Another user's socket can't be `stat`ed through their
-`0700` directory, so it never matches. The canonical origin exists when `serve.sock`
-is named exactly once, and that one reference is:
+**The rule.** The daemon finds every reference to its **serve target** anywhere in
+the serve config: every `TCP` forward and every `Web` handler, in the background
+config, every foreground config and every Tailscale Service.
 
-- the only handler of a `Web` entry: mount path `/`, proxy `unix:<serve.sock>`;
+- **On Linux the serve target is `serve.sock`.** A `unix:` target names it when it is
+  the same file by `stat` identity (device and inode), not by string, as tailscaled's
+  own `isTailscaledSocket` does; the daemon `stat`s `serve.sock` once, at bind.
+  Another user's socket can't be `stat`ed through their `0700` directory, so it never
+  matches.
+- **On a Mac the serve target is the Mac front's port.** A target names it when its
+  port is the front's, whatever its host, scheme or path: `127.1`, `0.0.0.0` and
+  `::ffff:127.0.0.1` all reach a `127.0.0.1` listener, and counting too many fails
+  closed.
+
+The canonical origin exists when the serve target is named exactly once, and that one
+reference is:
+
+- the only handler of a `Web` entry: mount path `/`, proxy `unix:<serve.sock>` on
+  Linux, or exactly `http://127.0.0.1:<port>/<path secret>` on a Mac;
 - on a port that serves HTTPS;
 - with Funnel off for its `host:port`.
 
 Otherwise there is no canonical origin and every node-lane request is `403
 bad_origin`. The refusal is one message that names the offending entry or
-reference and the command that fixes it.
+reference and the fix, which each serve target words for itself: on Linux the
+`sudo tailscale serve` command below; on a Mac, removing the offending handler and
+restarting tether, which publishes itself again.
 
 | Rule | Why |
 |---|---|
-| `serve.sock` named nowhere else | A Serve `TCP` forward to the socket (`--tcp`, `--tls-terminated-tcp`, from Tailscale 1.102) relays raw bytes from tailscaled itself, so a client writes its own `Host`, `X-Forwarded-For`, `X-Forwarded-Host` and `Tailscale-User-Login`. Only the serve config can show that every connection on `serve.sock` is Serve's HTTP proxy. A second `Web` publication of the same tether is refused by the same count; choosing among several isn't worth a setting |
+| the serve target named nowhere else | A Serve `TCP` forward to the socket or port (`--tcp`, `--tls-terminated-tcp`, from Tailscale 1.102) relays raw bytes from tailscaled itself, so a client writes its own `Host`, `X-Forwarded-For`, `X-Forwarded-Host` and `Tailscale-User-Login`. Only the serve config can show that every connection on the front is Serve's HTTP proxy. A second `Web` publication of the same tether is refused by the same count; choosing among several isn't worth a setting |
 | tether is the only handler in its entry | A second handler on the same `host:port` (`--set-path /grafana 3000`, a `Path` handler serving a directory, a `Text` handler) serves pages with tether's origin. They can open `/ws`, `fetch` `/fs/*` and post to `/complete` with exact `Origin` and `Sec-Fetch-Site: same-origin`, and no header tells them apart from tether's page |
 | mount path `/` | The shell and the API assume the root |
 | HTTPS | Browsers need a secure context for the service worker, and Serve marks only TLS requests `https` |
@@ -267,17 +514,20 @@ reference and the command that fixes it.
 
 **When it is read.** From the tailnet-state cell ([security state](#security-state-is-read-when-it-is-used)): on every node-lane request,
 every node-lane socket re-check, `GET /auth/info` and `tether enroll`. A handler
-added beside tether, or a stray reference to `serve.sock`, is therefore acted on
+added beside tether, or a stray reference to the serve target, is therefore acted on
 within 10 s, by new requests and by live sockets alike. Request headers (`Host`,
-`X-Forwarded-Host`) never choose the origin.
+`X-Forwarded-Host`) never choose the origin. On a Mac the daemon wrote the
+publication itself, and this rule still judges it: a handler Jimmy adds beside tether,
+or Funnel turned on, refuses browsers within 10 s as on Linux.
 
-**Upgrading from loopback TCP.** When there is no canonical origin and some entry
+**Upgrading from loopback TCP (Linux).** When there is no canonical origin and some entry
 proxies to `http://127.0.0.1:7850`, today's default publication, the message names
 that entry and gives the one command, `sudo tailscale serve --bg --https=443
 unix:/run/user/<uid>/tether/serve.sock`, which replaces the `/` handler of the
 entry it names. Any other loopback target is someone else's app and gets the plain
 refusal. The daemon logs the message, `tether enroll` prints it, and `GET
-/auth/info` carries it in `browserRefused`.
+/auth/info` carries it in `browserRefused`. Only the Unix serve target looks for
+this.
 
 `GET /auth/info` reports `browserOrigin` (or `null`, with `browserRefused` set to
 the message). The shell compares it with `location.origin` before connecting, and
@@ -334,7 +584,7 @@ WebSocket subprotocol. `Cookie` is ignored.
 | Presented | Lane |
 |---|---|
 | exactly one `Authorization: Bearer <token>`, or exactly one `tether.auth.<token>` subprotocol | native, on either front: today's rules, no origin check, no node identity. Another scheme, or an empty token, is `401 auth_required` |
-| nothing | node, on `serve.sock` only: [Node identity](#node-identity), [Canonical origin](#canonical-origin) and [Browser admission](#browser-admission). On `local.sock`, `401 auth_required` |
+| nothing | node, on a Serve front only: [Node identity](#node-identity), [Canonical origin](#canonical-origin) and [Browser admission](#browser-admission). On `local.sock`, `401 auth_required` |
 | two `Authorization` headers, two `tether.auth.` subprotocols, or one of each | ambiguous: `401 auth_required` / close 4401 |
 
 A request that presents a token never falls back to the node lane when the token
@@ -479,12 +729,14 @@ enrolled_by = "jimmy@github"
 
 ## Endpoints
 
-Every route on both fronts sits behind the Tailscale check (`403 forbidden`), and
-every route on `serve.sock` behind the `Host: localhost` rule. API paths are
+Every route on every front sits behind the Tailscale check (`403 forbidden`), and
+every route on a Serve front behind that front's gate: the `Host: localhost` rule on
+`serve.sock`; the path secret (`404`) and the published-authority `Host` rule on the
+Mac front. API paths are
 reserved before static routing (`/auth`, `/ws`, `/fs`, `/complete`, `/debug`): an
 unknown path under them, for any method, is a JSON 404, never the shell.
 
-| Route | Native lane | Node lane (`serve.sock`) | Request → response |
+| Route | Native lane | Node lane (a Serve front) | Request → response |
 |---|---|---|---|
 | shell paths, `GET`/`HEAD` | not judged | not judged | the packaged files, under the shell caps ([daemon-core.md](daemon-core.md#static-shell)) |
 | `GET /auth/info` | not judged | not judged | `{hostId, name, daemonVersion, protocol, browserOrigin, browserRefused}` |
@@ -520,25 +772,47 @@ pass through it.
 
 - `node.rs`: pure forwarded-address parsing, node eligibility and browser-origin
   admission rules.
-- `identity.rs`: the tailnet-state cell and LocalAPI clients; bounded, single-flight
-  whois; Serve-config parsing and canonical-origin calculation; Tailscale login
-  decoding. Cell fills and retries log changes in origin or availability.
+- `localapi.rs`: the LocalAPI transport chosen at startup (Unix socket, or the Mac's
+  proof-token TCP), endpoint discovery on each connect, and the keep-alive clients,
+  including the serve-config read with its `Etag` and the `If-Match` write.
+- `identity.rs`: the tailnet-state cell; bounded, single-flight whois; Serve-config
+  parsing, the serve target (`serve.sock` identity, or the Mac front's port and path
+  secret) and canonical-origin calculation; Tailscale login decoding. Cell fills and
+  retries log changes in origin or availability.
+- `publish.rs`: the Mac publication. A pure plan from the serve config's JSON, the
+  MagicDNS name, the front's port and the target to the new JSON or a refusal, and the
+  withdrawal's plan for a socket launchd couldn't bind; one
+  task owns the publication's state and runs the plan against LocalAPI with the
+  retries above. The serve-config types redact proxy URLs
+  in `Debug`.
 - `store.rs`: `auth.toml` read-modify-write, native and node devices, and pending
   enrolment. Invalid device rows are kept as raw TOML when refused; writes preserve
   them, and removal can match their `name`.
 - `mod.rs`: front and credential dispatch, device admission, and live-socket
   re-checks. Node re-checks use the freshly read device row before applying policy.
-- `http/server.rs`: bounded Unix-socket accept loop, socket fronts, and shutdown.
+- `http/front.rs`: the front type. Each front names its lanes and its gate: the
+  `localhost` rule for `serve.sock`, the path secret and published-authority rule
+  for the Mac front, none for `local.sock`. The gate is a pure function of the
+  request and the front.
+- `http/server.rs`: bounded accept loop over every bound front, Unix or TCP (the Mac
+  front's from launchd), and shutdown. Its per-request service runs the front's gate
+  before the router, since axum routes before `Router::layer` middleware runs.
   `http/mod.rs` orders shared Tailscale/login and device checks; `http/error.rs` is
   the shared HTTP error/status/body mapping; `http/shell.rs` serves only the
   build-time manifest; `http/ws.rs` keeps LocalAPI/auth re-check waits off the
   socket's I/O loop.
+- `launchd.rs` (macOS only): takes the Mac front's socket from launchd with
+  `launch_activate_socket`, returning `io::Result<Vec<OwnedFd>>`. It is the one
+  module allowed `unsafe` (`lib.rs` denies it, so the module's `allow` can override
+  it, and every block carries a `// SAFETY:` comment); no other code converts a raw
+  fd. A null array is an empty list. The fd arrives blocking, so the caller sets it
+  non-blocking before handing it to tokio.
 - `config.rs`: `runtime_dir()` returns `$XDG_RUNTIME_DIR/tether` on Linux or
   `$TMPDIR/tether` on macOS; both are private, checked directories.
 - `build.rs`: embeds the shell assets and computes their gzip payloads and ETags at
   build time.
-- The log never carries `Authorization` or `Sec-WebSocket-Protocol` values;
-  node-lane refusals include the stable ID.
+- The log never carries `Authorization` or `Sec-WebSocket-Protocol` values, the
+  LocalAPI token or the path secret; node-lane refusals include the stable ID.
 
 ## Seams
 
@@ -661,6 +935,7 @@ Recovery needs a shell on the server that isn't tether (the laptop, or SSH).
 | Tokens, `host_id` | `getrandom` |
 | base64url | `base64` |
 | Advisory file lock | `fs4` or `rustix::fs::flock` |
+| launchd socket activation (macOS) | `libc`, a macOS-only direct dependency (already in the lockfile), through `src/launchd.rs` |
 
 On the Swift side, Security and LocalAuthentication cover everything.
 `ios/Tether/Auth/`:
@@ -690,6 +965,22 @@ LocalAPI do not replace them. `browser-setup.md` links here for the complete che
 | G11 | Remove an enrolled node and measure live close latency; stop LocalAPI for 15 s and 40 s and verify two re-check failures are tolerated but the third closes with 4503 | Revocation and outage behavior |
 | G12 | Under the resource-limit R3 run, cold-load two browsers, fill distinct-address whois waiters and flood the 64-connection Serve backstop | Shell and admission headroom |
 
+G1 applies to Linux only. On a Mac host, G2, G3, G7 (with the Mac serve target),
+G9 (adding other ports on the Mac and a DNS-rebinding page in a browser on the Mac)
+and G11 apply as written, plus:
+
+| Gate | Check on the real Mac (standalone Tailscale app) | Settles |
+|---|---|---|
+| M0 | Install the LaunchAgent plist as Jimmy, no sudo, and log out and in. The daemon has `HOME` and `TMPDIR` from launchd and `PATH` from the plist; tmux sessions list; it reads the proof file; with another process listening on the port before the agent loads, the daemon withdraws its handler and exits 78 naming the cause, and the phone's next request doesn't reach that process; at logout the daemon gets `SIGTERM` and the phone gets an error, and after login it publishes again with a new secret; with the screen locked the phone still reaches it; whether `/fs` reading `~/Documents` prompts (TCC), and whether the grant survives reinstalling the binary; whether `$TMPDIR/tether/` survives a reboot's temp cleanup; whether turning the job off in Login Items sends `SIGTERM` | The LaunchAgent setup |
+| M1 | As Jimmy, no sudo: the entry appears in `tailscale serve status`; unrelated entries, including fields tether doesn't parse, survive byte-for-byte; a `/` handler of another app, another handler in the entry, a TCP forward on 443 and Funnel each refuse without writing; a concurrent edit gets `412` and a re-plan; a tether-shaped handler under an old name is removed | Publication and compare-and-swap |
+| M2 | Through Serve, GET, HEAD, POST and a WebSocket upgrade arrive as `/<secret>/…` and route; directly on the port, no prefix, a wrong secret of the same length, a one-byte-short secret, `/<secret>` without a slash, a percent-encoded secret, `/x/../<secret>/` and `//<secret>/` all get the empty `404`; the daemon's log never shows the secret | Path secret gate and its place before routing |
+| M3 | A `Host` or `X-Forwarded-Host` forged through Serve (curl `-H`) and a missing or doubled `X-Forwarded-Host` directly on the port are `403 forbidden`; the iPhone app and Safari pass | `Host` rule |
+| M4 | `kill -9` the daemon: the port stays bound (a second bind on `127.0.0.1`, `0.0.0.0` and `[::]` with `IPV6_V6ONLY` off fails), a request waits and the restarted daemon answers; the new start replaces the handler with a new secret and the old secret gets `404`. `launchctl bootout`, and turning the job off under Login Items: the entry stays and Serve answers `502`; `tailscale serve --https=443 off`, as Jimmy without sudo, removes it and nothing else; the next bootstrap publishes again | Socket ownership, rotation, stopping |
+| M5 | Start tether before Tailscale; quit Tailscale and check whether `ipnport` and `sameuserproof-*` remain; relaunch it (the port changes) while a tab is open and confirm the next request reconnects | Not a startup gate; endpoint rediscovery; how long a stale `ipnport` lasts |
+| M6 | Enrol the iPhone app and a Safari node against the Mac; hold a WebSocket for 10 minutes through Serve's pooled connections; revoke both | Native and node lanes through the Mac front |
+| M7 | With `TS_NO_LOGS_NO_SUPPORT=true` in the extension's `tailscaled-env.txt` and Tailscale restarted, `tailscale bugreport` prints the `BUG-NO-LOGS-NO-SUPPORT-…` marker (run it only with the opt-out set: otherwise it uploads a bug report) | The extension reads the opt-out, so log upload is off |
+| M8 | Optional, if the App Store app is installed: `lsof` discovery finds the port and token, and M1 passes | App Store transport |
+
 ## Open risks
 
 - The exact Keychain error after Face ID is re-enrolled remains unconfirmed. The
@@ -699,6 +990,17 @@ LocalAPI do not replace them. `browser-setup.md` links here for the complete che
   cross-origin refusal, and resource headroom under cold shell loads. These require
   the Linux dev box and the real browser/device matrix; a fake LocalAPI and HTTP tests
   do not replace them.
+- A Mac host's local boundary rests on its having no account but Jimmy's, on launchd
+  holding the front's port while he is logged in, on log upload being off, and on
+  nothing binding LocalAPI's port while Tailscale is stopped ([Threat model](#threat-model)).
+  tether can't check the log opt-out; M7 checks it once by hand. Whether `ipnport`
+  outlives a Tailscale quit is unverified; M5 settles it.
+- The LaunchAgent is probed for socket activation (the port stays bound across `kill
+  -9`, and a waiting connection relaunches the job); M0 settles the rest, including
+  whether TCC prompts for `~/Documents` and keeps the grant across reinstalls of an
+  unsigned binary.
+- The App Store app's discovery and write permission are designed from Tailscale's
+  CLI source and untested.
 - A bad hand edit to `auth.toml` locks every device out until the file is fixed, though
   the app keeps its credentials and retries. Recovery needs a shell outside tether.
 - Face ID failure lockout remains accepted for this single-user tool: if Face ID

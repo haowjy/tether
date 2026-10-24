@@ -1,18 +1,16 @@
 # Running tether
 
-tether runs as you, in a systemd user unit. It listens only on private Unix sockets in
-`$XDG_RUNTIME_DIR/tether/`; Tailscale Serve publishes `serve.sock` to your tailnet over
-HTTPS. Native iOS requests use an enrolled device token, while browser/PWA requests
-are admitted as an enrolled tailnet node ([auth.md](design/auth.md)). It attaches to
-your tmux server and never starts one, so start tmux the way you always do.
+On Linux, tether runs as you in a systemd user unit. It listens only on private Unix
+sockets in `$XDG_RUNTIME_DIR/tether/`; Tailscale Serve publishes `serve.sock` to your
+tailnet over HTTPS. A Mac can host tether too, with the Tailscale app, under weaker
+local guarantees, on a Mac with no account but yours ([Host on a Mac](#host-on-a-mac)). Native iOS requests use an enrolled
+device token, while browser/PWA requests are admitted as an enrolled tailnet node
+([auth.md](design/auth.md)). It attaches to your tmux server and never starts one, so
+start tmux the way you always do.
 
-`tether serve` runs on Linux only for now because it needs tailscaled's LocalAPI Unix
-socket for login, whois, status and Serve config; the macOS Tailscale apps (App Store
-and standalone) don't expose one. LocalAPI availability is not a startup gate: tether
-starts before tailscaled and reports identity-dependent requests unavailable until
-the API responds. A Mac is also a fine client: a browser there is identified by whois
-on the server and needs no local Tailscale LocalAPI. The Mac remains useful for
-recording tmux 3.7b fixtures and building the iOS app, but not for running the daemon.
+LocalAPI availability is not a startup gate: tether starts before tailscaled and
+reports identity-dependent requests unavailable until the API responds. A Mac is also
+a fine client: a browser there is identified by whois on the server.
 
 ## Install
 
@@ -44,7 +42,7 @@ With neither socket key, tether uses tmux's default socket, which tmux finds thr
 `TMUX_TMPDIR`. A systemd user unit doesn't see variables set in your shell's rc
 files, so if you set `TMUX_TMPDIR` there, set `socket_path` here.
 
-## Publish it on the tailnet
+## Publish it on the tailnet (Linux)
 
 ```bash
 sudo tailscale serve --bg --https=443 unix:/run/user/<uid>/tether/serve.sock
@@ -76,6 +74,89 @@ exclusive lock before replacing stale `serve.sock`/`local.sock` sockets or clean
 `paste/`, so a second daemon cannot damage the running one. If the existing Serve config still targets
 `http://127.0.0.1:7850`, tether logs the one publish command above and `tether enroll`
 prints it as the browser refusal.
+
+## Host on a Mac
+
+> **Not built yet.** This section is the design in [auth.md](design/auth.md#the-mac-front);
+> until it lands, `tether serve` on a Mac reaches no LocalAPI and publishes nothing.
+
+Host on a Mac only if your account is its only user account. tether isn't supported
+on a Mac with other logins: its Mac defences assume there are none.
+
+The Mac's boundary is weaker than Linux's. On Linux, Serve's target is a Unix socket
+in a `0700` directory: the kernel keeps every other account out, and the target holds
+no secret. The Tailscale app on a Mac can't reach a Unix socket, so tether listens on
+a loopback TCP port that any local process can open, and is published at a random
+path, the path secret, that changes at every start. Only root and you can read it,
+but the Tailscale app logs it each time tether publishes, and by default uploads those
+logs to Tailscale. The [threat model](design/auth.md#threat-model) lists what else a
+Mac host trusts.
+
+Requirements: the standalone Tailscale app (from tailscale.com, 1.104 or later; the
+App Store app is untested), signed in, with its `tailscale` command installed (the
+app's settings offer it), and your account an admin, which tether needs to read
+Tailscale's LocalAPI token.
+
+**Turn off Tailscale's log upload first**, so the path secret doesn't leave the Mac:
+
+```bash
+echo TS_NO_LOGS_NO_SUPPORT=true | sudo tee -a \
+  /private/var/root/Library/Containers/io.tailscale.ipn.macsys.network-extension/Data/tailscaled-env.txt
+```
+
+Then quit Tailscale from its menu and open it again. Check it took: `tailscale
+bugreport` must print `BUG-NO-LOGS-NO-SUPPORT-this-node-has-had-its-logging-disabled`
+(don't run it before the change: it would upload a bug report). The cost: Tailscale
+support can't use this Mac's logs, and a tailnet that requires network flow logs
+stops Tailscale on this Mac. tether can't see whether the setting is on, so it
+neither warns nor refuses; check again after reinstalling Tailscale.
+
+tether runs from a LaunchAgent, as you, with no sudo. launchd binds tether's port,
+`127.0.0.1:7851`, when you log in, starts tether, and keeps the port across crashes,
+so Serve never points at a port someone else could take while you're logged in. It
+stops at logout: **while you're logged out, the phone can't reach tether on this
+Mac.** The plist has two placeholders, your home directory and a `PATH` that finds
+tmux (`/opt/homebrew/bin` for Homebrew's):
+
+```bash
+sed -e "s|@HOME@|$HOME|g" -e "s|@PATH@|$PATH|g" contrib/com.jimmyyao.tether.plist \
+  > ~/Library/LaunchAgents/com.jimmyyao.tether.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jimmyyao.tether.plist
+```
+
+macOS may ask once whether tether can read `~/Documents`, `~/Desktop` or
+`~/Downloads` when `/fs` first opens them. If you set `TMUX_TMPDIR` in your shell,
+set `socket_path` in `config.toml`, as on Linux.
+
+It runs `tether serve --publish`, which writes tether's own Serve entry, the `/`
+handler of `https://<this Mac's MagicDNS name>`, without sudo. It refuses, and logs
+why, if another app's handler is on that name's port 443 or Funnel is on there. If
+7851 is taken, change the port in the plist before installing; to change it later,
+stop tether first (below). `--publish` works only with the port from launchd; without
+`--publish`, a Mac daemon serves only `local.sock` and never touches the Serve config,
+which is what the e2e stack and dev runs use. Don't run `tailscale serve` for tether
+by hand. If you reset Serve while tether runs, tether stays unpublished until it
+restarts.
+
+tether never removes its Serve entry: after a crash or a logout the next start
+replaces it, and in between Serve answers `502`. To stop tether, unload it and remove
+the entry, which is tether's alone; to stop it for good, also remove the plist, or
+launchd loads it again at your next login:
+
+```bash
+launchctl bootout gui/$(id -u)/com.jimmyyao.tether
+tailscale serve --https=443 off
+rm ~/Library/LaunchAgents/com.jimmyyao.tether.plist    # for good
+```
+
+Run `tailscale serve --https=443 off` straight after the unload, and also after
+turning tether off under System Settings → Login Items: until it runs, Serve points
+at a free port that any process could take. If something else already holds the port
+when tether's agent loads, tether removes its own entry and exits 78 saying so. To restart tether, `launchctl kickstart -k gui/$(id -u)/com.jimmyyao.tether`;
+renaming the Mac in Tailscale needs one. launchd can't skip restarts for
+configuration errors, so an exit 78 repeats every 10 s until you fix the logged
+cause. Logs go to `~/Library/Logs/tether.log`. macOS has no cgroup, so
+`memory_budget_mib` only sizes the counts.
 
 ## Run it under systemd
 
@@ -250,6 +331,11 @@ browser profile. Removing the node revokes every browser on that machine.
 | `401 auth_required`, or the native socket closes with 4401 | token is missing or its device was removed; enrol the native app again |
 | `503 identity_unavailable` | LocalAPI whois or tailnet state is unavailable; tether retries and never interprets a failed lookup as “not enrolled” |
 | `503 auth_unavailable`, or the native socket closes with 4503 | `auth.toml` can't be read, usually a typo from a hand edit; the log names the line. Fix it: native keeps its token and retries |
+| Mac: the log or `tether enroll` says another handler is on port 443, or Funnel is on | tether wouldn't overwrite it; remove that handler or turn Funnel off, then restart tether |
+| Mac: `503 identity_unavailable` and the log says the daemon's user must be an admin | tether can't read `/Library/Tailscale/sameuserproof-*`; run it as an admin user |
+| Mac: the browser or app gets 502 | tether isn't running: you're logged out, it was booted out, or it is restarting. Log in, or bootstrap it again; if you meant to stop it, run `tailscale serve --https=443 off` |
+| Mac: tether exits 78 saying launchd couldn't bind the front's port | another process holds `127.0.0.1:7851` (`lsof -nP -iTCP:7851`); stop it, or change the port in the plist, then `launchctl kickstart -k gui/$(id -u)/com.jimmyyao.tether` |
+| Mac: `tether serve --publish` exits 78 saying there is no launchd socket `Listener` | it was started by hand, or its plist lacks the `Sockets` entry `Listener`; run it from the installed plist |
 | tether exits with “already running” | another daemon holds the runtime lock; do not delete its sockets or paste files |
 | tether exits at start with status 78 naming a runtime directory variable | `XDG_RUNTIME_DIR` on Linux or `TMPDIR` on macOS is absent or unsafe; use the user's private runtime directory |
 | the app shows no sessions | no tmux server on the configured socket |

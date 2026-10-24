@@ -74,20 +74,22 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
   behind Face ID and an enrolled tailnet node for the browser/PWA. Both use the same
   one-time code and can be revoked with `tether device remove` ([auth.md](auth.md)).
 - **Hosts:** the app connects to each host's daemon directly; one host in the MVP.
-- **Server platform:** `tether serve` runs on Linux only for now. It needs tailscaled's
-  LocalAPI Unix socket for the login allowlist, node `whois`, self-node status and
-  Serve config; the macOS Tailscale apps (App Store and standalone) don't expose one.
-  A Mac is a fine client: its browser is judged by whois on the Linux server and needs
-  no local Tailscale LocalAPI. The Mac is also for recording the 3.7b tmux fixtures
-  ([daemon-core.md §8](daemon-core.md#8-testing)) and building the iOS app, not for
-  running the daemon. On macOS there is no cgroup or hard memory cap; if run there,
-  the budget only sizes the counts.
+- **Server platform:** Linux is the primary host. A Mac can host too, with the
+  standalone Tailscale app, under a weaker local boundary: Serve reaches tether on a
+  loopback port guarded by a path secret that tether publishes and rotates at each
+  start, instead of a socket in a private directory. It is supported only on a Mac
+  whose one user account is Jimmy's, with Tailscale's log upload off, and serves only
+  while he is logged in ([auth.md](auth.md#the-mac-front); not built yet). A Mac
+  is also a fine client: its browser is judged by whois on the host it connects to.
+  The Mac records the 3.7b tmux fixtures ([daemon-core.md §8](daemon-core.md#8-testing))
+  and builds the iOS app.
+  On macOS there is no cgroup or hard memory cap; the budget only sizes the counts.
 - **Scratch shell:** kept, landing after the core MVP.
 
 ## Architecture
 
-The daemon runs as Jimmy on the dev box, in a systemd user unit, reached only through
-`tailscale serve`. It talks to tmux directly through control mode: no SSH, no wrapping
+The daemon runs as Jimmy on the dev box, in a systemd user unit (on a Mac host, a
+LaunchAgent in Jimmy's login session), reached only through `tailscale serve`. It talks to tmux directly through control mode: no SSH, no wrapping
 of commands or agents.
 
 ```mermaid
@@ -734,7 +736,8 @@ slice they need and storage coalesces writes within a microtask.
 - **Bounded everything**, with the drop-and-snapshot rule in one place, the hub's
   per-connection credit ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)).
 - **The `%output` decoder works on bytes, not strings.**
-- `#![forbid(unsafe_code)]`, no `unwrap` in daemon paths, and a panicking task surfaces
+- No `unsafe` outside `src/launchd.rs`, the macOS socket-activation call (`lib.rs`
+  denies it, `main.rs` forbids it), no `unwrap` in daemon paths, and a panicking task surfaces
   as an error rather than a silently dead tab.
 - **Protocol types defined once in Rust** and generated for TypeScript (ts-rs);
   terminal output in binary frames, control messages as JSON.
