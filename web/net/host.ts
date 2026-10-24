@@ -59,8 +59,12 @@ export interface TabPort {
   /** The app went to the background and the host closed the socket on purpose. */
   paused(): void;
   message(msg: ServerMsg): void;
+  /** The answer to a paste this tab sent, or a socket loss before its answer. */
+  pasteResult?(result: PasteResult): void;
   frame(frame: Frame): void;
 }
+
+export type PasteResult = Extract<ServerMsg, { type: "pasted" | "error" }> | { type: "pasteLost"; req: number };
 
 export interface HostOptions {
   /** Opens a socket; called again after every loss. */
@@ -89,6 +93,7 @@ export class Host {
   private readonly tabs = new Set<TabPort>();
   private readonly watchRoutes = new Map<number, TabPort>();
   private readonly pending = new Map<number, Pending>();
+  private readonly pastes = new Map<number, TabPort>();
   private status: Status = "idle";
   private capped = false;
   private link: Link | null = null;
@@ -110,6 +115,11 @@ export class Host {
     return ++this.lastWatch;
   }
 
+  /** Request ids share one namespace across this host's tabs and non-tab requests. */
+  nextReq(): number {
+    return ++this.lastReq;
+  }
+
   join(tab: TabPort): void {
     this.tabs.add(tab);
     if (this.status === "idle") this.connect();
@@ -119,6 +129,7 @@ export class Host {
   leave(tab: TabPort): void {
     this.tabs.delete(tab);
     for (const [watch, owner] of this.watchRoutes) if (owner === tab) this.watchRoutes.delete(watch);
+    for (const [req, owner] of this.pastes) if (owner === tab) this.pastes.delete(req);
     this.closeIfUnused();
   }
 
@@ -126,6 +137,7 @@ export class Host {
   send(tab: TabPort, msg: ClientMsg): void {
     if (msg.type === "watch") this.watchRoutes.set(msg.data.watch, tab);
     else if (msg.type === "unwatch") this.watchRoutes.delete(msg.data.watch);
+    else if (msg.type === "paste") this.pastes.set(msg.data.req, tab);
     this.link?.send(msg);
   }
 
@@ -141,7 +153,7 @@ export class Host {
         reject(new RequestError("app in background", "background"));
         return;
       }
-      const req = ++this.lastReq;
+      const req = this.nextReq();
       const expireIn = (ms: number): ReturnType<typeof setTimeout> => setTimeout(() => {
         this.pending.delete(req);
         reject(new RequestError("timed out", "timeout"));
@@ -192,6 +204,7 @@ export class Host {
     if (this.status === "background") return;
     const wasUp = this.status === "open" || this.status === "connecting";
     this.stop("background");
+    this.failPastes();
     this.failAll(new RequestError("app in background", "background"));
     if (wasUp) for (const tab of this.tabs) tab.paused();
   }
@@ -262,6 +275,7 @@ export class Host {
     if (close.code === CloseCode.BadToken || close.code === CloseCode.AuthUnavailable) this.opts.onRefused(close.code);
     const halt =
       close.code === CloseCode.BadToken ? "unauthorized" : close.code === CloseCode.Incompatible ? "incompatible" : undefined;
+    this.failPastes();
     this.failAll(new RequestError(halt ? `host halted: ${halt}` : "connection lost", halt ?? "lost"));
     if (this.tabs.size === 0) {
       this.stop("idle");
@@ -301,6 +315,21 @@ export class Host {
   }
 
   private onMessage(msg: ServerMsg): void {
+    if (msg.type === "pasted") {
+      const tab = this.pastes.get(msg.data.req);
+      if (!tab) return;
+      this.pastes.delete(msg.data.req);
+      tab.pasteResult?.(msg);
+      return;
+    }
+    if (msg.type === "error" && msg.data.req !== undefined) {
+      const tab = this.pastes.get(msg.data.req);
+      if (tab) {
+        this.pastes.delete(msg.data.req);
+        tab.pasteResult?.(msg);
+        return;
+      }
+    }
     const req = replyTo(msg);
     if (req !== undefined) {
       if (this.pending.get(req)?.answer(msg)) {
@@ -327,6 +356,11 @@ export class Host {
         this.broadcast(msg); // window and server events, listings: every tab decides
         break;
     }
+  }
+
+  private failPastes(): void {
+    for (const [req, tab] of this.pastes) tab.pasteResult?.({ type: "pasteLost", req });
+    this.pastes.clear();
   }
 
   private broadcast(msg: ServerMsg): void {

@@ -160,7 +160,7 @@ means kept with its tests; "Revise" names the change.
 |---|---|---|
 | `proto/generated/`, `frames.ts`, `window.ts` | **Keep** | UI-free, tested, the wire contract |
 | `proto/link.ts` | **Revise**: `token` becomes optional. `tether.v1` is always offered, and `tether.auth.<token>` only when a token exists. `hello.client.kind` is `"web"` in the browser (it defaults to `"ios"` today) | Auth rev 4 §3.14 and §5: the node lane offers only `tether.v1` |
-| `net/host.ts` | **Revise**: takes its socket from `platform.transport` (§5.2). Routes errors with no `req` that answer a paste to the paste's tab (§7.5) | Reconnect, backoff and request routing already match plan.md "Reconnect" |
+| `net/host.ts` | **Revise**: takes its socket from `platform.transport` (§5.2). Routes paste replies by `req` to the paste's tab (§7.5) | Reconnect, backoff and request routing already match plan.md "Reconnect" |
 | `net/http.ts`, `net/fakes.ts` | **Keep** | |
 | `tabs/connection.ts`, `tabs/driver.ts` | **Keep**. The driver gains the `limited` state (§6.4) and the paste result (§7.5) | Tested state machine. `cover`/`uncover` already end and resume the watch; `Terminals` calls them |
 | `tabs/input.ts` | **Keep**. `InputEvent` moves to `platform/types.ts` | `toMessages` and `shellQuote` are pure |

@@ -281,7 +281,7 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 | `Subscribe { window }` / `Unsubscribe { window }` | `refresh-client -B 'w<W>:@W:<acts>\|#{pane_current_path}'` (§3.7) / `refresh-client -B 'w<W>'` | maint. |
 | `History { pane, start, end }` | §3.4 history capture group | user |
 | `Input { window, items }` | text and bytes: `send-keys -t @W -H 68 69 …`, ≤ 512 bytes per command; a key: `send-keys -t @W <name>` | user |
-| `Paste { window, path, enter }` | `load-buffer -b tether-<tag> '<path>' ; paste-buffer -p -d -b tether-<tag> -t @W`, then `; send-keys -t @W Enter` when `enter` | user |
+| `Paste { window, path, enter }` | `load-buffer -b tether-<tag> '<path>' ; paste-buffer -p -d -b tether-<tag> -t @W`; with `enter`, prepend `copy-mode -q -t @W` and append `; send-keys -t @W Enter` | user |
 
 - **Locate never errors.** On 3.4, `display-message -t` a missing window or session
   succeeds with the target fields empty, in control mode and as a one-shot, while
@@ -315,13 +315,15 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
   between load and paste, a missing file). On 3.4 `load-buffer` of a missing file succeeds: its read error is printed
   outside any block (dropped, §3.2) and the group then fails at `paste-buffer` with
   `no buffer tether-<tag>`.
-- **Paste then Enter is one group.** With `enter`, `send-keys -t @W Enter` ends the
-  same command list, so tmux runs it right after the paste and skips it when any
-  earlier command fails: a paste that didn't land never gets its Enter. The group
-  answers `Reply::Ok` only when every command succeeded, so `pasted` covers the paste
-  and its Enter together, and an `error` can in principle follow a paste that landed
-  when only the Enter failed (both target the same window in one list, so this needs
-  the window to vanish between them).
+- **Paste then Enter is one group.** With `enter`, the list first runs
+  `copy-mode -q -t @W`, which quietly quits any pane mode (a no-op outside a mode), then
+  pastes and sends `Enter`. The phone's latest action therefore leaves a laptop's copy
+  mode and reaches the program; a plain paste does not quit modes. Tmux skips later
+  commands when any earlier command fails, so a paste that didn't land never gets its
+  Enter. The group answers `Reply::Ok` only when every command succeeded, so `pasted`
+  covers the paste and its Enter together, and an `error` can in principle follow a
+  paste that landed when only the Enter failed (both target the same window in one list,
+  so this needs the window to vanish between them).
 - **Paste files.** The connection task takes one of a few daemon-wide paste slots
   (§6), or answers `busy` itself, then writes the text to a 0600 file in
   `$XDG_RUNTIME_DIR/tether/`, so the hub only holds a `PasteFile`: the path plus its

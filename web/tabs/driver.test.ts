@@ -240,7 +240,7 @@ describe("input", () => {
     expect(t.tab.input([{ text: "ls" }, { key: "Enter" }, { paste: "big" }, { key: "Up" }])).toBe(true);
     expect(l.sent.slice(1)).toEqual([
       { type: "input", data: { watch: 1, items: [{ text: "ls" }, { key: "Enter" }] } },
-      { type: "paste", data: { watch: 1, text: "big" } },
+      { type: "paste", data: { req: 1, watch: 1, text: "big" } },
       { type: "input", data: { watch: 1, items: [{ key: "Up" }] } },
     ]);
   });

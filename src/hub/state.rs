@@ -258,6 +258,7 @@ pub(super) enum Work {
     Paste {
         conn: ConnId,
         watch: u32,
+        req: u32,
         file: PasteFile,
     },
     /// Votes and subscriptions: a failure on a window that has gone is harmless.
@@ -691,10 +692,17 @@ impl State {
                     self.refuse_tmux(conn, None, Some(watch), &error);
                 }
             }
-            Work::Paste { conn, watch, file } => {
+            Work::Paste {
+                conn,
+                watch,
+                req,
+                file,
+            } => {
                 self.effects.push(Effect::RemoveFile { file });
-                if let Err(error) = result {
-                    self.refuse_tmux(conn, None, Some(watch), &error);
+                match result {
+                    Ok(Reply::Ok) => self.send(conn, &ServerMsg::Pasted { req, watch }, None),
+                    Err(error) => self.refuse_tmux(conn, Some(req), Some(watch), &error),
+                    Ok(_) => self.refuse_tmux(conn, Some(req), Some(watch), &TmuxError::BadReply),
                 }
             }
             Work::Maintenance => {}
@@ -743,7 +751,21 @@ impl State {
                     "the tmux control client ended",
                 );
             }
-            Work::Paste { file, .. } => self.effects.push(Effect::RemoveFile { file }),
+            Work::Paste {
+                conn,
+                watch,
+                req,
+                file,
+            } => {
+                self.effects.push(Effect::RemoveFile { file });
+                self.refuse(
+                    conn,
+                    Some(req),
+                    Some(watch),
+                    ErrorCode::Tmux,
+                    "tmux stopped answering before confirming the paste; it may have been sent",
+                );
+            }
             Work::Input { .. } | Work::Maintenance => {}
         }
     }

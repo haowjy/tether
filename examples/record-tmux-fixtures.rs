@@ -745,20 +745,32 @@ fn paste(r: &mut Recorder) -> Result<()> {
 
 fn paste_from(r: &mut Recorder, dir: &Path) -> Result<()> {
     let path = dir.join("we ird'#{pane_id}$HOME;~.txt");
-    fs::write(&path, "echo PASTED-OK\n")?;
+    fs::write(&path, "printf PASTED-ENTER")?;
     r.run(Op::Snapshot { pane: PaneId(0) })?;
+    r.server.run(&["copy-mode", "-t", "@0"])?;
     expect_ok(r.run(Op::Paste {
         window: WindowId(0),
         path: path.clone(),
+        enter: true,
     })?)?;
-    r.wait_for_output(b"PASTED-OK\r\n")?;
+    let pane_in_mode = r
+        .server
+        .run(&["display-message", "-p", "-t", "@0", "#{pane_in_mode}"])?;
+    if pane_in_mode.trim() != "0" {
+        return Err(
+            format!("paste with Enter left the pane in copy mode: {pane_in_mode:?}").into(),
+        );
+    }
+    r.wait_for_output(b"PASTED-ENTER\r\n")?;
     r.run(Op::Paste {
         window: WindowId(0),
         path: dir.join("missing.txt"),
+        enter: true,
     })?;
     r.run(Op::Paste {
         window: WindowId(99),
         path: path.clone(),
+        enter: true,
     })?;
     let secret = dir.join("secret.txt");
     fs::write(&secret, "SECRET\n")?;
@@ -769,6 +781,7 @@ fn paste_from(r: &mut Recorder, dir: &Path) -> Result<()> {
     let killed = r.run(Op::Paste {
         window: WindowId(0),
         path: secret,
+        enter: true,
     })?;
     r.server.run(&["set-hook", "-gu", "after-load-buffer"])?;
     if !matches!(

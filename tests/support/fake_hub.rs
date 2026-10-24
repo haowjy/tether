@@ -372,6 +372,13 @@ impl Hub {
                         .collect(),
                 })
             }
+            Command::PasteBuffer { window } => {
+                if self.locate(window.0, Some(session)).found.is_some() {
+                    Ok(Vec::new())
+                } else {
+                    Err(format!("can't find window: {window}"))
+                }
+            }
             Command::Other => Ok(Vec::new()),
         }
     }

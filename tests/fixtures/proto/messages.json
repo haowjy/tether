@@ -1,0 +1,11 @@
+{
+  "client": [
+    {"type":"paste","data":{"req":17,"watch":3,"text":"printf hello"}},
+    {"type":"paste","data":{"req":18,"watch":3,"text":"printf hello","enter":true}}
+  ],
+  "server": [
+    {"type":"pasted","data":{"req":17,"watch":3}},
+    {"type":"error","data":{"req":18,"watch":3,"code":"busy","message":"tmux is busy"}},
+    {"type":"error","data":{"req":19,"watch":3,"code":"tmux","message":"tmux stopped answering before confirming the paste; it may have been sent"}}
+  ]
+}

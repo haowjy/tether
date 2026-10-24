@@ -1,6 +1,6 @@
 import type { ClientMsg, ServerMsg, Size, WindowRef } from "../proto/generated/messages";
 import type { Frame } from "../proto/frames";
-import type { Host, TabPort } from "../net/host";
+import type { Host, PasteResult, TabPort } from "../net/host";
 import type { TerminalRenderer } from "../term";
 import { acceptsInsert, initialState, reduce, type ConnectionEvent, type ConnectionState } from "./connection";
 import type { InputEvent } from "../platform/types";
@@ -26,6 +26,8 @@ export interface TabOptions {
   onWatching?(watching: Watching): void;
   /** A message for the user, such as an upload that could not be inserted. */
   onNotice(text: string): void;
+  /** Paste replies are not retried; their result is shown by the terminal owner. */
+  onPasteResult?(result: PasteResult): void;
   random?: () => number;
 }
 
@@ -63,6 +65,7 @@ export class TabDriver {
       this.dispatch({ type: "rewatch" });
     },
     message: (msg) => { this.onMessage(msg); },
+    pasteResult: (result) => { this.opts.onPasteResult?.(result); },
     frame: (frame) => { this.onFrame(frame); },
   };
 
@@ -104,7 +107,17 @@ export class TabDriver {
   /** Input goes only to a bound watch; otherwise it is dropped and `false` returned. */
   input(events: InputEvent[]): boolean {
     if (!this.bound || this.watchId === null) return false;
-    this.sendAll(toMessages(this.watchId, events));
+    this.sendAll(toMessages(this.watchId, events, () => this.opts.host.nextReq()));
+    return true;
+  }
+
+  /** Sends one paste for a live watch; Enter, when requested, stays in the same tmux group. */
+  paste(text: string, enter = false): boolean {
+    if (!this.bound || this.watchId === null) return false;
+    this.send({
+      type: "paste",
+      data: { req: this.opts.host.nextReq(), watch: this.watchId, text, ...(enter ? { enter: true } : {}) },
+    });
     return true;
   }
 
@@ -282,7 +295,7 @@ export class TabDriver {
   private flushInserts(): void {
     if (!this.bound || this.watchId === null) return;
     for (const path of this.pendingInserts.splice(0)) {
-      this.sendAll(toMessages(this.watchId, [{ text: shellQuote(path) }]));
+      this.sendAll(toMessages(this.watchId, [{ text: shellQuote(path) }], () => this.opts.host.nextReq()));
     }
   }
 

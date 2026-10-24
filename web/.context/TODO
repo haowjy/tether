@@ -2,6 +2,6 @@ Must-do (client-architecture.md §11):
 
 - W5: move native/bridge.ts to platform/native/ at bridge version 2 (§5.10), then delete native/
   and its lint exemption in lint/rules.js.
-- L4 (daemon): an `input` or `paste` the daemon refuses (`busy`, `inputTooLarge`) names no request, so
-  `net/host.ts` drops the error. Once it does, a refused paste can say "Not pasted", and
-  screens/terminal/terminals.ts can stop leaning on its 8 ms input batching to survive a burst.
+- L4 (daemon): an `input` refusal (`busy`, `inputTooLarge`) names no request, so the client cannot
+  report which typed characters were refused. Paste refusals now carry their request id; the
+  terminal's short input batch remains necessary until input has its own result contract.

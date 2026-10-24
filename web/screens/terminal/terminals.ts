@@ -5,6 +5,7 @@
 // component should: one `TabDriver` per open tab, tmux's size from the stable box, desktop
 // direct input, and paste.
 import type { AppController } from "../../app/controller";
+import type { PasteResult } from "../../net/host";
 import type { HostClient } from "../../net/hosts";
 import { tabId } from "../../platform/tabKey";
 import type { InputEvent, Viewport } from "../../platform/types";
@@ -15,6 +16,7 @@ import { createXtermRenderer, type TerminalRenderer } from "../../term";
 import { TerminalSizer } from "../../term/size";
 import { Store } from "../../ui/store";
 import { terminalTheme } from "../../ui/theme";
+import { tabLabels } from "../../workspace/labels";
 import { shownTab } from "../../workspace/state";
 import { interceptClipboard, pasteRefusal, type Pasted } from "./paste";
 import styles from "./Terminal.module.css";
@@ -129,6 +131,11 @@ export class Terminals extends Store<TerminalsView> {
     return result;
   }
 
+  /** Sends one paste for a live tab. A phone line field passes `enter: true`. */
+  sendPaste(id: string, text: string, enter = false): boolean {
+    return this.drivers.get(id)?.paste(text, enter) ?? false;
+  }
+
   private sync(): void {
     const { viewport, workspace } = this.app.snapshot;
     if (viewport !== this.viewport) {
@@ -189,6 +196,7 @@ export class Terminals extends Store<TerminalsView> {
       onState: (state) => { this.stateChanged(id, hostId, window.server, state); },
       onWatching: () => { this.app.dispatch({ type: "watching", id }); },
       onNotice: (text) => { this.app.notify(text); },
+      onPasteResult: (result) => { this.pasteResult(id, result); },
     });
     this.drivers.set(id, driver);
   }
@@ -345,11 +353,23 @@ export class Terminals extends Store<TerminalsView> {
     if (pasted.kind === "text") {
       const refusal = pasteRefusal(pasted.text);
       if (refusal) this.app.notify(refusal);
-      // The daemon does not yet acknowledge a paste (L4): report sent, never inserted.
-      else if (!driver.input([{ paste: pasted.text }])) this.app.notify("Not pasted: the tab isn't connected");
+      else if (!this.sendPaste(id, pasted.text, false)) this.app.notify("Not sent: the tab isn't connected");
       return;
     }
     void this.pasteImage(id, pasted.file);
+  }
+
+  private pasteResult(id: string, result: PasteResult): void {
+    if (result.type === "pasted") return;
+    const tabs = this.app.snapshot.workspace.tabs;
+    const tab = tabLabels(tabs, (hostId) => this.app.hosts.byHostId(hostId)?.name ?? hostId)
+      .find((label) => label.id === id)?.full ?? "the closed tab";
+    if (result.type === "pasteLost") {
+      this.app.notify(`May not have been sent to ${tab}: the connection was lost before tmux confirmed the paste`);
+      return;
+    }
+    const label = result.data.code === "tmux" ? "May not have been sent" : "Not sent";
+    this.app.notify(`${label} to ${tab}: ${result.data.message}`);
   }
 
   /** Uploads the pasted image, then types its quoted path into the tab it was pasted in. */

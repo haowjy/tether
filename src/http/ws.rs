@@ -322,7 +322,12 @@ impl Conn<'_> {
                 self.own.push_back(encode(&ServerMsg::Pong { t }));
                 Ok(())
             }
-            ClientMsg::Paste { watch, text } => self.paste(watch, text).await,
+            ClientMsg::Paste {
+                req,
+                watch,
+                text,
+                enter,
+            } => self.paste(req, watch, text, enter.unwrap_or(false)).await,
             msg => {
                 if let Some((req, dir)) = start_dir(&msg) {
                     if let Err(cause) = self.check_dir(dir.to_owned()).await {
@@ -341,10 +346,10 @@ impl Conn<'_> {
     /// Writes the text to a 0600 file under a paste slot, on the auth lane, so the hub
     /// holds a path, not the text (daemon-core.md §3.4). The hub deletes the file, which
     /// frees the slot.
-    async fn paste(&mut self, watch: u32, text: String) -> Result<(), End> {
+    async fn paste(&mut self, req: u32, watch: u32, text: String, enter: bool) -> Result<(), End> {
         if text.len() > MAX_PASTE {
             self.refuse(
-                None,
+                Some(req),
                 Some(watch),
                 ErrorCode::InputTooLarge,
                 "a paste is at most 256 KiB",
@@ -353,7 +358,7 @@ impl Conn<'_> {
         }
         let Ok(slot) = self.ctx.pastes.clone().try_acquire_owned() else {
             self.refuse(
-                None,
+                Some(req),
                 Some(watch),
                 ErrorCode::Busy,
                 "too many pastes are waiting for tmux",
@@ -369,7 +374,7 @@ impl Conn<'_> {
         if let Err(cause) = written.unwrap_or_else(|busy| Err(io::Error::other(busy))) {
             warn!(%cause, path = %path.display(), "can't write a paste file");
             self.refuse(
-                None,
+                Some(req),
                 Some(watch),
                 ErrorCode::Busy,
                 "can't write the paste file",
@@ -377,7 +382,13 @@ impl Conn<'_> {
             return Ok(());
         }
         let file = PasteFile::new(path, slot, lanes.auth.clone());
-        self.hub(FromConn::Paste { watch, file }).await
+        self.hub(FromConn::Paste {
+            req,
+            watch,
+            enter,
+            file,
+        })
+        .await
     }
 
     /// The timer closes a socket the client has left silent.

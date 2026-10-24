@@ -95,8 +95,13 @@ pub enum ClientMsg {
     },
     /// Through `paste-buffer -p`, which brackets it if the pane asked for that.
     Paste {
+        req: u32,
         watch: u32,
         text: String,
+        /// Run Enter after the paste in the same tmux command group.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        enter: Option<bool>,
     },
     /// Scrollback rows by tmux line number (negative is history).
     History {
@@ -282,6 +287,11 @@ pub enum ServerMsg {
         window: WindowRef,
         session: SessionRef,
     },
+    /// tmux ran a paste and its optional Enter.
+    Pasted {
+        req: u32,
+        watch: u32,
+    },
     /// Refuses one request. A watch it names stays as it was.
     Error {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -394,6 +404,29 @@ pub enum ErrorCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paste_messages_match_the_protocol_fixture() {
+        // Rust serde round-trips only; web consumes the generated types, not this fixture.
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/proto/messages.json"))
+                .expect("message fixtures are JSON");
+        for value in fixture["client"].as_array().expect("client messages") {
+            let msg: ClientMsg = serde_json::from_value(value.clone()).expect("client message");
+            assert_eq!(
+                serde_json::to_value(msg).expect("serialize client message"),
+                *value
+            );
+        }
+        for value in fixture["server"].as_array().expect("server messages") {
+            let msg: ServerMsg = serde_json::from_value(value.clone()).expect("server message");
+            assert_eq!(
+                serde_json::to_value(msg).expect("serialize server message"),
+                *value
+            );
+        }
+        assert!(ClientMsg::decode(r#"{"type":"paste","data":{"watch":1,"text":"x"}}"#).is_err());
+    }
 
     #[test]
     fn unknown_types_are_reported_and_bad_known_ones_fail() {

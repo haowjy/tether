@@ -32,7 +32,12 @@ impl State {
     pub(super) fn conn(&mut self, conn: ConnId, msg: FromConn) {
         match msg {
             FromConn::Client(msg) => self.client_msg(conn, msg),
-            FromConn::Paste { watch, file } => self.paste(conn, watch, file),
+            FromConn::Paste {
+                req,
+                watch,
+                enter,
+                file,
+            } => self.paste(conn, req, watch, enter, file),
             FromConn::Credit { bytes } => {
                 if let Some(state) = self.conns.get_mut(&conn) {
                     state.outstanding = state.outstanding.saturating_sub(u64::from(bytes));
@@ -240,7 +245,14 @@ impl State {
         self.request(owner, tag, op, Work::Input { conn, watch });
     }
 
-    pub(super) fn paste(&mut self, conn: ConnId, watch: u32, file: PasteFile) {
+    pub(super) fn paste(
+        &mut self,
+        conn: ConnId,
+        req: u32,
+        watch: u32,
+        enter: bool,
+        file: PasteFile,
+    ) {
         if !self.conns.contains_key(&conn) {
             return self.effects.push(Effect::RemoveFile { file });
         }
@@ -248,15 +260,26 @@ impl State {
             Ok(target) => target,
             Err(refusal) => {
                 self.effects.push(Effect::RemoveFile { file });
-                return self.refuse_for(conn, None, watch, refusal);
+                return self.refuse_for(conn, Some(req), watch, refusal);
             }
         };
         let tag = self.next_tag();
         let op = Op::Paste {
             window: key.window,
             path: file.path.clone(),
+            enter,
         };
-        self.request(owner, tag, op, Work::Paste { conn, watch, file });
+        self.request(
+            owner,
+            tag,
+            op,
+            Work::Paste {
+                conn,
+                watch,
+                req,
+                file,
+            },
+        );
     }
 
     pub(super) fn history(&mut self, conn: ConnId, req: u32, watch: u32, start: i32, end: i32) {

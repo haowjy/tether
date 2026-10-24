@@ -104,7 +104,11 @@ pub fn op(op: &Op, tag: Tag) -> Result<Group, TmuxError> {
         )),
         Op::History { pane, start, end } => history(*pane, *start, *end)?,
         Op::Input { window, items } => input(*window, items)?,
-        Op::Paste { window, path } => {
+        Op::Paste {
+            window,
+            path,
+            enter,
+        } => {
             let path = path
                 .to_str()
                 .ok_or(TmuxError::BadRequest("paste path is not UTF-8"))?;
@@ -112,10 +116,19 @@ pub fn op(op: &Op, tag: Tag) -> Result<Group, TmuxError> {
             let buffer = paste_buffer(tag);
             // `-d` deletes the buffer only when the paste succeeds; after a failure
             // the session sends `delete_paste_buffer`.
-            Group::of(&[
+            let mut commands = Vec::new();
+            if *enter {
+                // Enter would otherwise be handled by copy mode instead of the pane's program.
+                commands.push(format!("copy-mode -q -t {window}"));
+            }
+            commands.extend([
                 format!("load-buffer -b {buffer} {path}"),
                 format!("paste-buffer -p -d -b {buffer} -t {window}"),
-            ])
+            ]);
+            if *enter {
+                commands.push(format!("send-keys -t {window} Enter"));
+            }
+            Group::of(&commands)
         }
     })
 }

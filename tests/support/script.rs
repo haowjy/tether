@@ -40,9 +40,14 @@ pub fn encode(offset: usize, tag: Tag, op: &Op) -> String {
             }
             line
         }
-        Op::Paste { window, path } => format!(
-            "paste {window} {}",
-            hex(path.to_str().expect("UTF-8 paste path").as_bytes())
+        Op::Paste {
+            window,
+            path,
+            enter,
+        } => format!(
+            "paste {window} {}{}",
+            hex(path.to_str().expect("UTF-8 paste path").as_bytes()),
+            if *enter { " enter" } else { "" }
         ),
     };
     format!("{offset} {} {op}", tag.0)
@@ -108,10 +113,16 @@ pub fn decode(line: &str) -> Request {
                 .collect();
             Op::Input { window, items }
         }
-        "paste" => Op::Paste {
-            window: window(next()),
-            path: PathBuf::from(String::from_utf8(unhex(next())).expect("UTF-8 path")),
-        },
+        "paste" => {
+            let window = window(next());
+            let path = PathBuf::from(String::from_utf8(unhex(next())).expect("UTF-8 path"));
+            let enter = words.next() == Some("enter");
+            Op::Paste {
+                window,
+                path,
+                enter,
+            }
+        }
         other => panic!("unknown script op {other}"),
     };
     Request { offset, tag, op }

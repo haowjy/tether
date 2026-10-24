@@ -15,6 +15,8 @@ pub enum Command {
     },
     /// `capture-pane -p` of a pane; tmux fails it when the pane is gone.
     Capture { pane: PaneId, rows: Capture },
+    /// `paste-buffer` targeted at a window.
+    PasteBuffer { window: super::WindowId },
     /// Anything else tether sends, which prints nothing.
     Other,
 }
@@ -44,6 +46,11 @@ fn command(words: &[String]) -> Command {
         words.get(at + 1)
     };
     match words.first().map(String::as_str) {
+        Some("paste-buffer") => Command::PasteBuffer {
+            window: value("-t")
+                .and_then(|window| super::WindowId::parse(window.as_bytes()))
+                .unwrap_or_else(|| panic!("paste-buffer without a window: {words:?}")),
+        },
         Some("display-message") => Command::Display {
             target: value("-t").cloned(),
             format: words.last().cloned().unwrap_or_default(),

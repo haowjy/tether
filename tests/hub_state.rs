@@ -618,6 +618,29 @@ fn user_requests_stop_at_the_threshold_and_maintenance_continues() {
         MAX_IN_FLIGHT - USER_IN_FLIGHT,
         "inputs past {USER_IN_FLIGHT} in flight are refused"
     );
+    let before_paste = hub.lines(client).len();
+    let paste_file = hub.paste_file("/run/over-limit");
+    hub.input(Input::Conn(
+        conn,
+        FromConn::Paste {
+            req: 77,
+            watch: 1,
+            enter: true,
+            file: paste_file,
+        },
+    ));
+    assert_eq!(
+        hub.lines(client).len(),
+        before_paste,
+        "refused paste sent no tmux commands"
+    );
+    assert_eq!(hub.removed.last(), Some(&PathBuf::from("/run/over-limit")));
+    assert_eq!(
+        hub.take_json(conn),
+        [
+            json!({"type":"error","data":{"req":77,"watch":1,"code":"busy","message":"tmux is busy"}})
+        ]
+    );
     // A resize still goes out.
     hub.send(
         conn,
@@ -696,42 +719,128 @@ fn low_budget_limit_names_the_sessions_holding_the_slot() {
 }
 
 #[test]
-fn every_paste_path_removes_its_file() {
+fn every_paste_path_removes_its_file_and_answers_req_once() {
     let mut hub = Hub::new();
     let conn = hub.connect();
     // Before `watching`: busy.
     hub.watch(conn, 1, 0);
     let file = hub.paste_file("/run/early");
-    hub.input(Input::Conn(conn, FromConn::Paste { watch: 1, file }));
+    hub.input(Input::Conn(
+        conn,
+        FromConn::Paste {
+            req: 11,
+            watch: 1,
+            enter: true,
+            file,
+        },
+    ));
     assert_eq!(hub.removed, [PathBuf::from("/run/early")]);
     assert_eq!(
-        hub.take_json(conn)
-            .last()
-            .map(|value| value["data"]["code"].clone()),
-        Some(json!("busy"))
+        hub.take_json(conn),
+        [
+            json!({"type":"error","data":{"req":11,"watch":1,"code":"busy","message":"the window isn't connected yet"}})
+        ]
     );
-    hub.settle();
-    // Answered: removed on its reply.
+    hub.settle(); // the watch is now bound
+    hub.take_json(conn);
+
+    // Successful paste and Enter receive one confirmation.
     let file = hub.paste_file("/run/ok");
-    hub.input(Input::Conn(conn, FromConn::Paste { watch: 1, file }));
+    hub.input(Input::Conn(
+        conn,
+        FromConn::Paste {
+            req: 12,
+            watch: 1,
+            enter: true,
+            file,
+        },
+    ));
     assert_eq!(hub.removed.len(), 1);
     hub.settle();
+    assert_eq!(
+        hub.take_json(conn),
+        [json!({"type":"pasted","data":{"req":12,"watch":1}})]
+    );
     assert_eq!(hub.removed.last(), Some(&PathBuf::from("/run/ok")));
-    // In flight when its client ends.
+
+    // A tmux failure is uncertain, but still carries the originating request.
+    hub.windows.remove(&0);
+    let file = hub.paste_file("/run/tmux-error");
+    hub.input(Input::Conn(
+        conn,
+        FromConn::Paste {
+            req: 13,
+            watch: 1,
+            enter: true,
+            file,
+        },
+    ));
+    hub.settle();
+    assert_eq!(
+        hub.take_json(conn),
+        [
+            json!({"type":"error","data":{"req":13,"watch":1,"code":"tmux","message":"tmux: can't find window: @0"}})
+        ]
+    );
+
+    // Unknown watches are refused and their paste file is released.
+    let file = hub.paste_file("/run/unknown");
+    hub.input(Input::Conn(
+        conn,
+        FromConn::Paste {
+            req: 14,
+            watch: 9,
+            enter: true,
+            file,
+        },
+    ));
+    assert_eq!(
+        hub.take_json(conn),
+        [
+            json!({"type":"error","data":{"req":14,"watch":9,"code":"badRequest","message":"no such watch"}})
+        ]
+    );
+
+    // A control client that exits before the reply gets the uncertain-send answer;
+    // the paste is never moved to its replacement client.
     let file = hub.paste_file("/run/lost");
-    hub.input(Input::Conn(conn, FromConn::Paste { watch: 1, file }));
+    hub.input(Input::Conn(
+        conn,
+        FromConn::Paste {
+            req: 15,
+            watch: 1,
+            enter: true,
+            file,
+        },
+    ));
     let client = hub.client(0);
     hub.exited(client);
+    assert_eq!(
+        hub.take_json(conn),
+        [
+            json!({"type":"error","data":{"req":15,"watch":1,"code":"tmux","message":"tmux stopped answering before confirming the paste; it may have been sent"}})
+        ]
+    );
     assert_eq!(hub.removed.last(), Some(&PathBuf::from("/run/lost")));
-    // For an unknown watch, or a connection that has gone.
-    let file = hub.paste_file("/run/unknown");
-    hub.input(Input::Conn(conn, FromConn::Paste { watch: 9, file }));
     hub.input(Input::Conn(conn, FromConn::Closed));
     let file = hub.paste_file("/run/closed");
-    hub.input(Input::Conn(conn, FromConn::Paste { watch: 1, file }));
+    hub.input(Input::Conn(
+        conn,
+        FromConn::Paste {
+            req: 16,
+            watch: 1,
+            enter: true,
+            file,
+        },
+    ));
     assert_eq!(
-        hub.removed[3..],
-        [PathBuf::from("/run/unknown"), PathBuf::from("/run/closed")]
+        hub.removed[2..],
+        [
+            PathBuf::from("/run/tmux-error"),
+            PathBuf::from("/run/unknown"),
+            PathBuf::from("/run/lost"),
+            PathBuf::from("/run/closed")
+        ]
     );
     assert_eq!(hub.slots.available_permits(), 4);
 }

@@ -23,7 +23,11 @@ export type ClientMsg = { "type": "hello", "data": { protocol: number, client: C
   | { "type": "resize", "data": { watch: number, size: Size, } }
   | { "type": "resync", "data": { watch: number, } }
   | { "type": "input", "data": { watch: number, items: Array<InputItem>, } }
-  | { "type": "paste", "data": { watch: number, text: string, } }
+  | { "type": "paste", "data": { req: number, watch: number, text: string,
+/**
+ * Run Enter after the paste in the same tmux command group.
+ */
+enter?: boolean, } }
   | { "type": "history", "data": { req: number, watch: number, start: number, end: number, } }
   | { "type": "listSessions", "data": { req: number, } }
   | { "type": "newWindow", "data": { req: number, session: SessionRef, name?: string,
@@ -67,6 +71,7 @@ historySize?: number, lines: Array<Base64>,
  */
 wraps: Base64, } }
   | { "type": "created", "data": { req: number, window: WindowRef, session: SessionRef, } }
+  | { "type": "pasted", "data": { req: number, watch: number, } }
   | { "type": "error", "data": { req?: number, watch?: number, code: ErrorCode, message: string, } };
 
 /**

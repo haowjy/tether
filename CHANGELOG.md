@@ -13,6 +13,9 @@ version section on release.
 - Terminal: a tab strip and terminal surface sized from the window, desktop keyboard input
   by tmux key name (Shift+Enter, named keys, IME), paste and image paste, a status band
   with Retry, and a "session limit" state that shows the daemon's message and retries.
+- Terminal paste now reports "Not sent" for refusals and "May not have been sent" when tmux
+  or the connection stops before confirming it; paste is never retried automatically. A
+  paste with Enter quits pane modes first so Enter reaches the program.
 - Files: browse folders, preview code, Markdown, images, video and audio, upload several
   files with progress, and "Insert path into <tab>" for an upload or an open file. Adding a
   root now means editing `config.toml` on the host.

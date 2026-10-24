@@ -286,6 +286,7 @@ pub enum Op {
     Paste {
         window: WindowId,
         path: PathBuf,
+        enter: bool,
     },
 }
 

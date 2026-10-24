@@ -95,7 +95,12 @@ pub enum FromConn {
     /// handles itself.
     Client(ClientMsg),
     /// A paste whose text the connection wrote to a file under a paste slot.
-    Paste { watch: u32, file: PasteFile },
+    Paste {
+        req: u32,
+        watch: u32,
+        enter: bool,
+        file: PasteFile,
+    },
     /// Charged bytes written to the socket or discarded since the last `Credit`.
     Credit { bytes: u32 },
     /// The socket is gone.

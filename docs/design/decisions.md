@@ -3146,8 +3146,9 @@ variations canvas.
 
 - **Decided:** 2026-10-24, design (p110, revised in p112).
 - **What:** the line goes as one `paste { req, watch, text, enter: true }`. The daemon
-  appends `send-keys Enter` to the paste's own tmux command list, which tmux skips if
-  the paste fails, and answers every paste exactly once: `pasted { req, watch }`, or
+  starts that tmux command list with `copy-mode -q` so the phone's latest action leaves
+  any pane mode, then pastes and sends `Enter`, which tmux skips if the paste fails. It
+  answers every paste exactly once: `pasted { req, watch }`, or
   `error { req, watch, code }`, also when the connection refuses it itself
   ([daemon-core.md](daemon-core.md#53-json-messages)). A refused or unanswered paste
   puts the line back into its tab's draft. A paste whose control client exited before
@@ -3158,9 +3159,12 @@ variations canvas.
   dropped by the client, the Enter behind it is accepted, and the shell runs whatever
   was already on the prompt line while the field has cleared the user's line.
 - **Why:** one message, no extra round trip on a slow link, and no window where the
-  Enter can run without its paste. A pane that asked for bracketed paste sees the line
-  delimited and the Enter outside it, so the Enter submits.
-- **Rejected:** the client sending `{ key: "Enter" }` after `pasted` (p110's first
+  Enter can run without its paste. Clearing a laptop's copy mode follows last-active-wins:
+  the user's phone action takes effect. A pane that asked for bracketed paste sees the
+  line delimited and the Enter outside it, so the Enter submits.
+- **Rejected:** preserving another client's copy mode for a phone paste with Enter (then
+  tmux accepts Enter in the mode while the daemon reports the line sent); the client
+  sending `{ key: "Enter" }` after `pasted` (p110's first
   version: a round trip per line, and the Enter can still meet a different prompt if
   something else typed in between; it stays the fallback if an agent CLI absorbs an
   immediate Enter); the text as literal `input` keystrokes (an agent CLI may read the
