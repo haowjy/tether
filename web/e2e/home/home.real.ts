@@ -74,13 +74,13 @@ for (const version of VERSIONS) {
     });
 
     test("warns that another terminal is attached", async ({ page }) => {
-      const detach = await stack.attach("alpha");
+      const laptop = await stack.attach("alpha");
       try {
         await page.goto(`${stack.url}/#/`);
         await sessionRow(page, "alpha").click();
         await expect(page.getByText("Another terminal is attached. Opening may resize it.")).toBeVisible();
       } finally {
-        detach();
+        laptop.detach();
       }
     });
 

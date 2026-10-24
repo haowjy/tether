@@ -56,8 +56,8 @@ export interface SizerOptions {
 
 /**
  * Turns the viewport, the chrome and the cell into tmux's size. Only these inputs change
- * it, so a keyboard opening never does. `claim` is always current; `onChange` fires on the
- * trailing edge, and not at all for a size a consumer already claimed.
+ * it, so a keyboard opening never does. `sizeForWatch` is always current; `onChange` fires on the
+ * trailing edge, and not at all for a size a `watch` already carried.
  */
 export class TerminalSizer {
   private viewport: Viewport | null = null;
@@ -74,7 +74,7 @@ export class TerminalSizer {
   }
 
   /** The size to watch with: the current one, which the trailing `onChange` will not repeat. */
-  claim(): Size {
+  sizeForWatch(): Size {
     const size = this.current ?? { cols: 80, rows: 24 };
     this.applied = size;
     return size;
@@ -104,7 +104,7 @@ export class TerminalSizer {
     this.current = next;
     if (before?.cols === next.cols && before.rows === next.rows) return;
     clearTimeout(this.timer);
-    // The first measurement is claimed by the first `watch`; later ones settle first.
+    // The first measurement goes out in the first `watch`; later ones settle first.
     if (before === null) return;
     this.timer = setTimeout(() => {
       const size = this.current;

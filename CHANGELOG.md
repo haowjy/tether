@@ -11,9 +11,13 @@ version section on release.
   each tab keeps its own draft across tab switches and reloads, a refused line comes back
   marked "Not sent", and the tab chip opens a sheet with the open tabs, every session and its
   windows, search and New session.
-- The daemon tracks claims on watched-window sizes: a watch or accepted input, paste,
-  or resize claims its size; a size-relevant change from another tmux client clears
-  the vote without dropping the watch.
+- A window now takes the size of whichever terminal acted on it last. Opening or returning to
+  a tab, typing, pasting and rotating size it to the phone; typing in another terminal (the
+  laptop) takes it back, and a reconnect after a network blip leaves it there. A window sized
+  for another terminal is drawn at the phone's own font from the left edge, wider content cut
+  off at the right and taller content following the cursor; after a second the terminal's top
+  edge says "Sized for another terminal" with Fit, which sizes the window to the phone. A
+  smaller window sits in the top-left corner.
 - Home, the session picker and Settings: open tabs, a search over sessions and windows,
   New session and New window (with an optional start directory), every listing state
   (loading, offline, refused, no tmux server, stale with Retry), and Settings with Remove

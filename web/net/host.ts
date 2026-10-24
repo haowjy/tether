@@ -202,11 +202,10 @@ export class Host {
   /** `lifecycle background`: close cleanly so the daemon frees the window at once. */
   background(): void {
     if (this.status === "background") return;
-    const wasUp = this.status === "open" || this.status === "connecting";
     this.stop("background");
     this.failPastes();
     this.failAll(new RequestError("app in background", "background"));
-    if (wasUp) for (const tab of this.tabs) tab.paused();
+    for (const tab of this.tabs) tab.paused();
   }
 
   /** `lifecycle active`: reconnect at once; tabs watch again on welcome. */

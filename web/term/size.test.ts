@@ -51,11 +51,11 @@ describe("TerminalSizer", () => {
     expect(sizer.measured).toBe(false);
   });
 
-  it("claims the first size for the first watch and sends only later changes, after they settle", () => {
+  it("hands the first size to the first watch and sends only later changes, after they settle", () => {
     const { sizer, changes } = setup();
     sizer.setViewport(vp());
     sizer.setChrome(chrome);
-    expect(key(sizer.claim())).toBe("56x47");
+    expect(key(sizer.sizeForWatch())).toBe("56x47");
     vi.advanceTimersByTime(500);
     expect(changes).toEqual([]);
     sizer.setViewport(vp({ width: 852, stableHeight: 393, safeArea: { top: 0, right: 59, bottom: 21, left: 59 } }));
@@ -70,7 +70,7 @@ describe("TerminalSizer", () => {
     const still = { top: 0, right: 0, bottom: 0, left: 0 };
     sizer.setViewport(vp({ width: 800, safeArea: still }));
     sizer.setChrome({ x: 56, y: 44 });
-    sizer.claim();
+    sizer.sizeForWatch();
     for (let width = 820; width <= 1200; width += 20) {
       sizer.setViewport(vp({ width, safeArea: still }));
       vi.advanceTimersByTime(20);
@@ -83,7 +83,7 @@ describe("TerminalSizer", () => {
     const { sizer, changes } = setup();
     sizer.setViewport(vp());
     sizer.setChrome(chrome);
-    sizer.claim();
+    sizer.sizeForWatch();
     sizer.setViewport(vp({ visibleHeight: 400, keyboard: true }));
     sizer.setViewport(vp());
     vi.advanceTimersByTime(500);
@@ -96,7 +96,7 @@ describe("TerminalSizer", () => {
     sizer.setChrome(chrome);
     setCell(cell);
     sizer.remeasure();
-    sizer.claim();
+    sizer.sizeForWatch();
     setCell({ width: 9, height: 18 });
     sizer.remeasure();
     sizer.remeasure(); // same size: nothing more to send

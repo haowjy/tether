@@ -32,11 +32,17 @@ export interface Stack {
   /** Stops the daemon (tmux keeps running) and starts it again on the same state: a restart under a connected page. */
   stopDaemon(): Promise<void>;
   startDaemon(): Promise<void>;
-  /** A terminal client attached to `session`, as someone's own terminal would be, once tmux lists it; returns the way to detach. */
-  attach(session: string): Promise<() => void>;
+  /** A terminal client attached to `session`, as someone's own terminal would be (a pty of `size`, 80x24 by default), once tmux lists it. */
+  attach(session: string, size?: { cols: number; rows: number }): Promise<Laptop>;
   /** Destroys every open `/ws` connection at the front proxy, and says how many: a socket kill. */
   dropSockets(): number;
   stop(): Promise<void>;
+}
+
+/** Someone's own terminal: typing into it makes it the client that acted last. */
+export interface Laptop {
+  type(text: string): void;
+  detach(): void;
 }
 
 export function tmuxBinary(version: TmuxVersion): string {
@@ -195,12 +201,20 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     tmux,
     stopDaemon,
     startDaemon,
-    attach: async (session) => {
-      const child = spawn("script", ["-q", "/dev/null", program, "-L", socketName, "attach", "-t", session], { env, stdio: "ignore" });
-      const detach = (): void => { child.kill(); };
+    attach: async (session, { cols, rows } = { cols: 80, rows: 24 }) => {
+      // The pty's size is the terminal's: tmux sizes the window by it.
+      const attach = `stty cols ${String(cols)} rows ${String(rows)}; exec '${program}' -L '${socketName}' attach -t '${session}'`;
+      // `script` refuses a socket for stdin, which is what a Node pipe is: `cat` hands it a real pipe.
+      const script = process.platform === "darwin" ? `script -q /dev/null sh -c "${attach}"` : `script -qfec "${attach}" /dev/null`;
+      // Its own process group, so detaching ends cat, script and the tmux client together.
+      const child = spawn("sh", ["-c", `cat | ${script}`], { env: { ...env, TERM: "xterm-256color" }, stdio: ["pipe", "ignore", "ignore"], detached: true });
+      const detach = (): void => {
+        if (child.pid !== undefined) try { process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
+      };
+      const laptop: Laptop = { type: (text) => { child.stdin.write(text); }, detach };
       // The client registers a moment after the spawn, and a listing taken before it says nothing is attached.
       for (let tries = 0; tries < 100; tries++) {
-        if (tmux("list-clients", "-t", session, "-F", "#{client_control_mode}").split("\n").includes("0")) return detach;
+        if (tmux("list-clients", "-t", session, "-F", "#{client_control_mode}").split("\n").includes("0")) return laptop;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       detach();

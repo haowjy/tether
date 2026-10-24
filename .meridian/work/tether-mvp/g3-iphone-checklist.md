@@ -38,3 +38,17 @@ scratch tmux session with two windows, not your own. Portrait first, then landsc
     behaves after zooming back.
 15. **Autocorrect before Return.** In the line field type a misspelling that autocorrects, press
     Return, and check the sent text is the corrected one (or at least matches what the field showed).
+16. **A laptop-sized window on the phone.** Attach a 250×70 laptop terminal to a session, open it
+    on the phone, then type in the laptop. The phone draws the pane at its own font from the left
+    edge (right side cut off, no horizontal pan), the cursor row stays in view above the dock and
+    the keyboard (a command that fills the pane puts the cursor on its last row), and scrolling into
+    history shows the top rows. Repeat with 120×200 (very tall). It renders without a blank or a
+    white canvas, and Safari does not reload the page: note Web Content memory (Safari Web
+    Inspector > Timelines > Memory, or Settings > Analytics Data for `WebContent`) before and
+    during.
+17. **Fit and the band.** One second after the laptop types the band reads "Sized for another
+    terminal" with Fit. Tap Fit: `tmux display -p '#{window_width}x#{window_height}'` is the phone's
+    size, the band goes, and the laptop shows the smaller window. Typing on the phone, pasting and
+    rotating also take the window. Lock the phone and unlock it on that tab: it claims again. Airplane
+    mode off/on while the laptop holds the window: the window stays at the laptop's size and the
+    band stays.

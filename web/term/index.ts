@@ -62,6 +62,11 @@ export interface TerminalRenderer {
   onPromptLine(listener: (line: PromptLine | null) => void): void;
   /** A density change: the cell, and so tmux's size, follow it. */
   setFont(fontFamily: string, fontSize: number): void;
+  /**
+   * WebGL when `on` and the context can be had, else the DOM renderer. A pane larger than the tab
+   * turns it off: the canvas would be the pane's size in device pixels, past WebKit's limit.
+   */
+  setWebgl(on: boolean): void;
   /** A fallback font arrived after first paint: drop the glyph atlas so its glyphs draw. */
   refreshGlyphs(): void;
   /** Points desktop direct input (xterm's own textarea, under the key-handler contract) at a sink, or turns stdin off with `null`. */

@@ -30,6 +30,8 @@ export interface TabStatus {
   downSince: number;
   /** When the next automatic retry fires, null if none is due. */
   retryAt: number | null;
+  /** The pane has been larger than this tab's size for {@link SIZED_FOR_OTHER_MS}: another terminal holds the window. */
+  sizedForOther: boolean;
 }
 
 interface TerminalsView {
@@ -40,6 +42,11 @@ interface TerminalsView {
 
 /** A few frames for xterm to paint and the cell to become measurable. */
 const MEASURE_FRAMES = 30;
+/**
+ * A pane larger than the tab shows the band only after this long, so a rotation's debounce, a
+ * claim's round trip and a first snapshot that predates the vote don't flash it.
+ */
+const SIZED_FOR_OTHER_MS = 1000;
 /**
  * Keys typed within this long go as one `input` message. The daemon refuses a burst of
  * separate messages with `busy` once enough are in flight, and a refused input has no reply
@@ -75,6 +82,8 @@ export class Terminals extends Store<TerminalsView> {
   /** tether's own input on a phone browser; created the first time it is needed. */
   private owned: HTMLTextAreaElement | null = null;
   private panArea: number | null = null;
+  /** The timers that will say in the band that a tab's pane is larger than its size. */
+  private readonly bandTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Takes a paste's answer if it is for a line the dock sent; what it declines becomes a notice. */
   private claimPasteResult: (id: string, result: PasteResult) => boolean = () => false;
   /** The armed ctrl or alt of the touch sources; it types through this surface. */
@@ -120,6 +129,11 @@ export class Terminals extends Store<TerminalsView> {
     this.app.dispatch({ type: "activated", id });
     const status = this.snapshot.tabs[id];
     if (status?.state.kind === "reconnecting" || status?.state.kind === "limited") this.drivers.get(id)?.nudge();
+  }
+
+  /** The band's Fit: sizes the window to this tab and so takes it from the other terminal. */
+  fit(id: string): void {
+    this.drivers.get(id)?.fit();
   }
 
   /** The tab's own Retry. */
@@ -207,6 +221,8 @@ export class Terminals extends Store<TerminalsView> {
     for (const [id, driver] of this.drivers) {
       if (workspace.tabs.some((t) => t.id === id)) continue;
       this.drivers.delete(id);
+      clearTimeout(this.bandTimers.get(id));
+      this.bandTimers.delete(id);
       if (this.painted === id) this.painted = null;
       driver.close();
       this.update({ tabs: Object.fromEntries(Object.entries(this.snapshot.tabs).filter(([key]) => key !== id)) });
@@ -218,6 +234,21 @@ export class Terminals extends Store<TerminalsView> {
       else driver.cover();
     }
     this.showPainted();
+  }
+
+  private paneLarger(id: string, larger: boolean): void {
+    clearTimeout(this.bandTimers.get(id));
+    this.bandTimers.delete(id);
+    if (larger) {
+      this.bandTimers.set(id, setTimeout(() => { this.setSizedForOther(id, true); }, SIZED_FOR_OTHER_MS));
+    } else {
+      this.setSizedForOther(id, false);
+    }
+  }
+
+  private setSizedForOther(id: string, sizedForOther: boolean): void {
+    const status = this.snapshot.tabs[id];
+    if (status && status.sizedForOther !== sizedForOther) this.update({ tabs: { ...this.snapshot.tabs, [id]: { ...status, sizedForOther } } });
   }
 
   /** On Terminal the surface shows a tab only once its own snapshot has painted; off Terminal it keeps what it holds, for the return, unless no tab is left. */
@@ -235,17 +266,24 @@ export class Terminals extends Store<TerminalsView> {
       renderer: {
         output: (bytes) => { this.renderer?.output(bytes); },
         snapshot: async (snapshot) => {
+          // The renderer follows the snapshot's pane alone, never the tab's own resizes: DOM before xterm grows to a pane larger
+          // than the box (a canvas that size runs the phone out of memory), WebGL again only once a fitting pane is in place.
+          const box = this.sizer.sizeForWatch();
+          const large = snapshot.cols > box.cols || snapshot.rows > box.rows;
+          if (large) this.renderer?.setWebgl(false);
           await this.renderer?.snapshot(snapshot);
+          if (!large) this.renderer?.setWebgl(true);
           // The surface now holds this tab's content, whichever tab is on screen by the time xterm finished parsing.
           this.painted = id;
           this.showPainted();
         },
       },
       host: client.socket,
-      size: () => this.sizer.claim(),
+      size: () => this.sizer.sizeForWatch(),
       // A tab never watches before the box is measured: tmux must not see the 80x24 placeholder.
       covered: true,
       onState: (state) => { this.stateChanged(id, hostId, window.server, state); },
+      onLarger: (larger) => { this.paneLarger(id, larger); },
       onWatching: () => { this.app.dispatch({ type: "watching", id }); },
       onNotice: (text) => { this.app.notify(text); },
       onPasteResult: (result) => { this.pasteResult(id, result); },
@@ -261,6 +299,7 @@ export class Terminals extends Store<TerminalsView> {
       state,
       downSince: down ? (before?.state.kind !== "live" && before ? before.downSince : now) : now,
       retryAt: state.kind === "reconnecting" && state.retryInMs !== null ? now + state.retryInMs : state.kind === "limited" ? now + state.retryInMs : null,
+      sizedForOther: before?.sizedForOther ?? false,
     };
     this.update({ tabs: { ...this.snapshot.tabs, [id]: status } });
     if (state.kind !== "closed") return;

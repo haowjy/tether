@@ -1,0 +1,5 @@
+# Review lane PS-web (uncommitted web/ changes): window size follows the client that acted last, phone side
+
+Review the code as it stands. Implementer report: `meridian spawn show p135`. Spec: `.meridian/work/tether-mvp/build-plan.md` PS-web text; client-architecture.md §2, §5.4, §8.2; browser-behaviors.md; daemon-core.md §3.6–3.7 (claims; daemon side committed in 7073a33, review `meridian spawn show p126`).
+Risks: claim correctness — user acts claim (tab on screen, return from background, input, paste, Fit) and automatic re-watches never claim, and no automatic `resize` follows a re-watch (else the "propped phone" steals the laptop's window); judgment calls in the report (claimNext cleared on bind, Retry as automatic) — are they right per spec?; renderer switch WebGL↔DOM (leaks, lost state, flashing, memory on a 250×70 pane); band debounce and hide rules; cursor pan / history anchoring with the dock's pan area and keyboard inset; e2e stack changes (`script` via `cat |`) robust on Linux CI too; anything that breaks desktop.
+Findings with severity; say whether anything blocks commit. Edit nothing.

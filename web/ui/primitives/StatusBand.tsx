@@ -3,7 +3,7 @@ import { Button } from "./Button";
 import styles from "./StatusBand.module.css";
 
 interface StatusBandProps {
-  tone: "reconnecting" | "error";
+  tone: "reconnecting" | "error" | "notice";
   text: string;
   hint?: string | null | undefined;
   action?: { label: string; onAction: () => void } | null | undefined;
@@ -11,7 +11,7 @@ interface StatusBandProps {
 
 /**
  * A compact band on the terminal's top edge for reconnecting, limited and failed tabs, with
- * Retry. It floats and reserves no space, so showing it never resizes tmux.
+ * Retry, and for a window sized for another terminal, with Fit. It floats and reserves no space, so showing it never resizes tmux.
  */
 export function StatusBand({ tone, text, hint, action }: StatusBandProps) {
   return (

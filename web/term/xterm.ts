@@ -39,12 +39,13 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
 
   let recreations = 0;
   let webgl: WebglAddon | undefined;
+  let webglWanted = true;
   const attachWebgl = (): void => {
     try {
       const addon = new WebglAddon();
       addon.onContextLoss(() => {
         addon.dispose(); // xterm falls back to the DOM renderer meanwhile
-        if (webgl === addon && recreations++ < MAX_WEBGL_RECREATIONS) attachWebgl();
+        if (webgl === addon && webglWanted && recreations++ < MAX_WEBGL_RECREATIONS) attachWebgl();
       });
       term.loadAddon(addon);
       webgl = addon;
@@ -63,20 +64,6 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     },
     resize: (cols, rows) => { term.resize(cols, rows); },
   });
-  const scrollListeners: ((scrolledUp: boolean) => void)[] = [];
-  let scrolledUp = false;
-  // New output while scrolled up moves the newest line away without scrolling the view,
-  // so writes are checked as well as scrolls.
-  const checkScroll = (): void => {
-    const buffer = term.buffer.active;
-    const up = buffer.viewportY < buffer.baseY;
-    if (up === scrolledUp) return;
-    scrolledUp = up;
-    for (const listener of scrollListeners) listener(up);
-  };
-  term.onScroll(checkScroll);
-  term.onWriteParsed(checkScroll);
-
   const cellSize = (): CellSize | null => {
     // The screen element is exactly cols × rows cells, so this needs no private API.
     const screen = term.element?.querySelector(".xterm-screen");
@@ -88,19 +75,35 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
   // The keyboard shortens what is visible but never tmux: the terminal keeps its rows and
   // slides so the cursor row stays in view. The pan area is what remains visible of the
   // terminal (the screen sets it); the browser's container never shrinks for the keyboard.
+  // In history the pan anchors to the top, so no row is skipped; the cursor lives at the bottom.
   // The slide follows a resize with the keyboard's motion; a cursor move jumps, as text does.
   let panned = 0;
+  let scrolledUp = false;
   let panArea: number | null = null;
   const pan = (animate: boolean): void => {
     const element = term.element;
     const cell = cellSize();
     if (!element || !cell) return;
-    const next = cursorPan(term.buffer.active.cursorY, term.rows, cell.height, panArea ?? container.clientHeight);
+    const next = scrolledUp ? 0 : cursorPan(term.buffer.active.cursorY, term.rows, cell.height, panArea ?? container.clientHeight);
     if (next === panned) return;
     panned = next;
     element.style.transition = animate ? "" : "none";
     element.style.transform = next ? `translateY(${String(-next)}px)` : "";
   };
+  const scrollListeners: ((scrolledUp: boolean) => void)[] = [];
+  // New output while scrolled up moves the newest line away without scrolling the view,
+  // so writes are checked as well as scrolls.
+  const checkScroll = (): void => {
+    const buffer = term.buffer.active;
+    const up = buffer.viewportY < buffer.baseY;
+    if (up === scrolledUp) return;
+    scrolledUp = up;
+    pan(false);
+    for (const listener of scrollListeners) listener(up);
+  };
+  term.onScroll(checkScroll);
+  term.onWriteParsed(checkScroll);
+
   const resized = new ResizeObserver(() => { pan(true); });
   resized.observe(container);
   term.onCursorMove(() => { pan(false); });
@@ -117,6 +120,15 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     setFont: (fontFamily, fontSize) => {
       term.options.fontFamily = fontFamily;
       term.options.fontSize = fontSize;
+    },
+    setWebgl: (on) => {
+      webglWanted = on;
+      if (on && !webgl) attachWebgl();
+      else if (!on && webgl) {
+        const addon = webgl;
+        webgl = undefined;
+        addon.dispose(); // xterm falls back to the DOM renderer
+      }
     },
     refreshGlyphs: () => { webgl?.clearTextureAtlas(); },
     setInput: setDesktopInput,

@@ -22,6 +22,11 @@ export interface TabOptions {
   /** Start without a watch, for a tab that is not on screen. */
   covered?: boolean;
   onState(state: ConnectionState): void;
+  /**
+   * The pane became larger than the size this tab sent (another terminal holds the window), or
+   * stopped being. Called only on a change.
+   */
+  onLarger?(larger: boolean): void;
   /** Bound, and again whenever the daemon reports a new session, pane or cwd. */
   onWatching?(watching: Watching): void;
   /** A message for the user, such as an upload that could not be inserted. */
@@ -47,6 +52,14 @@ export class TabDriver {
   private watchId: number | null = null;
   /** The size the daemon last heard for the current watch (in `watch`, or a `resize`). */
   private sentSize: Size | null = null;
+  /** The pane's size, from the last snapshot; it outlives a watch, as the content on screen does. */
+  private pane: Size | null = null;
+  private larger = false;
+  /**
+   * The user brought the tab on screen and no watch has bound since, so the next `watch` claims
+   * the window. Any other watch is the client's own doing and claims only a window the tab held.
+   */
+  private claimNext = true;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly pendingInserts: string[] = [];
 
@@ -61,6 +74,8 @@ export class TabDriver {
       this.dispatch({ type: "linkLost", retryInMs, ...(halt && { halt }) });
     },
     paused: () => {
+      // Backgrounded: returning to the app is the user bringing the tab forward.
+      this.claimNext = true;
       this.watchId = null;
       this.dispatch({ type: "rewatch" });
     },
@@ -89,6 +104,7 @@ export class TabDriver {
   uncover(): void {
     if (!this.covered) return;
     this.covered = false;
+    this.claimNext = true;
     this.dispatch({ type: "rewatch" });
     this.watchIfReady();
   }
@@ -102,6 +118,13 @@ export class TabDriver {
   /** Rotation or font change only. A resize that finds the watch in flight is sent when it binds. */
   resize(size: Size): void {
     if (this.bound) this.sendSize(size);
+  }
+
+  /** The Fit tap: sends the size again, which claims the window for this tab. */
+  fit(): void {
+    if (!this.bound) return;
+    this.claiming();
+    this.sendSize(this.opts.size(), true);
   }
 
   /** Input goes only to a bound watch; otherwise it is dropped and `false` returned. */
@@ -252,8 +275,14 @@ export class TabDriver {
   private watchIfReady(): void {
     if (this.state.kind !== "connecting" || !this.opts.host.ready || this.covered || this.watchId !== null) return;
     this.watchId = this.opts.host.nextWatch();
-    this.sentSize = this.opts.size();
-    this.send({ type: "watch", data: { watch: this.watchId, window: this.opts.window, size: this.sentSize } });
+    // Without `claim: false` the daemon sizes the window to this tab, so a reconnect would take it from the laptop.
+    // Decided before the new size is recorded: it asks whether the ended watch held the window.
+    // Accepted edge: a window held by a terminal no larger than this tab in either dimension also reads as "ours", so the re-watch claims it.
+    const claim = this.claimNext || !this.larger;
+    if (claim) this.claiming();
+    const size = this.opts.size();
+    this.setSent(size);
+    this.send({ type: "watch", data: { watch: this.watchId, window: this.opts.window, size, ...(claim ? {} : { claim: false }) } });
   }
 
   private onMessage(msg: ServerMsg): void {
@@ -262,6 +291,7 @@ export class TabDriver {
         break; // the 4001 close follows and carries the halt
       case "watching":
         if (msg.data.watch !== this.watchId) break;
+        this.claimNext = false;
         this.dispatch({ type: "bound" });
         // The terminal may have changed size while the watch was in flight.
         this.sendSize(this.opts.size());
@@ -287,7 +317,11 @@ export class TabDriver {
   private onFrame(frame: Frame): void {
     if (frame.watch !== this.watchId) return;
     if (frame.kind === "output") this.opts.renderer.output(frame.bytes);
-    else void this.opts.renderer.snapshot(frame);
+    else {
+      this.pane = { cols: frame.cols, rows: frame.rows };
+      this.checkLarger();
+      void this.opts.renderer.snapshot(frame);
+    }
   }
 
   private flushInserts(): void {
@@ -297,10 +331,30 @@ export class TabDriver {
     }
   }
 
-  private sendSize(size: Size): void {
-    if (this.watchId === null || (this.sentSize?.cols === size.cols && this.sentSize.rows === size.rows)) return;
-    this.sentSize = size;
+  private sendSize(size: Size, force = false): void {
+    if (this.watchId === null || (!force && this.sentSize?.cols === size.cols && this.sentSize.rows === size.rows)) return;
+    this.setSent(size);
     this.send({ type: "resize", data: { watch: this.watchId, size } });
+  }
+
+  private setSent(size: Size): void {
+    this.sentSize = size;
+    this.checkLarger();
+  }
+
+  /** A claim is going out: the band restarts, so only a snapshot taken after the claim can raise it. */
+  private claiming(): void {
+    this.pane = null;
+    this.checkLarger();
+  }
+
+  /** A window the tab holds is never larger than the size it sent (daemon-core.md §3.6). */
+  private checkLarger(): void {
+    const { pane, sentSize } = this;
+    const larger = pane !== null && sentSize !== null && (pane.cols > sentSize.cols || pane.rows > sentSize.rows);
+    if (larger === this.larger) return;
+    this.larger = larger;
+    this.opts.onLarger?.(larger);
   }
 
   private dropInserts(why: string): void {

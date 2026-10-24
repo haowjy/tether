@@ -20,8 +20,8 @@ export class FakeLink implements Link {
   say(msg: ServerMsg): void { this.handlers.message(msg); }
   frame(frame: Frame): void { this.handlers.frame(frame); }
   output(watch: number, text: string): void { this.frame({ kind: "output", watch, bytes: new TextEncoder().encode(text) }); }
-  snapshot(watch: number, text: string): void {
-    this.frame({ kind: "snapshot", watch, cols: 80, rows: 24, restore: new TextEncoder().encode(text) });
+  snapshot(watch: number, text: string, cols = 80, rows = 24): void {
+    this.frame({ kind: "snapshot", watch, cols, rows, restore: new TextEncoder().encode(text) });
   }
   drop(code = 1006, cause?: LinkClose["cause"]): void {
     this.ready = false;

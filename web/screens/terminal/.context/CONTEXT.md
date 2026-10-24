@@ -13,7 +13,15 @@ The Terminal destination. The design is client-architecture.md §5.4, §5.5, §5
   ready (a renderer, a cell size and a tmux size) and `lifecycle.covered` is false; otherwise
   every driver stays covered, so tmux never sees the 80x24 placeholder and releases the window
   size beneath a native screen. The reducer and controller never address a driver. The first
-  size is claimed by that `watch`; later ones go out 150 ms after the last change (`term/size.ts`).
+  size goes out in that `watch`; later ones go out 150 ms after the last change (`term/size.ts`).
+- **The pane keeps tmux's size, whatever the box** (§5.4). The sizer's inputs and the size sent
+  stay the tab's own; the snapshot's size is drawn at the tab's font. `TabDriver` reports
+  `onLarger` when the pane exceeds the size it sent; `terminals.ts` turns that into the DOM
+  renderer at once (`setWebgl(false)`) and `sizedForOther` after 1 s, which shows the Fit band.
+  Claims live in the driver: `watch` omits `claim` for the user's own acts (`claimNext`: set by
+  `uncover` and by returning from background, cleared once a watch binds) and sends
+  `claim: false` otherwise unless the pane was no larger than the size sent. Nothing sends
+  `resize` after a re-watch except a real size change, since `resize` claims.
 - **The surface hides until a tab's own snapshot has painted** (`data-blank`), so no tab shows
   another's content, and an empty terminal never looks live. Reconnecting keeps the last content.
   `painted` records whose snapshot the surface holds; `showPainted()` blanks it on Terminal

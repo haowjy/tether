@@ -74,6 +74,9 @@ export function TerminalScreen({ active }: { active: boolean }) {
             <EmptyState icon="terminal" title={dock && phone ? "Open a window from Sessions." : "Open a window with + or from Home."} />
           </div>
         )}
+        {current && !status?.detail && statuses[current.id]?.state.kind === "live" && statuses[current.id]?.sizedForOther && (
+          <StatusBand tone="notice" text="Sized for another terminal" action={{ label: "Fit", onAction: () => { terminals.fit(current.id); } }} />
+        )}
         {current && status?.detail && (
           <StatusBand
             tone={bandTone(status.tone)}

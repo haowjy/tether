@@ -12,6 +12,7 @@ function setup() {
   const painted: string[] = [];
   const states: ConnectionState[] = [];
   const notices: string[] = [];
+  const larger: boolean[] = [];
   const dec = new TextDecoder();
   const renderer: TabOptions["renderer"] = {
     output: (b) => painted.push(`o:${dec.decode(b)}`),
@@ -24,6 +25,7 @@ function setup() {
     host,
     size: () => size,
     onState: (s) => states.push(s),
+    onLarger: (l) => larger.push(l),
     onNotice: (n) => notices.push(n),
     random: () => 0.5,
   });
@@ -35,7 +37,7 @@ function setup() {
   const bind = (): FakeLink => { link().welcome(); link().say(watching(1)); return link(); };
   const state = (): ConnectionState => states[states.length - 1] as ConnectionState;
   const resizeTo = (cols: number, rows: number): void => { size = { cols, rows }; };
-  return { tab, links, link, events, painted, notices, watching, bind, state, resizeTo };
+  return { tab, links, link, events, painted, notices, larger, watching, bind, state, resizeTo };
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
@@ -103,6 +105,49 @@ describe("ending a tab", () => {
     t.tab.cover();
     t.tab.close();
     expect(l.types()).toEqual(["watch", "unwatch"]);
+  });
+});
+
+describe("claiming the window", () => {
+  const claimOf = (l: FakeLink, i: number): unknown => (l.sent[i] as { data: { claim?: boolean } }).data.claim;
+
+  it("claims when the tab comes on screen, not when the client re-watches by itself", () => {
+    const t = setup();
+    const l = t.bind();
+    l.snapshot(1, "S", 250, 70); // a bigger terminal holds the window
+    expect(t.larger).toEqual([true]);
+    t.tab.cover();
+    t.tab.uncover();
+    expect(claimOf(l, 2)).toBeUndefined(); // the user's act claims
+    l.say(t.watching(2));
+    l.snapshot(2, "S", 250, 70);
+    l.drop();
+    vi.advanceTimersByTime(500);
+    const l2 = t.link();
+    l2.welcome();
+    expect(claimOf(l2, 0)).toBe(false); // a reconnect while larger leaves the window
+    l2.say(t.watching(3));
+    expect(l2.types()).toEqual(["watch"]); // binding sends no resize
+  });
+
+  it("a first watch the session limit refused and retried still claims", () => {
+    const t = setup();
+    t.link().welcome();
+    t.link().say({ type: "watchEnded", data: { watch: 1, reason: "limit" } });
+    t.link().snapshot(1, "S", 250, 70);
+    vi.advanceTimersByTime(500);
+    expect(claimOf(t.link(), 1)).toBeUndefined();
+  });
+
+  it("restarts the band when a claim goes out: Fit clears it until a later snapshot", () => {
+    const t = setup();
+    const l = t.bind();
+    l.snapshot(1, "S", 250, 70);
+    t.tab.fit();
+    expect(t.larger).toEqual([true, false]);
+    expect(l.sent.at(-1)).toMatchObject({ type: "resize" });
+    l.snapshot(1, "S", 250, 70);
+    expect(t.larger).toEqual([true, false, true]);
   });
 });
 

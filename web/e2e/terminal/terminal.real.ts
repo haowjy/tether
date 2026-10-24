@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { startStack, type Stack, type TmuxVersion } from "../shared/stack";
+import { startStack, type Laptop, type Stack, type TmuxVersion } from "../shared/stack";
 
 const VERSIONS = (process.env["TETHER_E2E_TMUX"] ?? "3.4,3.7b").split(",") as TmuxVersion[];
 const DESKTOP = { width: 1440, height: 900 };
@@ -36,8 +36,8 @@ for (const version of VERSIONS) {
     };
 
     /** Opens `session`'s first window from Home and waits until the tab is connected and holds the focus. */
-    async function openTerminal(page: Page, session: string, connected = true): Promise<void> {
-      await page.setViewportSize(DESKTOP);
+    async function openTerminal(page: Page, session: string, connected = true, viewport = DESKTOP): Promise<void> {
+      await page.setViewportSize(viewport);
       await page.goto(`${stack.url}/#/`);
       await page.getByRole("button", { name: new RegExp(`^${session}\\b`) }).click();
       await page.getByRole("button", { name: /^0: / }).click();
@@ -216,6 +216,127 @@ for (const version of VERSIONS) {
       await page.keyboard.press("Enter");
       await paneIncludes(s, /^after$/m);
     });
+
+    // Window size follows the client that acted last (daemon-core.md §3.6; client-architecture.md §5.4).
+    {
+      const SMALL = { width: 900, height: 600 };
+      const windowSize = (s: string): string => stack.tmux("display-message", "-p", "-t", s, "#{window_width}x#{window_height}").trim();
+      /**
+       * Types in the laptop until the window is its size. The daemon sees an act a second after it,
+       * and a key in the same second as the last reported act shows only with the next one. Returns
+       * when the window was seen at `size`.
+       */
+      async function takeWindow(s: string, laptop: Laptop, size: string, line: string): Promise<number> {
+        laptop.type(line);
+        const deadline = Date.now() + 15_000;
+        for (let nudged = Date.now(); Date.now() < deadline; await new Promise((r) => setTimeout(r, 50))) {
+          if (windowSize(s) === size) return Date.now();
+          if (Date.now() - nudged >= 1100) {
+            laptop.type("\r");
+            nudged = Date.now();
+          }
+        }
+        throw new Error(`the window never became ${size}`);
+      }
+      const band = (page: Page) => page.getByRole("status").filter({ hasText: "Sized for another terminal" });
+      /** What xterm draws: its row count and the transform that pans it. */
+      const drawn = (page: Page) => page.evaluate(() => {
+        const term = document.querySelector<HTMLElement>(".xterm");
+        const screen = document.querySelector<HTMLElement>(".xterm-screen");
+        return {
+          rows: document.querySelectorAll(".xterm-rows > div").length,
+          canvases: document.querySelectorAll(".xterm-screen canvas").length,
+          transform: term?.style.transform ?? "",
+          left: screen?.getBoundingClientRect().left ?? -1,
+          width: screen?.getBoundingClientRect().width ?? 0,
+          height: screen?.getBoundingClientRect().height ?? 0,
+          hostHeight: term?.parentElement?.getBoundingClientRect().height ?? 0,
+          hostWidth: term?.parentElement?.getBoundingClientRect().width ?? 0,
+        };
+      });
+
+      test("a larger pane is drawn at the tab's font, clipped, with the band after 1 s; Fit takes the window back", async ({ page }) => {
+        const s = newSession();
+        await openTerminal(page, s, true, SMALL);
+        await expect.poll(() => windowSize(s)).not.toBe("100x30");
+        const phone = windowSize(s);
+        const laptop = await stack.attach(s, { cols: 250, rows: 70 });
+        try {
+          const since = await takeWindow(s, laptop, "250x69", "seq 1 100\r");
+          await expect(band(page)).toBeVisible();
+          expect(Date.now() - since).toBeGreaterThanOrEqual(800);
+          const view = await drawn(page);
+          expect(view.rows).toBe(69);
+          expect(view.canvases).toBe(0); // the DOM renderer while larger
+          expect(view.left).toBeLessThanOrEqual(view.hostWidth); // pinned left
+          expect(view.width).toBeGreaterThan(view.hostWidth); // clipped on the right, never scaled
+          // seq filled the pane, so the cursor is on the last row and the pan follows it.
+          expect(view.transform).toMatch(/translateY\(-\d+/);
+          // Scrolled into history, the pan anchors to the top. The snapshot holds the visible pane only, so more output pushes rows into it.
+          laptop.type("seq 1 10\r");
+          await page.locator(".xterm-screen").hover();
+          await expect.poll(async () => {
+            await page.mouse.wheel(0, -400);
+            return (await drawn(page)).transform;
+          }).toBe("");
+
+          await band(page).getByRole("button", { name: "Fit" }).click();
+          await expect.poll(() => windowSize(s)).toBe(phone);
+          await expect(band(page)).toHaveCount(0);
+        } finally {
+          laptop.detach();
+        }
+      });
+
+      test("a smaller pane sits top-left with no band", async ({ page }) => {
+        const s = newSession();
+        await openTerminal(page, s, true, SMALL);
+        const laptop = await stack.attach(s, { cols: 60, rows: 20 });
+        try {
+          await takeWindow(s, laptop, "60x19", "echo hi\r");
+          // 19 rows of a box that holds 30 or so.
+          await expect.poll(async () => { const v = await drawn(page); return v.height < v.hostHeight * 0.7; }).toBe(true);
+          const view = await drawn(page);
+          expect(view.width).toBeLessThan(view.hostWidth);
+          expect(view.transform).toBe("");
+          await page.waitForTimeout(1500);
+          await expect(band(page)).toHaveCount(0);
+        } finally {
+          laptop.detach();
+        }
+      });
+
+      test("a reconnect leaves the laptop's size; typing in the tab claims it again", async ({ page }) => {
+        const s = newSession();
+        await openTerminal(page, s, true, SMALL);
+        await expect.poll(() => windowSize(s)).not.toBe("100x30");
+        const phone = windowSize(s);
+        const laptop = await stack.attach(s, { cols: 250, rows: 70 });
+        try {
+          await takeWindow(s, laptop, "250x69", "echo laptop\r");
+          await expect(band(page)).toBeVisible();
+
+          const sent: string[] = [];
+          page.on("websocket", (ws) => {
+            ws.on("framesent", (frame) => { if (typeof frame.payload === "string") sent.push(frame.payload); });
+          });
+          expect(stack.dropSockets()).toBeGreaterThan(0);
+          await expect(page.locator("[aria-current='true']").first()).toHaveAttribute("aria-label", /, connected$/, { timeout: 15_000 });
+          await page.waitForTimeout(1000);
+          const watches = sent.filter((m) => m.includes('"type":"watch"'));
+          expect(watches.length).toBeGreaterThan(0);
+          expect(watches.every((m) => m.includes('"claim":false'))).toBe(true);
+          expect(sent.some((m) => m.includes('"type":"resize"'))).toBe(false);
+          expect(windowSize(s)).toBe("250x69");
+          await expect(band(page)).toBeVisible();
+
+          await page.keyboard.type("echo phone");
+          await expect.poll(() => windowSize(s)).toBe(phone);
+        } finally {
+          laptop.detach();
+        }
+      });
+    }
 
     test("dragging the window edge resizes tmux once", async ({ page }) => {
       const s = newSession();
