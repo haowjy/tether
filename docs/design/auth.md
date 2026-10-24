@@ -626,7 +626,7 @@ stateDiagram-v2
 
 | Situation | What happens | Fix |
 |---|---|---|
-| Face ID re-enrolled, or an appearance added | `.biometryCurrentSet` makes the item unreadable for good. The read fails with an error that isn't cancel or lockout, possibly "item not found" (spike 1 records which); "not found" while `HostStore` lists hosts counts as this case | The lock screen offers "Reset tokens": it deletes the item and marks every host "not enrolled"; Jimmy runs `tether enroll` on each host and adds them again. The app never deletes on its own: a misread error would cost re-enrolling every host |
+| Face ID re-enrolled, or an appearance added | `.biometryCurrentSet` makes the item unreadable for good. The read fails with an error that isn't cancel or lockout, possibly "item not found" (the [iOS device checklist](ios-shell.md#device-checklist) records which); "not found" while `HostStore` lists hosts counts as this case | The lock screen offers "Reset tokens": it deletes the item and marks every host "not enrolled"; Jimmy runs `tether enroll` on each host and adds them again. The app never deletes on its own: a misread error would cost re-enrolling every host |
 | Phone lost | Tokens stay on the lost phone, behind its Face ID | On each host, `tether device remove <name>`; live sockets close at the next re-check |
 | Device removed while the app still has its token | 401 or close 4401 | The host shows "not enrolled" with Add host |
 | `auth.toml` unreadable on the server (a bad hand edit) | 503 or close 4503, including on live sockets at their next re-check | Nothing on the phone: it keeps its token and retries. Fix the file on the server (the log names the line) |

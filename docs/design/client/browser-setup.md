@@ -81,7 +81,7 @@ polling. Cache only this app's namespaces and remove obsolete versions safely.
 [Service-worker lifecycle](https://web.dev/articles/service-worker-lifecycle).
 
 Offline launch shows Disconnected and the locally saved drafts, not a pretend live
-terminal. Never allow Insert against a stale or different window. Preserve immutable
+terminal. Never send a line against a stale or different window. Preserve immutable
 target identity and explicit delivery uncertainty. Do not cache terminal/file content
 for offline reading in the minimal pass.
 
@@ -114,20 +114,20 @@ Keep shared tab/window state, protocol, reconnect, terminal rendering, files and
 Replace the native-only assumption at boot with explicit browser/native adapters for
 credentials, input/focus, viewport/lifecycle, storage, file selection and link opening.
 Avoid scattered user-agent branches or promoting `web/dev/shim.ts` into production.
-Browser direct input must handle composition/input/paste; local drafts own their own
-editing and never feed keystrokes into tmux. Use the normal platform keyboard.
+Browser direct input must handle composition/input/paste; the line field owns its own
+editing and sends nothing to tmux until Return. The dock's key row supplements the
+normal platform keyboard.
 
 1. Build the browser adapter and enrolment UI against the settled node lane in
    [auth.md](../auth.md). Native remains on its independent token lane.
 2. Implement approved Home/Terminal/Files layouts and phone PWA manifest/install UX.
-3. Add local drafts and narrow shell caching/update behavior. Prototype iPhone
+3. Add the phone dock with its drafts, and narrow shell caching/update behavior. Prototype iPhone
    keyboard visibility, scroll/selection/click arbitration and correct logical copy.
    Fix wrap metadata capture/restore before claiming newline-correct copy.
 4. Verify built production assets, not only Vite dev mode, against isolated tmux 3.4
    and 3.7b and actual desktop/Safari/PWA/native clients before shipping.
 
-Browser implementation can proceed on Linux alongside the Mac keyboard spike once
-shared interfaces are settled. Lack of an iPhone does not block desktop serving/auth
+Browser implementation proceeds on Linux once shared interfaces are settled. Lack of an iPhone does not block desktop serving/auth
 work; it does block signing off on phone input, clipboard, and lifecycle behavior.
 
 ## Acceptance checks
@@ -145,7 +145,7 @@ work; it does block signing off on phone input, clipboard, and lifecycle behavio
 - Upgrade with an active terminal, unsaved IME composition, multiple windows and old
   cached assets; no lost draft, duplicate input or mixed-version API calls.
 - Storage unavailable/evicted/full, node removal, lost server/window, uncertain
-  Insert delivery; draft survives normal hiding and reload without accidental send.
+  Return delivery; draft survives normal hiding and reload without accidental send.
 - Bound connections for browser + PWA + native: current daemon cap is three admitted WebSockets, not three HTTP connections. Do not
   increase it blindly; show an actionable over-cap state and measure resource use.
 - Existing touch/copy matrix in terminal-interaction-design.md, especially copying

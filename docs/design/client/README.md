@@ -2,15 +2,16 @@
 
 Start here when implementing the desktop browser, mobile browser, or iPhone client.
 The layout mockup is approved; it is not the working terminal client. The production
-iOS app has not been built: `ios/spikes/keyboard` is an isolated keyboard experiment.
+iOS app has not been built; it comes after the phone browser input (P3).
 
 ## Read in order
 
 1. [Interaction contract](browser-behaviors.md): navigation, sessions, tabs, files,
    creation, focus, naming, minimal controls, and visual rules.
 2. [Interactive mockup](mockups/index.html): desktop and mobile layouts with fictional
-   data. It has no daemon connection and demonstrates keyboard-hidden layout only.
-3. [Touch, clipboard, local draft](terminal-interaction-design.md): proposed
+   data. It has no daemon connection; the phone terminal shows the dock with the keyboard
+   down and up.
+3. [Touch, clipboard, the line field](terminal-interaction-design.md): proposed
    implementation direction, measured constraints, and real-device checks.
 4. [Decision reconciliation](browser-review-decisions.md): current rationale.
    [Review dispositions](browser-review-resolution.md) are optional historical notes,
@@ -23,21 +24,19 @@ iOS app has not been built: `ios/spikes/keyboard` is an isolated keyboard experi
 This directory supersedes the older plan's native-only client scope and conflicting
 navigation/layout rules: desktop gets Home/Terminal/Files icon rail; mobile gets
 Sessions/Files Home and a compact full-screen terminal. Terminal + opens existing
-sessions, not Files. Use actual tmux names. No dot separators or dot status markers.
-Mobile browser uses the ordinary keyboard, not a custom accessory-key strip.
-Both mobile versions need a local multiline draft editor while the keyboard is open.
+sessions, not Files; on the phone, the dock's tab chip opens the session switcher
+instead. Use actual tmux names. No dot separators or dot status markers. On touch,
+Terminal ends in the phone dock (at rest one row: tab chip, one-line field, keyboard
+toggle; the key row above it while the keyboard is up), the same in the phone browser,
+the PWA and the iPhone app.
 
 Existing subsystem security, resource budgets, tmux ownership, and native focus
-invariants still apply. Older native accessory key rows, suggestion strips, and dedicated media controls
-are deferred. The required native draft follows the same Insert-without-Enter
-semantics as mobile browser; its keyboard-open layout remains to prototype. The keyboard
-spike's extra controls are test instrumentation, not approved product controls.
+invariants still apply. Suggestion strips and dedicated media controls are deferred.
 
 Layout approval does not settle browser authentication/asset serving, touch gesture
 implementation, or real-device copy behavior. The daemon now restores active-grid wraps
 and history chunks carry their own wrap map, but mobile selection and clipboard behavior
-still need device checks. Retaining a draft after Insert is proposed; closed-tab draft
-retention remains undecided.
+still need device checks.
 
 ## Connection roadmap
 
@@ -66,32 +65,11 @@ sample terminal for a working app or the mock keyboard control for device valida
 
 ## Start iPhone development
 
-Pull this repository on the Mac, then follow
-[the keyboard spike build instructions](../../../ios/spikes/keyboard/README.md).
-They cover Xcode, XcodeGen, signing, Developer Mode, and running on a real phone.
-The existing project generator command is:
-
-```sh
-cd ios/spikes/keyboard
-xcodegen
-open KeyboardSpike.xcodeproj
-```
-
-This builds the spike, not a finished tether app. Run its
-[device checklist](../spike-1-keyboard.md) and save results before selecting native
-input/viewport behavior. Xcode compilation and real iPhone behavior have not been
-verified on the Linux development host.
-
-Suggested next implementation brief:
-
-> Read docs/design/client/README.md and its linked contracts. Prototype the unresolved
-> input and platform boundaries before production implementation. First run the
-> keyboard spike on the Mac/iPhone and prototype touch selection, keyboard-open
-> local drafts, and logical copy over restored terminal and history rows. Resolve browser
-> auth/asset serving and resize ownership before connecting a browser client.
-> Preserve tmux as source of truth, bounded event-driven resource use, and one
-> native focus controller. Use isolated tmux sessions for probes, never personal
-> running sessions. Record design choices and hardware results in this repository.
+The native app is P4, after the phone dock and gestures (P3) are built and checked in
+the phone browser. Its design is [ios-shell.md](../ios-shell.md), and the checks it still
+needs on the phone are that spec's
+[device checklist](../ios-shell.md#device-checklist). Xcode, XcodeGen, signing and
+Developer Mode setup are written down when the app project lands.
 
 ## Research evidence and remaining gates
 
@@ -105,8 +83,8 @@ remain unchanged. Verify the result with the headless and real-tmux checks in th
 daemon-core design, then finish the real-device selection and clipboard probes.
 Coordinate tap versus scroll versus long-press so selection never sends an unintended
 remote click. Paste uses tmux's mode-aware paste route; embedded newlines can execute
-commands even when no extra Enter is appended. Drafts need stable target identity, local
-save failure feedback, and no automatic retry after uncertain delivery.
+commands even when no extra Enter is appended. Line-field drafts need stable target
+identity, local save failure feedback, and no automatic retry after uncertain delivery.
 
 The interaction design contains the full verification matrix: streaming-output
 selection stability, Unicode, multiline/trailing-newline paste, IME/dictation,

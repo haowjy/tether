@@ -1,7 +1,7 @@
 # Agent keybindings
 
 What the agent CLIs Jimmy uses bind to each key, collected 2026-10-21. It is the
-evidence behind the key-row groups in [plan.md](../plan.md#key-row-groups).
+evidence behind the dock's key row in [plan.md](../plan.md#the-key-row).
 
 Sources:
 

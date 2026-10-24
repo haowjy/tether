@@ -1,6 +1,8 @@
 # Client architecture: the rebuilt web client
 
-Status: design for review, revision 4, 2026-10-23. Nothing here is built. Revision 2
+Status: design for review, revision 4, 2026-10-23; the phone input sections (§5.3,
+§6.5, §7.3, §7.4, §11, §12) were rewritten on 2026-10-24 for the phone dock Jimmy chose
+after running the keyboard spike. W0–W4 are built (P2); P3 is next. Revision 2
 answered [review 1](client-architecture-review-1.md) and the
 [alignment review](client-architecture-review-alignment.md); revision 3 applied
 [review 2](client-architecture-review-2.md); revision 4 applies
@@ -56,11 +58,14 @@ One Preact app, three **platform adapters**, and one rule for each hard boundary
   fine pointer keeps xterm's own textarea, under a strict key-handler contract. Phone
   browsers use a tether-owned input that sends only committed text. Native keeps native
   input. Named keys always go to tmux by name. Paste is intercepted before xterm sees
-  it. The local draft is a separate editor; its Insert sends one `paste` and never an
-  Enter.
+  it. On touch, a web-drawn dock is the same in the browser, the PWA and the app: at
+  rest one row (tab chip, one-line field, keyboard toggle), with the key row above it
+  while the keyboard is up. The tab chip opens the session switcher. The line field's
+  Return sends its line and then Enter.
 - **Touch gestures have one owner.** A sans-IO recognizer decides between tap,
   scroll, long-press and cancel before anything reaches tmux or raises the keyboard.
-  Long-press selects text from a bounded snapshot.
+  A long-press held and dragged is the arrow pad; released, it selects text from a
+  bounded snapshot.
 - **The PWA's service worker serves the shell from cache and nothing else.** It
   precaches the whole build and never touches `/ws`, `/auth`, `/fs` or `/complete`. A
   new version takes over only when Jimmy taps Update, and only the page he tapped
@@ -75,7 +80,7 @@ One Preact app, three **platform adapters**, and one rule for each hard boundary
 
 ```mermaid
 flowchart TB
-  screens["screens/: home, picker, terminal, files, enrol, settings"]
+  screens["screens/: home, picker, switcher, terminal, files, enrol, settings"]
   ui["ui/: tokens and primitives"]
   app["app/: controller, router, focus, listing fetcher, persist"]
   cores["UI-free cores: workspace, sessions, drafts, tabs, net, proto, term, touch, files"]
@@ -98,11 +103,21 @@ flowchart TB
 
 These are Jimmy's explicit choices. No lane changes them without his say:
 
-- Terminal `+` opens the existing-session picker directly. There is no intermediate
-  menu, and Files is not in it.
+- Desktop terminal `+` opens the existing-session picker directly, and the phone's tab
+  chip opens the session switcher directly. There is no intermediate menu, and Files is
+  in neither.
 - No dot status markers. No middle-dot separators in any copy (§8.6 checks it).
-- No custom browser keyboard strip. The phone browser uses the ordinary keyboard.
-- The local draft's Insert sends the text with no added Enter.
+- On touch, Terminal ends in the phone dock, in the browser, the PWA and the app. At
+  rest it is one row: the tab chip, the line field and the keyboard toggle. While the
+  keyboard is up, the fixed key row (esc ↑ ↓ ^R ^C tab ctrl alt | ~ / -) sits above it.
+  Tabs on top were rejected ("hard to reach").
+- The tab chip opens one switcher sheet: open tabs, then every session on the host,
+  with search and New session at the bottom. It is the phone's only picker.
+- A long-press fires with a haptic; held and dragged it is the arrow pad, released it
+  selects a word.
+- Only the keyboard toggle opens and closes the keyboard; a tap on the terminal never
+  does.
+- The line field is one line; Return sends the text and then Enter, and clears it.
 
 ## 2. Vocabulary
 
@@ -113,14 +128,22 @@ One name per concept. The code, the specs and the UI copy use these.
 | **host** | One tether daemon endpoint, identified by `hostId` (`/auth/info.hostId`, `welcome.host.id`). The browser has exactly one, the daemon behind its page origin. Native has a saved list | `WindowRef.server`, a tmux server *instance*. UI copy shows the host's name (`pop-os`) with no label word; native settings call the list "Servers" (connection-roadmap.md) |
 | **tab** | A tether tab: one tmux window open in tether. Its identity is the **tab key**, `(hostId, WindowRef)` | A browser tab. Closing a tether tab never touches tmux |
 | **destination** | Home, Terminal or Files: the top level of navigation | |
-| **overlay** | A modal surface stacked on a destination: the picker, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files; the **status band** |
+| **overlay** | A modal surface stacked on a destination: the picker, the switcher, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files; the **status band** |
 | **navigation stack** | The browser history entries tether pushes: destination, overlay, Files folder and preview (§6.6). Its only writer is the router | The tab strip, which never enters history |
 | **listing** | One host's tmux sessions and windows, from `listSessions`. One fetcher gets it (§6.3) | |
 | **status band** | The band on the terminal's top edge that says a tab is reconnecting, limited or failed, with Retry (§8.2) | an overlay |
 | **persist now** | `app/persist.ts`: hand every pending draft and workspace write to storage at once (§5.5) | |
-| **picker** | The Open session picker behind terminal `+`. It only attaches existing windows | Home's creation actions |
-| **draft** | The local multiline text for one tab key. It is edited in the draft editor and sent only by Insert | Direct input |
-| **direct input** | Keystrokes that go to tmux as they are typed | |
+| **picker** | The desktop's session picker behind terminal `+`. It only attaches existing windows | Home's creation actions; the switcher |
+| **switcher** | The phone's session sheet behind the tab chip: Home, the open tabs, every session, search and New session. The phone's only picker; the phone's Terminal has no tab strip | the picker |
+| **dock** | On touch, the bottom of Terminal: at rest one row (tab chip, line field, keyboard toggle); while the keyboard is up, the key row above it. Always visible; rides on the keyboard | The desktop tab strip |
+| **tab chip** | The dock's control naming the active tab and the open-tab count; opens the switcher | a tab pill |
+| **line field** | The dock's one-line text field, with the platform's autocorrect, dictation and IME. Return sends its line and then Enter | **direct input**; the shell's own line editor |
+| **draft** | The line field's unsent text for one tab key, saved locally | |
+| **key row** | The dock's row of terminal keys, shown above the resting row while the keyboard is up | an app-drawn keyboard; it supplements the system keyboard |
+| **keyboard toggle** | The one control that opens and closes the on-screen keyboard on touch, at the right of the resting row | |
+| **arrow pad** | A long-press held and dragged on the terminal: arrows in the drag's direction, repeating while held | the key row's ↑ ↓ |
+| **direct input** | Keystrokes that go to tmux as they are typed | the line field |
+| **terminal input** | The element that takes direct input: xterm's textarea, the owned input, or native's responder | the line field |
 | **admission** | Whether the daemon lets this client in (§4.2) | A credential. The browser holds none |
 | **stable box** | The terminal's box with no software keyboard and nothing that appears with it. tmux is sized from it alone | The visible box |
 | **layout** | `desktop` (rail) or `phone` (Home with bottom nav, full-screen terminal), chosen by screen size | **density** |
@@ -184,10 +207,11 @@ web/
   tabs/              connection.ts, driver.ts, input.ts, keymap.ts (KeyboardEvent → InputItem),
                      status.ts (describe)
   term/              pipeline, size, prompt, xterm renderer, xterm-input.ts (desktop source)
-  touch/             phone-only: owned-input.ts, gesture.ts (recognizer), selection.ts
+  touch/             touch-only: owned-input.ts, modifiers.ts (armed ctrl and alt, pure),
+                     gesture.ts (recognizer), selection.ts
   workspace/         pure: tabs, active tab, restore, pruning, labels
   sessions/          pure: listing cache per host, search, expansion, creation requests
-  drafts/            pure: draft records, Insert state machine, eviction
+  drafts/            pure: per-tab line-field drafts, Return send state, eviction
   files/             /fs client and FileBrowser (the Files place); render/ (markdown, code)
   app/               <App> root and its context, controller, router.ts (the navigation
                      stack), focus.ts (the focus controller), listing.ts (the listing
@@ -195,8 +219,9 @@ web/
   screens/
     shell/           rail (desktop), destination frame, host banner
     home/            open tabs, sessions list, creation dialogs, bottom nav (phone)
-    picker/          the Open session picker
-    terminal/        tab strip, terminal surface, status band, draft slot
+    picker/          the desktop session picker
+    switcher/        the phone session switcher (P3a)
+    terminal/        tab strip, terminal surface, status band; dock/ (the phone dock)
     files/           folder list, preview, upload, insert path
     enrol/           enrolment and admission-problem screens
     settings/        Remove this device, Clear local data, Add to Home Screen
@@ -204,7 +229,7 @@ web/
     tokens/          primitives.css, semantic.css, components.css, fonts.css
     primitives/      Button, IconButton, Tooltip, TextField, SearchField, Dialog (with a
                      sheet variant), Disclosure, Row, RovingList, TabStrip, Banner, Toast,
-                     StatusBand, EmptyState, Spinner, Icon, DraftEditor
+                     StatusBand, EmptyState, Spinner, Icon, LineField, KeyRow
     store.ts, theme.ts, hostProblem.ts
   sw/                the service worker, built as its own entry; vite-plugin.ts
   public/            icons, apple-touch-icon
@@ -215,7 +240,7 @@ web/
 
 **Screens call their own cores directly.** `app/` provides one context (`useApp()`):
 the platform, the host registry, the router, the focus controller and persist now. A
-screen's own logic (creation, upload, insert path, draft insert) lives in the screen or
+screen's own logic (creation, upload, insert path, line field send) lives in the screen or
 its core and calls through that context, so a lane adds behaviour without editing
 `app/`. The controller in `app/` runs only the workspace reducer's effects. Each screen
 styles itself with a CSS module (`*.module.css`) beside it, so five lanes writing CSS
@@ -380,7 +405,7 @@ interface Platform {
   input: InputPlatform;          // §5.3
   storage: PlatformStorage;      // §5.6
   uploads: Uploads;              // §5.7
-  clipboard: { writeText(text: string): Promise<"ok" | "denied"> };
+  clipboard: Clipboard;          // §5.8
   openURL(url: string): void;                       // http(s) only
   playVideo(handle: string, path: string): "handled" | "inline"; // native player, or a <video> in the page
   haptic(kind: HapticKind): void;                   // browser: no-op
@@ -413,15 +438,13 @@ type PlatformEvent =
   | { type: "viewport"; viewport: Viewport }                 // §5.4
   | { type: "lifecycle"; lifecycle: Lifecycle }              // §5.5
   | { type: "input"; tab: TabKey; events: InputEvent[] }     // native responder (§5.3)
-  | { type: "composeEdit"; id: string; tab: TabKey; text: string; baseRevision: number }
-  | { type: "composeInsert"; id: string; tab: TabKey; text: string; revision: number }
   | { type: "draftChanged"; key: TabKey }                    // another page changed a draft
   | { type: "storage"; state: "closing" | "closed" }         // §5.6, IndexedDB upgrade
   | { type: "update"; state: UpdateState };                  // §9.3, only with `updates`
 
 interface Updates { check(): Promise<void>; apply(): void }   // §9.3
 type UpdateState = "none" | "ready" | "reload";   // reload: another page applied an update (§9.3)
-type HapticKind = "selection" | "rigid";   // tab switch; selection mode starts (ios-shell "Haptics")
+type HapticKind = "selection" | "rigid" | "key" | "modifier";   // ios-shell "Haptics"
 interface SafeArea { top: number; right: number; bottom: number; left: number }
 type Unsubscribe = () => void;
 ```
@@ -460,13 +483,11 @@ interface InputPlatform {
   /** The focus mode the screen needs (§6.5). Native: bridge `focus`. Browser: no-op,
    *  because app/focus.ts already moved DOM focus in the same dispatch. */
   setFocus(mode: "terminal" | "hidden" | "webText" | "select"): void;
-  /** Native compose: answer a composeEdit or composeInsert (bridge `draftResult`).
+  /** Where a touch may hand the keyboard to the line field (§7.4): its rect in page
+   *  coordinates, or null when Terminal is covered. Native: bridge `lineField`.
    *  Browser and test: no-op. */
-  composeResult(id: string, status: DraftStatus): void;
-  /** Native compose: show a draft changed elsewhere (bridge `draftChanged`). */
-  composeShow(tab: TabKey, text: string, revision: number): void;
+  setLineFieldRect(rect: DOMRectReadOnly | null): void;
 }
-type DraftStatus = "ok" | "tooLarge" | "full" | { conflict: { text: string; revision: number } };
 ```
 
 Native's keystrokes arrive as `input` events on the one channel, each with the tab key
@@ -489,14 +510,16 @@ interface Viewport {
   width: number;           // CSS px of the window or web view
   stableHeight: number;    // its height with no software keyboard
   visibleHeight: number;   // on screen now
+  visibleTop: number;      // the visual viewport's offset from the layout top (browser); 0 in native
   safeArea: SafeArea;      // of the keyboard-hidden layout
   keyboard: boolean;
+  hardwareKeyboard: boolean | null;   // native only (GCKeyboard); null in the browser
 }
 ```
 
 **The invariant: tmux is sized only from the stable box.** That box excludes the
-software keyboard and everything that appears with it: the draft editor, the
-keyboard-open toolbar and overlays. Nothing that only shows or hides ever resizes tmux.
+software keyboard and everything that appears with it: overlays, and the dock's lift
+onto the keyboard. The dock itself is chrome, in flow in the keyboard-hidden layout. Nothing that only shows or hides ever resizes tmux.
 
 **One sizing formula, in every environment.** `term/size.ts` computes
 
@@ -506,7 +529,7 @@ rows = floor((stableHeight − safeArea.top − safeArea.bottom − chrome.y) / 
 ```
 
 and recomputes whenever an input changes. `chrome` is the tether chrome in flow around
-the terminal in the keyboard-hidden layout (the rail, the tab strip, the toolbar's
+the terminal in the keyboard-hidden layout (the rail, the tab strip, the dock's
 resting slot), measured by the terminal screen when layout or density changes. A
 keyboard opening changes none of these inputs, so it never resizes tmux, and the sizer
 needs no event reason. Only the adapters differ, in how they define `stableHeight`:
@@ -516,13 +539,15 @@ needs no event reason. Only the adapters differ, in how they define `stableHeigh
   collapsed layout's rows.
 - **Browser**: the app root, which is `100svh` tall: the small viewport height, which
   doesn't change when Safari's toolbars collapse or the keyboard opens. On desktop that
-  is the window's height. In the phone layout the terminal container and the bottom
-  toolbar's resting slot share that root, in flow, so no tmux row sits under the
-  toolbar. While the keyboard is up, the toolbar is translated out of its slot to sit on
-  the visual viewport's bottom edge. The draft editor is always positioned over the
-  terminal, never in flow.
+  is the window's height. On touch the terminal container and the dock's resting slot
+  share that root, in flow, so no tmux row sits under the dock. While the keyboard is
+  up, the dock is translated out of its slot to sit on the visual viewport's bottom
+  edge (`visibleTop + visibleHeight`), which is above Safari's form accessory bar.
+  Focusing the line field can make Safari scroll the layout viewport, so `visibleTop`
+  is not assumed to be 0. `chrome.y` measures the dock without its bottom safe-area
+  padding, which `safeArea.bottom` already counts.
 - **The pan area** is what remains visible of the terminal: `visibleHeight` minus the
-  translated toolbar and the draft editor when they cover it. `cursorPan` reads this
+  translated dock. `cursorPan` reads this
   number, not `container.clientHeight`, which in the browser never shrinks. Native keeps
   passing its shrunken web view's height, as today.
 - **Applying a size.** Only the trailing size is sent, 150 ms after the last change, so
@@ -610,17 +635,17 @@ The saved workspace arrives in `BootResult`; a draft another page changed arrive
   So every page handles `versionchange`: the adapter emits `storage: closing`, the
   controller runs persist now, and once those writes complete the adapter closes the
   database and emits `storage: closed`. The page then shows "Reload to finish
-  updating". Later writes stay in memory, and the draft editor says they won't survive
+  updating". Later writes stay in memory, and the line field says they won't survive
   a reload.
 - **Persistence.** `navigator.storage.persist()` is requested on the first draft save;
   the client promises nothing about the result. If IndexedDB is unavailable, the
-  workspace lives in memory and the draft editor says drafts won't survive a reload.
+  workspace lives in memory and the line field says drafts won't survive a reload.
 - **Several pages at once.** A page writes its workspace only while it has focus
   (`document.hasFocus()`), and once more when it gains focus. The saved workspace is
   therefore the one from the page used last, even with two desktop windows visible side
   by side. Draft
   writes compare revisions: a `put` whose base revision is older than the stored one
-  returns `conflict`, and the editor reloads the newer text with "Edited in another
+  returns `conflict`, and the line field reloads the newer text with "Edited in another
   window". A `BroadcastChannel` named `tether` carries one message, `{ draft: <tab key
   string> }`, to tell other pages a draft changed; pages ignore any other message, so
   builds of different versions never depend on each other's messages.
@@ -628,17 +653,11 @@ The saved workspace arrives in `BootResult`; a draft another page changed arrive
 **Native.** The workspace goes to native through `saveWorkspace`, because native's copy
 survives a crash of the web content process. Drafts go through the same `DraftStore`
 interface over the bridge (`draftGet`, `draftPut`, `draftDelete`, `draftList`), and
-native persists the records. **The web applies every draft rule (§7.4) in both
-environments.** Native compose never writes a record itself: each edit goes to the web
-as `draftEdit { tab, text, baseRevision }` (a `composeEdit` event), debounced 300 ms in
-Swift. The web applies the cap, the revision check and eviction, persists through
-`draftPut`, and answers with `input.composeResult` (bridge `draftResult { status }`:
-`ok`, `tooLarge`, `full`, `conflict` with the newer text). When a draft changes from
-elsewhere, `input.composeShow` sends native `draftChanged { tab, text, revision }` so
-compose shows it. Swift holds no draft rules. **The revision check runs in JS:** the
-native `DraftStore` compares `baseRevision` with its cached copy of the record before
-calling `draftPut`, and returns `conflict` itself. Native has one page, so no other
-writer can slip between the check and the write.
+native persists the records. The line field is a web control in both environments, so
+the web applies every draft rule (§7.4) and Swift holds none. **The revision check runs
+in JS:** the native `DraftStore` compares `baseRevision` with its cached copy of the
+record before calling `draftPut`, and returns `conflict` itself. Native has one page, so
+no other writer can slip between the check and the write.
 
 
 ### 5.7 Uploads, file pick and image paste
@@ -666,32 +685,44 @@ type UploadEvent =
   Both `pick` and `send` stream the upload to `/fs/upload`. The daemon takes one upload
   at a time, so the client sends one file at a time and queues at most four. A fifth is
   refused with "Wait for the current uploads to finish".
-- **Native** keeps its own picker and uploader (`pickMedia` and `upload` events) and
-  receives image paste in its own input.
+- **Native** keeps its own picker and uploader (`pickMedia` and `upload` events). An
+  image read by the edit menu's Paste uploads natively too (§5.8).
 - **The insertion target is never the adapter's concern.** The caller captures the tab
   key when the action starts and offers or performs insertion into that tab only
   (§7.5).
 
 ### 5.8 Clipboard
 
-The browser calls `navigator.clipboard.writeText` inside the gesture. Native routes it
-through the bridge to `UIPasteboard`, because WebKit may not treat the `tether-app://`
-scheme as a secure context for the Clipboard API (a G3 probe).
+```ts
+interface Clipboard {
+  writeText(text: string): Promise<"ok" | "denied">;
+  /** Paste in the terminal's edit menu (§7.6). Call synchronously in its tap. */
+  read(tab: TabKey): Promise<{ text: string } | { image: File } | { uploading: string } | "empty" | "denied">;
+}
+```
+
+The browser calls `navigator.clipboard.writeText` inside the gesture, and `read()` calls
+`navigator.clipboard.read()` in the tap (Safari shows its own Paste confirmation): text
+comes back as `text`, an image as `image`, which the caller sends through
+`uploads.send`. Native routes both through the bridge to `UIPasteboard` (`copy`,
+`readPasteboard`), because WebKit may not treat the `tether-app://` scheme as a secure
+context for the Clipboard API (a G3 probe); an image there uploads natively and comes
+back as `uploading`, followed by `upload` events for `tab`.
 
 ### 5.9 Three implementations
 
 | Capability | browser | native | test |
 |---|---|---|---|
 | boot | one host with `pageOrigin: location.origin`; IndexedDB | bridge `ready`; hosts with no `pageOrigin` | fixture |
-| events | viewport, lifecycle, `draftChanged`, `storage`, `update` | bridge `hosts`, `viewport`, `lifecycle`, `network`, lock, `input`, `draftEdit`, `draftInsert` | `emit(event)` |
+| events | viewport, lifecycle, `draftChanged`, `storage`, `update` | bridge `hosts`, `viewport`, `lifecycle`, `network`, lock, `input` | `emit(event)` |
 | transport | same-origin `/ws` offering `tether.v1` | `tether-app://h-<id>`, token subprotocol; `{ notEnrolled }` and `hostRejected` as token refusals | fake `Link` (`net/fakes.ts`); fake `/auth` replies, so the real `net/admission.ts` runs |
 | direct input | `xterm` or `owned` | `native` | scripted events |
-| focus | `setFocus` is a no-op: `app/focus.ts` moves DOM focus | bridge `focus` | records requests |
+| focus | `setFocus` and `setLineFieldRect` are no-ops: `app/focus.ts` moves DOM focus | bridge `focus`, `lineField` | records requests |
 | viewport | `visualViewport`, media queries, `100svh` | bridge `viewport` | settable |
 | lifecycle | page visibility, online; never locked | bridge `lifecycle`, `network`, app lock | settable |
 | storage | IndexedDB, `BroadcastChannel`, `versionchange` | bridge `saveWorkspace` and draft records | in memory; can be told to fail or to close |
 | uploads | file input, `/fs/upload` | bridge `pickMedia`, `upload` | scripted |
-| clipboard | `navigator.clipboard` in the gesture | bridge to `UIPasteboard` | records |
+| clipboard | `navigator.clipboard` in the gesture | bridge `copy`, `readPasteboard` | records; scripted reads |
 | links | `window.open(url, "_blank", "noopener")` | bridge `openURL` | records |
 | video | inline `<video src="/fs/raw/…">` | bridge `playVideo` | records |
 | haptics | none | bridge `haptic` | records |
@@ -709,14 +740,14 @@ becomes 2.
 | "Boot and host payloads" | `boot { tabs, active }` and `SavedTab` become `workspace: SavedWorkspace`, which still carries each tab's last label, so restored pills have names before the listing |
 | "The bridge": `saveTabs` | becomes `saveWorkspace { workspace }` |
 | "The bridge": `prompt` | removed. Web forms take the keyboard in `webText` (§3.3) |
-| "Focus: one controller, native" | "No other web text inputs" is replaced. The web sends the resting mode on every destination or overlay change: `terminal` or `hidden` on Terminal with no overlay, and `webText` everywhere else. The `select` mode is entered by touch selection (§7.6); when selection ends the web sends the resting mode again. Native's own restore after interruptions (foreground, native sheets, content-process restart) stays as written |
+| "Focus: one controller, native" | Done in the spec (2026-10-24): `compose` is gone; the line field is lent by touch location (`lineField { rect }`); the web sends the resting mode on every destination or overlay change: `terminal` or `hidden` on Terminal with no overlay, and `webText` everywhere else. The `select` mode is entered by touch selection (§7.6); when selection ends the web sends the resting mode again |
 | "Keyboard geometry" | unchanged for native sizing. The new invariant (§5.4) is stated in the shared terms |
 | "The bridge": `input` | gains `tab` (the tab key native targeted). The web drops events whose tab key is no longer that tab's. `window.__tether.activeTab()` stays, so native knows the target |
-| "The bridge": drafts | new. Web → native `draftGet`, `draftPut`, `draftDelete`, `draftList` back the `DraftStore`. Native → web `draftEdit { id, tab, text, baseRevision }` and `draftInsert { id, tab, text, revision }`, each answered by web → native `draftResult { id, status }`. Web → native `draftChanged { tab, text, revision }` (§5.6, §7.4) |
+| "The bridge": drafts | new. Web → native `draftGet`, `draftPut`, `draftDelete`, `draftList` back the `DraftStore` (§5.6). Native has no draft UI, so nothing flows back |
 | "The bridge": `upload` | `tab` becomes the tab key. On `path`, the web no longer inserts automatically: it offers "Insert path into `<tab>`" (§7.5) |
-| "The bridge": clipboard | new `copy { text }` → `UIPasteboard` |
+| "The bridge": clipboard | new `copy { text }` → `UIPasteboard`. `readPasteboard` is already in the spec (2026-10-24) |
 | "Haptics" | unchanged kinds. The entries for suggestion chips go, along with the strip |
-| "What is native and what is web", "The accessory" | the suggestion strip leaves the web column. The compose field's draft rules point to §7.4; "retention remains to settle" is replaced by its retention rule |
+| "What is native and what is web" | the suggestion strip leaves the web column. The accessory and compose field are already gone from the spec (2026-10-24) |
 | "Project layout" | `web/native/bridge.ts` becomes `web/platform/native/bridge.ts`; the `--safe-*` tokens move to `ui/tokens/semantic.css` |
 | "Hosts" | `hostRejected` stays. The native transport turns it into a token refusal, which `net/admission.ts` maps to `notEnrolled` |
 | "The bridge": lock | the app lock state rides the `lifecycle` event as `locked` (§5.5) |
@@ -898,10 +929,12 @@ lost:
 - **Terminal rail with no tab** (desktop) opens the picker. Dismissing it leaves the
   empty state "Open a window with + or from Home." with the toolbar and `+` still
   visible.
-- **Picker focus.** Desktop focuses the picker's search. Phone does not. Closing it by
-  the close button, an outside tap or Escape leaves the active tab unchanged. Focus then
-  returns to the terminal input on desktop, or to `+` when no tab is open. On phone,
-  focus returns to `+` without raising the keyboard.
+- **Picker focus** (desktop). It focuses the picker's search. Closing it by the close
+  button, an outside click or Escape leaves the active tab unchanged. Focus then
+  returns to the terminal input, or to `+` when no tab is open.
+- **Switcher focus** (phone). Nothing is focused on open, so the keyboard stays down;
+  closing it without a choice returns focus to the tab chip, without raising the
+  keyboard.
 - **Creation dialogs.** Cancel and Escape restore focus to the exact control that
   opened the dialog.
 - **Terminal context.** Bold session, regular window, and a smaller muted host,
@@ -954,13 +987,16 @@ remains Swift's `FocusController`, which `app/focus.ts` reaches through
 
 | Owner | Held by | Entered by |
 |---|---|---|
-| `terminal` | the direct-input element (§7), or native's responder | tab activation, closing an overlay and returning to Terminal (desktop); a resolved tap on the terminal, or the keyboard button (touch) |
-| `draft` | the draft editor | the draft toggle, or a tap in the editor |
+| `terminal` | the direct-input element (§7), or native's responder | tab activation, closing an overlay and returning to Terminal (desktop); the keyboard toggle with the keyboard down (touch) |
+| `line` | the dock's line field | a tap in the field (touch) |
 | `field` | a `TextField` or `SearchField` | the user focusing it |
 | `overlay` | the top dialog or sheet | opening one |
 | `select` | the selection layer (§7.6) | a long-press on the terminal |
-| `none` | nothing | Home and Files with no field focused |
+| `none` | nothing | Home and Files with no field focused; the keyboard toggle from `terminal` or `line` (touch) |
 
+- **A terminal tap never changes the owner on touch.** The recognizer (§7.6) cancels
+  the tap's compatibility events, so the browser neither focuses nor blurs anything;
+  the native guard keeps first responder.
 - **Focus effects run synchronously inside `dispatch`, in the event handler's call
   stack.** iOS raises the keyboard only for a focus made during a user gesture. A focus
   run after a render, a timeout or a microtask chain would leave the keyboard down.
@@ -969,12 +1005,29 @@ remains Swift's `FocusController`, which `app/focus.ts` reaches through
   the tap arrives.
 - **Touch never focuses programmatically** except synchronously inside the tap that
   asked. In `touch` density a dialog's initial focus is the dialog element or its close
-  button, never a text field. Opening the picker on a phone therefore doesn't raise the
+  button, never a text field. Opening the switcher therefore doesn't raise the
   keyboard.
 - **Native resting mode.** Whenever the destination or overlay changes, the controller
   sends native the mode that screen needs. Terminal with no overlay sends `terminal`
-  if the keyboard was up there, else `hidden`. Everything else sends `webText`. Leaving
-  a field changes nothing; only a screen change does.
+  if `terminal` or `line` held the keyboard there, else `hidden`: WebKit focuses the
+  line field only on a tap, so it comes back as the terminal input. Everything else
+  sends `webText`. Leaving a field changes nothing; only a screen change and the
+  keyboard toggle do.
+- **The owner follows DOM focus on touch.** `terminal` and `line` are set from
+  `focusin` and cleared by `focusout` on their two elements, so Safari's Done and ⌃ ⌄
+  keep the toggle right. If `viewport.keyboard` drops from true to false while one of
+  them still holds focus, the controller blurs it. In native, `keyboard: false` with
+  `hardwareKeyboard: false` sets the owner to `none` (ios-shell.md "System dismissal").
+  Opening an overlay moves focus into it, which lowers the keyboard, and the controller
+  remembers which input held it. On close, native raises it again through the resting
+  mode; the browser refocuses that input synchronously inside the closing tap (a pill,
+  a window row, close or the backdrop), and leaves it down after a close without a tap
+  (back gesture, Escape).
+- **The keyboard toggle** runs inside its tap: with owner `terminal` or `line` it
+  blurs (browser) or sends `hidden` after blurring the line field (native), and the
+  owner becomes `none`; with `none` it focuses the direct-input element (browser) or
+  sends `terminal` (native). Its own `pointerdown` is cancelled so the tap never moves
+  focus first.
 - **A background event never moves focus away from a focused text field.** Background
   events include listings, reconnects and renames.
 
@@ -1033,17 +1086,22 @@ push, replace and `popstate`.
 ```mermaid
 flowchart LR
   xt["desktop: xterm textarea<br/>key handler + onData"] --> km
-  ow["phone browser: owned input<br/>beforeinput, composition"] --> km
-  nat["native responder<br/>bridge input"] --> items
+  ow["phone browser: owned input<br/>beforeinput, composition"] --> mods
+  nat["native responder<br/>bridge input"] --> mods
+  kr["dock key row"] --> mods
+  mods["touch/modifiers.ts<br/>armed ctrl and alt"] --> km
   km["tabs/keymap.ts<br/>named keys → tmux names"] --> items["InputItem[] for one tab key"]
   items --> drv["TabDriver → input / paste"]
   paste["paste event, capture phase"] --> route{"text or image?"}
   route -- text --> pm["paste message"]
   route -- image --> up["upload, then offer or insert the quoted path"]
-  draft["draft Insert"] --> pm
+  line["line field Return"] --> pm
+  pm -. "then Enter" .-> items
 ```
 
-Exactly one source is live per environment, so no keystroke is delivered twice. Every
+Exactly one direct-input source is live per environment, so no keystroke is delivered
+twice. The key row and the line field are added sources on touch, each with its own
+element. Every
 item targets the tab key that was active when its event arrived.
 
 ### 7.2 Desktop: xterm's textarea
@@ -1114,8 +1172,9 @@ An owned input gives tether one place to define what each edit means.
 - **The element.** A `<textarea>` in `touch/owned-input.ts`. It is mounted once, inside
   the terminal surface and inside the viewport, because an off-screen or
   `pointer-events: none` input may not raise the iOS keyboard. It is transparent, with
-  `autocapitalize="off"`, `autocorrect="off"`, `spellcheck="false"`, `inputmode="text"`
-  and `enterkeyhint="send"`. xterm's own textarea stays inert in this mode.
+  `autocapitalize="off"`, `autocorrect="off"`, `spellcheck="false"`, `inputmode="text"`,
+  no `enterkeyhint` (its Return is the plain key, a focus cue, §7.4), and `tabindex="-1"` so Safari's form bar's ⌃ ⌄ never moves
+  into it from the line field. xterm's own textarea stays inert in this mode.
 - **A sentinel.** The element always holds two spaces, with the caret at the end. The
   sentinel is restored after each commit and never during composition. A delete
   therefore always has a target, and the OS repeats it while Backspace is held.
@@ -1139,48 +1198,121 @@ An owned input gives tether one place to define what each edit means.
   `M-<key>`, each with `preventDefault`, because a paired keyboard's Ctrl+C fires
   `keydown` and no `beforeinput`. Plain printable keys arrive once, through
   `beforeinput`.
-- **No key strip.** The ordinary keyboard may lack Esc, Ctrl and arrows; that limit is
-  accepted (contract). A hardware keyboard and the draft editor are the ways around it.
-- **Raising the keyboard.** The toolbar's keyboard button, or a tap on the terminal
-  that the recognizer has resolved (§7.6), focuses the owned input synchronously in
-  that handler. Opening the picker never raises it.
+- **Armed modifiers.** An armed ctrl or alt from the key row (`touch/modifiers.ts`)
+  turns the next committed character into `C-<key>` or `M-<key>`, then disarms.
+- **Raising the keyboard.** Only the keyboard toggle focuses the owned input,
+  synchronously in its tap (§6.5). A terminal tap never does. Opening the switcher
+  lowers it and never raises it.
 
 This is the riskiest part of the client. It ships behind the G3 gate (§12), with a
 fallback.
 
-### 7.4 The local draft editor
+### 7.4 The phone dock and the session switcher
 
-A normal multiline `<textarea>` (`ui/primitives/DraftEditor.tsx`) for the phone browser,
-available while the software keyboard is open. Native uses its compose field, under the
-same rules, through the bridge-backed `DraftStore`.
+The dock (`screens/terminal/dock/`) is the bottom of Terminal whenever `directInput` is
+`owned` or `native`. One web implementation serves the phone browser, the PWA and the
+app; native draws nothing above the keyboard. Its behaviour is the contract's
+[Phone dock](../../../../docs/design/client/browser-behaviors.md#phone-dock).
 
-- **Enter adds a newline.** Nothing reaches tmux until Insert.
-- **Insert** captures `{ tab key, text, revision }`. It checks that the tab is connected
-  and still on that window, then sends one `paste` with the text exactly as written: no
-  added Enter, no newline conversion. tmux's `paste-buffer -p` adds bracketing only if
-  the pane asked for it. Insert never retargets after a tab switch or a reconnect.
-- **Insert states:**
-  - `sending`;
-  - `inserted`, on acknowledgement;
-  - `failed`, on a refusal, with the reason shown;
-  - `uncertain`, if the socket drops or the request times out before either.
+```text
+keyboard up only:  KeyRow      esc ↑ ↓ ^R ^C tab ctrl alt | ~ / -   (scrolls)
+always:            DockRow     [TabChip] [LineField .............] [Toggle]
+```
 
-  An uncertain Insert is never retried automatically. The draft stays, marked "May not
-  have been inserted".
-- **Persistence.** Saved per tab key on each change, debounced 300 ms, and flushed when
-  the page is hidden. The draft survives keyboard hide, blur, navigation and reload. It
-  is kept after Insert until cleared, as terminal-interaction-design.md proposes.
-- **Bounds.** At most 64 KiB per draft; the editor refuses more and says so. At most 32
-  drafts. Past 32, the least recently edited draft of a window with no open tab is
-  evicted. If every one belongs to an open tab, a new draft is refused with "Too many
-  saved drafts: clear one".
-- **Closed tabs.** The draft is kept, and reappears when that window is opened again
-  (open question 1). Clear local data removes all drafts.
-- **Offline.** The editor works. Insert is disabled with "Not connected". Nothing is
-  queued.
+**Layout.** `Dock.tsx` stacks `KeyRow` (mounted while the focus owner is `terminal` or
+`line`) above `DockRow`. Row items are 34 px, keys 32 px, small controls in the 30 px
+class; each control's touch area extends to its row's height. The line field's font is
+16 px, below which Safari zooms on focus. The dock adds the bottom safe area only while
+the keyboard is down. tmux is sized from the stable box (§5.4), which includes the
+resting row and excludes the key row, since the key row only appears with the keyboard;
+so showing it never resizes tmux. Portrait and landscape use the same layout. In the
+desktop layout with touch input, the tab strip stays on top and `DockRow` has no tab
+chip.
 
-P3a prototypes the editor's keyboard-open layout first, because no mockup exists for
-it.
+**The tab chip** (`dock/TabChip.tsx`) shows the active tab's window label (truncating,
+the window part first as in §8.6's tab labels) and the open-tab count from the
+workspace, and opens the switcher overlay. With no tabs it reads "Sessions".
+
+**The line field** is `screens/terminal/dock/LineField.tsx`, built on a styled
+`ui/primitives/LineInput.tsx` (an `<input type="text">`, for lint rule 1) with
+`enterkeyhint="send"`, `autocapitalize="off"`, autocorrect and spellcheck on, and the
+platform's own editing. Every behaviour below lives in `dock/`, not the primitive.
+
+- **Return** captures `{ tab key, text }`, checks that the tab is live, and sends one
+  `paste { req, watch, text, enter: true }`: the daemon runs the Enter in the same tmux
+  group, after the paste and only if it succeeded (daemon-core.md §3.4). The field
+  clears and keeps focus. An empty Return sends `{ key: "Enter" }` alone. With the tab
+  not live it keeps the text and says "Not connected"; nothing is queued. It never
+  retargets after a tab switch.
+- **Send states** (`drafts/`, keyed by `req`). `pasted { req }` deletes the pending
+  line. A refusal (`error { req }`: `inputTooLarge`, `busy`, `badRequest`) puts the line
+  back into the originating tab's draft, ahead of anything typed since, marked "Not
+  sent" with the daemon's message. A `tmux` error, which may follow a paste that ran,
+  puts it back marked "May not have been sent", as does a socket drop before the
+  answer. Nothing is retried automatically. A line still unanswered after 2 s
+  shows "Sending…" beside the field. There is no client timeout, and the paste does not
+  use `Host.request`'s 30 s one: the daemon answers every paste while the socket lives
+  (its own reply timeout ends a stuck control client and answers its pastes), and a
+  silent link ends in the socket's 25 s idle close. A timeout shorter than the daemon's
+  answer would restore a line that ran, inviting a duplicate.
+- **One line.** A `paste` event whose text holds a line break is cancelled in the field
+  and sent to the terminal as one paste, without Enter (§7.5), with a notice. One whose
+  `clipboardData.files` holds an image takes the image paste route (§7.5). A single
+  line is inserted for editing, as the platform does.
+- **Armed modifiers.** With ctrl or alt armed, the field's `beforeinput` for the next
+  single character outside composition is cancelled and the chord goes to the
+  terminal. A composition starting or a multi-character insert disarms instead.
+- **Drafts.** The field shows the active tab's draft and swaps it on a tab switch. Each
+  edit saves the draft per tab key, debounced 300 ms and flushed when the page is
+  hidden; Return deletes it. At most 64 KiB per draft; the field refuses more and says
+  so. At most 32 drafts. Past 32, the least recently edited draft of a window with no
+  open tab is evicted. If every one belongs to an open tab, a new draft is refused with
+  "Too many saved drafts: clear one". A closed tab's draft is kept and returns when
+  that window opens again. Clear local data removes all drafts.
+- **Offline.** The field can be edited; Return says "Not connected".
+- **Native.** A touch in the field's rect lends WebKit the first responder
+  (ios-shell.md); the web reports the rect through `input.setLineFieldRect` on every
+  dock layout, and `null` while an overlay covers Terminal.
+
+**Focus cues** follow the focus owner (§6.5), not keyboard geometry. Owner `terminal`:
+xterm's cursor is a solid block (`cursorStyle: "block"` with the terminal focused or,
+natively, drawn as focused) and the field shows its placeholder. Owner `line`: the
+terminal cursor is drawn as a hollow outline (xterm's `cursorInactiveStyle: "outline"`,
+the terminal being unfocused) and the field has the caret. The keyboard's Return key
+follows from the focused element: plain for the terminal input
+(`enterkeyhint` unset; natively `returnKeyType = .default`), the blue send key for the
+field. W2's `term/index.ts` sets both cursor options for every terminal.
+
+**The key row** (`screens/terminal/dock/KeyRow.tsx`): one fixed row, esc, ↑, ↓, ^R,
+^C, tab, ctrl, alt, `|`, `~`, `/`, `-`, in a horizontal scroller. No ← or →: arrows
+come from the long-press arrow pad (§7.6). No row that changes with the pane's program.
+
+- Every key cancels its `pointerdown`, so a tap never moves focus, and acts on
+  `pointerup` inside the key. Native also gets `haptic("key")` on `pointerdown`.
+- Control keys send `{ key }` to the active tab: `Escape`, `Up`, `Down`, `C-r`, `C-c`,
+  `Tab`. ↑ and ↓ repeat while held: 400 ms, then every 33 ms.
+- Character keys insert at the line field's caret when `line` owns the keyboard,
+  else send `{ text }` to the tab.
+- ctrl and alt toggle an armed state in `touch/modifiers.ts`, shown pressed, applied to
+  the next key from any touch source, then cleared. Native gets `haptic("modifier")`.
+- The row is the same with a hardware keyboard attached.
+
+**The keyboard toggle** follows §6.5. Its label is "Show keyboard" with owner `none`
+and "Hide keyboard" otherwise, from the focus owner rather than keyboard geometry, so it
+works with a hardware keyboard too.
+
+**The switcher** (`screens/switcher/`, P3a) is a router overlay, the `Dialog` sheet
+variant, opened by the tab chip. It is the contract's
+[session switcher](../../../../docs/design/client/browser-behaviors.md#session-picker-desktop-and-session-switcher-phone):
+a header with Home and close; the open tabs as pills from the workspace (tap activates
+and closes the overlay; each pill's close icon closes that tab); the host's sessions
+through W1's `screens/sessions/` renderer, given the active tab key so a window row
+says "here" for it and "open" for another open tab; and at the bottom, `SearchField`
+over `sessions/`' filter and "+ New session", which opens W1's creation dialog. The
+session holding the active tab starts expanded. It fetches the listing on open like the
+picker (§6.3). Initial focus is the dialog element (§6.5), so the keyboard stays down;
+opening it lowers the keyboard like any overlay. On the phone layout nothing else opens
+`screens/picker/`: the picker keeps only its desktop dialog, and its sheet variant goes.
 
 ### 7.5 Paste and image paste
 
@@ -1192,8 +1324,11 @@ it.
 - **Size.** Text over 256 KiB in UTF-8 is refused before sending: "Too large to paste
   (N KiB; the limit is 256 KiB)". A paste is never split, because splitting breaks
   bracketing.
-- **Results** use the same states as Insert. A refusal (`inputTooLarge`, `busy`) is
-  shown on the tab and never retried silently.
+- **Results.** Every `paste` carries a `req` and gets exactly one answer, `pasted` or
+  `error { req }`. A refusal is shown on the tab and never retried silently.
+- **The edit menu's Paste** (§7.6) calls `platform.clipboard.read(tab)` in its tap (§5.8).
+  Text goes as one `paste` for that tab, without Enter, under the size rule above; an
+  image goes the image paste route below (browser) or uploads natively (app).
 - **Image paste.** If `clipboardData.files` holds an image, the same listener captures
   the tab key and uploads the first image through `platform.uploads.send`. It then
   inserts the shell-quoted absolute path into that tab, with no Enter. If the tab has
@@ -1218,10 +1353,13 @@ it.
   holding a C0 control or DEL (CR, LF, ESC, ^C) is refused with a notice: typed into a
   pane it would submit or act as a key, which quoting cannot prevent.
 
-**Protocol gap, for L4.** `paste` has refusals but no positive acknowledgement, and its
-refusals carry no `req`, so `Host` drops them today. L4 adds an optional `req` to
-`paste`, a `pasted { req }` reply once the tmux paste group succeeds, and `req` on its
-refusals. Until it lands, the client reports `sent`, never `inserted`.
+**Protocol prerequisite (the paste-confirmation lane, §10).** Today `paste` has
+refusals but no positive answer, and its refusals carry no `req`, so `Host` drops them.
+The lane adds `req` and `enter` to `paste`, the `pasted { req, watch }` reply, and `req`
+on every paste refusal, as specified in
+[daemon-core.md](../../../../docs/design/daemon-core.md#53-json-messages). `Host` routes
+both answers to the request's owner by `req`. Until it lands, the client reports
+`sent`, never `inserted`.
 
 ### 7.6 Gestures, scrollback, selection and copy
 
@@ -1233,16 +1371,19 @@ with `platform.clipboard`.
 
 **Touch** has one gesture owner, `touch/gesture.ts`. It is a sans-IO recognizer:
 pointer events and the terminal's mouse mode go in; `tap`, `scroll(dy, velocity)`,
-`longPress`, `selectDrag` and `cancel` come out. Nothing reaches tmux, and the keyboard
-doesn't come up, until it decides.
+`longPress`, `arrowPad(direction)`, `selectWord`, `selectDrag` and `cancel` come out.
+The long-press rules are Jimmy's (2026-10-24). The long-press fires with
+`haptic("rigid")` natively. Nothing reaches tmux, and the keyboard doesn't come up,
+until it decides.
 
 | Resolved as | Then |
 |---|---|
 | `tap`, app mouse mode on (xterm's tracking mode, seeded by the snapshot) | press and release sent as one click at the tapped cell |
-| `tap`, no mouse mode | focus the owned input (raises the keyboard). On the prompt's input row (OSC 133, `term/prompt.ts`), also move the cursor there with ←/→ |
+| `tap`, no mouse mode | nothing: no focus change and no keyboard change. On the prompt's input row (OSC 133, `term/prompt.ts`), while owner `terminal` holds the keyboard, move the cursor there with ←/→ |
 | `scroll`, normal screen | scroll the buffer with momentum; history as on desktop |
 | `scroll`, alternate screen or mouse mode | SGR wheel events, or ↑/↓ when the app has no mouse mode, scaled by velocity |
-| `longPress` | selection mode: focus owner `select`, native `setFocus("select")` |
+| `longPress`, then drag | the arrow pad: arrows in the drag's direction, repeating while held, until release. No mouse event, in mouse-mode apps too |
+| `longPress`, released without moving | select the word under the finger and enter selection mode (focus owner `select`, native `setFocus("select")`); handles extend it |
 | `cancel` (`pointercancel`, a system gesture) | nothing is sent |
 
 - **Rules from terminal-interaction-design.md.** A remote mouse-down is never sent on
@@ -1251,9 +1392,12 @@ doesn't come up, until it decides.
   pan, never a guessed font size.
 - **Selection mode** (`touch/selection.ts`). It renders an immutable text snapshot of
   the visible rows, plus up to 2,000 rows of history and at most 512 KiB, as selectable
-  DOM text. Native selection handles work on it. New output keeps streaming under it;
-  the snapshot stays anchored. Copy calls `platform.clipboard.writeText` inside the tap,
-  with failure feedback. Dismissing selection frees the snapshot.
+  DOM text. Native selection handles work on it; dragging past the word extends it. New
+  output keeps streaming under it; the snapshot stays anchored. tether's edit menu
+  (`screens/terminal/selection/EditMenu.tsx`) offers Copy, which calls
+  `platform.clipboard.writeText` inside the tap with failure feedback, and Paste
+  (§7.5). A long-press released over a blank cell opens the menu with Paste alone and
+  no selection. Dismissing selection frees the snapshot.
 - **Logical copy.** Two sources, each carrying its own wrap facts:
   - **Rows in xterm's buffer.** L3 keeps the snapshot's wrap map inside the daemon: it
     replays each soft wrap in the snapshot bytes without a cursor move, so xterm marks
@@ -1293,11 +1437,11 @@ densities, and keyboard-only Playwright walks of Home, the picker, Terminal and 
 
 | Primitive | Built on | Used by |
 |---|---|---|
-| `Button` (primary, secondary, quiet) | `<button>` | creation actions, dialogs, Retry, Insert |
+| `Button` (primary, secondary, quiet) | `<button>` | creation actions, dialogs, Retry, Insert path |
 | `IconButton`, `Tooltip` | `<button aria-label>`; the tooltip shows on hover and keyboard focus | rail, toolbar, close, back, keyboard |
 | `TextField`, `SearchField` | `<input>` | search, creation name and directory, enrol code and device name |
 | `Dialog` | `<dialog>.showModal()` | desktop picker, creation forms, Settings, confirmations |
-| `Dialog` sheet variant | the same `<dialog>` and code, styled as a tall bottom sheet with safe-area padding | phone picker |
+| `Dialog` sheet variant | the same `<dialog>` and code, styled as a tall bottom sheet with safe-area padding | the switcher; phone creation forms and Settings |
 | `Disclosure` | `<button aria-expanded>` and a region. Controlled, because search forces expansion | session groups |
 | `Row` | `<button>` with fixed slots: leading icon, label, metadata, trailing | session, window, folder, file and open-tab rows; Home's Settings row |
 | `RovingList` | a list with arrow-key roving `tabindex` | Home and picker lists, file list |
@@ -1307,7 +1451,7 @@ densities, and keyboard-only Playwright walks of Home, the picker, Terminal and 
 | `StatusBand` | a band over the terminal's top edge | reconnecting, limited, failed, with Retry |
 | `EmptyState`, `Spinner` | | no tabs, no matches, empty folder, loading |
 | `Icon` | inline SVG from one owned set (a Lucide subset, ISC licence), sizes 16, 20 and 24 | everywhere |
-| `DraftEditor` | `<textarea>` | §7.4 |
+| `LineInput` | `<input type="text">`, styled | the dock's line field, §7.4 |
 
 ### 8.3 Token tiers
 
@@ -1383,7 +1527,7 @@ browser-behaviors.md in the same commit as its code. None touches the fixed choi
 | Mockup | Change | Reason |
 |---|---|---|
 | Spacing, type, radii and icon sizes are chosen per element: gaps from 4 to 25 px, text from 11 to 20 px, six radii, icons from 15 to 21 px | One scale per property (§8.3). Icons are 16, 20 or 24 px | Hand-tuned values read as unrelated. Tokens make light/dark and density possible |
-| The phone picker is a light sheet over a dark app | The sheet uses the current theme's raised surface: dark in dark mode, light in light mode (tech-lead call, 2026-10-23) | With light/dark theming, a fixed light sheet is the one surface that ignores the theme. `--sheet-bg` alone reverts it |
+| The phone sheet is light over a dark app | The sheet uses the current theme's raised surface: dark in dark mode, light in light mode (tech-lead call, 2026-10-23) | With light/dark theming, a fixed light sheet is the one surface that ignores the theme. `--sheet-bg` alone reverts it |
 
 | Search fields are 42 px; dialog buttons are about 41 px | At least 44 px in `touch` | The contract's 44 px target |
 | Inactive phone pills clip mid-label ("notes /") | The window part is always shown before the session part. A fade mask at the strip's scrolling edge signals overflow | The contract keeps the window portion visible first |
@@ -1488,7 +1632,7 @@ An offline launch opens Home from the cached shell, with the saved workspace:
   workspace (`SavedWorkspace.hostName`), since `/auth/info` cannot answer.
 - Open tabs show as reconnecting.
 - The listing shows its offline state.
-- Each tab's draft can be opened and edited, with Insert disabled.
+- Each tab's draft shows in the line field and can be edited; Return says "Not connected".
 
 Nothing shows a pretend live terminal, nothing typed is queued, and there is no
 Background Sync. The enrolment covers the whole machine, but Safari and an installed PWA
@@ -1503,7 +1647,7 @@ through the `test` adapter until it lands.
 |---|---|---|---|
 | W0 boot, Enrol, Settings | `/auth/info.browserOrigin`, `/auth/node/session`, `/auth/node/enroll`, `/auth/node/remove`, `tether.v1`-only node sockets | L2 | fake `/auth` replies in the `test` adapter, so the real `net/admission.ts` runs; Vite proxy (§5.11) |
 | W2 `limited` state | `watchEnded { reason: "limit" }`; `limit` in `WatchEndReason` | resource-limits build | a fake host that sends it |
-| W2, P3a Insert and paste states | `paste { req }`, `pasted { req }`, `req` on refusals | L4 | the client reports `sent` |
+| W2 paste states; **P3a line field Return** | `paste { req, watch, text, enter? }`; `pasted { req, watch }` once the tmux paste group succeeds; `req` on every paste refusal; Enter in the paste's own tmux group (daemon-core.md §3.4, §4.4, §5.3) | **paste-confirmation lane** (PC), built before or alongside P3a; it closes the paste half of L4. It lands the daemon change and its web counterpart in one commit, since a required `req` in the generated `messages.ts` fails `tsc` until every sender sets it: `src/proto/`, `src/hub/`, `src/http/` (the connection's own refusals), `tests/fixtures/proto/`, the regenerated `web/proto/generated/messages.ts`, `web/tabs/input.ts` (a `req` on every paste), `web/net/host.ts` (`pasted` and `error { req }` routed to the request's owner, with no timeout for a paste; a W0 hand-off made in this commit) and `web/screens/terminal/terminals.ts` (terminal paste results: W2 is finished, so PC takes the file over for this change) | the harness's fake host answers `pasted`; the real-tmux checks wait for it |
 | P3b logical copy | soft wraps replayed inside snapshot bytes; `wraps` on `history` chunks | L3 | copy without the newline claim |
 
 | W4 served-bundle checks | the static shell, the templated manifest | L2 | none: W4's served checks wait for L2 |
@@ -1521,8 +1665,10 @@ flowchart LR
   W0 --> W2[W2 Terminal, desktop input]
   W0 --> W3[W3 Files]
   W0 --> W4[W4 PWA]
-  W2 --> P3a[P3a phone input and draft]
-  W2 --> P3b[P3b gestures and selection]
+  W2 --> P3a[P3a phone dock, owned input, switcher]
+  W1 --> P3a
+  PC[paste-confirmation lane] --> P3a
+  W2 --> P3b[P3b gestures, scroll, selection]
   W1 --> G2{{G2}}
   W2 --> G2
   W3 --> G2
@@ -1533,19 +1679,23 @@ flowchart LR
 ```
 
 W5 follows the build plan: native is P4, after P3. Its bridge-v2 types are in W0's
-`platform/types.ts` from the start, and `drafts/` and the touch input are finished
-when it begins, so it builds against settled code.
+`platform/types.ts` from the start, and the dock, `drafts/` and the touch input are
+finished when it begins, so it builds against settled code. P3a and P3b both write
+`screens/terminal/TerminalScreen.tsx` only through the slots W2 left: P3a mounts the
+dock, P3b the selection layer. W1 is finished, so P3a takes over the one W1 file it
+must change, `screens/picker/` (its sheet variant goes), and asks for the
+`screens/sessions/` renderer's `active` prop through the hand-off below.
 
 | Lane | Owns (writes only these) | Delivers | Verifies |
 |---|---|---|---|
-| **W0 skeleton** | the deletions; every shared file: `package.json` and its lock, `index.html`, both `tsconfig`s, `eslint.config.js`, `vite.config.ts`, `main.tsx`; `platform/types.ts`, `platform/browser/{index,boot,transport,viewport,lifecycle,storage,clipboard,links}.ts`, `platform/test/`; `net/`, `proto/link.ts`; `app/`, `workspace/`, `ui/` (except `ui/primitives/DraftEditor.tsx`); `screens/shell/`, `screens/enrol/`; `harness/index.ts`, `harness/shared/`, `e2e/shared/`; `scripts/` checks and `.githooks/pre-push`. It also creates, then hands over, one stub per lane: `sw/vite-plugin.ts` and `platform/browser/pwa.ts` (W4), and `harness/<lane>/index.ts` (each lane) | Old views gone. Every dependency any lane will need (Playwright, axe) is installed before the lanes fork. Tokens, every primitive, CSS modules, the workspace core with restore and pruning, the listing fetcher, persist now, `net/admission.ts`, the router, the focus controller, the `useApp()` context, stub screens on their routes, the Enrol screen, the font subsets, `preflight.sh --commit` | Unit tests for workspace, admission, router, labels and restore. The kept suites stay green. Each lint rule, and each form of rule 3, fails on a seeded violation. Playwright on the harness opens every route in both layouts, themes and densities. Budgets are enforced |
+| **W0 skeleton** | the deletions; every shared file: `package.json` and its lock, `index.html`, both `tsconfig`s, `eslint.config.js`, `vite.config.ts`, `main.tsx`; `platform/types.ts`, `platform/browser/{index,boot,transport,viewport,lifecycle,storage,clipboard,links}.ts`, `platform/test/`; `net/`, `proto/link.ts`; `app/`, `workspace/`, `ui/` (except `ui/primitives/LineInput.tsx`); `screens/shell/`, `screens/enrol/`; `harness/index.ts`, `harness/shared/`, `e2e/shared/`; `scripts/` checks and `.githooks/pre-push`. It also creates, then hands over, one stub per lane: `sw/vite-plugin.ts` and `platform/browser/pwa.ts` (W4), and `harness/<lane>/index.ts` (each lane) | Old views gone. Every dependency any lane will need (Playwright, axe) is installed before the lanes fork. Tokens, every primitive, CSS modules, the workspace core with restore and pruning, the listing fetcher, persist now, `net/admission.ts`, the router, the focus controller, the `useApp()` context, stub screens on their routes, the Enrol screen, the font subsets, `preflight.sh --commit` | Unit tests for workspace, admission, router, labels and restore. The kept suites stay green. Each lint rule, and each form of rule 3, fails on a seeded violation. Playwright on the harness opens every route in both layouts, themes and densities. Budgets are enforced |
 | **W1 Home, picker, Settings** | `screens/home/`, `screens/picker/`, `screens/settings/`, `screens/sessions/` (the host session lists both render), `sessions/`, `harness/home/`, `e2e/home/` | Open tabs; the sessions list with search and expansion; creation dialogs; the picker as dialog and sheet; listing states; Settings | `sessions/` unit tests (search, expansion, 24+ groups). Playwright through the Vite proxy against isolated `tmux -L` servers on 3.4 and 3.7b: create, open, attachedElsewhere, pruning after a kill under an off-screen tab, one `listSessions` per reconnect |
-| **W2 Terminal and desktop input** | `screens/terminal/` (except `draft/` and `selection/`), `term/`, `tabs/`, `harness/terminal/`, `e2e/terminal/`, additions to `tests/fixtures/proto/keys.json` | The tab strip, the terminal surface, sizing from the stable box, desktop direct input, paste and image paste interception, the status band including `limited`. **For P3**, in `term/index.ts` and `tabs/keymap.ts`: `bufferText(rows)` (logical text by `isWrapped`), `mouseMode()`, `cellAt(x, y)`, `setPanArea(px)`, and the owned-mode keymap branch (Ctrl/Alt+printable, §7.3) | keymap tests against `keys.json`. Playwright in Chromium and WebKit: typing; named keys in vim and less; Shift+Enter in `cat -v` shows `^[[13;2u` once; Japanese IME candidate selection with arrows; paste with bracketed mode on and off, never double-bracketed; 300 KiB paste refused; the 4th session refused with its message; reconnect after a socket kill; window drag resizes tmux once |
+| **W2 Terminal and desktop input** | `screens/terminal/` (except `dock/` and `selection/`), `term/`, `tabs/`, `harness/terminal/`, `e2e/terminal/`, additions to `tests/fixtures/proto/keys.json` | The tab strip, the terminal surface, sizing from the stable box, desktop direct input, paste and image paste interception, the status band including `limited`. **For P3**, in `term/index.ts` and `tabs/keymap.ts`: `bufferText(rows)` (logical text by `isWrapped`), `mouseMode()`, `cellAt(x, y)`, `setPanArea(px)`, and the owned-mode keymap branch (Ctrl/Alt+printable, §7.3) | keymap tests against `keys.json`. Playwright in Chromium and WebKit: typing; named keys in vim and less; Shift+Enter in `cat -v` shows `^[[13;2u` once; Japanese IME candidate selection with arrows; paste with bracketed mode on and off, never double-bracketed; 300 KiB paste refused; the 4th session refused with its message; reconnect after a socket kill; window drag resizes tmux once |
 | **W3 Files** | `screens/files/`, `files/`, `platform/browser/uploads.ts`, `harness/files/`, `e2e/files/` | Folder list, preview with the kept viewers, inline video, upload, the insert-path offer | `files/` tests kept. Playwright: browse, preview, Back through folders and preview, upload then insert the quoted path into the captured tab, the target gone mid-upload, a fifth queued upload refused |
 | **W4 PWA** | `sw/` (including `vite-plugin.ts`), `public/`, `platform/browser/pwa.ts`, `harness/pwa/`, `e2e/pwa/` | Service worker, its build plugin (entry, precache list, manifest link and `theme-color` metas), `updates` and `install`, the Update banner's state, offline Home. The manifest template's content is handed to L2 | Built bundle served by the daemon through Serve, from an enrolled second machine: install in Chromium; offline launch; the multi-window and two-updates gates (§12); no API response in Cache Storage |
-| **P3a phone input and draft** (after W2) | `touch/owned-input.ts`, `drafts/`, `ui/primitives/DraftEditor.tsx`, `screens/terminal/draft/`, `harness/draft/` | The owned input; the draft editor, its keyboard-open layout prototyped first | `drafts/` unit tests (caps, eviction, revisions, Insert states). Simulator Safari probes, raising the keyboard with the keyboard button (terminal taps wait for P3b): opening the draft editor leaves tmux size unchanged; with the keyboard up, a prompt on tmux's last row stays visible above the toolbar and editor. The real-iPhone checklist (§12) queued for Jimmy |
-| **P3b gestures and selection** (after W2) | `touch/gesture.ts`, `touch/selection.ts`, `screens/terminal/selection/`, `harness/gesture/` | The recognizer, touch scroll with history, the selection layer, copy | Recognizer unit tests (tap, hold, scroll, cancel, long-press while streaming). Simulator probes. The selection-versus-click and logical-copy gates (§12) |
-| **W5 native adapter** (P4, after G3) | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v2, native transport, `saveWorkspace`, the draft bridge, `copy` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap Home search from Terminal with the keyboard up, compose edits and Insert |
+| **P3a phone dock, owned input and switcher** (after W1, W2 and the paste-confirmation lane, §10) | `touch/owned-input.ts`, `touch/modifiers.ts`, `drafts/`, `ui/primitives/LineInput.tsx`, `screens/terminal/dock/`, `screens/switcher/`, `screens/picker/` (taken over from W1), `harness/dock/` (renamed from `harness/draft/`), `e2e/dock/`; the phone toolbar in `TerminalScreen.tsx`, which becomes the dock (its disabled keyboard button goes). W0 hand-offs below | The dock as chosen (one row at rest: tab chip, line field, toggle; the key row above it while the keyboard is up), the line field with drafts and Return, the key row with armed ctrl and alt, the one keyboard toggle, the focus cues; the owned input; the `line` focus owner; the switcher replacing the phone picker sheet and tab row. Built against real tmux, with UI quality as the bar | `drafts/` and `modifiers.ts` unit tests (caps, eviction, revisions, send states by `req`, arming). Playwright WebKit at phone size against a real daemon on scratch tmux 3.4 and 3.7b: Return runs `echo hi` once in zsh and bash and submits a prompt in Claude Code and Codex; a `busy` paste refusal puts the line back and no Enter runs; every key-row key and an armed ctrl+c reach tmux; a multiline paste into the field goes to the terminal unsent; a tab switch swaps drafts; reload restores one; the switcher switches by pill, opens a window from the list, closes a tab, filters, and creates a session. Simulator Safari: the toggle raises and lowers the keyboard from both inputs and a terminal tap changes nothing; the key row appears only with the keyboard; the cursor and Return-key cues follow the owner; tmux size is unchanged with the keyboard up and the prompt on tmux's last row stays above the dock; portrait and landscape. Screenshots of every dock and switcher state, keyboard up and down, reviewed against the mockup. The real-iPhone checklist (§12) queued for Jimmy |
+| **P3b gestures, scroll and selection** (after W2) | `touch/gesture.ts`, `touch/selection.ts`, `screens/terminal/selection/`, `harness/gesture/` | The recognizer (a tap without mouse mode does nothing to focus), touch scroll with history, wheel translation, tap-to-position, the long-press with its haptic, the arrow pad, word selection with handles and the selection layer, the edit menu (Copy, Paste) | Recognizer unit tests (tap, hold then release, hold then drag, release over a blank cell, scroll, cancel, long-press while streaming). Simulator probes against real tmux: a tap never changes the keyboard; the arrow pad moves the shell cursor and vim's, repeating while held, and sends no mouse event in a mouse-mode app; a released long-press selects a word, a drag extends it, Copy keeps logical newlines, Paste sends one paste without Enter; vertical swipe in less and vim sends ↑/↓ or wheel events; scroll in a shell, in less and in Claude Code. The selection-versus-click and logical-copy gates (§12) |
+| **W5 native adapter** (P4, after G3) | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v2, native transport, `saveWorkspace`, the draft store bridge, `lineField`, `readPasteboard`, `copy` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap Home search from Terminal with the keyboard up, the line field taken from `terminal` and `hidden`. Then ios-shell.md's device checklist on Jimmy's iPhone |
 
 **How a commit lands.** Coders don't commit (a tech-lead call). For each reviewed change:
 
@@ -1577,6 +1727,28 @@ W0-owned file:
 W2-owned code that P3 needs is named in W2's Delivers column, so P3 starts against a
 finished API rather than a request.
 
+**W0 hand-offs for P3a** (the phone dock replaced the compose design these files were
+written for):
+
+- `platform/types.ts`: drop `composeResult`, `composeShow`, `DraftStatus`, and the
+  `composeEdit` and `composeInsert` events; add `setLineFieldRect`, the `Clipboard`
+  interface with `read` (§5.8), `visibleTop` (§5.4), and `HapticKind` `key` and
+  `modifier`. `platform/browser/clipboard.ts` gains `read`; `viewport.ts` reports
+  `visibleTop`.
+- `app/controller.ts`: remove the compose cases.
+- `ui/focus.ts`: `FocusTarget` `draft` becomes `line`; the port gains `blur`, which the
+  toggle needs under lint rule 2.
+- `app/focus.ts`: the `line` owner, owners from `focusin`/`focusout` on touch, and
+  `restingMode` from the owner rather than `viewport.keyboard` (§6.5).
+- `lint/rules.js`: `touch/modifiers.ts` joins the sans-IO cores; `LineInput` joins the
+  raw-element allowance through `ui/primitives/`.
+- `harness/index.ts`: import `./dock` instead of `./draft`.
+- `app/router.ts`: a `switcher` overlay; on the phone layout the Terminal tab chip opens
+  it and nothing opens the picker.
+- `screens/sessions/` (W1's renderer, now with the W0 owner): an optional `active` tab
+  key, so window rows say "here" for it and "open" for other open tabs; Home passes
+  none and keeps "Open".
+
 `docs/design/decisions.md`, `browser-behaviors.md`, plan.md and `CHANGELOG.md` are
 edited only by the lead, from each lane's notes, in that lane's commit.
 
@@ -1584,17 +1756,19 @@ edited only by the lead, from each lane's notes, in that lane's commit.
 
 | Risk | Gate before calling it done |
 |---|---|
-| The owned phone input mistranslates IME, dictation or autocorrect | Real iPhone, in Safari and the installed PWA: English with autocorrect on, Chinese and Korean IMEs, dictation, double-space period, Backspace held, Backspace with nothing typed, emoji, hardware keyboard (no doubled characters; Ctrl+C reaches tmux as `^C`). Android Chrome with Gboard if available. Fallback: xterm's textarea with targeted fixes, with the draft editor as the reliable route |
-| The keyboard only comes up from certain events | iPhone: a tap on the terminal, and the keyboard button, raise it on the first tap, both from `pointerup` and from `click` |
-| Keyboard detection misfires (iOS 26 offset bugs, hardware keyboard, zoom, toolbar collapse) | iPhone: open and close the keyboard; rotate with it up; pinch zoom; scroll until Safari's toolbars collapse; connect a hardware keyboard; open the draft editor. tmux size never changes |
+| The owned phone input mistranslates IME, dictation or autocorrect | Real iPhone, in Safari and the installed PWA: English with autocorrect on, Chinese and Korean IMEs, dictation, double-space period, Backspace held, Backspace with nothing typed, emoji, hardware keyboard (no doubled characters; Ctrl+C reaches tmux as `^C`). Android Chrome with Gboard if available. Fallback: xterm's textarea with targeted fixes, with the line field as the reliable route |
+| The keyboard toggle misbehaves | iPhone Safari and PWA: the toggle raises the keyboard on the first tap and lowers it from the owned input and from the line field; a terminal tap and a key-row tap never change it; Safari's Done lowers it and the toggle's label follows, and one toggle tap after Done raises it again; ⌃ ⌄ in Safari's form bar never moves into the owned input |
+| The dock under the keyboard | iPhone Safari and PWA, portrait and landscape: the dock sits directly above Safari's form bar with no gap or overlap, follows the keyboard's animation, and stays put while Safari's toolbars collapse. The cursor row stays visible above the dock. With a hardware keyboard, iOS still shows a short shortcut bar (about 50 px, under §5.4's keyboard threshold): the resting row must sit above it, which may need the dock lifted whenever the visual viewport's bottom is above the layout's |
+| Return into agent CLIs | Real tmux 3.4 and 3.7b: Return from the line field submits once in Claude Code and Codex, whose Enter arrives in the same tmux group as the paste. If either absorbs it into the paste, fall back to `enter: false` and send `{ key: "Enter" }` after `pasted` |
+| Keyboard detection misfires (iOS 26 offset bugs, hardware keyboard, zoom, toolbar collapse) | iPhone: open and close the keyboard; rotate with it up; pinch zoom; scroll until Safari's toolbars collapse; connect a hardware keyboard; focus the line field. tmux size never changes |
 | Gesture arbitration | Tap in a mouse-aware app versus a plain shell; press and hold; press then scroll; `pointercancel`; long-press while output streams. No mouse event is sent while selecting |
 | Logical copy | The terminal-interaction-design.md matrix: soft wrap, hard break at the exact column, blank lines, indentation, CJK, emoji and combining cells, partial selection, after reconnect and history fetch (after L3) |
-| Native clipboard and focus | Simulator then device: `copy` through the bridge; Home search tapped from Terminal with the keyboard up; picker sheet with its search focused; rotation |
-| `<dialog>` sheet on iOS: focus, scroll, keyboard | iPhone Safari and WKWebView: a long list in the picker, its search focused, rotation |
-| Multi-window update | Two Chromium windows and a PWA open, each with an unsaved draft; Update in one. Only that window reloads; the others show "Reload to finish updating", keep their drafts, and still open a lazy viewer (Markdown) after the worker has been idle long enough to be terminated |
+| Native clipboard and focus | Simulator then device: `copy` through the bridge; Home search tapped from Terminal with the keyboard up; the switcher with its search focused; rotation |
+| `<dialog>` sheet on iOS: focus, scroll, keyboard | iPhone Safari and WKWebView: a long list in the switcher with its search at the bottom focused, which must stay above the keyboard; rotation |
+| Multi-window update | Two Chromium windows and a PWA open, each with an unsent line in the field; Update in one. Only that window reloads; the others show "Reload to finish updating", keep their drafts, and still open a lazy viewer (Markdown) after the worker has been idle long enough to be terminated |
 | Two updates in a row | Build h1 open in one window; update to h2 in another, then to h3. The h1 window's next lazy chunk shows "Update required"; Cache Storage holds only `tether-shell-h2` and `tether-shell-h3` |
 | IndexedDB schema upgrade | A harness build that opens `tether` at version 2 while a version-1 page is open: the old page persists, closes and shows "Reload to finish updating"; the upgrade is not blocked; no draft is lost |
-| No paste acknowledgement yet | L4; until then the UI says "sent" |
+| No paste confirmation yet | The paste-confirmation lane (§10); until then the UI says "sent" |
 | The font subset misses glyphs | Render Jimmy's real prompt and tmux status line on a scratch server |
 | Shell budgets too tight | Measured in W0; raised only with the measurement in the commit |
 
@@ -1653,7 +1827,8 @@ For `docs/design/decisions.md`, each with the alternatives rejected:
     selection handlers (the remote click fires before a long-press is recognized).
 12. **Native focus mode is set by the screen, not by field focus.** Rejected:
     borrowing on pointer-down (races the native guard); releasing to `terminal` on blur
-    (raises the keyboard over Home).
+    (raises the keyboard over Home). The line field is the one exception, lent by touch
+    location on native's side (2026-10-24).
 13. **The service worker serves the shell cache-first, precaches the whole build, and
     updates on a tap in one page. Activation keeps the current and the replaced cache;
     every page handles IndexedDB `versionchange`.** Rejected: network-first navigation
@@ -1666,6 +1841,8 @@ For `docs/design/decisions.md`, each with the alternatives rejected:
     Background Sync; `skipWaiting` on install; a worker in the native app.
 14. **Drafts are owned by the web in both environments, persisted by the platform.**
     Rejected: native-only rules for native compose (two rule sets for one feature).
+    Since 2026-10-24 native has no compose field at all: the dock is web
+    (decisions.md "The phone dock is web, in every touch client").
 15. **Lanes in one checkout: coders don't commit; the lead commits by pathspec and
     preflights a clean export of each pushed commit.** Rejected: preflight on the
     working tree (it checks other lanes' uncommitted files, not the commit); serializing
@@ -1689,11 +1866,16 @@ Spec edits that land with the code (the lead applies them in the owning lane's c
 
 ## 14. Open questions for Jimmy
 
-None open. **Drafts of closed tabs** (settled by Jimmy, 2026-10-23): kept, and back
+None open from the phone dock. Settled on 2026-10-24 (decisions.md, "Phone input
+follows Termius"): the one-row dock with the switcher, the long-press arrow pad and word
+selection, the fixed key row, the focus cues, and auto-capitalization off in the line
+field.
+
+Earlier: **Drafts of closed tabs** (settled by Jimmy, 2026-10-23): kept, and back
 when the window is opened again, at most 32 drafts; not deleted with the tab.
 
-Settled by the tech lead on 2026-10-23, and logged with the decisions: the phone picker
-sheet follows the theme (§8.5), and each server's installed PWA is named
+Settled by the tech lead on 2026-10-23, and logged with the decisions: phone sheets
+follow the theme (§8.5), and each server's installed PWA is named
 "tether <host>", with the daemon filling the manifest (§9.1).
 
 

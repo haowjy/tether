@@ -2,8 +2,8 @@
 
 > **Client UX update (2026-10-22):** Start with [client design and Mac handoff](client/README.md).
 > Its approved browser/mobile navigation and minimal layout supersede conflicting
-> UI rules below. Subsystem invariants remain in force; touch, clipboard, and local
-> draft proposals retain explicit prototype/device gates.
+> UI rules below. Subsystem invariants remain in force; touch, clipboard and the phone
+> dock retain explicit device gates.
 
 tether is a phone-first client for the tmux sessions on Jimmy's dev server, reached
 only over his tailnet. This document is the product and UX spec and the index of the
@@ -24,7 +24,6 @@ and record decisions in decisions.md.
 | [auth.md](auth.md) | Native device tokens, enrolled-node browser admission, enrolment and auth routes |
 | [fs.md](fs.md) | `src/fs/`: roots, path resolution, the `/fs/*` routes, uploads, their limits |
 | [complete.md](complete.md) | `src/complete/`: `POST /complete`, the history, PATH, carapace and path sources, the shell snippet, how they stay inside the budget |
-| [spike-1-keyboard.md](spike-1-keyboard.md) | The keyboard spike Jimmy runs on the phone |
 | [decisions.md](decisions.md) | The decision log: what, why, alternatives rejected, who, when |
 | [plan-review.md](plan-review.md) | The first review of this plan, kept as a record |
 | [research/](research/) | Evidence: probes on the dev box, iOS and WebKit facts, libraries, prior art |
@@ -135,8 +134,9 @@ One tab opens one tmux window and follows its active pane. Display actual
 `session / window` names, with the real window index when labels collide;
 identity is the stable server/window ID, never the display name.
 
-Terminal + opens the existing-session picker only. Creation lives on Home as
-labelled New session and New window actions, with optional name and absolute start
+Desktop Terminal + opens the existing-session picker only; on the phone the dock's
+tab chip opens the session switcher. Creation is on Home, and on the phone also in the
+switcher, as labelled New session and New window actions, with optional name and absolute start
 directory. Session/window search is local; refresh is event-driven. Another-client
 attachment does not identify a laptop. Closing a tab never kills its tmux process.
 See [the interaction contract](client/browser-behaviors.md) for the full behavior.
@@ -316,39 +316,49 @@ kernel kills tether before tmux or the agents), and
 The [client interaction contract](client/browser-behaviors.md) and
 [interactive mockup](client/mockups/index.html) define current layout for all three
 clients. Desktop has a Home/Terminal/Files icon rail and top terminal tabs, without a
-back arrow. Mobile Home has Sessions/Files navigation; full-screen terminal has one
-compact bottom toolbar with Home/back, tabs, attach +, and keyboard controls.
+back arrow. Mobile Home has Sessions/Files navigation; on touch, Terminal is
+full-bleed above a dock that is always visible. At rest it is one row: a tab chip that
+opens the session switcher (open tabs, every session, search and creation), a one-line
+text field, and the keyboard toggle. While the keyboard is up, a key row sits above
+that row, and the dock rides on top of the keyboard. The phone browser, the PWA and the native
+app share the dock, drawn by the web
+([Phone dock](client/browser-behaviors.md#phone-dock)).
 
 Use actual tmux names, typography and color, not dot markers or dot separators.
-No rename/kill controls, extended-key/files sheet, or custom browser keyboard is part
-of this minimal pass. Native accessory shortcuts and suggestion UI below are deferred
-options, not required initial product controls.
+No rename/kill controls, extended-key/files sheet, or suggestion UI is part of this
+minimal pass.
 
-Keyboard opening does not resize tmux. The viewport pans to reveal the cursor while
-respecting platform safe areas; actual browser/native behavior needs device probes.
-Both mobile versions need an ordinary multiline local draft editor while the software
-keyboard is open. Enter edits the draft; explicit Insert sends one paste **without
-adding Enter**. Draft saving, target binding and remaining retention choices are in
-[the touch/input design](client/terminal-interaction-design.md). Its keyboard-open
-layout is not yet demonstrated by the approved keyboard-hidden mockup.
+Keyboard opening does not resize tmux: tmux is sized with the resting dock in place and
+the keyboard down, and the terminal pans to reveal the cursor above the dock while
+respecting platform safe areas.
 
 ## Keyboard
 
 ### Keyboard behaviour
 
-**The target:** nothing tether does closes the keyboard. Scrolling, tapping the
-terminal, selecting text, switching tabs, reconnecting, toolbar taps, and opening or
-closing a sheet all leave it open or bring it back by themselves. When iOS closes it
-anyway, one tap on `[⌨]` or the terminal brings it back. How the native app achieves
-this is in [ios-shell.md](ios-shell.md#keyboard); spike 1 tests it on the phone.
+On touch, the dock's keyboard toggle is the only tether control that opens and closes
+the on-screen keyboard. It stays visible in either state: with the keyboard down it
+raises it for the terminal input, and with either input holding the keyboard it lowers
+it. A tap on the dock's line field brings the keyboard up for the field, as any text
+field does. Terminal taps never change focus or the keyboard: with app mouse mode on,
+a tap is sent as a click; without it, a tap does nothing, except that OSC 133
+prompt-row cursor placement may move the cursor while the terminal input already has
+the keyboard. Scroll, selection, tab changes and reconnects leave the keyboard as it is.
+Opening a sheet lowers it; the native app raises it again when the sheet closes, as
+after any interruption, and the browser leaves it down. Desktop
+click-to-focus is unchanged. The native mechanics are in
+[ios-shell.md](ios-shell.md#keyboard), the touch rules in
+[terminal interaction](client/terminal-interaction-design.md).
 
 ### Autocorrect and text input
 
 - The terminal input never gets autocorrect, auto-capitalization, smart punctuation or
-  predictions: it is a bare `UIKeyInput` with those traits off, so there is no text
-  for iOS to correct after it's sent.
-- Dictation, CJK input and autocorrect belong to the compose field; its text is sent
-  as a paste.
+  predictions: keystrokes go as typed, so there is no text for iOS to correct after
+  it's sent. In the app it is a bare `UIKeyInput`; in the browser, the owned input
+  with those features off.
+- Dictation, CJK input and autocorrect belong to the dock's line field, with
+  auto-capitalization off. Return sends its line as one paste with Enter after it, in
+  one tmux command group.
 
 ### Suggestion strip
 
@@ -388,29 +398,24 @@ after Tab, ↑ or readline edits.
   ([daemon-core.md §3.7](daemon-core.md#37-cwd-subscription)), which needs no snippet.
   `/complete` is plain HTTP in `src/complete/` and never touches tmux.
 
-### Key-row groups
+### The key row
 
-> Deferred UI option, not part of the minimal approved client layout. Revisit after core input/device probes.
-
-Termius-style groups of 4; group 1 sits next to the hide-keyboard key, the rest a
-swipe away. Built from what the agent CLIs bind
-([research/agent-keybindings.md](research/agent-keybindings.md)).
-
-1. **Core:** esc · tab · ctrl · ⇧tab. Esc and Shift+Tab are the top agent keys.
-2. **Arrows:** ← ↑ ↓ →, also through the trackpad gesture.
-3. **Agent controls:** ^C · esc esc (two Escapes about 50 ms apart) · ⏎ newline
-   (Ctrl+J, which works everywhere) · ^V img.
-4. **Symbols:** / · @ · ! · |.
-5. **Ctrl combos:** ^R · ^T · ^O · ^B.
-6. **More:** alt · ^X (leader) · ^G · ^D · ~ · - · \` · \\. Reorderable (v2).
+Shown above the dock's resting row while the keyboard is up, the same in the browser,
+the PWA and the app. One fixed row, most used first: esc, ↑, ↓, ^R, ^C, tab, ctrl, alt,
+`|`, `~`, `/`, `-`, scrolling horizontally. ctrl and alt arm the next key; ↑ and ↓ repeat
+while held. Control keys always go to the terminal; character keys go where typing
+goes. There are no ← and → keys: the long-press arrow pad gives all four
+([Cursor movement](#cursor-movement)). Command recall is the shell's own (↑, ^R),
+including commands typed on the desktop; the line field keeps no history. Details are
+in [Phone dock](client/browser-behaviors.md#phone-dock).
 
 - **^B sends one Ctrl+B.** tether's `send-keys` writes straight to the pane, past
   tmux's key bindings, so the prefix never intercepts it.
 - **No tmux-prefix key**, for the same reason; tmux actions (new window, rename, kill)
   live in the app's UI.
-- **^V img:** Ctrl+V in Claude Code and Codex reads the server's clipboard, which a
-  headless box doesn't have. So ^V img opens the photo picker, uploads the image, and
-  inserts its path ([File manager](#file-manager)); both agents accept image paths.
+- More keys (⇧tab, esc esc, Ctrl+J newline) are candidates from what the agent CLIs
+  bind ([research/agent-keybindings.md](research/agent-keybindings.md)); the row
+  scrolls, so adding one costs no space.
 
 ### Sending keys and tmux.conf
 
@@ -460,14 +465,16 @@ Core MVP. Spikes 5–8 prototype these before feature work.
   xterm.js's state (seeded by the snapshot's modes): vertical swipes become mouse-wheel
   events (SGR 1006) or ↑/↓ keys, scaled by velocity.
 - Horizontal swipes on the terminal do nothing, to avoid fighting the system back
-  gesture; swiping the tab bar scrolls the pills.
+  gesture; swiping the key row scrolls its keys.
 
 ### Cursor movement
 
-- **Trackpad mode:** a two-finger press on the terminal, or a drag on the key row's
-  arrow group, then drag. Distance becomes ←/→/↑/↓ with acceleration, like Termius's
-  press-and-drag arrows. (iOS's long-press-space trackpad isn't available to the
-  native input view.)
+- **The arrow pad:** a long-press on the terminal fires with a haptic; keep holding
+  and drag, and the drag's direction sends arrows, repeating while held, like Termius's
+  motion joystick. It is the one arrow input on touch, and it sends no mouse event in
+  mouse-mode apps. Releasing without moving selects a word instead
+  ([Select, copy and paste](#select-copy-and-paste)). (iOS's long-press-space trackpad isn't available to the native input view, and isn't
+  mapped in the browser.)
 - **Tap to position** on the current prompt line: the column delta between cursor and
   tap, sent as ←/→. Only when the OSC 133 marks (or the prompt regex) show a shell
   prompt and the tap is inside the input region; single line only in the MVP.
@@ -475,7 +482,10 @@ Core MVP. Spikes 5–8 prototype these before feature work.
 ### Select, copy and paste
 
 The [researched interaction design](client/terminal-interaction-design.md) is the
-current direction. Long-press selection must not trigger a remote click. Prototype
+current direction. A long-press released without moving selects the word under the
+finger, with handles to drag it further and tether's edit menu: Copy, and Paste, which
+sends the clipboard to the terminal as one paste without Enter. Released over a blank
+cell it opens the menu with Paste alone. It must not trigger a remote click. Prototype
 native selection handles with a bounded, immutable logical-text snapshot; rendering
 one DOM node per physical terminal row is not enough to preserve copied newlines.
 Current snapshot restoration loses wrap metadata, so capture/restore must be resolved
@@ -483,8 +493,8 @@ before correct copy after reconnect/history can be promised. Unicode cell mappin
 streaming output, native menus, and gesture arbitration require device verification.
 
 Paste goes through tmux `load-buffer` and `paste-buffer -p -d`; tmux adds bracketed
-markers only when the receiving application requests them. Draft Insert uses this
-same route without adding Enter. Embedded or trailing newlines may still execute
+markers only when the receiving application requests them. The line field's Return
+uses this same route, with one Enter in the same tmux group, skipped if the paste fails. Embedded or trailing newlines may still execute
 commands. Clipboard access uses real user gestures and platform-supported controls;
 no background read or synthetic paste event is a substitute. Images use the existing
 upload/path-insertion route. Custom multi-tap selection and clipboard sync are outside
@@ -663,15 +673,16 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
   touch/          phone-owned input, gesture recognizer and selection
   workspace/      pure tab state, active tab, restore, pruning and labels
   sessions/       per-host listing cache, search, expansion and creation requests
-  drafts/         local draft records, Insert state machine and eviction
+  drafts/         per-tab line-field drafts, Return send state and eviction
   files/          /fs client and FileBrowser; render/ holds markdown and code viewers
   app/            App context, controller (owns the sessions cache), router.ts, focus.ts,
                   listing.ts, persist.ts
   screens/
     shell/        rail, destination frame and host banner
     home/         open tabs, sessions list, creation dialogs and phone bottom nav
-    picker/       Open session picker
-    terminal/     tab strip, terminal surface, status band and draft slot; terminals.ts
+    picker/       the desktop session picker
+    switcher/     the phone session switcher
+    terminal/     tab strip, terminal surface, status band and the phone dock; terminals.ts
                   holds the renderer and every tab's driver outside Preact
     files/        folder list, preview, upload and path insertion
     enrol/        enrolment and admission-problem screens
@@ -680,7 +691,7 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
     tokens/       primitives.css, semantic.css, components.css, fonts.css
     primitives/   Button, IconButton, Tooltip, TextField, SearchField, Dialog (sheet
                   variant), Disclosure, Row, RovingList, TabStrip, Banner, Toast,
-                  StatusBand, EmptyState, Spinner, Icon, DraftEditor
+                  StatusBand, EmptyState, Spinner, Icon, LineInput
     store.ts, theme.ts, hostProblem.ts
   sw/             service worker and the Vite plugin that builds it, after the main bundle
   public/         manifest template and web app icons (render-icons regenerates the PNGs)
@@ -702,8 +713,8 @@ lane's `Terminals` owns every tab driver: it covers each one except `shownTab(wo
 and is the one way a path is inserted into a tab (`canInsert`, `insertPath`). The router alone owns
 destinations, overlays and Files places. `Platform.subscribe` is one change channel:
 `app/controller.ts` handles app, host, viewport, lifecycle, storage and update changes,
-and deliberately leaves input, compose and draft events to their lane owners' direct
-subscriptions. Those consumers are added with the terminal and draft lanes. Screens
+and deliberately leaves input and draft events to their lane owners' direct
+subscriptions. Those consumers are added with the terminal and phone input lanes. Screens
 call their own cores through `useApp()`; each screen owns a CSS module beside it. In
 `platform/browser/`, `index.ts` also owns boot: there is no separate `boot.ts` module.
 No-op workspace events preserve the same state, so they do not save; views select the
@@ -755,7 +766,8 @@ slice they need and storage coalesces writes within a microtask.
 
 ## Phases
 
-The spikes come first; spike 1 gates the native app's keyboard design.
+The spikes come first. The native app's keyboard checks are in
+[ios-shell.md's device checklist](ios-shell.md#device-checklist).
 
 ### MVP
 
@@ -763,20 +775,22 @@ The spikes come first; spike 1 gates the native app's keyboard design.
   tmux; the resource budget met and measured; systemd unit with limits and
   `sd-notify`; the protocol version handshake.
 - **iOS app:** WKWebView shell with the bundled web UI and the dev-server switch;
-  native keyboard and accessory; focus controller; haptics; lifecycle signals; Xcode
-  install.
+  the native terminal input and keyboard geometry under the web dock; focus
+  controller; haptics; lifecycle signals; Xcode install.
 - **Auth:** `tailscale serve` only, with the Funnel check; the login allowlist from
   LocalAPI; a device token per phone behind Face ID; one middleware on every route;
   strict CSP.
 - **Tabs and layout:** 1 tab = 1 window; collapsed and keyboard states; safe areas;
-  the attach-only "+" sheet and Home creation actions; pinch font size per tab; landscape.
+  the desktop's attach-only "+" picker, the phone's session switcher, and Home creation
+  actions; pinch font size per tab; landscape.
 - **Reconnect:** indefinite "reconnecting" with backoff and instant retry; the connect
   timeout with web view recreation; a snapshot on every (re)watch; prompt release of
   server state; WebGL context loss handled by recreating the renderer, with DOM
   fallback.
-- **Keyboard:** one-tap recovery, local draft with explicit Insert (no added Enter),
-  ordinary mobile-browser editing, and native focus ownership. Extra key groups and
-  modifier-lock UI are deferred. Verify dictation/IME and hardware keyboards.
+- **Keyboard:** the phone dock in every touch client: one keyboard toggle, the line
+  field (Return sends the line and Enter), the key row with one-shot ctrl and alt;
+  native focus ownership. Modifier locking is deferred. Verify dictation/IME and
+  hardware keyboards.
 - **Touch:** momentum scroll with lazy history, wheel translation, jump-to-bottom,
   trackpad and tap-to-position, DOM selection with copy, paste through tmux.
 - **Display:** xterm.js 6 WebGL, Nerd Font, `unicode11`, tappable URLs.
@@ -814,10 +828,9 @@ The spikes come first; spike 1 gates the native app's keyboard design.
 Prototype in this order before feature work. Spike 2 runs on the server, in parallel
 with the phone spikes.
 
-1. **Keyboard ownership** in the native app, run by Jimmy from Xcode:
-   [spike-1-keyboard.md](spike-1-keyboard.md). The "rarely closes" target, hardware
-   keys, the terminal size staying fixed while the keyboard moves, whether the
-   keystroke bridge fits in a frame, and (part B) the Face ID-gated Keychain item.
+1. **Keyboard ownership** has no spike: input is the web dock, and its open native
+   questions are in [ios-shell.md's device checklist](ios-shell.md#device-checklist),
+   run during P4.
 2. **Daemon core against real tmux** (server only), as tether's own integration tests
    ([daemon-core.md §8](daemon-core.md#8-testing)): the snapshot boundary on 3.4 here
    and 3.7b on the Mac, recording the fixtures; `send-keys` bypassing `escape-time`
@@ -843,7 +856,6 @@ with the phone spikes.
 Spikes are throwaway code, kept out of `src/`, `web/` and `ios/Tether/`, and deleted
 once they've answered.
 
-- **Spike 1** is its own Xcode project and needs no server.
 - **Spikes 3–8** run their web pages inside the app, through the Debug build's
   dev-server switch ([ios-shell.md](ios-shell.md#where-the-web-ui-comes-from)):
   1. Run the page from Vite behind a private Unix socket using `TETHER_SOCKET`.
@@ -867,15 +879,9 @@ Mac), on its own `-L` socket.
 
 - **Jimmy's calls:** whether "the laptop can't grow a window the phone watches" is
   acceptable ([daemon-core.md §9](daemon-core.md#9-open-risks)).
-- **Spike outcomes:** above all whether the keyboard meets "rarely closes" (spike 1),
-  the boundary on 3.7b and the measured memory ceiling (spike 2), and the repaint on
+- **Spike outcomes:** the boundary on 3.7b and the measured memory ceiling (spike 2), and the repaint on
   tab switch (spike 3).
-- **File manager in landscape with the keyboard up:** the sheet is left about 70 px of
-  list (seen in the web build against a real daemon, the 852×393 layout with the
-  keyboard shown). Whether the file manager should hide the keyboard while it is open
-  in landscape, or keep it (the keyboard rule in
-  [Keyboard behaviour](#keyboard-behaviour) says nothing closes it), is undecided.
-- **Touch/copy and local draft gates:** see [the client research](client/terminal-interaction-design.md).
+- **Touch, copy and phone dock gates:** see [the client research](client/terminal-interaction-design.md).
   Rename/kill menus are not in scope and need no new protocol for this pass.
 - Open risks per subsystem: [daemon-core.md](daemon-core.md#9-open-risks),
   [ios-shell.md](ios-shell.md#open-risks), [auth.md](auth.md#open-risks).

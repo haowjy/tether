@@ -2904,3 +2904,307 @@ the p61 review. The product calls behind it are Jimmy's
   one, the web cannot release the tab's tmux size while native covers it.
 - **Rejected:** Swift-only cover state. It leaves the web's `Terminals` unaware, so its one
   watch owner keeps the active tab watched beneath native UI.
+
+## Phone input follows Termius: one keyboard toggle, a dock, a one-line field
+
+Jimmy ran the native keyboard spike on his iPhone on 2026-10-24 and changed the phone
+input design, then chose among four drawn dock variations. Entries marked Jimmy are his
+calls; the rest settle the structure his calls left open (design, spawns p110 and
+p112, and the tech lead). The record of his answers is in the work item's
+`phone-input-decisions.md`; his references are Termius screenshots and the dock
+variations canvas.
+
+### Only the keyboard toggle opens and closes the keyboard
+
+- **Decided:** 2026-10-24, Jimmy ("like termius"; "there should only be 1 place to
+  click to open and close the keyboard").
+- **What:** on touch, one control, the keyboard toggle, opens and closes the on-screen
+  keyboard, and stays visible in both states. A tap on the terminal never opens it,
+  closes it or moves focus: with app mouse mode on it is a click, without it nothing
+  happens (OSC 133 cursor placement aside, while the terminal input already has the
+  keyboard). Desktop click-to-focus is unchanged.
+- **Changes:** plan.md's earlier target that "nothing tether does closes the
+  keyboard", with a tap on the terminal or `[⌨]` bringing it back; and the gesture
+  table's "tap, no mouse mode: focus the owned input".
+- **Why:** a tap meant to scroll, select or click also opened the keyboard, and with
+  two ways to open it and a separate hide key there was no one place to look.
+- **Rejected:** tap-to-focus on the terminal (above); a toggle in the tab bar with a
+  separate hide key in the native key row (coder p109's interim edit), superseded by the
+  dock below.
+
+### The phone dock: one row at rest, the key row with the keyboard
+
+- **Decided:** 2026-10-24, Jimmy (a dock in every touch client, the phone browser
+  included; then variant 2 of four drawn, "one row at rest").
+- **What:** on touch, Terminal is full-bleed above a dock that is always visible and
+  rides on the keyboard when it is up. At rest the dock is one row: the tab chip (the
+  active tab's name and the open-tab count), the line field and the keyboard toggle.
+  While the keyboard is up, the key row sits above that row; the toggle stays at its
+  right end. Controls are small (34 px row items, 32 px keys), with the line field at
+  16 px so Safari doesn't zoom. Portrait and landscape share it. tmux is sized with the
+  resting row, so the key row appearing never resizes it.
+- **Changes:** reverses "custom browser keyboard" in the rejected list of
+  [Browser/mobile client direction](#browsermobile-client-direction-and-portable-design-record)
+  and the contract's "no custom strip" for the mobile browser. The key row supplements
+  the system keyboard; it is not the HTML keyboard rejected in
+  [Keyboard: native Swift shell first](#keyboard-native-swift-shell-first).
+- **Why:** the ordinary keyboard lacks Esc, Ctrl and Tab, which agent CLIs and shells
+  need; with the keyboard down none of them can be typed, so the key row costs no room
+  then. One row at rest leaves the terminal the most room, in landscape too, where a
+  stacked dock plus the keyboard and Safari's form bar left almost none.
+- **Rejected:** three rows always shown (tab row, line field row, key row with the
+  toggle), first as Termius draws it (layout A) and then compact (variant 1): Jimmy
+  wanted smaller controls and "i don't think we should EXACTLY copy termius"; tabs on
+  top (variant 4, "hard to reach"); a key row that follows the pane's program
+  (variant 3, deferred below); a key row in the native app only (the browser would stay
+  unable to send Esc or ^C); the keyboard-hidden toolbar plus a keyboard-open draft
+  editor (two layouts).
+
+### The key row's keys, and arrows by long-press
+
+- **Decided:** 2026-10-24, Jimmy (arrow keys off the row; the long-press, "long press
+  -> release -> highlight word -> can drag it further", with Termius's hold, vibration
+  and arrow motion pad); the fixed row and the arrow input settled by the tech lead
+  after his answers.
+- **What:**
+  - **One fixed key row**, most used first: esc, ↑, ↓, ^R, ^C, tab, ctrl, alt, `|`,
+    `~`, `/`, `-`, scrolling. ↑, ↓ and ^R are there because arrow use is "probably
+    mostly recalling commands", which the shell's own history does; ← and → go
+    ("i don't think the arrow buttons should be needed").
+  - **The long-press** on the terminal fires with a haptic. Held and dragged, it is the
+    arrow pad: arrows in the drag's direction, repeating while held. Released without
+    moving, it selects the word under the finger, with handles to drag the selection
+    further and tether's edit menu (Copy, Paste). No mouse event, in mouse-mode apps
+    too. Vertical swipes in alternate-screen apps still send ↑/↓.
+- **Why:** command recall is the shell's job (↑, ^R use its real history, desktop
+  commands included), so the line field keeps no history; one fixed row has fewer
+  moving parts (no daemon watch, protocol or client logic) than a row that follows the
+  program.
+- **Rejected:** ← and → keys; the spacebar trackpad ("kinda works, but not that well",
+  and unavailable to the native input view); a line-field command history.
+- **Deferred** (web/.context/FUTURE): smart keys that follow the pane's program
+  (needs a daemon watch of `pane_current_command` and protocol); swiping the tab chip
+  for the previous or next tab; a line-field command history; spacebar-trackpad
+  arrows.
+
+### The tab chip opens one session switcher
+
+- **Decided:** 2026-10-24, Jimmy (variant 2's tab chip, and other tmux sessions easy to
+  reach whether or not they are open as tabs; drawn as the Switcher board).
+- **What:** on the phone, the tab chip opens one sheet: Home and close in its header;
+  the open tabs as pills (a tap switches and closes the sheet; each has a close icon);
+  then every tmux session on the host with its windows, labelled "here" (the active
+  tab's window) and "open" (another open tab), never dots; and at the bottom, in thumb
+  reach, search (not auto-focused) and "+ New session". It replaces the phone's tab
+  row, its + and the phone picker sheet, and offers Home's creation actions. The
+  desktop is unchanged: top tabs, + and an attach-only picker.
+- **Why:** one place to switch, open, close and create keeps the resting dock to one
+  row, and the controls a thumb uses most sit at the bottom of the sheet.
+- **Rejected:** keeping the picker beside the switcher (two session lists on the
+  phone); auto-focusing search (the keyboard would cover the list on every open); the
+  sheet attach-only like the desktop picker (creation would need a trip to Home).
+
+### Two keyboard openers, one closer, with Termius's focus cues
+
+- **Decided:** 2026-10-24, Jimmy (his Termius screenshots: "note the difference when
+  the focus is different").
+- **What:** the toggle opens live typing to the terminal; a tap on the line field opens
+  line typing into the field; the toggle closes either; terminal taps open and close
+  nothing. With the terminal input holding the keyboard, the terminal cursor is a solid
+  block, the field shows its placeholder and Return is the plain key. With the field
+  holding it, the caret is in the field, the terminal cursor is a hollow outline and
+  Return is the blue send key (`enterkeyhint="send"`). The key row is the same in both.
+- **Why:** both inputs are needed (live keys for Tab completion, ^R, vim and y/n
+  prompts; the field for dictation and autocorrect), and the cues say which one typing
+  goes to without a label.
+- **Rejected:** the field as the only opener (loses live keys); a live mode toggled
+  inside the field (an extra tap for the same two modes).
+
+### Line field auto-capitalization is off
+
+- **Decided:** 2026-10-24, tech lead, confirmed by Jimmy.
+- **What:** `autocapitalize="off"` on the line field; autocorrect and dictation stay
+  on. Dictation's own capitalization is accepted, since no attribute controls it.
+- **Why:** most lines are commands, where a capital first letter breaks the command.
+- **Rejected:** sentence capitalization (it suits agent prompts, but they read
+  lowercase fine).
+
+### Phone paste: the line field's menu and the terminal's edit menu
+
+- **Decided:** 2026-10-24, design (p112), following from the one-row dock.
+- **What:** the dock has no Paste button. In the line field, paste is the platform's
+  own menu: one line is inserted for editing, text with a line break goes to the
+  terminal as one paste without Enter, an image takes the image paste route. On the
+  terminal, tether's edit menu, opened by a released long-press, has Paste (alone over
+  a blank cell), which sends the clipboard to the terminal as one paste without Enter
+  (`readPasteboard` in the app).
+- **Why:** the resting row Jimmy chose has room for the tab chip, the field and the
+  toggle only, and the key row is his fixed list; the edit menu is where iOS users look
+  for Paste on content that isn't a text field.
+- **Rejected:** a Paste chip in the resting row (crowds the row and shrinks the field);
+  a paste key in the key row (not in the fixed row, and hidden with the keyboard down).
+
+### The text box is one line; Return sends it and Enter
+
+- **Decided:** 2026-10-24, Jimmy ("edit should be a single line editor"; Return sends
+  the text and Enter and clears the box).
+- **What:** the dock's line field holds one line with the platform's autocorrect,
+  dictation and IME. Return sends its text to the active tab, then Enter, and clears
+  it; the field keeps the keyboard. An empty Return sends Enter. The unsent text is the
+  tab's draft, saved per tab key; [Drafts of closed tabs are kept](#drafts-of-closed-tabs-are-kept)
+  still applies to it.
+- **Changes:** replaces the multiline local draft editor whose Insert sent a paste
+  without Enter ([Browser/mobile client direction](#browsermobile-client-direction-and-portable-design-record),
+  terminal-interaction-design.md, client-architecture.md §7.4).
+- **Why:** on the phone the text box is for saying one thing to a shell or an agent
+  and sending it; a separate Insert and a second Enter cost a tap each time.
+- **Rejected:** the multiline editor with Insert; Return inserting without Enter.
+
+### The dock is web, in every touch client
+
+- **Decided:** 2026-10-24, design (p110), confirming the tech lead's lean.
+- **What:** the web draws the whole dock, including the key row, the line field and the
+  toggle, in the browser, the PWA and the app. Native keeps `TerminalInputView` as the
+  terminal input's first responder, reports keyboard geometry and sizes the web view
+  so the dock rides the keyboard, and draws nothing above the keyboard: no
+  `inputAccessoryView`, no compose `UITextView`. `FocusController`'s `compose` state
+  goes. Armed ctrl and alt live in the web (`touch/modifiers.ts`) and apply to native
+  keystrokes too, so modifiers have one owner; key-row haptics go over `haptic`.
+- **Why:** the browser needs the dock anyway, so a native copy would be a second
+  implementation of the same controls, with the drift and double review that brings.
+  The web already owns everything else Jimmy looks at; iterating on the dock needs no
+  app rebuild.
+- **Rejected:** a native accessory key row and compose field (two implementations;
+  modifier state split between Swift and the web); a native `UITextField` overlaid on
+  the web dock for the line field (its frame would have to track web layout through
+  scroll, rotation and keyboard animation).
+- **Cost:** a key-row haptic crosses the bridge, unmeasured; a native touch-down
+  `prepare()` is no longer possible.
+
+### Native lends the line field to WebKit by touch location
+
+- **Decided:** 2026-10-24, design (p110).
+- **What:** the web reports the line field's rect (`lineField { rect }`); a passive
+  native recognizer sees each touch-down before WebKit does, and a touch that begins
+  inside the rect lowers the guard, so WebKit takes first responder straight from
+  `TerminalInputView` on the tap. WebKit asks only after the touch ends, so the guard
+  stays down until the field's `focusin` confirms with `focus webText`, or 500 ms after
+  the touch ends (review p111 caught a guard raised at touch end, which would refuse
+  WebKit). Native removes WebKit's form accessory bar. The toggle from the field blurs it in the web, then sends `focus hidden`.
+- **Why:** the guard must keep refusing every other tap on the page. Native seeing the
+  touch itself has no race with WebKit's focus on the same tap.
+- **Rejected:** a `focus webText` sent on pointer-down (races WebKit's focus, as
+  client-architecture decision 12 found); the guard off on Terminal (any tap could
+  take first responder); a native overlay field (above).
+- **Risk:** the passive-recognizer ordering and the accessory-bar removal (no public
+  API) are unverified; both are on ios-shell.md's device checklist.
+
+### What the toggle raises, and where key-row keys go
+
+- **Decided:** 2026-10-24, design (p110); the character-key routing accepted by the
+  tech lead the same day.
+- **What:** with the keyboard down, the toggle raises it for the terminal input; with
+  either input holding it, the toggle lowers it. Tapping the line field gives it the
+  keyboard, as any text field. Key-row control keys (esc, ↑, ↓, ^R, ^C, tab) always go
+  to the terminal; character keys (`/ | ~ -`) go where typing goes, into the field at its
+  caret when it has the keyboard. An armed modifier takes the next character from the
+  field and sends the chord to the terminal. A paste holding a line break into the
+  field goes to the terminal as one paste, without Enter. The toggle's state follows
+  the focus owner, not keyboard geometry.
+- **Changes:** for the four character keys, the wording of Jimmy's two-openers choice,
+  "the key row always sends to the terminal". Control keys still always do.
+- **Why:** the toggle stays a pure open/close control whose result never depends on a
+  remembered earlier state. Control keys have no meaning inside a one-line field
+  except caret moves the platform already gives, while the symbol keys are exactly the
+  ones that are slow to reach on the iOS keyboard.
+- **Rejected:** the toggle reopening whichever input last had the keyboard (hidden
+  state); the toggle switching between the inputs (then it isn't open/close); every
+  key-row key going to the field while it has focus (Esc and ^C would no longer reach
+  the program); every key-row key going to the terminal while the field has focus (a
+  `|` tapped mid-line would land at the shell prompt, outside the line being written);
+  flattening a multiline paste into one line (it changes the command).
+
+### Sheets lower the keyboard, and closing one gives it back
+
+- **Decided:** 2026-10-24, design (p112).
+- **What:** opening a sheet or dialog on Terminal, the switcher included, moves focus
+  into it and lowers the keyboard; leaving Terminal for Home or Files lowers it too.
+  When a sheet closes, the input that held the keyboard gets it back: native raises it
+  through the resting mode; the browser refocuses that input inside the closing tap,
+  and leaves the keyboard down when the sheet closed without a tap (back gesture,
+  Escape), since Safari raises the keyboard only inside a gesture.
+- **Changes:** ios-shell.md's earlier rule that the keyboard stays up under web
+  sheets.
+- **Why:** a sheet needs the screen: with the keyboard up the switcher's list would be
+  a few rows, and keys typed while it is open would go to a terminal the user can't
+  see. Giving the keyboard back on close keeps a switch of tabs from costing a toggle
+  tap.
+- **Rejected:** the keyboard staying up under sheets (above); leaving it down after
+  every close (an extra tap per tab switch).
+
+### Return sends a paste with Enter in the same tmux group, and the daemon confirms it
+
+- **Decided:** 2026-10-24, design (p110, revised in p112).
+- **What:** the line goes as one `paste { req, watch, text, enter: true }`. The daemon
+  appends `send-keys Enter` to the paste's own tmux command list, which tmux skips if
+  the paste fails, and answers every paste exactly once: `pasted { req, watch }`, or
+  `error { req, watch, code }`, also when the connection refuses it itself
+  ([daemon-core.md](daemon-core.md#53-json-messages)). A refused or unanswered paste
+  puts the line back into its tab's draft. A paste whose control client exited before
+  answering is reported, never resent. The client keeps no timeout of its own: one
+  shorter than the daemon's answer would restore a line that ran (review p114). This closes the paste half of L4 ("refusals
+  carry no `req`"); it is built as its own daemon lane before or alongside P3a.
+- **Found in review (p111):** without an answer naming the paste, a `busy` refusal is
+  dropped by the client, the Enter behind it is accepted, and the shell runs whatever
+  was already on the prompt line while the field has cleared the user's line.
+- **Why:** one message, no extra round trip on a slow link, and no window where the
+  Enter can run without its paste. A pane that asked for bracketed paste sees the line
+  delimited and the Enter outside it, so the Enter submits.
+- **Rejected:** the client sending `{ key: "Enter" }` after `pasted` (p110's first
+  version: a round trip per line, and the Enter can still meet a different prompt if
+  something else typed in between; it stays the fallback if an agent CLI absorbs an
+  immediate Enter); the text as literal `input` keystrokes (an agent CLI may read the
+  burst as a paste and swallow the Enter); an Enter inside the pasted text (in bracketed
+  mode it is a newline, not a submit); resending a paste whose answer was lost (it
+  could run twice).
+- **Risk:** whether Claude Code and Codex submit on an Enter that immediately follows a
+  bracketed paste is unverified; a P3a gate.
+
+### The key row stays with a hardware keyboard
+
+- **Decided:** 2026-10-24, design (p110).
+- **What:** the dock is the same with a hardware keyboard attached: the key row shows
+  while an input holds focus, as with the on-screen keyboard.
+- **Why:** the browser cannot detect a hardware keyboard reliably, and one layout is
+  easier to get right.
+- **Changes:** ios-shell.md's collapse to a thin strip.
+- **Rejected:** collapsing in native only (two layouts of one web dock).
+
+### The keyboard spike is retired
+
+- **Decided:** 2026-10-24, design (p110), confirming the tech lead's lean.
+- **What:** `ios/spikes/keyboard/` and `spike-1-keyboard.md` are deleted. The questions
+  that still matter (the guard through sheets, rotation and a killed web process; the
+  hidden-keyboard trick; WebKit's selection under the guard; geometry; terminal input
+  traits; hardware keys; keystroke latency; the Face ID Keychain item) and the new
+  line-field lending moved to the device checklist in ios-shell.md, run in P4.
+- **Why:** half of what it tested (the native accessory key row and compose field) no
+  longer exists, its harness is not tether's UI, and Jimmy found it could not judge the
+  UI quality that is now the bar. P3 builds the real dock against real tmux.
+- **Rejected:** updating the spike to the web dock (it would become a second copy of
+  P3a); running it as is (it tests the old design).
+
+### Vocabulary: dock, tab chip, line field, key row, keyboard toggle, switcher, arrow pad
+
+- **Decided:** 2026-10-24, design (p110, p112).
+- **What:** the **dock** is the touch stack at the bottom of Terminal; the **tab chip**
+  its control naming the active tab; the **line field** its one-line text field; the
+  **key row** its row of terminal keys, shown while the keyboard is up; the **keyboard
+  toggle** the one keyboard control. The **switcher** is the phone's session sheet
+  behind the tab chip; the **picker** is the desktop's attach-only modal. The **arrow
+  pad** is a long-press held and dragged. A **draft** is the line field's unsent text
+  for one tab. "Compose", "draft editor", "tab row" and "Insert" (for text) are retired.
+- **Rejected:** "line editor" and "edit box", which collide with the shell's own line
+  editor (zle, readline); "compose", tied to the removed multiline editor; "picker" for
+  the phone sheet, whose contents (tabs, creation) differ from the desktop picker's.
+

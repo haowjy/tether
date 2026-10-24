@@ -14,13 +14,12 @@ creation, naming, and minimal controls, as specified in
 
 That approval covers less than it looks like:
 
-- The mockup uses fictional data, never connects to tmux, and shows only the
-  keyboard-hidden layout. It demonstrates layout; it does not prove any interaction
+- The mockup uses fictional data and never connects to tmux. Its phone terminal shows
+  the dock with the keyboard down and up. It demonstrates layout; it does not prove any interaction
   works.
-- The production iOS app does not exist. `ios/spikes/keyboard` is an isolated
-  keyboard experiment, and its extra controls are test instrumentation, not approved
-  product controls.
-- Touch selection, clipboard, and the local draft editor are a proposed
+- The production iOS app does not exist. The keyboard spike was retired on 2026-10-24;
+  its open native checks are the device checklist in `docs/design/ios-shell.md`.
+- Touch selection, clipboard, and the phone dock's line field are a proposed
   implementation direction (`docs/design/client/terminal-interaction-design.md`),
   backed by research but unverified on a device.
 
@@ -31,25 +30,31 @@ holds the full set, with reasons in `browser-review-decisions.md`.
 
 - One shared client: shared workspace behavior, platform-specific navigation and
   input. Three independent terminal implementations is the wrong shape.
-- Terminal `+` opens existing tmux windows only. Creating sessions and windows
-  happens on Home, behind text-labelled buttons. Files opens from Home or the
-  desktop rail, never from terminal `+`.
+- Desktop terminal `+` opens existing tmux windows only; creating sessions and windows
+  happens on Home, behind text-labelled buttons. On the phone the dock's tab chip opens
+  the session switcher instead: open tabs, every session, search and New session, with
+  no tab row and no +. Files opens from Home or the desktop rail, never from either.
 - Closing a tether tab only detaches it; this pass exposes no rename or kill.
-- The mobile browser uses the ordinary system keyboard, with no app-drawn key strip,
-  and must support PWA installation. Browser/PWA hosting research is in
+- On touch, every client (phone browser, PWA, app) ends Terminal in the phone dock:
+  one row at rest (tab chip, one-line field, the one keyboard toggle) and the fixed key
+  row above it while the keyboard is up, drawn by the web
+  (`docs/design/client/browser-behaviors.md`, Phone dock). The phone browser must
+  support PWA installation. Browser/PWA hosting research is in
   `docs/design/client/browser-setup.md`; its cookie/auth direction is a proposal,
   not a replacement for current auth rules until reviewed and implemented.
-- Both mobile clients need a local multiline draft while the software keyboard is
-  open. Insert sends the draft as one paste with no added Enter, to the tab captured
-  when Insert was tapped.
+- The line field holds one line; Return sends it to the tab it was written for, then
+  Enter, and clears it. Its unsent text is that tab's draft. The Enter rides in the
+  paste's own tmux group, and the daemon confirms each paste by `req`.
+- A long-press on the terminal is the arrow pad when held and dragged, and selects a
+  word when released; there are no ← → keys.
 
 Where `docs/design/plan.md` or `docs/design/ios-shell.md` conflict with
 `docs/design/client/`, the client directory wins. Tmux ownership, resource budgets,
 security, and the single native focus controller from those specs still apply.
 
-The repository plan and native shell explicitly defer extra accessory controls and
-use draft Insert without Enter. Native compose focus is internal; any web-controlled
-toggle needs a reviewed bridge action before implementation.
+Native draws nothing above the keyboard: it owns the terminal input's first responder,
+lends the line field to WebKit by touch location, and sizes the web view so the dock
+rides the keyboard (`docs/design/ios-shell.md`).
 
 ## Gates before implementation counts as done
 
@@ -57,7 +62,7 @@ None of these close from the Linux dev box; each needs the real system.
 
 | Gate | What must hold |
 | --- | --- |
-| Real device | Keyboard spike run on a real iPhone with its device checklist (`docs/design/spike-1-keyboard.md`) recorded before choosing native input and viewport behavior. Touch, clipboard, and keyboard layout verified on iPhone Safari and WKWebView. Xcode compilation has not been verified. |
+| Real device | The device checklist in `docs/design/ios-shell.md` run on the iPhone during P4. Touch, clipboard, and keyboard layout verified on iPhone Safari and WKWebView. Xcode compilation has not been verified. |
 | Wrap restoration | Snapshot repaint currently loses soft-wrap boundaries, so restored text copies with false newlines. Fix the capture/restore boundary before promising correct copy after reconnect, tab switch, or history fetch. |
 | Gesture arbitration | Tap, scroll, and long-press resolve before anything is sent, so selecting never sends a stray remote click. |
 | Browser architecture | Browser authentication, asset serving, and terminal resize ownership pass architecture review before a browser client connects. The dev proxy is not production auth. |
@@ -65,8 +70,8 @@ None of these close from the Linux dev box; each needs the real system.
 
 The full verification matrix is in `docs/design/client/terminal-interaction-design.md`.
 
-Two draft decisions remain open: keeping the draft after Insert is proposed but not
-confirmed, and draft retention after a tab closes is undecided.
+Drafts are now the line field's unsent text per tab; Return clears it, and a closed
+tab's draft is kept (decisions.md).
 
 ## Connection roadmap
 
@@ -81,11 +86,8 @@ not authorization to remove current device checks or expose the daemon publicly.
 On the Mac, pull the repository and read `docs/design/client/README.md`. It covers:
 
 1. Serving the mockup locally (a Python static server; no Tailscale or daemon).
-2. Building the keyboard spike per `ios/spikes/keyboard/README.md` (Xcode,
-   XcodeGen, signing, Developer Mode), then running the device checklist and
-   saving the results in the repository.
-3. A suggested implementation brief: prototype touch selection, keyboard-open
-   drafts, and logical copy across snapshot restoration on the device first; resolve
+2. The native app comes in P4; its device checklist is in `docs/design/ios-shell.md`.
+3. A suggested implementation brief: prototype touch selection, the phone dock, and logical copy across snapshot restoration on the device first; resolve
    browser auth, asset serving, and resize ownership before connecting a browser
    client.
 

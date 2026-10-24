@@ -29,7 +29,8 @@ Parallel source lanes therefore own disjoint directories; one writer per directo
   that works with Preact, or a small owned primitive set) and the token tiers
   (primitive → semantic → component; light/dark; density for desktop vs touch). Keep
   Jimmy's explicit choices: no Files in `+`, no intermediate menu, no dot markers or
-  separators, no custom browser keyboard strip, local draft whose Insert sends no Enter.
+  separators; on touch the phone dock (one keyboard toggle, a one-line field whose
+  Return sends the line and Enter, a key row), in every touch client (2026-10-24).
   Log each departure from the mockup in decisions.md and update browser-behaviors.md.
 - Build for one user; leave room for per-user ports, multiple devices, scoped guests.
 
@@ -54,7 +55,14 @@ P2  web rebuild (after D', G1 contracts):
       reconnect UI) · W3 Files (browse, preview, upload, insert path) · W4 PWA (manifest,
       service worker, install, offline drafts shell)
     gate G2: reviewers + browser probes (desktop Chrome/Safari, mobile viewport)
-P3  mobile input: draft editor, touch scroll/selection/copy, paste + image paste
+P3  mobile input against real tmux:
+      PC paste confirmation (daemon, before or alongside P3a): `paste { req, enter }`,
+         `pasted { req }`, `req` on every paste refusal, Enter in the paste's tmux group
+         (daemon-core.md §3.4, §4.4, §5.3; closes the paste half of L4), with its web
+         counterpart in the same commit (client-architecture.md §10)
+      P3a the phone dock (one row at rest: tab chip, line field, keyboard toggle; key row
+         while the keyboard is up), owned input, focus cues, the session switcher
+      P3b gestures (long-press arrow pad, word selection, edit menu), touch scroll
     gate G3: Simulator probes; real-iPhone checklist queued for Jimmy
 P4  native iOS shell (Simulator only; the physical iPhone is in use elsewhere)
 P5  final gate: end-to-end probe on isolated tmux 3.4/3.7b, budget measured, docs,

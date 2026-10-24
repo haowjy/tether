@@ -278,7 +278,7 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 | `Subscribe { window }` / `Unsubscribe { window }` | `refresh-client -B 'w<W>:@W:#{pane_current_path}'` / `refresh-client -B 'w<W>'` | maint. |
 | `History { pane, start, end }` | §3.4 history capture group | user |
 | `Input { window, items }` | text and bytes: `send-keys -t @W -H 68 69 …`, ≤ 512 bytes per command; a key: `send-keys -t @W <name>` | user |
-| `Paste { window, path }` | `load-buffer -b tether-<tag> '<path>' ; paste-buffer -p -d -b tether-<tag> -t @W` | user |
+| `Paste { window, path, enter }` | `load-buffer -b tether-<tag> '<path>' ; paste-buffer -p -d -b tether-<tag> -t @W`, then `; send-keys -t @W Enter` when `enter` | user |
 
 - **Locate never errors.** On 3.4, `display-message -t` a missing window or session
   succeeds with the target fields empty, in control mode and as a one-shot, while
@@ -312,6 +312,13 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
   between load and paste, a missing file). On 3.4 `load-buffer` of a missing file succeeds: its read error is printed
   outside any block (dropped, §3.2) and the group then fails at `paste-buffer` with
   `no buffer tether-<tag>`.
+- **Paste then Enter is one group.** With `enter`, `send-keys -t @W Enter` ends the
+  same command list, so tmux runs it right after the paste and skips it when any
+  earlier command fails: a paste that didn't land never gets its Enter. The group
+  answers `Reply::Ok` only when every command succeeded, so `pasted` covers the paste
+  and its Enter together, and an `error` can in principle follow a paste that landed
+  when only the Enter failed (both target the same window in one list, so this needs
+  the window to vanish between them).
 - **Paste files.** The connection task takes one of a few daemon-wide paste slots
   (§6), or answers `busy` itself, then writes the text to a 0600 file in
   `$XDG_RUNTIME_DIR/tether/`, so the hub only holds a `PasteFile`: the path plus its
@@ -593,7 +600,7 @@ pub enum Op {
     Subscribe { window: WindowId }, Unsubscribe { window: WindowId },
     History { pane: PaneId, start: i32, end: i32 },
     Input { window: WindowId, items: Vec<InputItem> },
-    Paste { window: WindowId, path: PathBuf },
+    Paste { window: WindowId, path: PathBuf, enter: bool },
 }
 
 pub enum Event {
@@ -895,6 +902,18 @@ sends a Release only once no bound window of the client shows the pane, and the 
 that left it has already returned the attempts' reservations.) A `Paste` the hub refuses or drops (busy, unknown watch, connection gone) emits
 `RemoveFile`.
 
+**Every paste is answered exactly once, by its `req`** (§5.3). The hub records the
+paste's `(conn, req, watch)` with its tag in the client's `pending`. `Done { Ok }`
+sends `pasted { req, watch }`; `Done { Err }` sends `error { req, watch, tmux }` with
+tmux's message. A paste the hub refuses gets `error { req, watch, code }` at once:
+`badRequest` for a watch the connection doesn't have, `busy` for a watch not yet
+`watching` or a client at the user threshold. A paste is never resent: if its control
+client exits or is closed with the tag unanswered (`settle`: a crash, the reply
+timeout, a linger close), the hub sends `error { req, watch, tmux }` with the message
+"tmux stopped answering before confirming the paste; it may have been sent". The
+answer goes even if the watch has ended since; a connection that has gone gets
+nothing.
+
 ### 4.5 Control clients
 
 - **One per tmux session that owns a watched window**, shared by all connections,
@@ -1065,7 +1084,7 @@ impl HubHandle {
 }
 pub enum FromConn {
     Client(proto::ClientMsg),   // all but hello, ping, paste, which the hub ignores
-    Paste { watch: u32, file: PasteFile },   // deleting it frees its slot
+    Paste { req: u32, watch: u32, enter: bool, file: PasteFile },   // deleting it frees its slot
     Credit { bytes: u32 },   // charged bytes written or discarded since the last one
     Closed,
 }
@@ -1189,7 +1208,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `resize` | `watch, size` | rotation or font change only |
 | `resync` | `watch` | fresh snapshot needed (renderer recreated) |
 | `input` | `watch, items: [{text} \| {key} \| {bytes: base64}]` | to the window's active pane, in order. Before `watching` it gets `error { busy }`, so the client sends input only to a bound watch |
-| `paste` | `watch, text` | through `paste-buffer -p` |
+| `paste` | `req, watch, text, enter?: bool` | through `paste-buffer -p`; with `enter`, then Enter in the same tmux group, skipped if the paste fails (§3.4). Answered exactly once: `pasted`, or `error` with this `req` (§4.4) |
 | `history` | `req, watch, start, end` | scrollback rows by tmux line number (negative is history) |
 | `listSessions` | `req: u32` | the session sheet |
 | `newWindow` | `req, session: SessionRef, name?, dir?` | tmux refuses a `session` from another server instance, a restarted server or an earlier run of the daemon, on a hub that has never seen the live instance too (§3.8): the hub broadcasts `serverExited` for that instance and answers `error { noServer }`; no window is created. The connection checks `dir` with `fs::check_dir` (absolute, an existing directory; not the file roots) and passes it as given; a refusal is `error { badRequest }` ([fs.md](fs.md#path-resolution-fsopen)) |
@@ -1211,7 +1230,8 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `sessions` | `req, tmux: TmuxListing \| null` | `null` when no tmux server is running. `TmuxListing` is `{ server, version, sessions: [{ id, name, attachedElsewhere, windows: [{ id, index, name, active, activity }] }] }`; `activity` in unix seconds |
 | `historyChunk` | `req, watch, start, historySize?, lines: [base64], wraps: base64` | `capture-pane -e` bytes per physical row; `start` is the true tmux line number of `lines[0]`. Bit `i` of the packed bitmap says row `i` wraps to the next row. May hold fewer rows than asked (§4.6); the client follows the returned `start`, including an empty range that advanced to the retained-history top, and joins wrapped rows for copy only while `historySize` stays unchanged |
 | `created` | `req, window, session` | |
-| `error` | `req?, watch?, code, message` | refuses one request; a watch it names stays as it was. `badRequest, noServer, tooManySessions, inputTooLarge, busy, tmux` |
+| `pasted` | `req, watch` | tmux ran the paste (and its Enter, if asked) |
+| `error` | `req?, watch?, code, message` | refuses one request; a watch it names stays as it was. `badRequest, noServer, tooManySessions, inputTooLarge, busy, tmux`. A refusal of a request that carries `req` (`paste`, `history`, the listing and creation requests) always carries it, including the connection's own paste refusals |
 
 A request that names a watch the connection doesn't have (`input`, `paste`, `history`)
 gets `error { badRequest }`; `resize`, `resync` and `unwatch` for one are ignored.
@@ -1568,6 +1588,7 @@ How each failure ends; §4.5 has the control-client details.
 | client crashed, killed, wedged (10 s) or `Fatal` | EOF without `%exit`, timer, parser | one respawn; a second within 60 s: `watchEnded { error }` |
 | a Locate or session check fails (not `NoServer`) | its answer, or the one-shot's timeout | `watchEnded { error }` for the window's watches |
 | user requests at the threshold | in-flight count | `error { busy }` |
+| control client exits with a paste unanswered | its exit, the tag still in `pending` | `error { req, watch, tmux }` saying it may have been sent; never resent |
 | control-client cap full | the budget-tier cap, with no lingering client to close | `watchEnded { limit }` naming sessions holding slots |
 | socket cap full | the upgrade-time socket permit | close 4005; client reconnects with its host backoff |
 | connection socket dies | `FromConn::Closed` | `DropConn`; its watches end; votes and subscriptions clear if no watch remains |
@@ -1599,7 +1620,7 @@ characters, an OSC 8 link, custom tab stops, wrap off, hidden cursor), of a scro
 region under origin mode, and of an alternate-screen TUI; a pane that is gone; hooks;
 a Gap, with a terminal client attached through `script`; splits and layout changes;
 window add, rename, kill, move and link; cwd subscriptions; Locate on live, killed and
-moved windows; paste, including a missing file; `send-keys` of `C-b` and of `Escape`
+moved windows; paste, including a missing file, and paste with `enter`, whose Enter must not run when the paste fails; `send-keys` of `C-b` and of `Escape`
 then a key; history; detach from outside; kill-server. 3.4 is recorded on the dev
 box, 3.7b on the Mac, both committed (3.7b: `src/tmux/.context/TODO`).
 
@@ -1652,7 +1673,8 @@ box, 3.7b on the Mac, both committed (3.7b: `src/tmux/.context/TODO`).
   instance as `if-shell` does); output arriving past the snapshot-spacing deadline
   standing in for the Tick, and a spent deadline not reported again; a closed
   connection and an exited client each emitting `DropConn` and `CloseClient`; every
-  paste path deleting its file.
+  paste path deleting its file and answering its `req` exactly once (`pasted`, a
+  refusal, a tmux error, its control client exiting).
 - **`proto`:** the golden frames in `tests/fixtures/proto/frames.json` (shared with
   `web/proto/frames.test.ts`), unknown message types against bad known ones, and the
   generated-TypeScript staleness test (§5.5).
