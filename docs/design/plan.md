@@ -777,7 +777,8 @@ The spikes come first. The native app's keyboard checks are in
 - **Daemon:** the control-mode bridge with snapshots and pane pausing; never starts
   tmux; the resource budget met and measured; systemd unit with limits and
   `sd-notify`; the protocol version handshake.
-- **iOS app:** WKWebView shell with the bundled web UI and the dev-server switch;
+- **iOS app:** WKWebView shell with the bundled web UI (the Debug dev-server switch is
+  deferred: `ios/.context/FUTURE`);
   the native terminal input and keyboard geometry under the web dock; focus
   controller; haptics; lifecycle signals; Xcode install.
 - **Auth:** `tailscale serve` only, with the Funnel check; the login allowlist from
@@ -860,7 +861,8 @@ Spikes are throwaway code, kept out of `src/`, `web/` and `ios/Tether/`, and del
 once they've answered.
 
 - **Spikes 3–8** run their web pages inside the app, through the Debug build's
-  dev-server switch ([ios-shell.md](ios-shell.md#where-the-web-ui-comes-from)):
+  dev-server switch ([ios-shell.md](ios-shell.md#where-the-web-ui-comes-from)). That
+  switch is deferred (`ios/.context/FUTURE`), so these steps need it built first:
   1. Run the page from Vite behind a private Unix socket using `TETHER_SOCKET`.
      Its proxy presents a native token to `local.sock`. A spike that needs a live terminal attaches to a tmux server on
      its own socket (`tmux -L tether-spike`), which Jimmy starts from a shell; spike

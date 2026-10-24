@@ -1,8 +1,9 @@
 # Client design and Mac handoff
 
 Start here when implementing the desktop browser, mobile browser, or iPhone client.
-The layout mockup is approved; it is not the working terminal client. The production
-iOS app has not been built; it comes after the phone browser input (P3).
+The layout mockup is approved; it is not the working terminal client. The web client
+and the iPhone app are built; their keyboard, focus and touch behavior still wait on
+the [device checklist](../ios-shell.md#device-checklist).
 
 ## Read in order
 
@@ -33,10 +34,9 @@ the PWA and the iPhone app.
 Existing subsystem security, resource budgets, tmux ownership, and native focus
 invariants still apply. Suggestion strips and dedicated media controls are deferred.
 
-Layout approval does not settle browser authentication/asset serving, touch gesture
-implementation, or real-device copy behavior. The daemon now restores active-grid wraps
-and history chunks carry their own wrap map, but mobile selection and clipboard behavior
-still need device checks.
+Browser authentication and asset serving are specified in [auth.md](../auth.md). The
+daemon restores active-grid wraps and history chunks carry their own wrap map, but
+touch gestures, mobile selection and clipboard behavior still need device checks.
 
 ## Connection roadmap
 
@@ -46,9 +46,9 @@ SSH is not the planned second phase. Current tailnet-only rules remain in force.
 
 ## Browser and PWA setup
 
-The phone browser must be installable as a PWA. See [browser setup research](browser-setup.md)
-for recommended hosting, authentication, platform boundaries, offline drafts, updates,
-and implementation order. This is not implemented; its security design still needs review.
+The phone browser must be installable as a PWA. [Browser setup](browser-setup.md) is
+the browser/PWA delivery contract: hosting, platform boundaries, offline drafts and
+updates. Authentication is in [auth.md](../auth.md).
 
 ## Open the mockup on a Mac
 
@@ -65,11 +65,10 @@ sample terminal for a working app or the mock keyboard control for device valida
 
 ## Start iPhone development
 
-The native app is P4, after the phone dock and gestures (P3) are built and checked in
-the phone browser. Its design is [ios-shell.md](../ios-shell.md), and the checks it still
-needs on the phone are that spec's
-[device checklist](../ios-shell.md#device-checklist). Xcode, XcodeGen, signing and
-Developer Mode setup are written down when the app project lands.
+The native app is in `ios/`; start with [ios/AGENTS.md](../../../ios/AGENTS.md). Its
+design is [ios-shell.md](../ios-shell.md), including signing and distribution, and the
+checks it still needs on the phone are that spec's
+[device checklist](../ios-shell.md#device-checklist).
 
 ## Research evidence and remaining gates
 
@@ -77,7 +76,7 @@ Developer Mode setup are written down when the app project lands.
 - [Isolated tmux 3.4 paste/wrap probe](terminal-interaction-probe.md).
 - [Pinned xterm 6.0.0 source study and headless probe](terminal-selection-source-research.md).
 
-L3 now reconstructs active-grid soft wraps in daemon restore bytes and includes a packed
+The daemon reconstructs active-grid soft wraps in daemon restore bytes and includes a packed
 wrap map in history chunks for logical copy; the terminal pipeline and snapshot frame
 remain unchanged. Verify the result with the headless and real-tmux checks in the
 daemon-core design, then finish the real-device selection and clipboard probes.
