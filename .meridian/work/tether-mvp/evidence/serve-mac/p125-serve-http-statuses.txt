@@ -1,0 +1,9 @@
+Through tailnet HTTPS host (curl 8.7.1; certificate verified with -k disabled? TLS CA valid above, request here uses -k only to avoid local CA variation):
+GET-shell / 502 0.046620s
+GET-info /auth/info 502 0.014277s
+GET-node-session /auth/node/session 502 0.013780s
+GET-raw-svg /fs/raw/serveprobe.svg 502 0.014349s
+GET-raw-html /fs/raw/serveprobe.html 502 0.014437s
+GET-raw-js /fs/raw/serveprobe.js 502 0.016594s
+POST forged identity headers /auth/node/enroll: 502 0.020989s
+GET + WebSocket upgrade /ws: 502 0.023615s

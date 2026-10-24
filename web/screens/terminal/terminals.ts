@@ -14,6 +14,8 @@ import { TabDriver, type InsertResult } from "../../tabs/driver";
 import { cannotInsert, shellQuote } from "../../tabs/input";
 import { createXtermRenderer, type TerminalRenderer } from "../../term";
 import { TerminalSizer } from "../../term/size";
+import { ArmedModifiers } from "../../touch/armed";
+import { createOwnedInput } from "../../touch/owned-input";
 import { Store } from "../../ui/store";
 import { terminalTheme } from "../../ui/theme";
 import { tabLabels } from "../../workspace/labels";
@@ -70,6 +72,13 @@ export class Terminals extends Store<TerminalsView> {
   private painted: string | null = null;
   private batch: { id: string; events: InputEvent[] } | null = null;
   private batchTimer: ReturnType<typeof setTimeout> | undefined;
+  /** tether's own input on a phone browser; created the first time it is needed. */
+  private owned: HTMLTextAreaElement | null = null;
+  private panArea: number | null = null;
+  /** Takes a paste's answer if it is for a line the dock sent; what it declines becomes a notice. */
+  private claimPasteResult: (id: string, result: PasteResult) => boolean = () => false;
+  /** The armed ctrl or alt of the touch sources; it types through this surface. */
+  readonly modifiers = new ArmedModifiers((events) => { this.type(events); });
 
   constructor(private readonly app: AppController) {
     super({ tabs: {}, ready: false });
@@ -81,11 +90,15 @@ export class Terminals extends Store<TerminalsView> {
       onChange: (size) => { this.shownDriver()?.resize(size); },
     });
     interceptClipboard(this.element, {
-      onPaste: (pasted) => { this.pasted(pasted); },
+      onPaste: (pasted) => { this.paste(pasted); },
       selectionText: () => this.renderer?.selectionText() ?? "",
     });
+    // Until the touch recognizer (P3b) owns every tap, a touch must not move focus: a tap on the
+    // surface would blur whichever input holds the keyboard (§6.5).
+    this.element.addEventListener("pointerdown", (event) => { if (this.viewport.directInput !== "xterm") event.preventDefault(); });
     new ResizeObserver(() => { this.measure(); }).observe(this.element);
     app.subscribe(() => { this.sync(); });
+    app.focus.subscribe(() => { this.drawCursor(); });
     app.platform.subscribe((event) => {
       // Native's responder: only the tab on screen still takes input.
       if (event.type !== "input") return;
@@ -102,8 +115,9 @@ export class Terminals extends Store<TerminalsView> {
     this.measure();
   }
 
-  /** A pill tap on a tab that is waiting to reconnect retries it now. */
-  nudge(id: string): void {
+  /** Selects a tab. A tab that is waiting to reconnect retries now: a tap on its pill is the user asking. */
+  activate(id: string): void {
+    this.app.dispatch({ type: "activated", id });
     const status = this.snapshot.tabs[id];
     if (status?.state.kind === "reconnecting" || status?.state.kind === "limited") this.drivers.get(id)?.nudge();
   }
@@ -131,9 +145,47 @@ export class Terminals extends Store<TerminalsView> {
     return result;
   }
 
-  /** Sends one paste for a live tab. A phone line field passes `enter: true`. */
-  sendPaste(id: string, text: string, enter = false): boolean {
-    return this.drivers.get(id)?.paste(text, enter) ?? false;
+  /**
+   * The line field's Return: one paste with Enter, run in the same tmux group by the daemon
+   * (daemon-core.md §3.4). Returns the paste's `req`, or null, with nothing sent, when the tab
+   * isn't live. Its one answer goes to {@link claimPasteResults}' claimant, not to a notice.
+   */
+  sendLine(id: string, text: string): number | null {
+    this.flushInput(); // what was typed before goes first
+    return this.drivers.get(id)?.paste(text, true) ?? null;
+  }
+
+  /** Named keys for one tab, now (the line field's empty Return). False when the tab isn't live. */
+  sendKeys(id: string, events: InputEvent[]): boolean {
+    this.flushInput();
+    return this.drivers.get(id)?.input(events) ?? false;
+  }
+
+  /** The one claimant of paste answers (the dock's line drafts). */
+  claimPasteResults(claim: (id: string, result: PasteResult) => boolean): void {
+    this.claimPasteResult = claim;
+  }
+
+  /** A paste into the tab on screen: text goes as one paste without Enter, an image is uploaded and its path typed. */
+  paste(pasted: Pasted): void {
+    // The tab is captured now: the upload below finishes later.
+    const id = this.shownTerminalTab();
+    const driver = id === null ? undefined : this.drivers.get(id);
+    if (pasted.kind === "empty" || id === null || !driver) return;
+    this.flushInput(); // what was typed before the paste goes first
+    if (pasted.kind === "text") {
+      const refusal = pasteRefusal(pasted.text);
+      if (refusal) this.app.notify(refusal);
+      else if (driver.paste(pasted.text) === null) this.app.notify("Not sent: the tab isn't connected");
+      return;
+    }
+    void this.pasteImage(id, pasted.file);
+  }
+
+  /** What remains visible of the terminal above the dock, for the cursor pan; null follows the surface. */
+  setPanArea(px: number | null): void {
+    this.panArea = px;
+    this.renderer?.setPanArea(px);
   }
 
   private sync(): void {
@@ -293,6 +345,7 @@ export class Terminals extends Store<TerminalsView> {
       openLink: (url) => { this.app.platform.openURL(url); },
     });
     this.renderer = renderer;
+    renderer.setPanArea(this.panArea);
     // The symbols fallback arrives after first paint: its glyphs draw once the atlas is cleared.
     document.fonts.addEventListener("loadingdone", () => { renderer.refreshGlyphs(); });
     this.applyInput();
@@ -307,11 +360,12 @@ export class Terminals extends Store<TerminalsView> {
     requestAnimationFrame(() => { this.measure(); });
   }
 
-  /** Desktop direct input is xterm's own textarea, held by the focus controller; phone and native bring their own. */
+  /** Desktop direct input is xterm's own textarea, held by the focus controller; a phone browser's is tether's owned input; native brings its own. */
   private applyInput(): void {
     const renderer = this.renderer;
     if (!renderer) return;
-    const xterm = this.viewport.directInput === "xterm";
+    const { directInput } = this.viewport;
+    const xterm = directInput === "xterm";
     renderer.setInput(
       xterm
         ? {
@@ -326,10 +380,30 @@ export class Terminals extends Store<TerminalsView> {
         : null,
     );
     if (this.registered) this.app.focus.withdraw("terminal", this.registered);
-    this.registered = xterm ? renderer.inputElement() : null;
+    // Where tether's own input (or native's) takes the keyboard, xterm's helper textarea is inert: out of the accessibility tree, so VoiceOver cannot land on it.
+    const helper = renderer.inputElement();
+    if (xterm) helper?.removeAttribute("aria-hidden");
+    else helper?.setAttribute("aria-hidden", "true");
+    this.registered = xterm ? renderer.inputElement() : directInput === "owned" ? this.ownedInput() : null;
+    this.drawCursor();
     if (!this.registered) return;
     this.app.focus.register("terminal", this.registered);
-    this.focusIfIdle();
+    if (xterm) this.focusIfIdle();
+  }
+
+  /** The owned input lives in the surface, so the capture-phase paste listener sees its pastes; the keyboard toggle focuses it. */
+  private ownedInput(): HTMLTextAreaElement {
+    if (!this.owned) {
+      this.owned = createOwnedInput((events) => { this.modifiers.input(events); });
+      this.element.append(this.owned);
+    }
+    return this.owned;
+  }
+
+  /** Solid block while the terminal holds the keyboard, hollow otherwise (§7.4); a desktop's real xterm focus draws itself. */
+  private drawCursor(): void {
+    const solid = this.viewport.directInput !== "xterm" && this.app.focus.snapshot.owner === "terminal";
+    this.renderer?.setInactiveCursor(solid ? "block" : "outline");
   }
 
   /**
@@ -344,23 +418,8 @@ export class Terminals extends Store<TerminalsView> {
     this.app.focus.focusTarget("terminal");
   }
 
-  private pasted(pasted: Pasted): void {
-    // The tab is captured now: the upload below finishes later.
-    const id = this.shownTerminalTab();
-    const driver = id === null ? undefined : this.drivers.get(id);
-    if (pasted.kind === "empty" || id === null || !driver) return;
-    this.flushInput(); // what was typed before the paste goes first
-    if (pasted.kind === "text") {
-      const refusal = pasteRefusal(pasted.text);
-      if (refusal) this.app.notify(refusal);
-      else if (!this.sendPaste(id, pasted.text, false)) this.app.notify("Not sent: the tab isn't connected");
-      return;
-    }
-    void this.pasteImage(id, pasted.file);
-  }
-
   private pasteResult(id: string, result: PasteResult): void {
-    if (result.type === "pasted") return;
+    if (this.claimPasteResult(id, result) || result.type === "pasted") return;
     const tabs = this.app.snapshot.workspace.tabs;
     const tab = tabLabels(tabs, (hostId) => this.app.hosts.byHostId(hostId)?.name ?? hostId)
       .find((label) => label.id === id)?.full ?? "the closed tab";

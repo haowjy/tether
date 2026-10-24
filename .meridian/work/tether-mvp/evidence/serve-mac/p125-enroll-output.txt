@@ -1,0 +1,4 @@
+Enrolment code: [redacted]
+It works once, for 10m.
+Host: unknown (no tailscaled LocalAPI socket at /var/run/tailscale/tailscaled.sock or /var/run/tailscaled.socket)
+Browser: tailnet state is unavailable (no tailscaled LocalAPI socket at /var/run/tailscale/tailscaled.sock or /var/run/tailscaled.socket)

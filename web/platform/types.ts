@@ -34,6 +34,12 @@ export interface Viewport {
   stableHeight: number;
   /** On screen now. */
   visibleHeight: number;
+  /**
+   * How far the keyboard, or Safari's form bar with a hardware keyboard, covers the bottom of
+   * the stable box; 0 with none. It is the one number the dock, sheets and toasts rise by
+   * (CSS reads it as `--keyboard-inset`). Smaller than the `keyboard` threshold for the bar.
+   */
+  keyboardInset: number;
   /** Of the keyboard-hidden layout. */
   safeArea: SafeArea;
   keyboard: boolean;
@@ -49,7 +55,7 @@ export interface Lifecycle {
 }
 
 export type Unsubscribe = () => void;
-export type HapticKind = "selection" | "rigid";
+export type HapticKind = "selection" | "rigid" | "key" | "modifier";
 
 /** The files place `FileBrowser` holds, as saved across reloads. */
 export type FilesPlace = { kind: "roots" } | { kind: "dir"; path: string } | { kind: "file"; path: string };
@@ -75,8 +81,6 @@ export interface DraftRecord {
   editedAt: number;
 }
 
-export type DraftStatus = "ok" | "tooLarge" | "full" | { conflict: { text: string; revision: number } };
-
 export interface DraftStore {
   get(key: TabKey): Promise<DraftRecord | null>;
   put(record: DraftRecord, baseRevision: number): Promise<"ok" | "conflict" | "failed">;
@@ -101,16 +105,20 @@ export interface Transport {
 export interface InputPlatform {
   /** The focus mode the screen needs. Native: bridge `focus`. Browser: a no-op, because app/focus.ts already moved DOM focus. */
   setFocus(mode: "terminal" | "hidden" | "webText" | "select"): void;
-  /** Native compose: answer a composeEdit or composeInsert. Browser and test: no-op. */
-  composeResult(id: string, status: DraftStatus): void;
-  /** Native compose: show a draft changed elsewhere. */
-  composeShow(tab: TabKey, text: string, revision: number): void;
+  /** Where a touch may hand the keyboard to the line field (§7.4): its rect in page coordinates, or null when Terminal is covered. Native: bridge `lineField`. Browser and test: no-op. */
+  setLineFieldRect(rect: DOMRectReadOnly | null): void;
 }
 
 export type UploadEvent =
   | { id: string; progress: number }
   | { id: string; path: string }
   | { id: string; error: string };
+
+export interface Clipboard {
+  writeText(text: string): Promise<"ok" | "denied">;
+  /** Paste in the terminal's edit menu (§7.6). Call synchronously in its tap. */
+  read(tab: TabKey): Promise<{ text: string } | { image: File } | { uploading: string } | "empty" | "denied">;
+}
 
 export interface Uploads {
   /** Call synchronously in the tap. Ends on completion, failure, or the picker's cancel. */
@@ -149,8 +157,6 @@ export type PlatformEvent =
   | { type: "viewport"; viewport: Viewport }
   | { type: "lifecycle"; lifecycle: Lifecycle }
   | { type: "input"; tab: TabKey; events: InputEvent[] }
-  | { type: "composeEdit"; id: string; tab: TabKey; text: string; baseRevision: number }
-  | { type: "composeInsert"; id: string; tab: TabKey; text: string; revision: number }
   | { type: "draftChanged"; key: TabKey }
   | { type: "storage"; state: "closing" | "closed" }
   | { type: "update"; state: UpdateState };
@@ -163,7 +169,7 @@ export interface Platform {
   input: InputPlatform;
   storage: PlatformStorage;
   uploads: Uploads;
-  clipboard: { writeText(text: string): Promise<"ok" | "denied"> };
+  clipboard: Clipboard;
   /** http(s) only. */
   openURL(url: string): void;
   playVideo(handle: string, path: string): "handled" | "inline";

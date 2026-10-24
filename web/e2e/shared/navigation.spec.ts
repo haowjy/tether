@@ -72,18 +72,20 @@ test.describe("overlays and focus", () => {
     expect(await hash(page)).toBe("#/terminal");
   });
 
-  test("on a phone the picker is a bottom sheet and opening it focuses no text field", async ({ page }, testInfo) => {
-    await openFixture(page, "home", phone, "#/terminal");
-    await page.getByRole("button", { name: "Open another session" }).click();
-    const picker = page.getByRole("dialog", { name: "Open session" });
-    await expect(picker).toBeVisible();
-    const box = await picker.boundingBox();
-    await shot(page, "picker", phone, testInfo.project.name);
+  test("on a phone the tab chip opens the switcher sheet, which focuses no text field", async ({ page }, testInfo) => {
+    await openFixture(page, "restored", phone, "#/terminal");
+    const chip = page.getByRole("button", { name: /, \d tabs?, open sessions$/ });
+    await chip.click();
+    const sheet = page.getByRole("dialog", { name: "Sessions" });
+    await expect(sheet).toBeVisible();
+    const box = await sheet.boundingBox();
+    await shot(page, "switcher", phone, testInfo.project.name);
     expect(box?.width).toBe(393);
     expect((box?.y ?? 0) + (box?.height ?? 0)).toBeGreaterThan(800); // anchored to the bottom
     expect(await page.evaluate(() => document.activeElement instanceof HTMLInputElement)).toBe(false);
     await page.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Open another session" })).toBeFocused();
+    await expect(sheet).toBeHidden();
+    await expect(chip).toBeFocused();
   });
 
   test("Settings is an overlay on Home, closed by Back", async ({ page }, testInfo) => {
@@ -133,6 +135,6 @@ test.describe("restore", () => {
 
   test("tabs wait, restoring, until the host's id is known, and the active one is kept", async ({ page }) => {
     await openFixture(page, "restored", phone, "#/terminal");
-    await expect(page.getByRole("button", { name: /^tether \/ agent/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /, \d tabs?, open sessions$/ })).toBeVisible();
   });
 });

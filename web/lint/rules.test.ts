@@ -111,7 +111,7 @@ describe("rule 4: import boundaries", () => {
 });
 
 describe("rule 5: sans-IO cores have no Preact, window or document", () => {
-  it.each(["workspace/Bad.ts", "sessions/Bad.ts", "drafts/Bad.ts", "tabs/Bad.ts", "net/admission.ts", "touch/gesture.ts"])("fails in %s", async (path) => {
+  it.each(["workspace/Bad.ts", "sessions/Bad.ts", "drafts/Bad.ts", "tabs/Bad.ts", "net/admission.ts", "touch/gesture.ts", "touch/modifiers.ts"])("fails in %s", async (path) => {
     await failsWith(path, "import { useState } from 'preact/hooks';", "no-restricted-imports", "sans-IO");
     await failsWith(path, "import { h } from 'preact';", "no-restricted-imports", "sans-IO");
     await failsWith(path, "window.addEventListener('x', () => undefined);", "no-restricted-globals", "sans-IO");

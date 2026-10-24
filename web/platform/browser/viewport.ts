@@ -5,7 +5,7 @@ import type { SafeArea, Viewport } from "../types";
 
 /** Layout is `phone` when `min(width, stableHeight)` is under this many CSS px. */
 const PHONE_BELOW = 600;
-/** The visible height must be this much shorter than the stable box to count as a keyboard. */
+/** The keyboard must cover this much of the stable box to count as one (a form bar covers less). */
 const KEYBOARD_MIN_PX = 120;
 
 /** A hidden element sized by CSS the script cannot read directly: `100svh` and the safe-area insets. */
@@ -49,8 +49,9 @@ export function createBrowserViewport(): BrowserViewport {
       left: parseFloat(style.paddingLeft) || 0,
     };
     const directInput = fine.matches ? "xterm" : "owned";
-    const keyboard =
-      textOwnerFocused && directInput === "owned" && (vv?.scale ?? 1) < 1.05 && stableHeight - visibleHeight >= KEYBOARD_MIN_PX;
+    // The visual viewport's bottom edge is where the keyboard starts; a pinch zoom shrinks it too, so a zoomed page has no keyboard.
+    const typing = textOwnerFocused && directInput === "owned" && (vv?.scale ?? 1) < 1.05;
+    const covered = typing ? Math.max(0, stableHeight - ((vv?.offsetTop ?? 0) + visibleHeight)) : 0;
     return {
       layout: Math.min(width, stableHeight) < PHONE_BELOW ? "phone" : "desktop",
       density: coarse.matches ? "touch" : "compact",
@@ -59,8 +60,10 @@ export function createBrowserViewport(): BrowserViewport {
       width,
       stableHeight,
       visibleHeight,
+      keyboardInset: covered,
       safeArea,
-      keyboard,
+      // From the height alone: Safari scrolling the page with the keyboard up moves offsetTop, not the keyboard.
+      keyboard: typing && stableHeight - visibleHeight >= KEYBOARD_MIN_PX,
     };
   };
 

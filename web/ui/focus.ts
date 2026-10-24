@@ -5,7 +5,7 @@ import { createContext } from "preact";
 import { useCallback, useContext, useRef } from "preact/hooks";
 
 /** Elements the app moves focus to by name. */
-export type FocusTarget = "terminal" | "draft" | "homeSearch" | "plus" | "addFolder" | "tabs";
+export type FocusTarget = "terminal" | "line" | "homeSearch" | "plus" | "addFolder" | "tabs";
 
 export interface FocusPort {
   register(target: FocusTarget, element: HTMLElement): void;
@@ -13,6 +13,8 @@ export interface FocusPort {
   focusElement(element: HTMLElement): void;
   openDialog(dialog: HTMLDialogElement): void;
   closeDialog(dialog: HTMLDialogElement, returnTo?: HTMLElement | FocusTarget | null): void;
+  /** Inside the tap that closes a dialog: hands the keyboard back to the input that held it when the dialog opened. */
+  returnKeyboardInTap(from: Element): void;
 }
 
 const missing = (): never => {
@@ -25,6 +27,7 @@ export const FocusContext = createContext<FocusPort>({
   focusElement: missing,
   openDialog: missing,
   closeDialog: missing,
+  returnKeyboardInTap: missing,
 });
 
 export function useFocus(): FocusPort {

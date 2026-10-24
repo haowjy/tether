@@ -1,0 +1,4 @@
+Source was exported with `git archive 96216b1` to `/tmp/tether-meridian-501/serve-probe/src` (not built from the working tree).
+First cargo invocation before pnpm install failed in build.rs: `sh: tsc: command not found`.
+Then, in the archive: `pnpm --dir web install` passed; `pnpm --dir web build` passed (Vite 8.3.5, 264 modules, built in 386 ms); `cargo build --release` passed (optimized profile, 30.72 s). `CARGO_TARGET_DIR=/tmp/tether-meridian-501/serve-probe/target`.
+Runtime config `/tmp/tether-meridian-501/serve-probe/config.toml`: tmux program `/opt/homebrew/bin/tmux`, socket_name `serveprobe-p125`; daemon binary is the archive release artifact.

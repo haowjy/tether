@@ -62,7 +62,7 @@ const imports = (...patterns) => ["error", { patterns }];
 const globals = (list) => ["error", ...list];
 const properties = (list) => ["error", ...list];
 
-const CORES = ["workspace/**", "sessions/**", "drafts/**", "tabs/**", "net/admission.ts", "touch/gesture.ts"];
+const CORES = ["workspace/**", "sessions/**", "drafts/**", "tabs/**", "net/admission.ts", "touch/gesture.ts", "touch/modifiers.ts"];
 const TESTS = ["**/*.test.ts", "**/*.test.tsx"];
 
 export const rules = [

@@ -1,0 +1,25 @@
+Mac Tailscale CLI: version 1.104.2; daemon binary from git archive 96216b1, release.
+Requested form:
+$ tailscale serve --bg --https=443 unix:/tmp/tether-meridian-501/serve-probe/runtime/tether/serve.sock --yes
+Error: invalid argument format
+2026/10/24 13:05:34 try `tailscale serve --help` for usage info
+Accepted equivalent (HTTPS 443 is Serve default):
+$ tailscale serve --bg --yes unix:/tmp/tether-meridian-501/serve-probe/runtime/tether/serve.sock
+Available within your tailnet: https://jimmys-macbook-air.tail852a76.ts.net/
+|-- proxy unix:/tmp/tether-meridian-501/serve-probe/runtime/tether/serve.sock
+Serve started and running in the background.
+--- state ---
+https://jimmys-macbook-air.tail852a76.ts.net (tailnet only)
+|-- / proxy unix:/tmp/tether-meridian-501/serve-probe/runtime/tether/serve.sock
+
+--- funnel status ---
+https://jimmys-macbook-air.tail852a76.ts.net (tailnet only)
+|-- / proxy unix:/tmp/tether-meridian-501/serve-probe/runtime/tether/serve.sock
+
+--- runtime permissions ---
+drwx------@ 6 jimmyyao  wheel  192 Oct 24 13:06 /tmp/tether-meridian-501/serve-probe/runtime/tether
+srw-------@ 1 jimmyyao  wheel  0 Oct 24 13:06 /tmp/tether-meridian-501/serve-probe/runtime/tether/local.sock
+-rw-------@ 1 jimmyyao  wheel  0 Oct 24 13:05 /tmp/tether-meridian-501/serve-probe/runtime/tether/lock
+srw-------@ 1 jimmyyao  wheel  0 Oct 24 13:06 /tmp/tether-meridian-501/serve-probe/runtime/tether/serve.sock
+--- daemon LocalAPI error ---
+2026-10-24T17:05:34.569043Z  WARN tailnet state unavailable no tailscaled LocalAPI socket at /var/run/tailscale/tailscaled.sock or /var/run/tailscaled.socket

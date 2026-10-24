@@ -5,7 +5,7 @@ import { createBrowserTransport } from "./transport";
 import { createBrowserUploads } from "./uploads";
 import { createBrowserViewport } from "./viewport";
 import { readLifecycle, watchLifecycle } from "./lifecycle";
-import { writeClipboardText } from "./clipboard";
+import { clipboard } from "./clipboard";
 import { openURL } from "./links";
 import { createPwa } from "./pwa";
 import { restart } from "./restart";
@@ -44,10 +44,10 @@ export function createBrowserPlatform(): Platform {
     },
     transport: createBrowserTransport(),
     // app/focus.ts already moved DOM focus in the same dispatch; there is no native side.
-    input: { setFocus: () => undefined, composeResult: () => undefined, composeShow: () => undefined },
+    input: { setFocus: () => undefined, setLineFieldRect: () => undefined },
     storage: storage.storage,
     uploads: createBrowserUploads(),
-    clipboard: { writeText: writeClipboardText },
+    clipboard,
     openURL,
     playVideo: () => "inline",
     haptic: () => undefined,

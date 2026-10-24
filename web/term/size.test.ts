@@ -11,6 +11,7 @@ const vp = (over: Partial<Viewport> = {}): Viewport => ({
   width: 393,
   stableHeight: 852,
   visibleHeight: 852,
+  keyboardInset: 0,
   safeArea: { top: 59, right: 0, bottom: 34, left: 0 },
   keyboard: false,
   ...over,

@@ -1,16 +1,17 @@
-// The Terminal destination (client-architecture.md §6.1, §6.4, §7): the tab strip and the
-// surface the renderer draws into, with the status band over its top edge. The screen is
+// The Terminal destination (client-architecture.md §6.1, §6.4, §7): the tab strip (or, on a
+// touch phone, the dock) and the surface the renderer draws into, with the status band over
+// its top edge. The screen is
 // mounted once and hidden rather than unmounted (§6.5); the renderer, the drivers and tmux's
 // size belong to `terminals.ts`, so this file only places things and draws state.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { useApp, useAppView } from "../../app/context";
+import { useApp, useAppView, useHostName } from "../../app/context";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { StatusBand } from "../../ui/primitives/StatusBand";
-import { TabStrip, type Pill } from "../../ui/primitives/TabStrip";
+import { TabStrip } from "../../ui/primitives/TabStrip";
 import { useStore } from "../../ui/store";
-import { tabLabels } from "../../workspace/labels";
-import { bandTone, lookOf } from "./tabView";
+import { Dock } from "./dock/Dock";
+import { bandTone, lookOf, tabPills } from "./tabView";
 import { terminalsOf } from "./terminals";
 import styles from "./Terminal.module.css";
 
@@ -32,25 +33,21 @@ export function TerminalScreen({ active }: { active: boolean }) {
   const slot = useRef<HTMLDivElement>(null);
   const statuses = useStore(terminals, (s) => s.tabs);
   const workspace = useAppView((v) => v.workspace);
-  const hosts = useAppView((v) => v.hosts);
   const layout = useAppView((v) => v.viewport.layout);
   const phone = layout === "phone";
+  // Touch input (a phone, or an iPad without a trackpad) ends in the dock; a mouse keeps the tab strip.
+  const dock = useAppView((v) => v.viewport.directInput !== "xterm");
 
   useEffect(() => {
     if (slot.current) terminals.mount(slot.current);
   }, [terminals]);
 
-  const hostName = (id: string): string => hosts.find((h) => h.hostId === id)?.name ?? id;
+  const hostName = useHostName();
   const current = workspace.tabs.find((t) => t.id === workspace.active);
   const running = active && current !== undefined && statuses[current.id]?.state.kind !== "live";
   const now = useNow(running);
-  const looks = new Map(workspace.tabs.map((t) => [t.id, lookOf(t, statuses[t.id], hostName(t.key.host), active && t.id === workspace.active, now)]));
-  const labels = tabLabels(workspace.tabs, hostName);
-  const pills: Pill[] = labels.map((l) => {
-    const look = looks.get(l.id);
-    return { id: l.id, session: l.session, window: l.window, full: l.full, tone: look?.tone ?? "idle", state: look?.state ?? "open" };
-  });
-  const look = current && looks.get(current.id);
+  const pills = tabPills(workspace.tabs, statuses, hostName, active ? workspace.active : null, now);
+  const look = current && lookOf(current, statuses[current.id], hostName(current.key.host), active, now);
   const status = look?.status;
 
   const tools = (
@@ -59,15 +56,10 @@ export function TerminalScreen({ active }: { active: boolean }) {
       <TabStrip
         pills={pills}
         active={workspace.active}
-        onSelect={(id) => {
-          app.dispatch({ type: "activated", id });
-          terminals.nudge(id);
-        }}
+        onSelect={(id) => { terminals.activate(id); }}
         onClose={(id) => { app.dispatch({ type: "closed", id }); }}
       />
       <IconButton icon="plus" label="Open another session" focusTarget="plus" onClick={(e) => { app.openOverlay({ screen: "picker", name: "open" }, e.currentTarget); }} />
-      {/* Raised by the phone input lane. */}
-      {phone && <IconButton icon="keyboard" label="Show keyboard" disabled />}
       {!phone && current && look && <span class={styles.hostLabel} data-tone={look.tone}>{hostName(current.key.host)}</span>}
     </div>
   );
@@ -79,7 +71,7 @@ export function TerminalScreen({ active }: { active: boolean }) {
       <div class={styles.surface} ref={slot}>
         {current === undefined && (
           <div class={styles.empty}>
-            <EmptyState icon="terminal" title="Open a window with + or from Home." />
+            <EmptyState icon="terminal" title={dock && phone ? "Open a window from Sessions." : "Open a window with + or from Home."} />
           </div>
         )}
         {current && status?.detail && (
@@ -91,7 +83,8 @@ export function TerminalScreen({ active }: { active: boolean }) {
           />
         )}
       </div>
-      {phone && tools}
+      {phone && !dock && tools}
+      {dock && <Dock active={active} />}
     </div>
   );
 }

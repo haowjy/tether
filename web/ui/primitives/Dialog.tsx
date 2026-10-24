@@ -14,14 +14,23 @@ interface DialogProps {
   variant?: "dialog" | "sheet";
   /** Where focus returns on close: an element or a registered name. Default: the control `app.openOverlay` was given, else the one focused at opening. A field marked `data-initial-focus=""` takes focus on opening with a fine pointer. */
   returnFocusTo?: HTMLElement | FocusTarget | null;
+  /** Beside the close button in the header (the switcher's Home). */
+  actions?: ComponentChildren;
+  /** Pinned under the scrolling body, safe-area padded (the switcher's search). */
+  footer?: ComponentChildren;
   children: ComponentChildren;
 }
 
 /** `<dialog>.showModal()`: top layer, modal focus containment, Escape. Safari lacks `closedby`, so Escape and the backdrop are handled here. */
-export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo, children }: DialogProps) {
+export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo, actions, footer, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const focus = useFocus();
+  // A tap that closes (the close icon, the backdrop) is the moment a keyboard that was up can come back.
+  const closeByTap = (from: Element): void => {
+    focus.returnKeyboardInTap(from);
+    onClose();
+  };
 
   // A layout effect: the dialog opens in the commit of the change that asked, not a frame later
   // (after a paint of the page behind it, and after a tap on its backdrop could land elsewhere).
@@ -45,14 +54,16 @@ export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo
       aria-labelledby={titleId}
       tabIndex={-1}
       onCancel={(e) => { e.preventDefault(); onClose(); }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget) closeByTap(e.currentTarget); }}
     >
       <div class={styles.panel}>
         <header class={styles.header}>
           <h2 id={titleId} class={styles.title}>{title}</h2>
-          <IconButton icon="close" label="Close" data-initial-focus="touch" onClick={onClose} />
+          {actions && <div class={styles.actions}>{actions}</div>}
+          <IconButton icon="close" label="Close" data-initial-focus="touch" onClick={(e) => { closeByTap(e.currentTarget); }} />
         </header>
         <div class={styles.body}>{children}</div>
+        {footer && <footer class={styles.footer}>{footer}</footer>}
       </div>
     </dialog>
   );

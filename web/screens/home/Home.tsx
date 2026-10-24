@@ -8,7 +8,7 @@ import { SearchField } from "../../ui/primitives/TextField";
 import { FilesScreen } from "../files/FilesScreen";
 import { HostSessionLists } from "../sessions/HostSessionLists";
 import { openWindow } from "../sessions/openWindow";
-import { CreateDialog, type CreateParams } from "./CreateDialog";
+import type { CreateParams } from "./CreateDialog";
 import { HomeNav } from "./HomeNav";
 import { OpenTabs } from "./OpenTabs";
 import styles from "./Home.module.css";
@@ -61,7 +61,6 @@ function Sessions() {
         </div>
       </div>
       {phone && <HomeNav pane="sessions" />}
-      <CreateDialog />
     </div>
   );
 }

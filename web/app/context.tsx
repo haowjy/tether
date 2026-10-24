@@ -2,6 +2,7 @@ import { createContext, type ComponentChildren } from "preact";
 import { useContext } from "preact/hooks";
 import { FocusContext } from "../ui/focus";
 import { useStore } from "../ui/store";
+import { tabLabels, type TabLabel } from "../workspace/labels";
 import type { AppController, AppView } from "./controller";
 
 const AppContext = createContext<AppController | null>(null);
@@ -37,4 +38,16 @@ export function useOverlay(screen: string, name?: string): { open: boolean; para
 /** A slice of the app's view state (viewport, workspace, navigation, hosts), re-rendering only when that slice changes. */
 export function useAppView<S>(select: (view: AppView) => S, equal?: (a: S, b: S) => boolean): S {
   return useStore(useApp(), select, equal);
+}
+
+/** A host's name for a host id, falling back to the id while the host is unknown. */
+export function useHostName(): (hostId: string) => string {
+  const hosts = useAppView((v) => v.hosts);
+  return (hostId) => hosts.find((h) => h.hostId === hostId)?.name ?? hostId;
+}
+
+/** The open tabs' labels, one place for every pill, chip and list that names a tab. */
+export function useTabLabels(): TabLabel[] {
+  const tabs = useAppView((v) => v.workspace.tabs);
+  return tabLabels(tabs, useHostName());
 }

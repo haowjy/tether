@@ -1,0 +1,37 @@
+.button {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  border: 0;
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  user-select: none;
+  transition: background var(--duration-1) var(--ease-out), color var(--duration-1) var(--ease-out);
+}
+/* The visible button is smaller than the row it sits in; its touch area runs to the row's height. */
+.button::after { content: ""; position: absolute; inset: calc(-1 * var(--space-1)) -2px; }
+.button[data-kind="key"] {
+  min-width: var(--dock-control-height);
+  height: var(--dock-key-height);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-1);
+}
+.button[data-kind="control"] {
+  min-width: var(--dock-control-height);
+  height: var(--dock-control-height);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-2);
+  font-size: var(--font-size-2);
+}
+.button:active,
+.button[data-pressed] { background: var(--color-accent); color: var(--color-on-accent); }
+.button:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }
+.button:disabled { opacity: 0.5; }

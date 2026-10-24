@@ -138,5 +138,6 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
       panArea = px;
       pan(true);
     },
+    setInactiveCursor: (style) => { term.options.cursorInactiveStyle = style; },
   };
 }

@@ -1,0 +1,69 @@
+/* The slot is in flow in the keyboard-hidden layout, so tmux is sized with it in place. The
+   safe area is its padding, which the keyboard covers when the row lifts onto it. */
+.slot {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  padding-bottom: var(--safe-bottom);
+  background: var(--color-bg-raised);
+}
+/* Rides on the keyboard: the row's bottom goes to the keyboard's top. The safe area below
+   the row is the slot's padding, which the keyboard covers, so only the rest of the inset lifts. */
+.lift {
+  position: relative;
+  translate: 0 calc(-1 * max(0px, var(--keyboard-inset) - var(--safe-bottom)));
+  background: var(--color-bg-raised);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Over the terminal's bottom edge, not in flow: showing it never resizes tmux. */
+.above {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+}
+.note {
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+  font-size: var(--text-small);
+  color: var(--color-text-muted);
+}
+.note:empty { display: none; }
+.note[data-tone="error"] { color: var(--color-status-error); }
+
+.keys {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--dock-keys-height);
+  padding: 0 var(--space-2);
+  overflow-x: auto;
+  background: var(--color-bg-raised);
+  border-top: 1px solid var(--color-border);
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  /* Horizontal drags scroll the row; a press on a key is its own gesture. */
+  touch-action: pan-x;
+}
+.keys::-webkit-scrollbar { display: none; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--dock-height);
+  padding: var(--space-1) var(--space-2);
+}
+.chip {
+  max-width: var(--dock-chip-max-width);
+  min-width: var(--dock-chip-min-width);
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+.chipName { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chipCount { flex: none; font-size: var(--font-size-1); color: var(--color-text-muted); }
+.toggle { width: var(--dock-control-height); padding: 0; }

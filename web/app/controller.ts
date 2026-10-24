@@ -50,7 +50,7 @@ export class AppController extends Store<AppView> {
   readonly sessions: SessionsCache;
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastUpdateCheck = 0;
-  private onHomeOrPicker = false;
+  private wasOnListing = false;
 
   static async start(platform: Platform, options: StartOptions = {}): Promise<AppController> {
     const boot = await platform.boot();
@@ -182,17 +182,17 @@ export class AppController extends Store<AppView> {
     this.dispatch({ type: "hostsKnown", ids, complete: hosts.length > 0 && ids.length === hosts.length });
   }
 
-  /** A host stays joined while Home or the picker is on screen, a tab on it exists, or one is restoring. This is the one place that asks for a listing on entering Home or the picker. */
+  /** A host stays joined while Home, the picker or the switcher is on screen, a tab on it exists, or one is restoring. This is the one place that asks for a listing on entering one of them. */
   private syncListing(): void {
     const { nav, workspace } = this.snapshot;
-    const homeOrPicker = nav.destination === "home" || nav.entry.overlay?.screen === "picker";
-    const entered = homeOrPicker && !this.onHomeOrPicker;
-    this.onHomeOrPicker = homeOrPicker;
+    const listingShown = nav.destination === "home" || nav.entry.overlay?.screen === "picker" || nav.entry.overlay?.screen === "switcher";
+    const entered = listingShown && !this.wasOnListing;
+    this.wasOnListing = listingShown;
     for (const client of this.hosts.all()) {
       const { handle } = client.entry;
       const admitted = client.admission.kind === "admitted";
       const hasTab = client.hostId !== null && workspace.tabs.some((t) => t.key.host === client.hostId);
-      const listed = this.listing.setWanted(handle, admitted && (homeOrPicker || hasTab));
+      const listed = this.listing.setWanted(handle, admitted && (listingShown || hasTab));
       // Entering Home or the picker lists afresh, unless joining the host just started a listing.
       if (entered && admitted && !listed) this.listing.refresh(handle);
     }
@@ -204,6 +204,7 @@ export class AppController extends Store<AppView> {
         this.hosts.set(event.hosts);
         break;
       case "viewport":
+        this.focus.viewportChanged(this.snapshot.viewport, event.viewport);
         this.applyViewport(event.viewport);
         this.update({ viewport: event.viewport });
         break;
@@ -221,8 +222,6 @@ export class AppController extends Store<AppView> {
         this.update({ update: event.state });
         break;
       case "input":
-      case "composeEdit":
-      case "composeInsert":
       case "draftChanged":
         break; // owned by the terminal and draft lanes, which subscribe on the platform themselves
     }

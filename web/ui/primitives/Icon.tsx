@@ -8,6 +8,7 @@ const PATHS = {
   plus: <path d="M12 5v14M5 12h14" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   keyboard: <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M5 9h1m3 0h1m3 0h1m3 0h1M5 12h1m3 0h1m3 0h1m3 0h1M7 16h10" /></>,
+  keyboardHide: <><rect x="2" y="3" width="20" height="12" rx="2" /><path d="M5 7h1m3 0h1m3 0h1m3 0h1M7 11h10m-8 6.5 3 3 3-3" /></>,
   chevron: <path d="m9 6 6 6-6 6" />,
   search: <><circle cx="10" cy="10" r="6" /><path d="m15 15 5 5" /></>,
   terminal: <path d="m4 7 5 5-5 5m8 0h8" />,

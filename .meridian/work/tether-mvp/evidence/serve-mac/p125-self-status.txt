@@ -1,0 +1,2 @@
+Tailscale CLI status identifies this Mac as self at 100.69.69.122, DNS `jimmys-macbook-air.tail852a76.ts.net.`, StableID `nMM5jYAKHC11CNTRL`, UserID `2509935602649044`; `iphone181` is 100.124.108.79 and online. Daemon LocalAPI calls could not obtain Whois Node/UserProfile fields.
+Auth design rule: self StableID is explicitly refused for node lane. The rule's expected outcome is self-refused; actual whois/refusal could not be exercised due missing Mac LocalAPI.

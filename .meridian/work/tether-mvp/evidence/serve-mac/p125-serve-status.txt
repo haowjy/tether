@@ -1,0 +1,3 @@
+https://jimmys-macbook-air.tail852a76.ts.net (tailnet only)
+|-- / proxy unix:/tmp/tether-meridian-501/serve-probe/runtime/tether/serve.sock
+

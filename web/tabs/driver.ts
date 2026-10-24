@@ -111,14 +111,12 @@ export class TabDriver {
     return true;
   }
 
-  /** Sends one paste for a live watch; Enter, when requested, stays in the same tmux group. */
-  paste(text: string, enter = false): boolean {
-    if (!this.bound || this.watchId === null) return false;
-    this.send({
-      type: "paste",
-      data: { req: this.opts.host.nextReq(), watch: this.watchId, text, ...(enter ? { enter: true } : {}) },
-    });
-    return true;
+  /** Sends one paste for a live watch and returns its `req`, which its answer names; null when the tab isn't live. Enter, when requested, stays in the same tmux group. */
+  paste(text: string, enter = false): number | null {
+    if (!this.bound || this.watchId === null) return null;
+    const req = this.opts.host.nextReq();
+    this.send({ type: "paste", data: { req, watch: this.watchId, text, ...(enter ? { enter: true } : {}) } });
+    return req;
   }
 
   /**

@@ -1,0 +1,4 @@
+endpoint=GET /auth/node/session via daemon serve.sock; LocalAPI missing; HTTP status/body are identity_unavailable; these are error-path transport timings, NOT whois latency
+200 new Unix connections: n=200 p50=0.017ms p95=0.032ms max=2.560ms statuses=['503'] sizes=[32]
+200 requests on one keep-alive Unix connection: n=200 p50=0.015ms p95=0.030ms max=0.036ms statuses=['503'] sizes=[32]
+20 concurrent new Unix connections: n=20 p50=0.071ms p95=0.298ms max=0.537ms statuses=['503'] sizes=[32]

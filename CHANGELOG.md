@@ -5,6 +5,12 @@ version section on release.
 
 ## [Unreleased]
 
+- Phone dock and session switcher: on a touch phone Terminal ends in one row (tab chip, line
+  field, keyboard toggle) with a key row (esc, arrows, ^R, ^C, tab, ctrl, alt, | ~ / -) above
+  it while the keyboard is up. Return in the line field sends the line and Enter together,
+  each tab keeps its own draft across tab switches and reloads, a refused line comes back
+  marked "Not sent", and the tab chip opens a sheet with the open tabs, every session and its
+  windows, search and New session.
 - The daemon tracks claims on watched-window sizes: a watch or accepted input, paste,
   or resize claims its size; a size-relevant change from another tmux client clears
   the vote without dropping the watch.

@@ -510,7 +510,7 @@ interface Viewport {
   width: number;           // CSS px of the window or web view
   stableHeight: number;    // its height with no software keyboard
   visibleHeight: number;   // on screen now
-  visibleTop: number;      // the visual viewport's offset from the layout top (browser); 0 in native
+  keyboardInset: number;   // how far the keyboard (or Safari's form bar) covers the bottom of the stable box; 0 with none
   safeArea: SafeArea;      // of the keyboard-hidden layout
   keyboard: boolean;
   hardwareKeyboard: boolean | null;   // native only (GCKeyboard); null in the browser
@@ -541,10 +541,13 @@ needs no event reason. Only the adapters differ, in how they define `stableHeigh
   doesn't change when Safari's toolbars collapse or the keyboard opens. On desktop that
   is the window's height. On touch the terminal container and the dock's resting slot
   share that root, in flow, so no tmux row sits under the dock. While the keyboard is
-  up, the dock is translated out of its slot to sit on the visual viewport's bottom
-  edge (`visibleTop + visibleHeight`), which is above Safari's form accessory bar.
-  Focusing the line field can make Safari scroll the layout viewport, so `visibleTop`
-  is not assumed to be 0. `chrome.y` measures the dock without its bottom safe-area
+  up, the dock is translated out of its slot by `keyboardInset`: the distance from the
+  stable box's bottom to the visual viewport's bottom edge, which is above Safari's form
+  accessory bar. The browser computes it from the visual viewport (so Safari scrolling the
+  layout when a field takes focus is counted) and `applyViewport` publishes it as
+  `--keyboard-inset`; the dock, sheets (`Dialog`) and toasts rise by it in CSS, and
+  `keyboard` comes from the height alone
+  (see Keyboard detection), so Safari scrolling the page cannot lower it. `chrome.y` measures the dock without its bottom safe-area
   padding, which `safeArea.bottom` already counts.
 - **The pan area** is what remains visible of the terminal: `visibleHeight` minus the
   translated dock. `cursorPan` reads this
@@ -1260,8 +1263,8 @@ always:            DockRow     [TabChip] [LineField .............] [Toggle]
 ```
 
 **Layout.** `Dock.tsx` stacks `KeyRow` (mounted while the focus owner is `terminal` or
-`line`) above `DockRow`. Row items are 34 px, keys 32 px, small controls in the 30 px
-class; each control's touch area extends to its row's height. The line field's font is
+`line`) above the resting row (inlined in `Dock.tsx`, as is the tab chip, not separate
+files). Row items are 34 px, keys 32 px (`--dock-control-height`, `--dock-key-height`); each control's touch area extends to its row's height. The line field's font is
 16 px, below which Safari zooms on focus. The dock adds the bottom safe area only while
 the keyboard is down. tmux is sized from the stable box (§5.4), which includes the
 resting row and excludes the key row, since the key row only appears with the keyboard;
@@ -1269,7 +1272,7 @@ so showing it never resizes tmux. Portrait and landscape use the same layout. In
 desktop layout with touch input, the tab strip stays on top and `DockRow` has no tab
 chip.
 
-**The tab chip** (`dock/TabChip.tsx`) shows the active tab's window label (truncating,
+**The tab chip** shows the active tab's window label (truncating,
 the window part first as in §8.6's tab labels) and the open-tab count from the
 workspace, and opens the switcher overlay. With no tabs it reads "Sessions".
 
@@ -1284,7 +1287,10 @@ platform's own editing. Every behaviour below lives in `dock/`, not the primitiv
   clears and keeps focus. An empty Return sends `{ key: "Enter" }` alone. With the tab
   not live it keeps the text and says "Not connected"; nothing is queued. It never
   retargets after a tab switch.
-- **Send states** (`drafts/`, keyed by `req`). `pasted { req }` deletes the pending
+- **Send states** (`drafts/`, keyed by tab id and `req`: `req` counts per host, so the
+  tab names the host). The terminal hands every paste answer to the one claimant, the
+  line drafts, which takes those for lines it sent; the rest become notices.
+  `pasted { req }` deletes the pending
   line. A refusal (`error { req }`: `inputTooLarge`, `busy`, `badRequest`) puts the line
   back into the originating tab's draft, ahead of anything typed since, marked "Not
   sent" with the daemon's message. A `tmux` error, which may follow a paste that ran,
@@ -1353,6 +1359,45 @@ session holding the active tab starts expanded. It fetches the listing on open l
 picker (§6.3). Initial focus is the dialog element (§6.5), so the keyboard stays down;
 opening it lowers the keyboard like any overlay. On the phone layout nothing else opens
 `screens/picker/`: the picker keeps only its desktop dialog, and its sheet variant goes.
+
+**P3a build notes (2026-10-24; where the build differs from the text above).**
+
+- *Messages sit in a strip above the row, not beside the field.* "Sending…", "Not sent",
+  "May not have been sent", "Not connected", "Edited in another window" and the draft caps
+  share one strip over the terminal's bottom edge (out of flow, so tmux is never resized; the
+  cursor pan counts it).
+- *A narrow window with a mouse* (`layout: phone`, `directInput: xterm`) has no dock: it keeps
+  the bottom tab strip with `+`, which opens the picker as a dialog. The picker's sheet variant
+  is gone.
+- *`Dialog` gained `actions` and `footer`* (the switcher's Home and its pinned search); a sheet
+  lifts onto the keyboard in CSS by `--keyboard-inset`, and `DockButton` cancels every
+  `pointerdown`, so no dock control moves focus; `TabStrip` gained `closeAll`; `CreateDialog` moved from Home to
+  the shell so Home and the switcher share it; the switcher keeps its own expansion (the active
+  session open, the rest collapsed), through `HostSessionLists`' `expansion` prop.
+- *A line paste ending in one line break* is a single line and is inserted for editing; only a
+  break inside the text goes to the terminal.
+- *A draft whose write loses to a newer revision* adopts the stored text, marked "Edited in
+  another window" (§5.6), also when it had unwritten edits.
+- *Until P3b's recognizer lands*, the surface cancels `pointerdown` on touch so a terminal tap
+  never blurs the input holding the keyboard; the recognizer replaces that guard.
+- *The owned input* sits at the surface's top-left (1 px, transparent) so Safari has no reason
+  to scroll the page for it. Its aria-label is "Terminal keyboard".
+- *Keyboard dropping* (`viewport.keyboard` true to false) blurs the held input only through
+  `FocusController.viewportChanged`, as §6.5 says; the iPhone gate in §12 covers its misfires.
+- *The tab chip and the resting row are inlined in `Dock.tsx`* (the spec names `dock/TabChip.tsx`
+  and `DockRow`); the chip shows the window label, its accessible name is `<window>, N tabs,
+  open sessions`. The switcher's New session targets the first host, as Home's does.
+- *The W0 port `blur`* became `FocusController.toggleKeyboard` and `returnKeyboardInTap`.
+- *Armed ctrl/alt* is a store in `touch/armed.ts` over the pure `touch/modifiers.ts`;
+  `Terminals` owns the instance and types through it.
+- *Native's keyboard toggle does nothing yet:* native registers no `terminal` element, so
+  `toggleKeyboard` has nothing to focus, the owner never becomes `terminal`, and the key row
+  never shows. W5 hand-off (`web/.context/TODO`): native sends `keyboardInset` and the
+  toggle reaches Swift's responder.
+- *Not verified in the Simulator:* the Simulator here has no window or touch injection
+  (`simctl` has no tap), so keyboard-up behaviour and landscape were exercised in Playwright
+  WebKit with a scripted viewport and are on the real-iPhone checklist
+  (`.meridian/work/tether-mvp/g3-iphone-checklist.md`).
 
 ### 7.5 Paste and image paste
 
@@ -1492,6 +1537,7 @@ densities, and keyboard-only Playwright walks of Home, the picker, Terminal and 
 | `EmptyState`, `Spinner` | | no tabs, no matches, empty folder, loading |
 | `Icon` | inline SVG from one owned set (a Lucide subset, ISC licence), sizes 16, 20 and 24 | everywhere |
 | `LineInput` | `<input type="text">`, styled | the dock's line field, §7.4 |
+| `DockButton` | `<button>` that cancels `pointerdown`, so a tap never moves focus | the dock's chip, toggle and keys, §7.4 |
 
 ### 8.3 Token tiers
 
@@ -1772,9 +1818,9 @@ written for):
 
 - `platform/types.ts`: drop `composeResult`, `composeShow`, `DraftStatus`, and the
   `composeEdit` and `composeInsert` events; add `setLineFieldRect`, the `Clipboard`
-  interface with `read` (§5.8), `visibleTop` (§5.4), and `HapticKind` `key` and
+  interface with `read` (§5.8), `keyboardInset` (§5.4), and `HapticKind` `key` and
   `modifier`. `platform/browser/clipboard.ts` gains `read`; `viewport.ts` reports
-  `visibleTop`.
+  `keyboardInset`.
 - `app/controller.ts`: remove the compose cases.
 - `ui/focus.ts`: `FocusTarget` `draft` becomes `line`; the port gains `blur`, which the
   toggle needs under lint rule 2.

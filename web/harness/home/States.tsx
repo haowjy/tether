@@ -30,6 +30,9 @@ function Block({ title, children }: { title: string; children: ComponentChildren
   );
 }
 
+/** The one open tab, window 1. */
+const OPEN: ReadonlySet<string> = new Set(["1"]);
+
 export function States() {
   return (
     <main style={{ display: "flex", flexDirection: "column", gap: "32px", padding: "16px", maxWidth: "720px", margin: "0 auto", overflowY: "auto", height: "100%" }}>
@@ -43,7 +46,8 @@ export function States() {
             sessions={s.sessions}
             expanded={new Set(s.expanded ?? [])}
             query={s.query ?? ""}
-            isOpen={(w) => w.id === 1}
+            tabIdOf={(w) => String(w.id)}
+            open={OPEN}
             onToggle={NO_OP}
             onOpen={NO_OP}
             onRetry={NO_OP}

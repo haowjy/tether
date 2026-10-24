@@ -35,7 +35,7 @@ for (const version of VERSIONS) {
       await page.getByRole("button", { name: "Home" }).click();
       await expect(page.getByRole("button", { name: "alpha / shell", exact: true })).toBeVisible();
       // The row is marked Open, and opening it again activates the tab: no duplicate.
-      await expect(page.getByRole("button", { name: /1: shell/ })).toContainText("Open");
+      await expect(page.getByRole("button", { name: /1: shell/ })).toContainText("open");
       await page.getByRole("button", { name: /1: shell/ }).click();
       await page.getByRole("button", { name: "Home" }).click();
       await expect(page.getByRole("button", { name: "alpha / shell", exact: true })).toHaveCount(1);

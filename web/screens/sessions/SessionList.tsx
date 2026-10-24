@@ -20,8 +20,12 @@ export interface SessionListProps {
   sessions: HostSessions | undefined;
   expanded: ReadonlySet<string>;
   query: string;
-  /** Whether the tab for this window is open. */
-  isOpen: (window: WindowListing) => boolean;
+  /** The id of this window's tab, whether or not it is open. */
+  tabIdOf: (window: WindowListing) => string | null;
+  /** The ids of the open tabs. */
+  open: ReadonlySet<string>;
+  /** The active tab's id: its window reads "here" and other open windows "open", in words and never dots. */
+  active?: string | null;
   onToggle: (key: string) => void;
   onOpen: (listing: TmuxListing, session: SessionListing, window: WindowListing) => void;
   /** A fresh listing, or admission again when the host is unreachable. */
@@ -41,7 +45,7 @@ function Heading({ hostName, status, action }: { hostName: string; status: Compo
 }
 
 export function SessionList(props: SessionListProps) {
-  const { hostName, unreachable, sessions, expanded, query, isOpen, onToggle, onOpen, onRetry, creation } = props;
+  const { hostName, unreachable, sessions, expanded, query, tabIdOf, open, active, onToggle, onOpen, onRetry, creation } = props;
   const listing = sessions?.listing;
   const failure = sessions?.failure ?? null;
   const newSession = creation && (
@@ -112,17 +116,21 @@ export function SessionList(props: SessionListProps) {
               onToggle={() => { onToggle(g.key); }}
             >
               {g.session.attachedElsewhere && <p class={styles.attached}>Another terminal is attached. Opening may resize it.</p>}
-              {g.windows.map((w) => (
-                <Row
-                  key={w.id}
-                  roving
-                  icon="terminal"
-                  label={`${String(w.index)}: ${w.name}`}
-                  meta={isOpen(w) ? "Open" : undefined}
-                  selected={isOpen(w)}
-                  onClick={() => { onOpen(listing, g.session, w); }}
-                />
-              ))}
+              {g.windows.map((w) => {
+                const id = tabIdOf(w);
+                const isOpen = id !== null && open.has(id);
+                return (
+                  <Row
+                    key={w.id}
+                    roving
+                    icon="terminal"
+                    label={`${String(w.index)}: ${w.name}`}
+                    meta={id !== null && id === active ? "here" : isOpen ? "open" : undefined}
+                    selected={isOpen}
+                    onClick={() => { onOpen(listing, g.session, w); }}
+                  />
+                );
+              })}
               {creation && (
                 <Button variant="quiet" icon="plus" class={styles.newWindow} data-roving="" onClick={(e) => { creation.onNewWindow(g.session, e.currentTarget); }}>
                   New window

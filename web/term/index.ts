@@ -78,4 +78,9 @@ export interface TerminalRenderer {
   cellAt(x: number, y: number): CellPosition | null;
   /** What remains visible of the terminal, in CSS pixels, for the cursor pan; null follows the container (the default). */
   setPanArea(px: number | null): void;
+  /**
+   * How the cursor draws while xterm itself is unfocused (the phone: its input is tether's, not
+   * xterm's textarea). `block` is the terminal holding the keyboard, `outline` anything else.
+   */
+  setInactiveCursor(style: "block" | "outline"): void;
 }

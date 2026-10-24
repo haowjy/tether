@@ -40,6 +40,8 @@
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
+  /* How far the keyboard covers the bottom of the page; the platform sets it (ui/theme.ts). The dock, sheets and toasts rise by it. */
+  --keyboard-inset: 0px;
 
   /* The terminal's theme (xterm.js), read by ui/theme.ts. */
   --term-bg: var(--color-bg-sunken);

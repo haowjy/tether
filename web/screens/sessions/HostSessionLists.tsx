@@ -14,6 +14,10 @@ const NONE: ReadonlySet<string> = new Set();
 
 interface HostSessionListsProps {
   query: string;
+  /** The switcher: the active tab's id, so its window row says "here". Home passes none. */
+  active?: string | null;
+  /** The switcher keeps its own expansion (its active session starts open); Home and the picker share the cache's. */
+  expansion?: { keys: ReadonlySet<string>; toggle: (key: string) => void };
   onOpen: (host: HostClient, listing: TmuxListing, session: SessionListing, window: WindowListing) => void;
   /** Home only: the creation actions beside each host's list. */
   creation?: {
@@ -22,7 +26,7 @@ interface HostSessionListsProps {
   };
 }
 
-export function HostSessionLists({ query, onOpen, creation }: HostSessionListsProps) {
+export function HostSessionLists({ query, active, expansion, onOpen, creation }: HostSessionListsProps) {
   const app = useApp();
   const hosts = useAppView((v) => v.hosts);
   const tabs = useAppView((v) => v.workspace.tabs);
@@ -39,10 +43,16 @@ export function HostSessionLists({ query, onOpen, creation }: HostSessionListsPr
             hostName={h.name ?? "the server"}
             unreachable={h.admission.kind === "unreachable"}
             sessions={state.hosts[handle]}
-            expanded={(h.hostId !== null && state.expanded[h.hostId]) || NONE}
+            expanded={expansion ? expansion.keys : (h.hostId !== null && state.expanded[h.hostId]) || NONE}
             query={query}
-            isOpen={(w) => h.hostId !== null && listing != null && open.has(tabId({ host: h.hostId, window: { server: listing.server, window: w.id } }))}
+            tabIdOf={(w) => (h.hostId !== null && listing != null ? tabId({ host: h.hostId, window: { server: listing.server, window: w.id } }) : null)}
+            open={open}
+            {...(active !== undefined && { active })}
             onToggle={(key) => {
+              if (expansion) {
+                expansion.toggle(key);
+                return;
+              }
               if (h.hostId === null) return;
               app.sessions.toggle(h.hostId, key);
               app.persist.save(); // expansion is part of the saved workspace

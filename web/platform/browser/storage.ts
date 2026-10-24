@@ -116,7 +116,7 @@ export function createBrowserStorage(): BrowserStorage {
       } catch {
         return "failed";
       }
-      channel?.postMessage({ draft: id });
+      channel?.postMessage({ draft: id, key: record.key });
       return "ok";
     },
     async delete(key) {
@@ -127,7 +127,7 @@ export function createBrowserStorage(): BrowserStorage {
       const tx = handle.transaction("drafts", "readwrite");
       tx.objectStore("drafts").delete(id);
       await done(tx);
-      channel?.postMessage({ draft: id });
+      channel?.postMessage({ draft: id, key });
     },
     async list() {
       const handle = await db();
@@ -189,14 +189,10 @@ export function createBrowserStorage(): BrowserStorage {
         };
       });
       const onMessage = (ev: MessageEvent<unknown>): void => {
-        const data = ev.data as { draft?: unknown } | null;
-        if (typeof data?.draft !== "string") return; // any other message belongs to another build
-        void dbReady.then(async () => {
-          const all = await drafts.list();
-          const changed = all.find((r) => tabId(r.key) === data.draft);
-          const key: TabKey | undefined = changed?.key;
-          if (key) emitEvent({ type: "draftChanged", key });
-        });
+        // The key travels with the message: a deleted draft is no longer in the store to look up.
+        const data = ev.data as { draft?: unknown; key?: TabKey } | null;
+        if (typeof data?.draft !== "string" || !data.key || tabId(data.key) !== data.draft) return; // any other message belongs to another build
+        emitEvent({ type: "draftChanged", key: data.key });
       };
       channel?.addEventListener("message", onMessage);
       const onFocus = (): void => { void flushWorkspace(); };

@@ -1,0 +1,24 @@
+Direct to daemon Unix socket, Host: localhost: GET /auth/info
+HTTP/1.1 503 Service Unavailable
+content-type: application/json
+cache-control: no-store
+cross-origin-resource-policy: same-origin
+x-content-type-options: nosniff
+content-length: 32
+date: Sat, 24 Oct 2026 17:08:10 GMT
+
+{"error":"identity_unavailable"}
+Raw routes via tailnet hostname: statuses in p125-serve-http-statuses.txt; all 502.
+Direct daemon route GET /fs/raw/test.svg, .html, .js:
+.svg HTTP/1.1 503 Service Unavailable
+content-type: application/json
+x-content-type-options: nosniff
+HTTP 503 bytes=32
+.html HTTP/1.1 503 Service Unavailable
+content-type: application/json
+x-content-type-options: nosniff
+HTTP 503 bytes=32
+.js HTTP/1.1 503 Service Unavailable
+content-type: application/json
+x-content-type-options: nosniff
+HTTP 503 bytes=32

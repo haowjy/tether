@@ -6,7 +6,7 @@ import { App } from "../app/App";
 import { AppProvider } from "../app/context";
 import { AppController } from "../app/controller";
 import { createTestPlatform, DESKTOP, PHONE, type TestPlatform } from "../platform/test";
-import { applyViewport } from "../ui/theme";
+import { applyViewport, trackInputKind } from "../ui/theme";
 import "../ui/tokens/index.css";
 import { fixtures } from "./index";
 
@@ -30,7 +30,9 @@ const viewport = {
   width: innerWidth,
   stableHeight: innerHeight,
   visibleHeight: innerHeight,
+  keyboardInset: 0,
 };
+trackInputKind();
 const platform = createTestPlatform({ viewport, ...fixture.options?.() });
 fixture.daemon?.(platform.daemon);
 const app = await AppController.start(platform, { fetchFn: platform.fetch, applyViewport });

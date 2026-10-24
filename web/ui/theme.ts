@@ -45,6 +45,17 @@ export function terminalTheme(): TerminalTheme {
 }
 
 /**
+ * Notes on the root whether the last input was a key or a pointer, so CSS can hide the focus
+ * ring a touch or click put on a control by script (a dialog's close button) and keep it for the keyboard.
+ */
+export function trackInputKind(): void {
+  const root = document.documentElement;
+  const note = (kind: "key" | "pointer") => (): void => { root.dataset["input"] = kind; };
+  addEventListener("keydown", note("key"), true);
+  addEventListener("pointerdown", note("pointer"), true);
+}
+
+/**
  * Puts the platform's viewport facts where CSS reads them: the scheme, the density, and the
  * safe-area insets tmux was sized from. Call it before the first render and on every
  * `viewport` event; re-theme xterm afterwards with {@link terminalTheme}.
@@ -62,4 +73,6 @@ export function applyViewport(viewport: Viewport): void {
     const value = `${String(viewport.safeArea[side])}px`;
     if (root.style.getPropertyValue(`--safe-${side}`) !== value) root.style.setProperty(`--safe-${side}`, value);
   }
+  const inset = `${String(viewport.keyboardInset)}px`;
+  if (root.style.getPropertyValue("--keyboard-inset") !== inset) root.style.setProperty("--keyboard-inset", inset);
 }

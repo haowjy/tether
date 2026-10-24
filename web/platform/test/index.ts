@@ -30,6 +30,7 @@ export const PHONE: Viewport = {
   width: 393,
   stableHeight: 852,
   visibleHeight: 852,
+  keyboardInset: 0,
   safeArea: { top: 59, right: 0, bottom: 34, left: 0 },
   keyboard: false,
 };
@@ -42,6 +43,7 @@ export const DESKTOP: Viewport = {
   width: 1280,
   stableHeight: 800,
   visibleHeight: 800,
+  keyboardInset: 0,
   safeArea: { top: 0, right: 0, bottom: 0, left: 0 },
   keyboard: false,
 };
@@ -240,8 +242,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     },
     input: {
       setFocus: (mode) => { platform.focusRequests.push(mode); },
-      composeResult: () => undefined,
-      composeShow: () => undefined,
+      setLineFieldRect: () => undefined,
     },
     storage: {
       saveWorkspace: (ws) => { platform.savedWorkspaces.push(ws); },
@@ -271,6 +272,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
         platform.clipboardWrites.push(text);
         return Promise.resolve("ok");
       },
+      read: () => Promise.resolve("empty"),
     },
     openURL: (url) => { platform.opened.push(url); },
     playVideo: () => "inline",

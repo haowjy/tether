@@ -3,7 +3,8 @@
   z-index: var(--z-toast);
   left: 0;
   right: 0;
-  bottom: calc(var(--space-4) + var(--safe-bottom) + var(--toast-offset));
+  /* The keyboard covers the safe area, so the larger of the two clears. */
+  bottom: calc(var(--space-4) + max(var(--safe-bottom), var(--keyboard-inset)) + var(--toast-offset));
   display: flex;
   justify-content: center;
   padding: 0 var(--space-gutter);

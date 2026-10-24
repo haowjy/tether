@@ -3,9 +3,11 @@ import { Spinner } from "../../ui/primitives/Spinner";
 import { Enrol } from "../enrol/Enrol";
 import { HostProblem } from "../enrol/HostProblem";
 import { FilesScreen } from "../files/FilesScreen";
+import { CreateDialog } from "../home/CreateDialog";
 import { Home } from "../home/Home";
 import { Picker } from "../picker/Picker";
 import { Settings } from "../settings/Settings";
+import { Switcher } from "../switcher/Switcher";
 import { TerminalScreen } from "../terminal/TerminalScreen";
 import { HostBanner } from "./HostBanner";
 import { Rail } from "./Rail";
@@ -42,6 +44,9 @@ export function Shell() {
       {!blocking && (
         <>
           <Picker />
+          <Switcher />
+          {/* New session and New window open from Home and from the switcher. */}
+          <CreateDialog />
           <Settings />
         </>
       )}

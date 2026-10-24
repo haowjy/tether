@@ -9,6 +9,8 @@
   overflow: hidden;
 }
 .dialog:focus { outline: none; }
+/* A touch or mouse opens the dialog on its close button: no ring until a key is pressed (the root's input attribute, ui/theme.ts). */
+:root[data-input="pointer"] .dialog [data-initial-focus="touch"]:focus-visible { outline: none; }
 .dialog::backdrop { background: var(--color-scrim); }
 .dialog[open] { display: flex; }
 
@@ -20,20 +22,26 @@
   gap: var(--space-3);
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
 }
-.title { font-size: var(--text-heading); font-weight: var(--weight-bold); }
-.body { overflow-y: auto; padding: 0 var(--space-4) var(--space-4); min-height: 0; }
+.title { flex: 1; font-size: var(--text-heading); font-weight: var(--weight-bold); }
+.actions { display: flex; align-items: center; gap: var(--space-2); }
+.body { flex: 1; overflow-y: auto; padding: 0 var(--space-4) var(--space-4); min-height: 0; }
 
 /* The phone picker: a tall bottom sheet, safe-area padded, in the theme's raised surface. */
 .sheet {
   width: 100%;
   max-width: none;
   max-height: none;
-  height: 88svh;
+  /* Sits on the keyboard and shrinks to the screen that is left. */
+  height: min(88svh, calc(100svh - var(--keyboard-inset) - var(--safe-top)));
+  translate: 0 calc(-1 * var(--keyboard-inset));
   margin: auto 0 0;
   border-radius: var(--sheet-radius) var(--sheet-radius) 0 0;
   border-bottom: 0;
   background: var(--sheet-bg);
 }
 .sheet .body { padding-bottom: calc(var(--space-4) + var(--safe-bottom)); }
+/* A footer carries the safe area, which a lifted sheet has the keyboard under instead. */
+.footer { flex: none; padding: var(--space-3) var(--space-3) calc(var(--space-3) + max(0px, var(--safe-bottom) - var(--keyboard-inset))); border-top: 1px solid var(--color-border); }
+.panel:has(> .footer) .body { padding-bottom: var(--space-3); }
 .sheet[open] { animation: rise var(--duration-2) var(--ease-out); }
 @keyframes rise { from { translate: 0 24px; opacity: 0; } }

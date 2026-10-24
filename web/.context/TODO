@@ -5,3 +5,14 @@ Must-do (client-architecture.md §11):
 - L4 (daemon): an `input` refusal (`busy`, `inputTooLarge`) names no request, so the client cannot
   report which typed characters were refused. Paste refusals now carry their request id; the
   terminal's short input batch remains necessary until input has its own result contract.
+- Phone dock (P3a): landscape and keyboard-up behaviour need the real-iPhone checklist
+  (`.meridian/work/tether-mvp/g3-iphone-checklist.md`).
+- W5 (native dock): the keyboard toggle does nothing in native (no `terminal` element is
+  registered, so `FocusController.toggleKeyboard` has nothing to focus and the key row never
+  shows), and native must report `Viewport.keyboardInset` (the keyboard frame's height).
+- P3b: delete the `pointerdown` guard in `screens/terminal/terminals.ts` once the recognizer owns taps.
+- P3b (iPad, touch mode, desktop layout): the top tools row (TabStrip pills, the "+" IconButton) uses
+  ordinary buttons, so a tap blurs the owned input before `openDialog` runs, `held` is null and the
+  keyboard does not return when the picker closes. Cancel `pointerdown` there when `directInput !== "xterm"`.
+- P3b (nit): phone toasts rise by `--dock-height` on every phone screen; on Home and Files the bottom
+  nav is `--toolbar-height`, so the toast-to-nav gap shrinks from about 16px to about 5px.

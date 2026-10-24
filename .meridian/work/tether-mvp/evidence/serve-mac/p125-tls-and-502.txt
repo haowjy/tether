@@ -1,0 +1,5 @@
+* Connected to jimmys-macbook-air.tail852a76.ts.net (100.69.69.122) port 443
+*  subject: CN=jimmys-macbook-air.tail852a76.ts.net
+*  issuer: C=US; O=Let's Encrypt; CN=YE2
+*  SSL certificate verify ok.
+< HTTP/2 502 

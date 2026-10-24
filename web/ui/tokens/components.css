@@ -5,6 +5,14 @@
   --row-pad-x: var(--space-3);
   --tab-height: 32px;
   --toolbar-height: 44px;
+  /* The phone dock's resting row: chip, line field and keyboard toggle. */
+  --dock-height: 42px;
+  --dock-control-height: 34px;
+  --dock-key-height: 32px;
+  /* The key row above the resting row. */
+  --dock-keys-height: 40px;
+  --dock-chip-min-width: 70px;
+  --dock-chip-max-width: 104px;
 }
 :root[data-density="touch"] {
   --row-height: 48px;
@@ -24,11 +32,13 @@
   --sheet-radius: var(--radius-4);
   --band-bg: var(--color-bg-raised);
 
-  /* The phone toast sits above the bottom toolbar, never over its tabs. */
+  /* The phone toast sits above the bottom toolbar (or the dock's row), never over its tabs. */
   --toast-offset: 0px;
 
   --z-band: 20;
   --z-toast: 40;
 }
 
-:root[data-layout="phone"] { --toast-offset: var(--toolbar-height); }
+:root[data-layout="phone"] { --toast-offset: var(--dock-height); }
+/* The dock's key row, shown while an input holds the keyboard, is above its row. */
+:root[data-layout="phone"]:has([data-keyboard]) { --toast-offset: calc(var(--dock-height) + var(--dock-keys-height)); }

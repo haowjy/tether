@@ -1,7 +1,7 @@
 // The Open session picker behind terminal `+` (client-architecture.md §6.3): existing windows
-// only, the same hierarchy and rows as Home, a centred dialog on desktop and a tall sheet on
-// a phone. The router owns when it is open, so Back, Escape and the backdrop all close it the
-// same way, leaving the active tab as it was.
+// only, the same hierarchy and rows as Home, in a centred dialog. On a touch phone the
+// switcher is the only picker. The router owns when it is open, so Back, Escape and the
+// backdrop all close it the same way, leaving the active tab as it was.
 import { useState } from "preact/hooks";
 import { useApp, useAppView, useOverlay } from "../../app/context";
 import { Dialog } from "../../ui/primitives/Dialog";
@@ -24,14 +24,12 @@ function PickerBody() {
 
 export function Picker() {
   const { open, close } = useOverlay("picker");
-  const phone = useAppView((v) => v.viewport.layout === "phone");
   const touch = useAppView((v) => v.viewport.density === "touch");
   const noTabs = useAppView((v) => v.workspace.tabs.length === 0);
   return (
     <Dialog
       open={open}
       title="Open session"
-      variant={phone ? "sheet" : "dialog"}
       returnFocusTo={noTabs || touch ? "plus" : "terminal"}
       onClose={close}
     >

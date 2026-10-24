@@ -75,3 +75,10 @@ only with keyboard up), 3 smart keys (key row follows the pane's program: shell 
   has the last focus gets the focus and the size of the screen". Replaces the rule where a
   watching phone's size vote caps a window even when the laptop is latest. Also: Files in
   landscape hides the keyboard like portrait (Jimmy: yes).
+- Jimmy (2026-10-24): OK to use this Mac's `tailscale serve` for the Serve/PWA gate (tailnet only, never Funnel; reset after).
+- Serve probe on this Mac (p125, 2026-10-24): blocked. The macOS Tailscale app exposes no
+  LocalAPI at the Linux socket paths tether reads (/var/run/tailscale/tailscaled.sock), so the
+  daemon answers 503 identity_unavailable, and Serve → unix socket returns 502 (likely the app's
+  sandbox). tether-on-macOS behind Tailscale is therefore unsupported today despite AGENTS.md's
+  "POSIX only (Linux, macOS)". Torn down (serve reset, daemon and tmux stopped). Deployment gates
+  now need pop-os (Jimmy to accept its ssh host key) or Docker.

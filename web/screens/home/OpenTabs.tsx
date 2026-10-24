@@ -1,7 +1,6 @@
-import { useApp, useAppView } from "../../app/context";
+import { useApp, useAppView, useTabLabels } from "../../app/context";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { Row } from "../../ui/primitives/Row";
-import { tabLabels } from "../../workspace/labels";
 import styles from "./Home.module.css";
 
 /**
@@ -12,7 +11,7 @@ export function OpenTabs() {
   const app = useApp();
   const hosts = useAppView((v) => v.hosts);
   const workspace = useAppView((v) => v.workspace);
-  const labels = tabLabels(workspace.tabs, (id) => hosts.find((h) => h.hostId === id)?.name ?? id);
+  const labels = useTabLabels();
 
   return (
     <section class={styles.section} aria-labelledby="open-tabs">
