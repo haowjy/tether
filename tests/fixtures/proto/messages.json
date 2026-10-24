@@ -1,5 +1,7 @@
 {
   "client": [
+    {"type":"watch","data":{"watch":3,"window":{"server":"main:42-7","window":1},"size":{"cols":60,"rows":40}}},
+    {"type":"watch","data":{"watch":4,"window":{"server":"main:42-7","window":1},"size":{"cols":60,"rows":40},"claim":false}},
     {"type":"paste","data":{"req":17,"watch":3,"text":"printf hello"}},
     {"type":"paste","data":{"req":18,"watch":3,"text":"printf hello","enter":true}}
   ],

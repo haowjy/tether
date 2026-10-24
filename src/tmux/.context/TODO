@@ -1,8 +1,4 @@
 # src/tmux TODO
 
-- Record and commit the tmux 3.7b fixtures on the Mac
-  (`cargo run --example record-tmux-fixtures -- --out tests/fixtures/tmux/3.7b`) and
-  replay them in `tests/tmux_session.rs`. daemon-core.md §8 requires both 3.4 and 3.7b;
-  only 3.4 exists.
 - Run the real-tmux suites with no locale set (LANG/LC_ALL unset) in CI, as
   daemon-core.md §8 requires, to catch a missing `-u` turning non-ASCII names into `_`.

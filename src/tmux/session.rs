@@ -1,7 +1,7 @@
 //! The control-client protocol as a pure state machine (daemon-core.md §3.3): bytes
 //! and requests in, events and command lines out. No I/O, no clock.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use bytes::Bytes;
 
@@ -34,6 +34,7 @@ pub struct Session {
     pending: VecDeque<Pending>,
     block: Block,
     wanted: BTreeSet<PaneId>,
+    subscriptions: BTreeMap<WindowId, Subscription>,
     /// Pauses of unwanted panes waiting for room under `MAX_IN_FLIGHT`.
     deferred_pauses: VecDeque<PaneId>,
     exit_seen: bool,
@@ -108,12 +109,31 @@ enum Request {
     Release {
         pane: PaneId,
     },
+    Subscribe {
+        window: WindowId,
+    },
     History {
         start: i32,
         end: i32,
     },
     Paste,
     Plain,
+}
+
+#[derive(Default)]
+struct Subscription {
+    /// Notifications before Subscribe's reply are stale or belong to an earlier
+    /// subscription with the same name.
+    ready: bool,
+    entries: Option<BTreeMap<String, ClientEntry>>,
+    path: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct ClientEntry {
+    activity: u64,
+    size: super::Size,
+    flags: BTreeSet<String>,
 }
 
 impl Session {
@@ -125,6 +145,7 @@ impl Session {
             pending: VecDeque::new(),
             block: Block::None,
             wanted: BTreeSet::new(),
+            subscriptions: BTreeMap::new(),
             deferred_pauses: VecDeque::new(),
             exit_seen: false,
         };
@@ -204,13 +225,17 @@ impl Session {
                     .for_each(|group| group.release(pane));
                 Request::Release { pane }
             }
+            Op::Subscribe { window } => {
+                self.subscriptions.insert(window, Subscription::default());
+                Request::Subscribe { window }
+            }
+            Op::Unsubscribe { window } => {
+                self.subscriptions.remove(&window);
+                Request::Plain
+            }
             Op::History { start, end, .. } => Request::History { start, end },
             Op::Paste { .. } => Request::Paste,
-            Op::Vote { .. }
-            | Op::ClearVote { .. }
-            | Op::Subscribe { .. }
-            | Op::Unsubscribe { .. }
-            | Op::Input { .. } => Request::Plain,
+            Op::Vote { .. } | Op::ClearVote { .. } | Op::Input { .. } => Request::Plain,
         };
         self.send(group, Purpose::Request { tag, request }, &mut step);
         step
@@ -351,20 +376,8 @@ impl Session {
             | NotificationKind::SessionsChanged
             | NotificationKind::SessionRenamed => Event::SessionsChanged,
             NotificationKind::SubscriptionChanged => {
-                // `w<W> $S @W <index> - : <value>`
-                let Some(window) = first
-                    .strip_prefix(b"w")
-                    .and_then(|digits| WindowId::parse(&[b"@", digits].concat()))
-                else {
-                    return;
-                };
-                let Some(marker) = rest.windows(3).position(|window| window == b" : ") else {
-                    return;
-                };
-                Event::Cwd {
-                    window,
-                    path: String::from_utf8_lossy(&rest[marker + 3..]).into_owned(),
-                }
+                self.subscription_changed(first, rest, step);
+                return;
             }
             NotificationKind::Exit => {
                 self.exit_seen = true;
@@ -372,6 +385,53 @@ impl Session {
             }
         };
         step.events.push(event);
+    }
+
+    fn subscription_changed(&mut self, name: &[u8], rest: &[u8], step: &mut Step) {
+        // `%subscription-changed w<W> $S @W <index> - : <acts>|<path>`.
+        let Some(window) = name
+            .strip_prefix(b"w")
+            .and_then(|digits| WindowId::parse(&[b"@".as_slice(), digits].concat()))
+        else {
+            return;
+        };
+        let Some(marker) = rest.windows(3).position(|bytes| bytes == b" : ") else {
+            return;
+        };
+        let value = String::from_utf8_lossy(&rest[marker + 3..]);
+        let Some((acts, path)) = value.split_once('|') else {
+            return;
+        };
+        let entries = parse_client_entries(acts);
+        let Some(subscription) = self.subscriptions.get_mut(&window) else {
+            return;
+        };
+        if !subscription.ready {
+            return;
+        }
+
+        if let Some(previous) = &subscription.entries {
+            let acted = entries.iter().any(|(name, entry)| {
+                let Some(old) = previous.get(name) else {
+                    return !entry.flags.contains("ignore-size");
+                };
+                old != entry
+                    && !old.flags.contains("ignore-size")
+                    && !entry.flags.contains("ignore-size")
+                    && !focus_out_only(old, entry)
+            });
+            if acted {
+                step.events.push(Event::Acted { window });
+            }
+        }
+        subscription.entries = Some(entries);
+        if subscription.path.as_deref() != Some(path) {
+            subscription.path = Some(path.to_owned());
+            step.events.push(Event::Cwd {
+                window,
+                path: path.to_owned(),
+            });
+        }
     }
 
     fn reply_ended(&mut self, error: bool, step: &mut Step) {
@@ -434,6 +494,11 @@ impl Session {
             let result = Err(TmuxError::Released);
             return step.events.push(Event::Done { tag, result });
         }
+        if let Request::Subscribe { window } = &request {
+            if let Some(subscription) = self.subscriptions.get_mut(window) {
+                subscription.ready = true;
+            }
+        }
         let first_row = |replies: &[Rows]| replies.first()?.first().cloned();
         let paste = matches!(request, Request::Paste);
         let result = if done.too_large {
@@ -491,7 +556,10 @@ impl Session {
                 Request::History { start, end } => {
                     history::from_replies(start, end, done.replies).map(Reply::History)
                 }
-                Request::Release { .. } | Request::Paste | Request::Plain => Ok(Reply::Ok),
+                Request::Release { .. }
+                | Request::Subscribe { .. }
+                | Request::Paste
+                | Request::Plain => Ok(Reply::Ok),
             }
         };
         if paste && result.is_err() {
@@ -524,6 +592,53 @@ impl Session {
         self.phase = Phase::Dead;
         step.events.push(Event::Fatal(error));
     }
+}
+
+fn parse_client_entries(value: &str) -> BTreeMap<String, ClientEntry> {
+    let mut entries = BTreeMap::new();
+    for entry in value.split(';').filter(|entry| !entry.is_empty()) {
+        let Some((name, client)) = parse_client_entry(entry) else {
+            continue;
+        };
+        entries.insert(name, client);
+    }
+    entries
+}
+
+fn parse_client_entry(entry: &str) -> Option<(String, ClientEntry)> {
+    let mut fields = entry.rsplitn(4, '.');
+    let flags = fields.next()?;
+    let dimensions = fields.next()?;
+    let activity = fields.next()?.parse().ok()?;
+    let name = fields.next()?;
+    if name.is_empty() {
+        return None;
+    }
+    let (cols, rows) = dimensions.split_once('x')?;
+    let client = ClientEntry {
+        activity,
+        size: super::Size {
+            cols: cols.parse().ok()?,
+            rows: rows.parse().ok()?,
+        },
+        flags: flags
+            .split(',')
+            .filter(|flag| !flag.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    };
+    Some((name.to_owned(), client))
+}
+
+fn focus_out_only(old: &ClientEntry, new: &ClientEntry) -> bool {
+    old.flags.contains("focused")
+        && !new.flags.contains("focused")
+        && old.size == new.size
+        && old
+            .flags
+            .iter()
+            .filter(|flag| flag.as_str() != "focused")
+            .eq(new.flags.iter().filter(|flag| flag.as_str() != "focused"))
 }
 
 impl Pending {
@@ -594,6 +709,177 @@ mod tests {
             .events;
         events.extend(session.feed(b"%begin 1 2 1\n%end 1 2 1\n").events);
         (session, events)
+    }
+
+    fn subscription(session: &mut Session, value: &str) -> Vec<Event> {
+        session
+            .feed(format!("%subscription-changed w0 $0 @0 0 - : {value}\n").as_bytes())
+            .events
+    }
+
+    fn answer(session: &mut Session, tag: u64) -> Vec<Event> {
+        session
+            .feed(format!("%begin 1 {tag} 1\n%end 1 {tag} 1\n").as_bytes())
+            .events
+    }
+
+    #[test]
+    fn window_subscription_uses_a_post_reply_baseline_and_reports_only_size_acts() {
+        let (mut session, _) = started("3.4");
+        session.request(
+            Tag(1),
+            Op::Subscribe {
+                window: WindowId(0),
+            },
+        );
+        // A value queued before Subscribe's reply cannot be the baseline.
+        assert!(
+            subscription(
+                &mut session,
+                "tty.name.1.200x50.attached,focused,UTF-8;|/old"
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            answer(&mut session, 3),
+            [Event::Done {
+                tag: Tag(1),
+                result: Ok(Reply::Ok),
+            }]
+        );
+        let baseline = subscription(
+            &mut session,
+            "tty.name.1.200x50.attached,focused,UTF-8;|/tmp",
+        );
+        assert_eq!(
+            baseline,
+            [Event::Cwd {
+                window: WindowId(0),
+                path: "/tmp".into(),
+            }]
+        );
+        assert!(
+            subscription(
+                &mut session,
+                "tty.name.1.200x50.attached,focused,UTF-8;|/tmp"
+            )
+            .is_empty()
+        );
+
+        // A malformed client row doesn't hide the valid row or its path, which may
+        // itself contain the value separator.
+        assert_eq!(
+            subscription(
+                &mut session,
+                "invalid-entry;tty.name.2.200x50.attached,focused,UTF-8;|/tmp/one|two"
+            ),
+            [
+                Event::Acted {
+                    window: WindowId(0)
+                },
+                Event::Cwd {
+                    window: WindowId(0),
+                    path: "/tmp/one|two".into(),
+                },
+            ]
+        );
+
+        assert_eq!(
+            subscription(
+                &mut session,
+                "tty.name.3.200x50.attached,focused,UTF-8;|/tmp/one|two"
+            ),
+            [Event::Acted {
+                window: WindowId(0)
+            }]
+        );
+        // Focus-out advances activity but only drops focused at the same size.
+        assert!(
+            subscription(
+                &mut session,
+                "tty.name.4.200x50.attached,UTF-8;|/tmp/one|two"
+            )
+            .is_empty()
+        );
+        // A key while unfocused still counts as an act.
+        assert_eq!(
+            subscription(
+                &mut session,
+                "tty.name.5.200x50.attached,UTF-8;|/tmp/one|two"
+            ),
+            [Event::Acted {
+                window: WindowId(0)
+            }]
+        );
+        // Size changes count even when tmux's activity clock has one-second
+        // resolution. A client with ignore-size never changes the window size.
+        assert_eq!(
+            subscription(
+                &mut session,
+                "tty.name.5.210x50.attached,UTF-8;ignored.1.70x25.attached,ignore-size,UTF-8;|/tmp/one|two"
+            ),
+            [Event::Acted {
+                window: WindowId(0)
+            }]
+        );
+        assert!(
+            subscription(
+                &mut session,
+                "tty.name.5.210x50.attached,UTF-8;ignored.2.70x25.attached,ignore-size,UTF-8;|/tmp/one|two"
+            )
+            .is_empty()
+        );
+        // Leaving a window is not an act, and path changes remain independent.
+        assert_eq!(
+            subscription(&mut session, "|/home/jimmy"),
+            [Event::Cwd {
+                window: WindowId(0),
+                path: "/home/jimmy".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn subscription_values_between_unsubscribe_and_subscribe_reply_are_dropped() {
+        let (mut session, _) = started("3.4");
+        session.request(
+            Tag(1),
+            Op::Subscribe {
+                window: WindowId(0),
+            },
+        );
+        answer(&mut session, 3);
+        subscription(&mut session, "laptop.1.200x50.attached,focused,UTF-8;|/tmp");
+
+        session.request(
+            Tag(2),
+            Op::Unsubscribe {
+                window: WindowId(0),
+            },
+        );
+        assert!(
+            subscription(&mut session, "laptop.2.200x50.attached,focused,UTF-8;|/tmp").is_empty()
+        );
+        answer(&mut session, 4);
+
+        session.request(
+            Tag(3),
+            Op::Subscribe {
+                window: WindowId(0),
+            },
+        );
+        assert!(
+            subscription(&mut session, "laptop.3.200x50.attached,focused,UTF-8;|/tmp").is_empty()
+        );
+        answer(&mut session, 5);
+        assert_eq!(
+            subscription(&mut session, "laptop.3.200x50.attached,focused,UTF-8;|/tmp"),
+            [Event::Cwd {
+                window: WindowId(0),
+                path: "/tmp".into(),
+            }],
+            "the first post-reply value establishes a fresh baseline"
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
-//! `tmux::Session` against recorded tmux 3.4 streams (daemon-core.md §8). Each fixture
-//! is replayed with its requests at their recorded offsets, in 1-byte and seeded
-//! random chunks: the session must write exactly the recorded lines (or tmux's replies
-//! would belong to other groups) and report the same events however bytes arrive.
+//! `tmux::Session` against recorded tmux streams (daemon-core.md §8). Each fixture is
+//! replayed with its requests at their recorded offsets, in 1-byte and seeded random
+//! chunks: the session must write exactly the recorded lines (or tmux's replies would
+//! belong to other groups) and report the same events however bytes arrive.
 //! Re-record with `examples/record-tmux-fixtures.rs` when tmux command output changes.
 
 #[path = "support/script.rs"]
@@ -11,8 +11,8 @@ mod terminal;
 
 use terminal::{look, terminal};
 
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 use bytes::Bytes;
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -34,9 +34,13 @@ fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tmux")
 }
 
+fn fixture_version() -> String {
+    env::var("TETHER_TMUX_FIXTURE_VERSION").unwrap_or_else(|_| "3.4".into())
+}
+
 /// The fixtures the targeted tests read; every version's are replayed below.
 fn fixture_dir() -> PathBuf {
-    fixtures().join("3.4")
+    fixtures().join(fixture_version())
 }
 
 fn replay(name: &str, chunk: impl FnMut(usize) -> usize) -> Replay {
@@ -120,8 +124,9 @@ fn startup_sets_the_client_size_from_the_current_window_before_ready() {
     let replay = whole("startup");
     assert_eq!(replay.lines[1], "refresh-client -C 80x24");
     let ready = replay.events.first().expect("an event");
+    let expected_version = fixture_version();
     assert!(
-        matches!(ready, Event::Ready { version, .. } if version.to_string() == "3.4"),
+        matches!(ready, Event::Ready { version, .. } if version.to_string() == expected_version),
         "{ready:?}"
     );
     // Ready only once the client-size reply is in: feed everything but its `%end`.
@@ -493,7 +498,20 @@ fn notifications_become_events() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(cwds, ["/tmp", "/"]);
+    assert_eq!(cwds, ["/private/tmp", "/"]);
+    let acts = replay
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                Event::Acted {
+                    window: WindowId(0)
+                }
+            )
+        })
+        .count();
+    assert_eq!(acts, 4, "arrival, typing, returning and resizing are acts");
 
     for name in ["detach", "kill-server", "startup"] {
         assert!(whole(name).session.exit_seen(), "{name}");
@@ -563,7 +581,7 @@ fn input_and_history_carry_bytes_unchanged() {
         .collect::<Vec<_>>()
         .concat();
     assert!(
-        find(&output, b" 61 62 02 1b 78 c3 a9 0a").is_some(),
+        find(&output, b"6162021b78c3a90a").is_some(),
         "C-b and Escape by name"
     );
     let c0 = (0u8..32).chain([b'\\', 0x80, 0xff]).collect::<Vec<_>>();

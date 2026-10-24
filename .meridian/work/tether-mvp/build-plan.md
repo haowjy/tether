@@ -70,8 +70,11 @@ P3  mobile input against real tmux:
            clipped right, the cursor pan for taller rows and top-anchored in history,
            top-left when smaller), the DOM renderer while larger, the "Sized for another
            terminal" status band (1 s debounce) with Fit re-sending `resize`, and
-           `watch { claim }` on the client's own re-watches (`term/`,
-           `screens/terminal/` StatusBand, `tabs/`, `net/`). Rename
+           `watch { claim: false }` on automatic re-watches (`term/`,
+           `screens/terminal/` StatusBand, `tabs/`, `net/`). An automatic re-watch must
+           not be followed by an automatic `resize`, since that claims the window.
+           PS-web owns the user-visible CHANGELOG wording when this behavior lands.
+           Rename
            `TerminalSizer.claim()` (and its `.context` mention), which would collide
            with the daemon's claim. After P3a, which owns `TerminalScreen.tsx` and the
            pan area; P3b's coordinate checks add a pane wider and taller than the tab.

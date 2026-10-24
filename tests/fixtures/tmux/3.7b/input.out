@@ -1,0 +1,179 @@
+%begin 1792859627 287 0
+%end 1792859627 287 0
+%session-changed $0 fixture
+%begin 1792859627 292 1
+3.7b	48787	1792859627	80	24
+%end 1792859627 292 1
+%begin 1792859627 293 1
+%end 1792859627 293 1
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%begin 1792859627 296 1
+%end 1792859627 296 1
+%begin 1792859627 297 1
+%0	80	24	0	4294967295	4294967295	2	0	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
+%end 1792859627 297 1
+%begin 1792859627 298 1
+$                   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%end 1792859627 298 1
+%begin 1792859627 299 1
+$ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%end 1792859627 299 1
+%begin 1792859627 300 1
+$ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%end 1792859627 300 1
+%begin 1792859627 301 1
+
+%end 1792859627 301 1
+%begin 1792859627 302 1
+
+%end 1792859627 302 1
+%begin 1792859627 303 1
+%0	80	24	0	4294967295	4294967295	2	0	1	0	0	0	1	0	0	23	0	0	0	0	0	8,16,24,32,40,48,56,64,72
+%end 1792859627 303 1
+%begin 1792859628 304 1
+%end 1792859628 304 1
+%begin 1792859628 305 1
+%end 1792859628 305 1
+%extended-output %0 0 : od -An
+%extended-output %0 0 :  -
+%extended-output %0 0 : v 
+%extended-output %0 0 : -t
+%extended-output %0 0 : x1 | 
+%extended-output %0 0 : tr 
+%extended-output %0 0 : -d '
+%extended-output %0 0 :  \134
+%extended-output %0 0 : n
+%extended-output %0 0 : '\015\012
+%begin 1792859628 306 1
+%end 1792859628 306 1
+%begin 1792859628 307 1
+%end 1792859628 307 1
+%begin 1792859628 308 1
+%end 1792859628 308 1
+%begin 1792859628 309 1
+%end 1792859628 309 1
+%begin 1792859628 310 1
+%end 1792859628 310 1
+%begin 1792859628 311 1
+%end 1792859628 311 1
+%extended-output %0 0 : ab^B^[xÃ©\015\012^D\010\010
+%extended-output %0 0 : 6162021b78c3a90a
+%extended-output %0 0 : $ 
+%begin 1792859628 312 1
+%end 1792859628 312 1
+%begin 1792859628 313 1
+%end 1792859628 313 1
+%extended-output %0 0 : stty -opost; p
+%extended-output %0 0 : ri
+%extended-output %0 0 : ntf '\134000\13400
+%extended-output %0 0 : 1\134
+%extended-output %0 0 : 002\134003\134004
+%extended-output %0 1 : \134
+%extended-output %0 0 : 005\134006\134007\134010\134011\1340
+%extended-output %0 0 : 12\13401
+%extended-output %0 0 : 3\134014\134015\134 \015016\134017\134020\13402
+%extended-output %0 0 : 1\134
+%extended-output %0 0 : 022\134023\134024\1340
+%extended-output %0 0 : 2
+%extended-output %0 0 : 5
+%extended-output %0 0 : \134026\134027
+%extended-output %0 0 : \1340
+%extended-output %0 0 : 30\13403
+%extended-output %0 0 : 1\134
+%extended-output %0 0 : 03
+%extended-output %0 0 : 2\1340
+%extended-output %0 0 : 3
+%extended-output %0 0 : 3\134
+%extended-output %0 0 : 0
+%extended-output %0 0 : 34\134
+%extended-output %0 0 : 0
+%extended-output %0 0 : 3
+%extended-output %0 0 : 5\134036\134
+%extended-output %0 0 : 0
+%extended-output %0 0 : 3
+%extended-output %0 0 : 7
+%extended-output %0 0 : \134
+%extended-output %0 0 : \134
+%extended-output %0 0 : \134
+%extended-output %0 0 : 2
+%extended-output %0 0 : 0
+%extended-output %0 0 : 0
+%extended-output %0 0 : \134
+%extended-output %0 0 : 37 \0157C0-DONE'; stty opost; e
+%extended-output %0 0 : cho\015\012
+%begin 1792859628 314 1
+can't find window: @99
+%error 1792859628 314 1
+%extended-output %0 0 : \000\001\002\003\004\005\006\007\010\011\012\013\014\015\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\134€ÿC0-DONE
+%extended-output %0 1 : \015\012$ 
+%window-renamed @0 bash
+%exit

@@ -114,10 +114,21 @@ impl Server {
 
     /// A terminal client attached to the session, in a pty from `script`.
     pub fn attach_terminal(&self) -> Result<Child> {
+        self.attach_terminal_to(SESSION, None)
+    }
+
+    /// A terminal client attached to a chosen session, optionally with client flags.
+    pub fn attach_terminal_to(&self, session: &str, flags: Option<&str>) -> Result<Child> {
+        let existing = self
+            .run(&["list-clients", "-F", "#{client_control_mode}"])?
+            .lines()
+            .filter(|mode| *mode == "0")
+            .count();
         let tmux = format!(
-            "nice -n 10 {} -N -L {} attach-session -t {SESSION}",
+            "nice -n 10 {} -N -L {} attach-session{} -t {session}",
             self.tmux.display(),
-            self.socket
+            self.socket,
+            flags.map_or_else(String::new, |flags| format!(" -f {flags}")),
         );
         let mut script = Command::new("script");
         if cfg!(target_os = "macos") {
@@ -133,10 +144,10 @@ impl Server {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
-        // tmux lists the client once it has attached.
+        // Wait for this client, not just any terminal that was already attached.
         for _ in 0..100 {
             let modes = self.run(&["list-clients", "-F", "#{client_control_mode}"])?;
-            if modes.lines().any(|mode| mode == "0") {
+            if modes.lines().filter(|mode| *mode == "0").count() > existing {
                 return Ok(child);
             }
             thread::sleep(Duration::from_millis(50));
@@ -150,6 +161,28 @@ impl Server {
     pub fn type_line(&self, pane: &str, line: &str) -> Result<()> {
         self.run(&["send-keys", "-t", pane, "-l", line])?;
         self.run(&["send-keys", "-t", pane, "Enter"])?;
+        Ok(())
+    }
+
+    /// Changes a terminal client's real pty size, which makes tmux treat it as a
+    /// client resize rather than a control-client size override.
+    pub fn resize_terminal(&self, tty: &str, cols: u16, rows: u16) -> Result<()> {
+        let mut command = Command::new("stty");
+        if cfg!(target_os = "macos") {
+            command.args(["-f", tty]);
+        } else {
+            command.args(["-F", tty]);
+        }
+        let output = command
+            .args(["cols", &cols.to_string(), "rows", &rows.to_string()])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "stty size for {tty}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )
+            .into());
+        }
         Ok(())
     }
 

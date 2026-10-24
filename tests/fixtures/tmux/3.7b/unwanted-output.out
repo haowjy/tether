@@ -1,0 +1,30 @@
+%begin 1792859598 287 0
+%end 1792859598 287 0
+%session-changed $0 fixture
+%begin 1792859598 292 1
+3.7b	47379	1792859598	80	24
+%end 1792859598 292 1
+%begin 1792859598 293 1
+%end 1792859598 293 1
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%extended-output %0 0 : echo on
+%extended-output %0 0 : e;
+%extended-output %0 0 :  
+%extended-output %0 0 : ec
+%extended-output %0 0 : h
+%extended-output %0 0 : o 
+%extended-output %0 0 : t
+%extended-output %0 1 : wo
+%extended-output %0 0 : \015\012
+%extended-output %0 0 : one\015\012two\015\012
+%extended-output %0 0 : $ 
+%begin 1792859598 300 1
+%pause %0
+%end 1792859598 300 1
+%layout-change @0 c195,80x24,0,0[80x12,0,0,0,80x11,0,13,1] c195,80x24,0,0[80x12,0,0,0,80x11,0,13,1] *
+%extended-output %1 0 : Jimmys-MacBook-Air:tether-ps-daemon-verify-20261024 jimmyyao$ 
+%begin 1792859598 304 1
+%pause %1
+%end 1792859598 304 1
+%window-renamed @0 bash
+%exit

@@ -1,0 +1,38 @@
+%begin 1792859618 287 0
+%end 1792859618 287 0
+%session-changed $0 fixture
+%begin 1792859618 292 1
+3.7b	48620	1792859618	80	24
+%end 1792859618 292 1
+%begin 1792859618 293 1
+%end 1792859618 293 1
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%begin 1792859618 296 1
+%end 1792859618 296 1
+%subscription-changed w0 $0 @0 0 - : |/private/tmp
+%window-renamed @0 bash
+%client-session-changed /dev/ttys030 $0 fixture
+%layout-change @0 ae5d,80x23,0,0,0 ae5d,80x23,0,0,0 *
+%extended-output %0 0 : \015\033[K$ 
+%begin 1792859619 309 1
+%pause %0
+%end 1792859619 309 1
+%subscription-changed w0 $0 @0 0 - : /dev/ttys030.1792859619.80x24.attached,focused,UTF-8;|/private/tmp
+%subscription-changed w0 $0 @0 0 - : /dev/ttys030.1792859620.80x24.attached,focused,UTF-8;|/
+%window-add @1
+%extended-output %1 0 : Jimmys-MacBook-Air:tether-ps-daemon-verify-20261024 jimmyyao$ 
+%begin 1792859621 318 1
+%pause %1
+%end 1792859621 318 1
+%session-window-changed $0 @1
+%subscription-changed w0 $0 @0 0 - : |/
+%window-renamed @1 bash
+%session-window-changed $0 @0
+%subscription-changed w0 $0 @0 0 - : /dev/ttys030.1792859622.80x24.attached,focused,UTF-8;|/
+%layout-change @0 b49d,90x34,0,0,0 b49d,90x34,0,0,0 *
+%subscription-changed w0 $0 @0 0 - : /dev/ttys030.1792859622.90x35.attached,focused,UTF-8;|/
+%client-detached /dev/ttys030
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%begin 1792859625 337 1
+%end 1792859625 337 1
+%exit

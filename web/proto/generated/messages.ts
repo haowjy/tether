@@ -18,7 +18,11 @@ export const CloseCode = {
 
 export type ClientMsg = { "type": "hello", "data": { protocol: number, client: ClientInfo, } }
   | { "type": "ping", "data": { t: number, } }
-  | { "type": "watch", "data": { watch: number, window: WindowRef, size: Size, } }
+  | { "type": "watch", "data": { watch: number, window: WindowRef, size: Size,
+/**
+ * Automatic re-watches don't claim the window again.
+ */
+claim?: boolean, } }
   | { "type": "unwatch", "data": { watch: number, } }
   | { "type": "resize", "data": { watch: number, size: Size, } }
   | { "type": "resync", "data": { watch: number, } }

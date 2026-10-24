@@ -127,8 +127,8 @@ pub(super) struct WatchKey {
 /// it has a watch.
 pub(super) struct Window {
     pub(super) watches: BTreeSet<WatchKey>,
-    /// The size of the latest `watch` or `resize`: the vote its owner casts.
-    pub(super) vote: Size,
+    /// The watch whose last action currently sizes the window, if any.
+    pub(super) claim: Option<WatchKey>,
     pub(super) phase: Phase,
     pub(super) locate: Locate,
     pub(super) stream: Stream,
@@ -188,6 +188,8 @@ pub(super) struct Conn {
 
 pub(super) struct Watch {
     pub(super) window: WinKey,
+    /// The size this watch last claimed with `watch` or `resize`.
+    pub(super) size: Size,
     /// Gets the next snapshot, and no output until then.
     pub(super) awaiting: bool,
     /// Started awaiting because its output didn't fit: snapshot spacing applies.
@@ -482,6 +484,13 @@ impl State {
                         *current = pane;
                         self.break_stream(key);
                         self.tell(key);
+                    }
+                }
+            }
+            Event::Acted { window } => {
+                if let Some(key) = self.owned(client, window) {
+                    if let Some(window) = self.windows.get_mut(&key) {
+                        window.claim = None;
                     }
                 }
             }
@@ -892,6 +901,9 @@ impl State {
             return;
         };
         window.watches.remove(&watch);
+        if window.claim == Some(watch) {
+            window.claim = None;
+        }
         let reserved = window
             .stream
             .inflight

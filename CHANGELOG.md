@@ -5,6 +5,9 @@ version section on release.
 
 ## [Unreleased]
 
+- The daemon tracks claims on watched-window sizes: a watch or accepted input, paste,
+  or resize claims its size; a size-relevant change from another tmux client clears
+  the vote without dropping the watch.
 - Home, the session picker and Settings: open tabs, a search over sessions and windows,
   New session and New window (with an optional start directory), every listing state
   (loading, offline, refused, no tmux server, stale with Retry), and Settings with Remove

@@ -47,15 +47,31 @@ impl State {
         }
     }
 
-    /// What the client owns: each bound window's id, pane and vote.
-    fn owned_windows(&self, client: ClientId) -> BTreeMap<WindowId, (PaneId, Size)> {
+    /// Bound windows this client owns, regardless of whether a watch claims them.
+    fn owned_windows(&self, client: ClientId) -> BTreeMap<WindowId, PaneId> {
         self.windows
             .iter()
             .filter_map(|(key, window)| match window.phase {
-                Phase::Bound { owner, pane, .. } if owner == client => {
-                    Some((key.window, (pane, window.vote)))
-                }
+                Phase::Bound { owner, pane, .. } if owner == client => Some((key.window, pane)),
                 _ => None,
+            })
+            .collect()
+    }
+
+    /// The claimed windows this client votes for, using the claiming watch's latest size.
+    fn claimed_windows(&self, client: ClientId) -> BTreeMap<WindowId, Size> {
+        self.windows
+            .iter()
+            .filter_map(|(key, window)| {
+                let Phase::Bound { owner, .. } = window.phase else {
+                    return None;
+                };
+                if owner != client {
+                    return None;
+                }
+                let watch = window.claim?;
+                let watch = self.conns.get(&watch.conn)?.watches.get(&watch.watch)?;
+                Some((key.window, watch.size))
             })
             .collect()
     }
@@ -63,10 +79,11 @@ impl State {
     /// Releases panes, clears votes and unsubscribes windows the client no longer owns.
     fn withdraw(&mut self, client: ClientId) {
         let owned = self.owned_windows(client);
+        let claimed = self.claimed_windows(client);
         let Some(record) = self.clients.get(&client) else {
             return;
         };
-        let shown: BTreeSet<PaneId> = owned.values().map(|(pane, _)| *pane).collect();
+        let shown: BTreeSet<PaneId> = owned.values().copied().collect();
         let releases: Vec<PaneId> = record
             .ready()
             .into_iter()
@@ -76,7 +93,7 @@ impl State {
         let clears: Vec<WindowId> = record
             .votes
             .keys()
-            .filter(|window| !owned.contains_key(window))
+            .filter(|window| !claimed.contains_key(window))
             .copied()
             .collect();
         let unsubscribes: Vec<WindowId> = record
@@ -196,7 +213,7 @@ impl State {
             .map(|(id, _)| *id)
     }
 
-    /// A cwd subscription and a size vote on every window the client owns.
+    /// A window subscription on every owned window and a vote on each claimed one.
     fn subscribe_and_vote(&mut self, client: ClientId) {
         let owned = self.owned_windows(client);
         for &window in owned.keys() {
@@ -216,7 +233,7 @@ impl State {
             let tag = self.next_tag();
             self.request(client, tag, Op::Subscribe { window }, Work::Maintenance);
         }
-        for (&window, &(_, size)) in &owned {
+        for (window, size) in self.claimed_windows(client) {
             let applied = self
                 .clients
                 .get(&client)

@@ -16,7 +16,10 @@ Tests replay recorded tmux streams and require `Session` to write exactly the re
 lines (`.in`); the same replays check that events do not depend on chunking, while
 targeted tests assert the important event behavior. Re-record with
 `cargo run --example record-tmux-fixtures -- --out tests/fixtures/tmux/3.4` when
-command output changes. The checked-in fixture set currently contains only tmux 3.4.
+command output changes; record 3.7b with `--tmux <path> --out tests/fixtures/tmux/3.7b`.
+The checked-in fixture sets include tmux 3.4 and 3.7b;
+targeted session tests default to 3.4 and accept `TETHER_TMUX_FIXTURE_VERSION=3.7b`
+to read the other version's fixtures.
 The `snapshot-*` fixtures also feed the `vt100` restore tests in `snapshot.rs`, so
 re-recording them re-checks `compose` too.
 

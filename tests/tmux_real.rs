@@ -11,6 +11,7 @@ mod terminal;
 mod tmux_server;
 
 use std::env;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -36,6 +37,10 @@ const SNAPSHOTS: usize = 200;
 /// Every this many snapshots, one is fed all the output after it, not only the output
 /// up to the next snapshot.
 const SAMPLE: usize = 25;
+
+fn acted_on(event: &Event, window: WindowId) -> bool {
+    matches!(event, Event::Acted { window: acted } if *acted == window)
+}
 
 /// The hub's side of one control client: a `Session` fed by the real pump.
 struct Client {
@@ -1001,6 +1006,272 @@ async fn a_stall_shorter_than_pause_after_loses_nothing_with_only_control_client
     );
     let (snaps, output) = snaps(&client.events, PaneId(0));
     check_numbered_once(&snaps[1..], &output);
+}
+
+fn terminal_names(server: &Server, control: &str) -> Vec<String> {
+    let clients = server
+        .run(&[
+            "list-clients",
+            "-F",
+            "#{client_control_mode}\t#{client_name}",
+        ])
+        .expect("list tmux clients");
+    clients
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter_map(|(mode, name)| (mode == control).then_some(name.to_owned()))
+        .collect()
+}
+
+fn terminal_name(server: &Server, control: &str) -> String {
+    terminal_names(server, control)
+        .into_iter()
+        .next()
+        .expect("matching tmux client")
+}
+
+fn window_size(server: &Server) -> String {
+    server
+        .run(&[
+            "display-message",
+            "-p",
+            "-t",
+            "@0",
+            "#{window_width}x#{window_height}",
+        ])
+        .expect("read window size")
+        .trim()
+        .to_owned()
+}
+
+async fn wait_for_size(server: &Server, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let actual = window_size(server);
+        if actual == expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "window size was {actual}, expected {expected}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+fn resize_terminal(server: &Server, name: &str, cols: u16, rows: u16) {
+    server
+        .resize_terminal(name, cols, rows)
+        .expect("resize pty client");
+}
+
+fn type_terminal(child: &mut std::process::Child, bytes: &[u8]) {
+    child
+        .stdin
+        .as_mut()
+        .expect("pty client stdin")
+        .write_all(bytes)
+        .expect("write to pty client");
+}
+
+/// A window vote caps tmux's latest client until a real pty client acts. This runs
+/// against each supported tmux version with private servers only.
+#[tokio::test]
+async fn window_size_yields_to_the_last_acting_pty_client() {
+    let Some((_serial, server)) = setup("window-sizing").await else {
+        return;
+    };
+    let mut client = Client::attach(&server, SessionId(0)).await;
+    let mut laptop = server.attach_terminal().expect("attach pty laptop");
+    let laptop_name = terminal_name(&server, "0");
+    resize_terminal(&server, &laptop_name, 200, 50);
+
+    // The first value is a baseline, even when the laptop is already attached.
+    client
+        .run(Op::Subscribe {
+            window: WindowId(0),
+        })
+        .await;
+    client
+        .wait_for("the subscription baseline", |event| {
+            matches!(
+                event,
+                Event::Cwd {
+                    window: WindowId(0),
+                    ..
+                }
+            )
+        })
+        .await;
+    assert!(
+        !client
+            .events
+            .iter()
+            .any(|event| acted_on(event, WindowId(0))),
+        "baseline is not an act"
+    );
+
+    let vote = Size { cols: 60, rows: 20 };
+    client
+        .run(Op::Vote {
+            window: WindowId(0),
+            size: vote,
+        })
+        .await;
+    wait_for_size(&server, "60x20").await;
+
+    let event_start = client.events.len();
+    type_terminal(&mut laptop, b"x");
+    client
+        .wait_from(event_start, "the laptop act", |event| {
+            acted_on(event, WindowId(0))
+        })
+        .await;
+    client
+        .run(Op::ClearVote {
+            window: WindowId(0),
+        })
+        .await;
+    wait_for_size(&server, "200x49").await;
+
+    // Focus-out updates activity but does not make the laptop latest; focus-in does.
+    server
+        .run(&["set-option", "-g", "focus-events", "on"])
+        .expect("enable focus events");
+    client
+        .run(Op::Vote {
+            window: WindowId(0),
+            size: vote,
+        })
+        .await;
+    wait_for_size(&server, "60x20").await;
+    let events_before_focus_out = client.events.len();
+    type_terminal(&mut laptop, b"\x1b[O");
+    client.feed_for(Duration::from_millis(1250)).await;
+    assert!(
+        !client.events[events_before_focus_out..]
+            .iter()
+            .any(|event| acted_on(event, WindowId(0))),
+        "focus-out does not yield"
+    );
+    assert_eq!(window_size(&server), "60x20");
+    let events_before_focus_in = client.events.len();
+    type_terminal(&mut laptop, b"\x1b[I");
+    client
+        .wait_from(events_before_focus_in, "focus-in", |event| {
+            acted_on(event, WindowId(0))
+        })
+        .await;
+    client
+        .run(Op::ClearVote {
+            window: WindowId(0),
+        })
+        .await;
+    wait_for_size(&server, "200x49").await;
+
+    // ignore-size clients are listed but neither their arrival nor input can take
+    // the window away from the current claim.
+    client
+        .run(Op::Vote {
+            window: WindowId(0),
+            size: vote,
+        })
+        .await;
+    let events_before_ignored = client.events.len();
+    let mut ignored = server
+        .attach_terminal_to(SESSION, Some("ignore-size"))
+        .expect("attach ignore-size pty");
+    client.feed_for(Duration::from_millis(1250)).await;
+    type_terminal(&mut ignored, b"z");
+    client.feed_for(Duration::from_millis(1250)).await;
+    assert!(
+        !client.events[events_before_ignored..]
+            .iter()
+            .any(|event| acted_on(event, WindowId(0))),
+        "ignore-size client arrival and activity do not yield"
+    );
+    assert_eq!(window_size(&server), "60x20");
+
+    let names_before_second = terminal_names(&server, "0");
+    let events_before_second = client.events.len();
+    let mut second = server.attach_terminal().expect("attach second pty");
+    let second_name = terminal_names(&server, "0")
+        .into_iter()
+        .find(|name| !names_before_second.contains(name))
+        .expect("new pty client name");
+    resize_terminal(&server, &second_name, 180, 41);
+    // A new client on the window is itself an act, even before its first key.
+    client
+        .wait_from(events_before_second, "second pty arrival", |event| {
+            acted_on(event, WindowId(0))
+        })
+        .await;
+    client
+        .run(Op::ClearVote {
+            window: WindowId(0),
+        })
+        .await;
+    wait_for_size(&server, "180x40").await;
+
+    // Membership is by window, not session: link @0 into another session and make
+    // it current there before attaching the third pty.
+    let events_before_linked = client.events.len();
+    server
+        .run(&["new-session", "-d", "-s", "linked", "-x", "100", "-y", "30"])
+        .expect("create linked session");
+    server
+        .run(&["link-window", "-s", "@0", "-t", "linked:"])
+        .expect("link window into second session");
+    server
+        .run(&["select-window", "-t", "linked:@0"])
+        .expect("select linked window");
+    let names_before_linked = terminal_names(&server, "0");
+    let mut linked = server
+        .attach_terminal_to("linked", None)
+        .expect("attach linked-session pty");
+    let linked_name = terminal_names(&server, "0")
+        .into_iter()
+        .find(|name| !names_before_linked.contains(name))
+        .expect("linked-session pty name");
+    resize_terminal(&server, &linked_name, 160, 46);
+    client
+        .wait_from(
+            events_before_linked,
+            "linked-session pty arrival",
+            |event| acted_on(event, WindowId(0)),
+        )
+        .await;
+    client
+        .run(Op::ClearVote {
+            window: WindowId(0),
+        })
+        .await;
+    wait_for_size(&server, "160x45").await;
+
+    // No polling or periodic maintenance: after changes settle, neither an act nor
+    // another command line appears for a quiet subscription.
+    let quiet_lines = client.sent.len();
+    let quiet_acts = client
+        .events
+        .iter()
+        .filter(|event| acted_on(event, WindowId(0)))
+        .count();
+    client.feed_for(Duration::from_millis(1250)).await;
+    assert_eq!(client.sent.len(), quiet_lines, "no periodic tmux operation");
+    assert_eq!(
+        client
+            .events
+            .iter()
+            .filter(|event| acted_on(event, WindowId(0)))
+            .count(),
+        quiet_acts,
+        "no report without an act"
+    );
+
+    for child in [&mut laptop, &mut ignored, &mut second, &mut linked] {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 async fn locate_session(endpoint: &Endpoint, session: SessionId) -> Result<Reply, TmuxError> {

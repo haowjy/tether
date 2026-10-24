@@ -52,7 +52,7 @@ fn a_watch_binds_after_locating_and_catches_up_by_snapshot() {
 
     hub.output(client, 0, "hi");
     assert_eq!(hub.take(conn), [Got::Output(1, Bytes::from_static(b"hi"))]);
-    hub.feed(client, "%subscription-changed w0 $0 @0 1 - : /home/j\n");
+    hub.feed(client, "%subscription-changed w0 $0 @0 1 - : |/home/j\n");
     let watching = hub.take_json(conn);
     assert_eq!(watching[0]["data"]["cwd"], "/home/j");
 
@@ -136,6 +136,218 @@ fn a_resize_votes_and_a_new_pane_size_breaks_the_stream() {
     assert!(hub.take(conn).is_empty());
     hub.settle();
     assert_eq!(hub.take(conn), [Got::Snapshot(1, size(500, 5))]);
+}
+
+#[test]
+fn another_clients_act_yields_a_claim_and_input_or_resize_claims_again() {
+    let mut hub = Hub::new();
+    let conn = hub.connect();
+    hub.watch_sized(conn, 1, 0, 110, 35);
+    hub.settle();
+    let client = hub.client(0);
+    hub.take(conn);
+
+    // The first value after Subscribe is only a baseline, not an act.
+    hub.feed(
+        client,
+        "%subscription-changed w0 $0 @0 0 - : laptop.1.200x50.attached,focused,UTF-8;|/tmp\n",
+    );
+    hub.take_json(conn);
+    hub.settle();
+
+    // Activity changes, while the client remains on the window and size-counted.
+    hub.feed(
+        client,
+        "%subscription-changed w0 $0 @0 0 - : laptop.2.200x50.attached,focused,UTF-8;|/tmp\n",
+    );
+    hub.settle();
+    let clear = line_for(Op::ClearVote {
+        window: WindowId(0),
+    });
+    assert!(hub.lines(client).contains(&clear));
+    assert!(hub.take_json(conn).is_empty(), "the watch remains active");
+
+    hub.send(
+        conn,
+        json!({"type":"input","data":{"watch":1,"items":[{"text":"x"}]}}),
+    );
+    assert!(hub.lines(client).contains(&vote(0, 110, 35)));
+    hub.settle();
+    hub.take_json(conn);
+
+    hub.feed(
+        client,
+        "%subscription-changed w0 $0 @0 0 - : laptop.3.200x50.attached,focused,UTF-8;|/tmp\n",
+    );
+    hub.settle();
+    hub.send(
+        conn,
+        json!({"type":"resize","data":{"watch":1,"size":{"cols":90,"rows":28}}}),
+    );
+    assert!(hub.lines(client).contains(&vote(0, 90, 28)));
+}
+
+#[test]
+fn an_act_reported_by_a_non_owner_does_not_yield_the_claim() {
+    let mut hub = Hub::new();
+    let conn = hub.connect();
+    hub.watch_sized(conn, 1, 0, 110, 35);
+    hub.settle();
+    let owner = hub.client(0);
+    hub.take(conn);
+
+    // Attach a second control client in a different session. It does not own @0.
+    hub.add_window(1, 1, 1);
+    hub.watch(conn, 2, 1);
+    hub.settle();
+    let non_owner = hub.client(1);
+
+    // Establish the owner's subscription baseline. A stale/foreign w0 value from the
+    // other client is ignored because it never subscribed to @0.
+    hub.feed(
+        owner,
+        "%subscription-changed w0 $0 @0 0 - : laptop.1.200x50.attached,focused,UTF-8;|/tmp\n",
+    );
+    hub.take_json(conn);
+    hub.feed(
+        non_owner,
+        "%subscription-changed w0 $0 @0 0 - : laptop.2.200x50.attached,focused,UTF-8;|/tmp\n",
+    );
+    hub.settle();
+    let clear = line_for(Op::ClearVote {
+        window: WindowId(0),
+    });
+    assert!(
+        !hub.lines(owner).contains(&clear),
+        "a notification from a client that does not own the window cannot clear its vote"
+    );
+
+    // The same activity change from the actual owner yields the claim.
+    hub.feed(
+        owner,
+        "%subscription-changed w0 $0 @0 0 - : laptop.2.200x50.attached,focused,UTF-8;|/tmp\n",
+    );
+    hub.settle();
+    assert!(hub.lines(owner).contains(&clear));
+}
+
+#[test]
+fn focus_out_leaving_and_ignore_size_entries_do_not_yield_a_claim() {
+    let mut hub = Hub::new();
+    let conn = hub.connect();
+    hub.watch_sized(conn, 1, 0, 110, 35);
+    hub.settle();
+    let client = hub.client(0);
+    hub.take(conn);
+
+    hub.feed(
+        client,
+        "%subscription-changed w0 $0 @0 0 - : laptop.1.200x50.attached,focused,UTF-8;|/tmp\n",
+    );
+    hub.take_json(conn);
+    hub.settle();
+    let clear = line_for(Op::ClearVote {
+        window: WindowId(0),
+    });
+    let initial_clears = hub
+        .lines(client)
+        .iter()
+        .filter(|line| **line == clear)
+        .count();
+
+    // Focus-out advances activity but only removes `focused` at an unchanged size.
+    hub.feed(
+        client,
+        "%subscription-changed w0 $0 @0 0 - : laptop.2.200x50.attached,UTF-8;ignored.1.70x25.attached,ignore-size,UTF-8;|/tmp\n",
+    );
+    // A client with ignore-size can arrive, change activity, or leave without acting
+    // on the size tmux calculates for this window.
+    hub.feed(
+        client,
+        "%subscription-changed w0 $0 @0 0 - : laptop.2.200x50.attached,UTF-8;ignored.2.70x25.attached,ignore-size,UTF-8;|/tmp\n",
+    );
+    hub.feed(
+        client,
+        "%subscription-changed w0 $0 @0 0 - : laptop.2.200x50.attached,UTF-8;|/tmp\n",
+    );
+    hub.settle();
+    let clears = hub
+        .lines(client)
+        .iter()
+        .filter(|line| **line == clear)
+        .count();
+    assert_eq!(clears, initial_clears);
+}
+
+#[test]
+fn an_unclaimed_rewatch_and_nonclaiming_requests_do_not_vote() {
+    let mut hub = Hub::new();
+    let conn = hub.connect();
+    hub.open(conn, 1, 0);
+    let client = hub.client(0);
+    hub.take(conn);
+
+    hub.send(conn, json!({"type":"unwatch","data":{"watch":1}}));
+    hub.settle();
+    let claims_before = hub
+        .lines(client)
+        .iter()
+        .filter(|line| **line == vote(0, 80, 24))
+        .count();
+    hub.send(conn, json!({"type":"watch","data":{"watch":2,"window":{"server":SERVER_NAME,"window":0},"size":{"cols":120,"rows":40},"claim":false}}));
+    hub.settle();
+    assert_eq!(
+        hub.lines(client)
+            .iter()
+            .filter(|line| **line == vote(0, 120, 40))
+            .count(),
+        0,
+        "an automatic re-watch does not claim"
+    );
+    let before = hub.lines(client).len();
+    hub.send(conn, json!({"type":"resync","data":{"watch":2}}));
+    hub.send(
+        conn,
+        json!({"type":"history","data":{"req":3,"watch":2,"start":-1,"end":0}}),
+    );
+    hub.settle();
+    assert_eq!(
+        hub.lines(client)
+            .iter()
+            .filter(|line| **line == vote(0, 120, 40))
+            .count(),
+        0
+    );
+    assert!(hub.lines(client).len() > before);
+    assert!(claims_before > 0);
+}
+
+#[test]
+fn leaving_the_claiming_watch_clears_its_vote_but_keeps_other_watches() {
+    let mut hub = Hub::new();
+    let (claiming, other) = (hub.connect(), hub.connect());
+    hub.watch_sized(claiming, 1, 0, 100, 30);
+    hub.settle();
+    hub.take(claiming);
+    hub.send(
+        other,
+        json!({"type":"watch","data":{"watch":2,"window":{"server":SERVER_NAME,"window":0},"size":{"cols":140,"rows":45},"claim":false}}),
+    );
+    hub.settle();
+    hub.take(other);
+    let client = hub.client(0);
+
+    hub.send(claiming, json!({"type":"unwatch","data":{"watch":1}}));
+    hub.settle();
+    assert!(hub.lines(client).contains(&line_for(Op::ClearVote {
+        window: WindowId(0),
+    })));
+    assert!(!hub.lines(client).contains(&release(0)));
+    hub.output(client, 0, "still watched");
+    assert_eq!(
+        hub.take(other),
+        [Got::Output(2, Bytes::from_static(b"still watched"))]
+    );
 }
 
 #[test]
@@ -240,7 +452,9 @@ fn a_detached_client_ends_its_watches_and_does_not_reattach() {
 fn a_crashed_client_respawns_once_and_a_second_crash_ends_the_watch() {
     let mut hub = Hub::new();
     let conn = hub.connect();
-    hub.open(conn, 1, 0);
+    hub.watch_sized(conn, 1, 0, 100, 30);
+    hub.settle();
+    hub.take(conn);
     let first = hub.client(0);
     hub.take(conn);
     hub.exited(first); // no %exit: a crash
@@ -251,6 +465,7 @@ fn a_crashed_client_respawns_once_and_a_second_crash_ends_the_watch() {
     hub.settle();
     let second = hub.client(0);
     assert_ne!(first, second);
+    assert!(hub.lines(second).contains(&vote(0, 100, 30)));
     // Same session and pane: no new `watching`, just the snapshot.
     assert_eq!(hub.take(conn), [Got::Snapshot(1, size(80, 24))]);
     hub.advance(Duration::from_secs(30));
@@ -743,6 +958,25 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
     );
     hub.settle(); // the watch is now bound
     hub.take_json(conn);
+    let client = hub.client(0);
+
+    // A tmux client can yield the watch; a successful paste reclaims it.
+    hub.feed(
+        client,
+        "%subscription-changed w0 $0 @0 0 - : laptop.1.200x50.attached,focused,UTF-8;|/tmp\n",
+    );
+    hub.take_json(conn);
+    hub.feed(
+        client,
+        "%subscription-changed w0 $0 @0 0 - : laptop.2.200x50.attached,focused,UTF-8;|/tmp\n",
+    );
+    hub.settle();
+    let vote_line = vote(0, 80, 24);
+    let votes_before_paste = hub
+        .lines(client)
+        .iter()
+        .filter(|line| **line == vote_line)
+        .count();
 
     // Successful paste and Enter receive one confirmation.
     let file = hub.paste_file("/run/ok");
@@ -760,6 +994,14 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
     assert_eq!(
         hub.take_json(conn),
         [json!({"type":"pasted","data":{"req":12,"watch":1}})]
+    );
+    assert_eq!(
+        hub.lines(client)
+            .iter()
+            .filter(|line| **line == vote_line)
+            .count(),
+        votes_before_paste + 1,
+        "paste claims the window again"
     );
     assert_eq!(hub.removed.last(), Some(&PathBuf::from("/run/ok")));
 

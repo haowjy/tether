@@ -722,8 +722,124 @@ fn subscription(r: &mut Recorder) -> Result<()> {
         window: WindowId(0),
     })?)?;
     r.wait_for(|event| matches!(event, Event::Cwd { .. }))?;
-    r.server.type_line("%0", "cd /")?;
+    let mut laptop = r.server.attach_terminal()?;
+    r.wait_for(|event| {
+        matches!(
+            event,
+            Event::Acted {
+                window: WindowId(0)
+            }
+        )
+    })?;
+    laptop
+        .stdin
+        .as_mut()
+        .ok_or("laptop stdin is closed")?
+        .write_all(b"cd /\n")?;
     r.wait_for(|event| matches!(event, Event::Cwd { path, .. } if path == "/"))?;
+
+    // Switching away removes the laptop's entry; returning is a new act. The
+    // second window is setup only, and is never itself subscribed.
+    r.server.run(&["new-window", "-d", "-t", "$0"])?;
+    r.settle()?;
+    let acts_before_switch = r
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                Event::Acted {
+                    window: WindowId(0)
+                }
+            )
+        })
+        .count();
+    laptop
+        .stdin
+        .as_mut()
+        .ok_or("laptop stdin is closed")?
+        .write_all(b"\x02n")?;
+    r.pump_for(Duration::from_millis(1100))?;
+    let acts_after_leaving = r
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                Event::Acted {
+                    window: WindowId(0)
+                }
+            )
+        })
+        .count();
+    if acts_after_leaving != acts_before_switch {
+        return Err("leaving the subscribed window was reported as an act".into());
+    }
+    laptop
+        .stdin
+        .as_mut()
+        .ok_or("laptop stdin is closed")?
+        .write_all(b"\x02p")?;
+    r.wait_for(|event| {
+        matches!(
+            event,
+            Event::Acted {
+                window: WindowId(0)
+            }
+        )
+    })?;
+
+    let clients = r.server.run(&[
+        "list-clients",
+        "-F",
+        "#{client_control_mode}\t#{client_name}",
+    ])?;
+    let laptop_name = clients
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .find_map(|(control, name)| (control == "0").then_some(name))
+        .ok_or("the pty laptop client is missing")?;
+    r.server.resize_terminal(laptop_name, 90, 35)?;
+    r.wait_for(|event| {
+        matches!(
+            event,
+            Event::Acted {
+                window: WindowId(0)
+            }
+        )
+    })?;
+    let acts_after_resize = r
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                Event::Acted {
+                    window: WindowId(0)
+                }
+            )
+        })
+        .count();
+    r.pump_for(Duration::from_millis(1200))?;
+    let acts_while_idle = r
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                Event::Acted {
+                    window: WindowId(0)
+                }
+            )
+        })
+        .count();
+    if acts_while_idle != acts_after_resize {
+        return Err("the idle client produced an extra act".into());
+    }
+    laptop.kill()?;
+    let _ = laptop.wait()?;
+    r.settle()?;
+
     expect_ok(r.run(Op::Unsubscribe {
         window: WindowId(0),
     })?)?;
@@ -810,7 +926,7 @@ fn input(r: &mut Recorder) -> Result<()> {
     let key = |name: &str| InputItem::Key(name.to_owned());
     expect_ok(r.run(Op::Input {
         window: WindowId(0),
-        items: vec![text("od -An -tx1"), key("Enter")],
+        items: vec![text("od -An -v -tx1 | tr -d ' \\n'"), key("Enter")],
     })?)?;
     r.settle()?;
     expect_ok(r.run(Op::Input {
@@ -825,7 +941,7 @@ fn input(r: &mut Recorder) -> Result<()> {
             key("C-d"),
         ],
     })?)?;
-    r.wait_for_output(b"61 62 02 1b 78 c3 a9 0a")?;
+    r.wait_for_output(b"6162021b78c3a90a")?;
     r.settle()?;
     let c0: String = (0u8..32).map(|byte| format!("\\{byte:03o}")).collect();
     expect_ok(r.run(Op::Input {

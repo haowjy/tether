@@ -56,7 +56,8 @@ impl State {
                 watch,
                 window,
                 size,
-            } => self.watch(conn, watch, window, size),
+                claim,
+            } => self.watch(conn, watch, window, size, claim.unwrap_or(true)),
             ClientMsg::Unwatch { watch } => {
                 if let Some(state) = self.conns.get_mut(&conn) {
                     if let Some(removed) = state.watches.remove(&watch) {
@@ -66,8 +67,14 @@ impl State {
             }
             ClientMsg::Resize { watch, size } => {
                 if let Some(key) = self.watch_window(conn, watch) {
-                    if let Some(window) = self.windows.get_mut(&key) {
-                        window.vote = clamp(size);
+                    let watch_key = WatchKey { conn, watch };
+                    if let Some(current) = self
+                        .conns
+                        .get_mut(&conn)
+                        .and_then(|state| state.watches.get_mut(&watch))
+                    {
+                        current.size = clamp(size);
+                        self.claim(key, watch_key);
                     }
                 }
             }
@@ -124,7 +131,14 @@ impl State {
         }
     }
 
-    pub(super) fn watch(&mut self, conn: ConnId, watch: u32, window: WindowRef, size: proto::Size) {
+    pub(super) fn watch(
+        &mut self,
+        conn: ConnId,
+        watch: u32,
+        window: WindowRef,
+        size: proto::Size,
+        claim: bool,
+    ) {
         let Some(state) = self.conns.get(&conn) else {
             return;
         };
@@ -161,7 +175,7 @@ impl State {
         let size = clamp(size);
         let entry = self.windows.entry(key).or_insert_with(|| Window {
             watches: BTreeSet::new(),
-            vote: size,
+            claim: None,
             phase: Phase::Locating {
                 after: None,
                 on: None,
@@ -177,13 +191,17 @@ impl State {
             },
             cwd: None,
         });
-        entry.vote = size;
-        entry.watches.insert(WatchKey { conn, watch });
+        let watch_key = WatchKey { conn, watch };
+        entry.watches.insert(watch_key);
+        if claim {
+            entry.claim = Some(watch_key);
+        }
         if let Some(state) = self.conns.get_mut(&conn) {
             state.watches.insert(
                 watch,
                 Watch {
                     window: key,
+                    size,
                     awaiting: true,
                     starved: false,
                     last_snapshot: None,
@@ -229,6 +247,7 @@ impl State {
             Ok(target) => target,
             Err(refusal) => return self.refuse_for(conn, None, watch, refusal),
         };
+        self.claim(key, WatchKey { conn, watch });
         let items = items
             .into_iter()
             .map(|item| match item {
@@ -263,6 +282,7 @@ impl State {
                 return self.refuse_for(conn, Some(req), watch, refusal);
             }
         };
+        self.claim(key, WatchKey { conn, watch });
         let tag = self.next_tag();
         let op = Op::Paste {
             window: key.window,
@@ -559,5 +579,11 @@ impl State {
             Refusal::Busy => (ErrorCode::Busy, "tmux is busy"),
         };
         self.refuse(conn, req, Some(watch), code, message);
+    }
+
+    fn claim(&mut self, window: WinKey, watch: WatchKey) {
+        if let Some(window) = self.windows.get_mut(&window) {
+            window.claim = Some(watch);
+        }
     }
 }

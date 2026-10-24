@@ -95,7 +95,7 @@ pub fn op(op: &Op, tag: Tag) -> Result<Group, TmuxError> {
         )),
         Op::ClearVote { window } => Group::one(format!("refresh-client -C '{window}:'")),
         Op::Subscribe { window } => Group::one(format!(
-            "refresh-client -B '{}:{window}:#{{pane_current_path}}'",
+            "refresh-client -B '{}:{window}:{WINDOW_SUBSCRIPTION_FORMAT}'",
             subscription_name(*window)
         )),
         Op::Unsubscribe { window } => Group::one(format!(
@@ -161,10 +161,15 @@ fn paste_buffer(tag: Tag) -> String {
     format!("tether-{}", tag.0)
 }
 
-/// `w<W>`: the subscription that reports window `@W`'s active pane's cwd.
+/// `w<W>`: the subscription for other clients' acts and the active pane's cwd.
 pub fn subscription_name(window: WindowId) -> String {
     format!("w{}", window.0)
 }
+
+/// The L: loop is filtered to clients whose current window is the outer @W. Keep the
+/// outer window available inside the loop; window_active_clients_list supplies the
+/// exact membership test.
+const WINDOW_SUBSCRIPTION_FORMAT: &str = "#{L:#{?client_control_mode,,#{?#{m:*#,#{client_name}#,*,#,#{window_active_clients_list}#,},#{client_name}.#{client_activity}.#{client_width}x#{client_height}.#{client_flags};,}}}|#{pane_current_path}";
 
 fn locate(window: WindowId) -> Group {
     Group::one(format!("display-message -p -t {window} '{LOCATE_FORMAT}'"))

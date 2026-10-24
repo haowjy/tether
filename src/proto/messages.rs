@@ -74,6 +74,10 @@ pub enum ClientMsg {
         watch: u32,
         window: WindowRef,
         size: Size,
+        /// Automatic re-watches don't claim the window again.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        claim: Option<bool>,
     },
     /// The tab left the screen or closed.
     Unwatch {

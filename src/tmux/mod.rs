@@ -375,6 +375,10 @@ pub enum Event {
         window: WindowId,
         path: String,
     },
+    /// Another size-counted tmux client acted on this window.
+    Acted {
+        window: WindowId,
+    },
     /// The control client can't continue; the caller closes it.
     Fatal(SessionError),
 }
