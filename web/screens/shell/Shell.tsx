@@ -1,6 +1,7 @@
-import { useAppView } from "../../app/context";
+import { useApp, useAppView } from "../../app/context";
 import { Spinner } from "../../ui/primitives/Spinner";
 import { Enrol } from "../enrol/Enrol";
+import { NoServers } from "../enrol/NoServers";
 import { HostProblem } from "../enrol/HostProblem";
 import { FilesScreen } from "../files/FilesScreen";
 import { CreateDialog } from "../home/CreateDialog";
@@ -15,10 +16,13 @@ import styles from "./Shell.module.css";
 
 /** The destination frame: the rail on desktop, and the screen for the route. Admission problems replace it. */
 export function Shell() {
+  const app = useApp();
   const layout = useAppView((v) => v.viewport.layout);
   const destination = useAppView((v) => v.nav.destination);
   const hosts = useAppView((v) => v.hosts);
   const desktop = layout === "desktop";
+  // An app with no server yet has nothing to wait for: it offers to add one.
+  const noServers = hosts.length === 0 && app.platform.manageHosts !== undefined;
   // The browser has one host; native may have several, each with its own banner.
   const blocking = hosts.find((h) => ["notEnrolled", "wrongOrigin", "originRefused", "nodeRefused", "incompatible"].includes(h.admission.kind) && h.entry.pageOrigin !== null);
 
@@ -33,9 +37,10 @@ export function Shell() {
             blocking.admission.kind === "notEnrolled" ? <Enrol host={blocking} /> : <HostProblem host={blocking} />
           ) : (
             <>
-              {hosts.length === 0 && <div class={styles.waiting}><Spinner label="Checking access" /></div>}
-              {destination === "home" && <Home pane="sessions" />}
-              {destination === "files" && (desktop ? <FilesScreen /> : <Home pane="files" />)}
+              {hosts.length === 0 && !noServers && <div class={styles.waiting}><Spinner label="Checking access" /></div>}
+              {noServers && <NoServers />}
+              {!noServers && destination === "home" && <Home pane="sessions" />}
+              {!noServers && destination === "files" && (desktop ? <FilesScreen /> : <Home pane="files" />)}
             </>
           )}
           <TerminalScreen active={!blocking && destination === "terminal"} />

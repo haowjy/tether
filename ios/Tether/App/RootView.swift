@@ -4,26 +4,14 @@ struct TetherRootView: View {
     @ObservedObject var model: TetherAppModel
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            WebShellView(model: model).ignoresSafeArea()
-            Button {
-                model.showingServers = true
-            } label: {
-                Image(systemName: "server.rack")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 42, height: 42)
-                    .background(.regularMaterial, in: Circle())
+        WebShellView(model: model)
+            .ignoresSafeArea()
+            .sheet(isPresented: $model.showingServers, onDismiss: { model.setCovered(false) }) {
+                ServerListSheet(model: model)
             }
-            .accessibilityLabel("Servers")
-            .padding(.trailing, 12)
-            .padding(.top, 8)
-        }
-        .sheet(isPresented: $model.showingServers, onDismiss: { model.setCovered(false) }) {
-            ServerListSheet(model: model)
-        }
-        .overlay {
-            if model.isLocked { LockedView(model: model) }
-        }
+            .overlay {
+                if model.isLocked { LockedView(model: model) }
+            }
     }
 }
 

@@ -2,7 +2,8 @@
 // `.blur()` (lint rule 2). Elements that can hold focus register here; a dialog's initial
 // focus and its focus return run in the same dispatch that opened or closed it, because iOS
 // raises the keyboard only for a focus made during a user gesture. In native the controller
-// remains Swift's; the browser's `setFocus` is a no-op.
+// remains Swift's; the browser's `setFocus` is a no-op. Native's terminal has no DOM element
+// to focus: a stand-in registers as `terminal`, and focusing or blurring it asks native.
 import type { InputPlatform, Viewport } from "../platform/types";
 import type { FocusPort, FocusTarget } from "../ui/focus";
 import { Store } from "../ui/store";
@@ -42,6 +43,7 @@ export class FocusController extends Store<FocusView> implements FocusPort {
   private readonly openers = new Map<HTMLDialogElement, Element | null>();
   /** The control the next dialog is opened from. */
   private opener: Element | null = null;
+  private standIn: HTMLElement | null = null;
   private mode: FocusMode | null = null;
   private screen: { destination: Destination; overlay: boolean } | null = null;
   private isSelecting = false;
@@ -103,6 +105,27 @@ export class FocusController extends Store<FocusView> implements FocusPort {
   viewportChanged(before: Viewport, after: Viewport): void {
     const { owner } = this.snapshot;
     if (before.keyboard && !after.keyboard && owner !== "none") this.targets.get(owner)?.blur();
+  }
+
+  /**
+   * The `terminal` target in native, where Swift owns the keyboard and the page has no element for it. Focus and
+   * blur announce themselves like an element's, so owner tracking and dialog returns need no special case; each
+   * also tells native, even when the mode is the one last sent, since a lent line field moves native on unseen.
+   */
+  nativeTerminal(): HTMLElement {
+    if (!this.standIn) {
+      const element = document.createElement("div");
+      element.hidden = true;
+      const announce = (type: "focus" | "blur"): void => {
+        element.dispatchEvent(new Event(type));
+        this.send(this.restingNow());
+      };
+      element.focus = () => { announce("focus"); };
+      element.blur = () => { announce("blur"); };
+      document.body.append(element);
+      this.standIn = element;
+    }
+    return this.standIn;
   }
 
   /**
@@ -175,9 +198,17 @@ export class FocusController extends Store<FocusView> implements FocusPort {
   }
 
   private rest(): void {
-    if (!this.screen) return;
-    const mode = restingMode(this.screen.destination, this.screen.overlay, this.snapshot.owner !== "none", this.isSelecting);
-    if (mode === this.mode) return;
+    const mode = this.restingNow();
+    if (mode !== null && mode !== this.mode) this.send(mode);
+  }
+
+  private restingNow(): FocusMode | null {
+    if (!this.screen) return null;
+    return restingMode(this.screen.destination, this.screen.overlay, this.snapshot.owner !== "none", this.isSelecting);
+  }
+
+  private send(mode: FocusMode | null): void {
+    if (mode === null) return;
     this.mode = mode;
     this.input.setFocus(mode);
   }

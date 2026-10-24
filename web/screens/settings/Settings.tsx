@@ -68,6 +68,8 @@ export function Settings() {
   const install = app.platform.install;
   const showInstall = phone && install !== undefined && !install.installed();
 
+  const manageHosts = app.platform.manageHosts;
+
   const ask = (name: Confirmation, from: Element): void => { app.openOverlay({ screen: "settings", name }, from); };
 
   return (
@@ -75,6 +77,13 @@ export function Settings() {
       <Dialog open={open} title="Settings" onClose={close}>
         {open && (
           <div class={styles.sections}>
+            {manageHosts && (
+              <section class={styles.section} aria-labelledby="settings-servers">
+                <h3 id="settings-servers" class={styles.heading}>Servers</h3>
+                <p class={styles.detail}>The servers this app connects to. Add one, pair it again with a code from <code>tether enroll</code>, or remove it.</p>
+                <Button variant="secondary" onClick={manageHosts}>Manage servers</Button>
+              </section>
+            )}
             {target && (
               <section class={styles.section} aria-labelledby="settings-device">
                 <h3 id="settings-device" class={styles.heading}>This device</h3>

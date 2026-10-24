@@ -435,7 +435,7 @@ export class Terminals extends Store<TerminalsView> {
     const helper = renderer.inputElement();
     if (xterm) helper?.removeAttribute("aria-hidden");
     else helper?.setAttribute("aria-hidden", "true");
-    this.registered = xterm ? renderer.inputElement() : directInput === "owned" ? this.ownedInput() : null;
+    this.registered = xterm ? renderer.inputElement() : directInput === "owned" ? this.ownedInput() : this.app.focus.nativeTerminal();
     this.drawCursor();
     if (!this.registered) return;
     this.app.focus.register("terminal", this.registered);

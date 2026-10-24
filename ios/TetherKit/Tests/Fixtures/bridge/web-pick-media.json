@@ -1,7 +1,9 @@
 {
   "direction": "webToNative",
   "message": {
-    "type": "pickMedia"
+    "type": "pickMedia",
+    "id": "upload-01",
+    "host": "host-01"
   },
   "reply": null
 }

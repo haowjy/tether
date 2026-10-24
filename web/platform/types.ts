@@ -107,6 +107,8 @@ export interface InputPlatform {
   setFocus(mode: "terminal" | "hidden" | "webText" | "select"): void;
   /** Where a touch may hand the keyboard to the line field (§7.4): its rect in page coordinates, or null when Terminal is covered. Native: bridge `lineField`. Browser and test: no-op. */
   setLineFieldRect(rect: DOMRectReadOnly | null): void;
+  /** The tab that keyboard input batches target, whenever the active tab changes (null: none). Native: bridge `activeTab`. Browser: no-op. */
+  setActiveTab(tab: TabKey | null): void;
 }
 
 export type UploadEvent =
@@ -125,6 +127,8 @@ export interface Uploads {
   pick(handle: string, signal: AbortSignal): AsyncIterable<UploadEvent>;
   /** One pasted image the page already holds. Present in the browser only. */
   send?(handle: string, file: File, signal: AbortSignal): AsyncIterable<UploadEvent>;
+  /** An upload the platform started itself, by the id `clipboard.read` returned as `uploading`. Native only. */
+  follow?(id: string, signal: AbortSignal): AsyncIterable<UploadEvent>;
 }
 
 /** `ready`: a new build waits for a tap. `reload`: another page applied an update, and this page keeps running the previous build. */
@@ -175,6 +179,8 @@ export interface Platform {
   playVideo(handle: string, path: string): "handled" | "inline";
   haptic(kind: HapticKind): void;
   restart(reason: "stuck" | "update"): void;
+  /** Opens the platform's own screen for adding, pairing and removing servers. Native only. */
+  manageHosts?: () => void;
   updates?: Updates;
   install?: { installed(): boolean };
 }

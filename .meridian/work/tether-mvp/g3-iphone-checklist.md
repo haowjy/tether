@@ -101,3 +101,8 @@ things only a finger shows.
     under the finger, not one a pan's distance away; the same in history, and with a window sized for
     another terminal (wider and taller than the phone).
 
+30. **Native keyboard toggle.** In the app, the dock's toggle raises the keyboard and the key row
+    appears; toggled again it lowers; toggled from the line field it lowers. Dismiss the keyboard
+    with the system gesture and the toggle shows "Show keyboard" again.
+31. **Safe area and servers.** Status bar clear of the header on Home and Terminal; Settings >
+    Servers opens the native sheet; with no servers the app says "Add a server".

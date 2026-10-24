@@ -8,7 +8,8 @@
         "server": "$1",
         "window": "@2"
       }
-    }
+    },
+    "id": "upload-02"
   },
   "reply": {
     "text": "clipboard text"

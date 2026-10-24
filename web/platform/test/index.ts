@@ -91,6 +91,7 @@ export interface TestPlatform extends Platform {
   /** Every socket the app opened, newest last. */
   links: FakeLink[];
   focusRequests: string[];
+  /** Every `input.setActiveTab` call, newest last. */
   clipboardWrites: string[];
   opened: string[];
   haptics: HapticKind[];
@@ -243,6 +244,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     input: {
       setFocus: (mode) => { platform.focusRequests.push(mode); },
       setLineFieldRect: () => undefined,
+      setActiveTab: () => {},
     },
     storage: {
       saveWorkspace: (ws) => { platform.savedWorkspaces.push(ws); },

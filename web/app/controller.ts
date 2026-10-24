@@ -51,6 +51,8 @@ export class AppController extends Store<AppView> {
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastUpdateCheck = 0;
   private wasOnListing = false;
+  /** The active tab native was last told: undefined until the first dispatch. */
+  private sentActive: string | null | undefined;
 
   static async start(platform: Platform, options: StartOptions = {}): Promise<AppController> {
     const boot = await platform.boot();
@@ -119,6 +121,10 @@ export class AppController extends Store<AppView> {
   dispatch(event: WorkspaceEvent): void {
     const { state, effects } = reduce(this.snapshot.workspace, event);
     if (state !== this.snapshot.workspace) this.update({ workspace: state });
+    if (state.active !== this.sentActive) {
+      this.sentActive = state.active;
+      this.platform.input.setActiveTab(state.tabs.find((t) => t.id === state.active)?.key ?? null);
+    }
     for (const effect of effects) this.run(effect);
     this.syncListing();
   }

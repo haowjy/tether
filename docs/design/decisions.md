@@ -3504,3 +3504,24 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
   happens when the selected format looks up `client_name`); requiring a newer tmux
   (3.4 is a supported server version); or omitting client names/activity and losing
   the act detection behavior.
+
+### Native uploads are named by the web, not guessed by native
+
+- **Decided:** 2026-10-24, tech lead, after the P4b review (p159). Bridge v2 had not shipped, so v2 changed in place.
+- **What:** `pickMedia { id, host }` and `readPasteboard { tab, id }` carry an id the web chose and the host to upload to; every `upload { id, progress, path?, error?, cancelled? }` event carries that id back, and the adapter routes events by id alone. A dismissed picker sends a terminal `cancelled` event. Native sends an upload's first event after its reply. Upload works with no tab open. Native keeps no tab for media, so `activeTab` serves keyboard batches only. This supersedes the `activeTab()` page callback in "Bridge cleanup" (already replaced by the cached `activeTab` message) and the cached-tab media targeting in "Native caches the web's active tab". A pasted image inserts its path into the tab pasted into (the user's intent is clear); a Files upload only offers "Insert path".
+- **Why:** native chose the host and stream from its own cached state, so a pasted image could be claimed by an abandoned Files pick, and Upload did nothing with no tab or went to the active tab's host rather than Files'.
+- **Rejected:** a first-match by host (the bug); a host and optional tab on `pickMedia` with a version bump (the tab would only be echoed back, and the web already knows its target); native reporting `upload` events with `host` and `tab` for the web to match.
+
+### Native draft conflicts: stored revision greater than the base
+
+- **Decided:** 2026-10-24, tech lead, after the P4b review (p159).
+- **What:** `DraftStore.put` returns `conflict` only when the stored revision is greater than `baseRevision`, as the browser does. The check runs in Swift, and client-architecture.md §5.6 says so.
+- **Why:** the web's base is the last revision it issued, so after one `failed` put the retry's base is ahead of the store. An equality check answered `conflict` and the reducer dropped the draft.
+- **Rejected:** moving the check to JS (the page cannot see the stored revision without another round trip).
+
+### The app registers a stand-in `terminal` focus target
+
+- **Decided:** 2026-10-24, tech lead, after the P4b review (p159).
+- **What:** `FocusController.nativeTerminal()` returns a hidden element whose `focus()` and `blur()` announce themselves as DOM focus events (so owner tracking, dialog returns and the viewport's keyboard-drop rule work unchanged) and ask native for the resting mode. There is no separate native branch in `toggleKeyboard`.
+- **Why:** the keyboard toggle, leaving Terminal and returning from a dialog had one path in the browser and a special case in the app, which missed the dialog return.
+- **Rejected:** a `directInput === "native"` branch in the controller.

@@ -34,7 +34,8 @@ export function HostBanner({ host }: { host: HostClient }) {
   }
   if (admission.kind === "notEnrolled" && byToken) {
     const copy = admissionCopy(admission, name, true);
-    return copy && <Banner tone="error" title={copy.title}>{copy.hint}</Banner>;
+    const manage = app.platform.manageHosts;
+    return copy && <Banner tone="error" title={copy.title} {...(manage && { action: { label: "Servers", onAction: manage } })}>{copy.hint}</Banner>;
   }
   return null;
 }

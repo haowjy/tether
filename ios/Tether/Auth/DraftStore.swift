@@ -19,7 +19,7 @@ final class DraftStore {
         lock.lock(); defer { lock.unlock() }
         var values = records()
         let stored = values[Self.key(for: record.key)]
-        guard (stored?.revision ?? 0) == baseRevision else { return .conflict }
+        guard (stored?.revision ?? 0) <= baseRevision else { return .conflict }
         values[Self.key(for: record.key)] = record
         return save(values) ? .ok : .failed
     }

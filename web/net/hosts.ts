@@ -104,7 +104,8 @@ export class HostRegistry {
   set(entries: HostEntry[]): void {
     for (const entry of entries) {
       const slot = this.slots.get(entry.handle);
-      if (slot) this.patch(slot, { entry });
+      // A refused token may have been replaced: the republished host tries again, and is refused again if not.
+      if (slot) this.patch(slot, entry.pageOrigin === null && slot.client.admission === TOKEN_REFUSED ? { entry, admission: { kind: "admitted" } } : { entry });
       else this.create(entry);
     }
     const handles = new Set(entries.map((e) => e.handle));

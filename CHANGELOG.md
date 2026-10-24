@@ -5,11 +5,11 @@ version section on release.
 
 ## [Unreleased]
 
-- Native iOS shell with bundled web assets, device-token auth and bridge-v2 support for
-  keyboard input, host management and native media.
-- Native focus and terminal input stay gated behind lock/native covers; hardware-key
-  names follow the daemon's allowlist, Option punctuation maps to terminal Meta bytes,
-  and stale auth refusals cannot revoke a newly enrolled token.
+- An iOS app: the web UI bundled in a native shell that holds each server's token behind
+  Face ID (one unlock for every server, locking after five minutes away), owns the keyboard
+  (hardware keys go straight to the terminal: Esc, Ctrl and Option as Meta, held arrows
+  repeat), rides the dock on the keyboard, and adds photos, the camera and pasted images to
+  uploads. Settings > Servers, or "Add a server" with none, opens the native server sheet.
 - Touch gestures on the phone terminal. A swipe scrolls with momentum, through tmux's history
   past what the phone holds, with a "Jump to latest" button; in `less`, `vim` and other
   full-screen applications it sends ↑/↓ or mouse wheel events. A tap clicks in an application

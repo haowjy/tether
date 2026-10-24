@@ -20,8 +20,8 @@ adding a file. [README.md](README.md) has the commands.
 - **No `·`, `•` or `●` in copy**; `scripts/checks.mjs source` fails on them.
 - **Every state, not the one in the mockup.** A new screen ships its loading, empty, error and
   offline states, and a harness fixture (`harness/<lane>/`) that Playwright opens in both layouts.
-- `native/bridge.ts` is the v1 bridge. Nothing imports it now; W5 moves it into
-  `platform/native/` (`.context/TODO`).
+- The iOS shell's bridge is `platform/native/bridge.ts` (bridge v2); `bridge.test.ts` decodes
+  every fixture in `ios/TetherKit/Tests/Fixtures/bridge/`, the contract's one copy.
 
 Changes to W0-owned files (`ui/`, `workspace/`, `app/`, `net/`, `platform/types.ts`,
 `harness/index.ts`, repo config) go through the hand-off protocol in §11, not a direct edit.

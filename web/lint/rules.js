@@ -95,9 +95,6 @@ export const rules = [
       "no-restricted-imports": imports(IMPL, XTERM),
     },
   },
-  // Retired by the lanes that own its importers: W2 retargets tabs/ and term/size.ts to
-  // platform/types, W5 moves the rest into platform/native/ and deletes native/.
-  { files: ["native/**"], rules: { "no-restricted-syntax": syntax(rule1, rule2) } },
   { files: ["main.tsx"], rules: { "no-restricted-imports": imports(TEST_PLATFORM, XTERM) } },
   { files: ["term/**"], rules: { "no-restricted-imports": imports(IMPL, TEST_PLATFORM) } },
   // Rule 1's exempt files: the primitives, the two input owners and the hidden file input.

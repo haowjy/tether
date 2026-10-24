@@ -38,6 +38,12 @@ final class TetherAppModel: ObservableObject {
     private var backgroundHadTokens = false
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var shouldAutoUnlock = false
+    /// Debug builds only: the state came from the launch environment and is never written to the device.
+    #if DEBUG
+    private var seeded = false
+    #else
+    private let seeded = false
+    #endif
     private var unlockInFlight = false
     private weak var shell: WebShellController?
     private let pathMonitor = NWPathMonitor()
@@ -49,6 +55,17 @@ final class TetherAppModel: ObservableObject {
         isLocked = expectsTokenItem
         tokens = expectsTokenItem ? nil : [:]
         shouldAutoUnlock = expectsTokenItem
+        #if DEBUG
+        // Simulator verification has no Face ID or typing into the Add sheet: a launch environment (SIMCTL_CHILD_*) seeds one server held in memory only.
+        let environment = ProcessInfo.processInfo.environment
+        if let url = environment["TETHER_DEBUG_HOST_URL"], let id = environment["TETHER_DEBUG_HOST_ID"], let token = environment["TETHER_DEBUG_TOKEN"] {
+            hosts = [HostEntry(id: id, name: environment["TETHER_DEBUG_HOST_NAME"] ?? id, baseURL: url)]
+            isLocked = false
+            tokens = [id: token]
+            shouldAutoUnlock = false
+            seeded = true
+        }
+        #endif
         startNetworkMonitor()
     }
 
@@ -141,7 +158,7 @@ final class TetherAppModel: ObservableObject {
         var nextHosts = hosts.filter { $0.id != result.entry.id }
         nextHosts.append(result.entry)
         do {
-            try hostStore.save(nextHosts)
+            try saveHosts(nextHosts)
         } catch {
             if tokens == nextTokens { tokens = currentTokens }
             try? await saveTokens(currentTokens)
@@ -164,7 +181,7 @@ final class TetherAppModel: ObservableObject {
         do {
             try await saveTokens(nextTokens)
             do {
-                try hostStore.save(nextHosts)
+                try saveHosts(nextHosts)
             } catch {
                 if tokens == nextTokens { tokens = currentTokens }
                 try? await saveTokens(currentTokens)
@@ -181,6 +198,13 @@ final class TetherAppModel: ObservableObject {
     }
 
     func resetTokens() async {
+        // A Debug seed never touched the Keychain, so it must not delete the device's real item.
+        if seeded {
+            tokens = [:]
+            shell?.send(.hosts(platformHosts))
+            publishLifecycle()
+            return
+        }
         do {
             try await tokenStore.deleteAll(context: authenticationContext)
             authenticationContext?.invalidate()
@@ -284,6 +308,8 @@ final class TetherAppModel: ObservableObject {
     }
 
     func lockApp() {
+        // A Debug seed's token is in memory only; an unlock would read the real Keychain over it.
+        if seeded { return }
         tokens = nil
         authenticationContext?.invalidate()
         authenticationContext = nil
@@ -295,7 +321,12 @@ final class TetherAppModel: ObservableObject {
 
     private func updateNativeCoverage() { shell?.coverNativeScreen(isLocked || covered) }
 
+    private func saveHosts(_ hosts: [HostEntry]) throws {
+        if !seeded { try hostStore.save(hosts) }
+    }
+
     private func saveTokens(_ tokens: [String: String]) async throws {
+        if seeded { return }
         try await tokenStore.save(tokens, context: authenticationContext)
         defaults.set(!tokens.isEmpty, forKey: expectedTokenItemKey)
     }

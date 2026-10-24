@@ -19,7 +19,7 @@ export function hostProblem(kind: HostProblem, host: string, byToken = false): P
       return { title: `Can't reach ${host}`, hint: "Check that Tailscale is on, then retry." };
     case "unauthorized":
       return byToken
-        ? { title: `This app isn't paired with ${host}`, hint: "Pair it again from the app's Servers settings, with a code from tether enroll on the server." }
+        ? { title: `This app isn't paired with ${host}`, hint: "Pair it again from Settings > Servers, with a code from tether enroll on the server." }
         : { title: `This device isn't enrolled on ${host}`, hint: "Run tether enroll on the server for a code." };
     case "incompatible":
       return { title: `tether on ${host} speaks a different version`, hint: "Update the page or the daemon so they use the same protocol." };

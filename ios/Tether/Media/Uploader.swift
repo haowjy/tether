@@ -39,9 +39,8 @@ final class Uploader: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate {
     private var activeJob: Job?
     private var queuedJobs: [Job] = []
 
-    func upload(host: HostEntry, data: Data, fileName: String, token: String, rejectedToken: @escaping (String) -> Void, progress: @escaping (Double) -> Void, completion: @escaping (Result<String, Error>) -> Void) -> String? {
-        guard activeJob == nil || queuedJobs.count < Self.maxQueuedUploads else { return nil }
-        let id = UUID().uuidString.lowercased()
+    func upload(id: String, host: HostEntry, data: Data, fileName: String, token: String, rejectedToken: @escaping (String) -> Void, progress: @escaping (Double) -> Void, completion: @escaping (Result<String, Error>) -> Void) -> Bool {
+        guard activeJob == nil || queuedJobs.count < Self.maxQueuedUploads else { return false }
         let job = Job(id: id, host: host, data: data, fileName: fileName, token: token, rejectedToken: rejectedToken, progress: progress, completion: completion)
         if activeJob == nil {
             activeJob = job
@@ -49,7 +48,7 @@ final class Uploader: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate {
         } else {
             queuedJobs.append(job)
         }
-        return id
+        return true
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {

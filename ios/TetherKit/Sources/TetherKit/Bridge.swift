@@ -20,7 +20,8 @@ public enum BridgeMessageType: String, CaseIterable, Codable, Sendable {
 
     var requiredFields: Set<String> {
         switch self {
-        case .ready, .recreateWebView, .draftList, .pickMedia, .manageHosts: []
+        case .ready, .recreateWebView, .draftList, .manageHosts: []
+        case .pickMedia: ["id", "host"]
         case .socket: ["host"]
         case .hostRejected: ["host", "token"]
         case .saveWorkspace: ["workspace"]
@@ -28,7 +29,7 @@ public enum BridgeMessageType: String, CaseIterable, Codable, Sendable {
         case .activeTab: ["tab"]
         case .lineField: ["rect"]
         case .draftGet, .draftDelete: ["key"]
-        case .readPasteboard: ["tab"]
+        case .readPasteboard: ["tab", "id"]
         case .draftPut: ["record", "baseRevision"]
         case .copy: ["text"]
         case .haptic: ["kind"]
@@ -39,7 +40,7 @@ public enum BridgeMessageType: String, CaseIterable, Codable, Sendable {
         case .viewport: ["viewport"]
         case .lifecycle: ["lifecycle"]
         case .hosts: ["hosts"]
-        case .upload: ["id", "host", "tab", "progress"]
+        case .upload: ["id", "progress"]
         }
     }
 }

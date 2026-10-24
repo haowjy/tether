@@ -4,6 +4,7 @@
 // `Pastes` is what a paste, a copy and an inserted path do after that.
 import type { AppController } from "../../app/controller";
 import type { PasteResult } from "../../net/host";
+import type { UploadEvent } from "../../platform/types";
 import type { InsertResult, TabDriver } from "../../tabs/driver";
 import { cannotInsert, shellQuote } from "../../tabs/input";
 import { tabLabels } from "../../workspace/labels";
@@ -126,6 +127,10 @@ export class Pastes {
       else if (result === "empty") app.notify("Nothing to paste");
       else if ("text" in result) this.paste({ kind: "text", text: result.text });
       else if ("image" in result) this.paste({ kind: "image", file: result.image });
+      else if (app.platform.uploads.follow) {
+        app.notify("Uploading image…");
+        void this.followUpload(tab.id, app.platform.uploads.follow(result.uploading, new AbortController().signal));
+      }
     });
   }
 
@@ -162,7 +167,13 @@ export class Pastes {
       return;
     }
     app.notify("Uploading image…");
-    for await (const event of platform.uploads.send(client.entry.handle, file, new AbortController().signal)) {
+    await this.followUpload(id, platform.uploads.send(client.entry.handle, file, new AbortController().signal));
+  }
+
+  /** Types the uploaded path into tab `id` when the upload finishes. */
+  private async followUpload(id: string, events: AsyncIterable<UploadEvent>): Promise<void> {
+    const { app } = this.deps;
+    for await (const event of events) {
       if ("error" in event) {
         app.notify(`Upload failed: ${event.error}`);
       } else if ("path" in event) {

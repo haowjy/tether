@@ -1,15 +1,11 @@
 Must-do (client-architecture.md §11):
 
-- W5: move native/bridge.ts to platform/native/ at bridge version 2 (§5.10), then delete native/
-  and its lint exemption in lint/rules.js.
 - L4 (daemon): an `input` refusal (`busy`, `inputTooLarge`) names no request, so the client cannot
   report which typed characters were refused. Paste refusals now carry their request id; the
   terminal's short input batch remains necessary until input has its own result contract.
 - Phone dock (P3a): landscape and keyboard-up behaviour need the real-iPhone checklist
   (`.meridian/work/tether-mvp/g3-iphone-checklist.md`).
-- W5 (native dock): the keyboard toggle does nothing in native (no `terminal` element is
-  registered, so `FocusController.toggleKeyboard` has nothing to focus and the key row never
-  shows), and native must report `Viewport.keyboardInset` (the keyboard frame's height).
-- P3b (device, W5): native must honour `setFocus("select")` (the web view's text selection while
-  the selection layer is up) and the web view's long-press must not show iOS's own callout over
-  tether's menu; both and the handles on a programmatic selection are on the checklist (18 to 29).
+- W5 (device): the native keyboard toggle (`focus terminal`/`hidden`), `keyboardInset`, rotation,
+  `select` and the long-press callout were built but not exercised: the Simulator takes no touch
+  or key input from the agent shell. They are on `ios-shell.md`'s Device checklist and the
+  checklist (18 to 29).

@@ -44,7 +44,7 @@ export function createBrowserPlatform(): Platform {
     },
     transport: createBrowserTransport(),
     // app/focus.ts already moved DOM focus in the same dispatch; there is no native side.
-    input: { setFocus: () => undefined, setLineFieldRect: () => undefined },
+    input: { setFocus: () => undefined, setLineFieldRect: () => undefined, setActiveTab: () => undefined },
     storage: storage.storage,
     uploads: createBrowserUploads(),
     clipboard,

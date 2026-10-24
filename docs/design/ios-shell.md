@@ -336,7 +336,7 @@ InputEvent = { text: string }    // literal text
 ### Focus: one controller, native
 
 `FocusController` (Swift) is the only code that changes first responder. The web
-(`web/native/`) asks for focus changes over the bridge and never focuses an element.
+(`web/platform/native/`) asks for focus changes over the bridge and never focuses an element.
 
 | State | First responder | Keyboard | Entered by |
 |---|---|---|---|
@@ -461,7 +461,7 @@ Bridge version 2 has one `tether` message handler
 (`WKScriptMessageHandlerWithReply`) and a page entry point, invoked in the page
 content world: `window.__tether.receive(messages)` accepts an array of native events.
 The native shell does not query page state; web sends `activeTab` when selection changes,
-and native uses that cache for keyboard and media targeting. Each bridge message is a
+and native uses that cache for keyboard targeting. Uploads name their own host and id (below). Each bridge message is a
 flat JSON object with a `type`; request fields are beside `type`. Every message and
 representative reply has one shared fixture in
 `ios/TetherKit/Tests/Fixtures/bridge/`; the Swift tests decode and re-encode each one.
@@ -477,16 +477,16 @@ token to native solely for comparison and revocation, never into storage or logs
 | `recreateWebView` | `null` | Discard/reload the page after unrecoverable WebSocket connection failure |
 | `saveWorkspace { workspace }` | `null` | Persist the entire v1 `SavedWorkspace` |
 | `focus { mode }` | `null` | `terminal`, `hidden`, `webText` or `select`; native alone changes first responder |
-| `activeTab { tab: TabKey | null }` | `null` | Update native's cached target for coalesced keyboard batches and media actions |
+| `activeTab { tab: TabKey | null }` | `null` | Update native's cached target for coalesced keyboard batches |
 | `lineField { rect }` | `null` | Update the line field's rect in web-view coordinates, or `null` when unavailable |
 | `draftGet { key: TabKey }` | `DraftRecord` or `null` | Read the line-field draft |
 | `draftPut { record, baseRevision }` | `"ok"`, `"conflict"` or `"failed"` | Revision-checked draft write |
 | `draftDelete { key: TabKey }` | `null` | Delete one draft |
 | `draftList` | `DraftRecord[]` | List drafts |
 | `copy { text }` | `"ok"` | User-initiated terminal Copy always writes the system pasteboard |
-| `readPasteboard { tab: TabKey }` | `{ text }`, `{ uploading: id }`, `"empty"` or `"denied"` | Paste text or start a native image upload for the addressed tab |
+| `readPasteboard { tab: TabKey, id }` | `{ text }`, `{ uploading: id }`, `"empty"` or `"denied"` | Paste text, or upload an image to the tab's host under the web-chosen `id`. The first `upload` event follows this reply |
 | `haptic { kind }` | `null` | `key`, `modifier`, `rigid`, `selection` or the ^C/^D `warning` |
-| `pickMedia` | `null` | Present the native media action sheet for the cached active tab, then upload to that tab |
+| `pickMedia { id, host }` | `null` | Present the native media action sheet, then upload the pick to `host` under the web-chosen `id`. Needs no open tab |
 | `playVideo { host, path }` | `null` | Play an authenticated `/fs/raw` resource |
 | `manageHosts` | `null` | Present the native server management sheet from the web's Home/Settings entry |
 | `openURL { url }` | `null` | Open only `http`, `https` or `mailto` externally |
@@ -498,7 +498,7 @@ token to native solely for comparison and revocation, never into storage or logs
 | `viewport { viewport: Viewport }` | Full v2 geometry; includes `keyboardInset` | Size terminal, dock and other viewport-relative UI |
 | `lifecycle { lifecycle: Lifecycle }` | `visible`, `online`, `locked`, `covered` | One state for app foreground, connectivity, app lock and native coverage |
 | `hosts { hosts: PlatformHost[] }` | Native host handles and labels; never base URLs or tokens | Refresh host admission / connection state |
-| `upload { id, host, tab, progress, path?, error? }` | `tab` is the original `TabKey` | Update upload UI; on success queue the shell-quoted path as text for that tab, without Enter |
+| `upload { id, progress, path?, error?, cancelled? }` | `id` is the one the web sent with `pickMedia` or `readPasteboard`; the web routes by it alone. `path`, `error` or `cancelled` ends the stream; `cancelled` is a dismissed picker | Update upload UI; the web decides where the path goes (a pasted image inserts it, a Files upload offers it) |
 
 There are no separate `network`, `lock` or `lifecycle.covered` messages in v2. A
 connectivity, lock, foreground or native-screen change publishes the whole `lifecycle`
@@ -555,17 +555,21 @@ Photo Library (`PHPickerViewController`, no permission prompt), Camera
 (`UIImagePickerController`), Paste image. The edit menu's Paste with an image on the
 pasteboard (`readPasteboard`) starts at step 1 too. Then:
 
-1. Native captures the `TabKey` from its cached `activeTab` bridge message; the upload
-   goes to that tab's host and keeps that tab key even if the user switches while picking.
+1. The web states the destination: `pickMedia { id, host }` names the host Files shows and
+   the id every `upload` event for this pick carries (`readPasteboard` carries its own id and
+   the tab's host). Native keeps no tab: the web decides where a finished path goes, so
+   switching tabs while picking changes nothing and Upload works with no tab open. A dismissed
+   picker sends a terminal `upload { cancelled }` so the web's stream ends. Native sends the
+   first progress event after its reply, so the web's stream exists before it arrives.
 2. Native converts the image to JPEG at quality 0.9 with a 2048 px longest side.
 3. `Uploader` posts to `/fs/upload?name=image.jpg` with the Bearer token
    ([fs.md](fs.md#post-fsupload)). It runs one request at a time, allows at most four
    queued uploads, retries up to three `503 busy` responses after `Retry-After`, and
    reports progress. A fifth queued request is refused with an upload error.
-4. On success, `upload` carries the absolute path. The web offers insertion of the
-   shell-quoted path as `text` input, without Enter, for the original `TabKey`; it does
-   not insert automatically. If the tab closed meanwhile, the web explains that the
-   file remains available but cannot be inserted into that tab.
+4. On success, `upload` carries the absolute path. The web types the shell-quoted path,
+   without Enter, into the tab the user pasted into (an image from the edit menu's Paste),
+   and only offers "Insert path" for a Files upload (client-architecture.md §7.5). If the tab
+   closed meanwhile, the web explains that the file remains available but cannot be inserted.
 
 **Share extension (after the paid account).** A `TetherShare` target accepts images
 and movies, copies them into the App Group container (`Inbox/<uuid>.<ext>` plus a
@@ -586,8 +590,8 @@ in the Keychain ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)). The 
 maps these to `PlatformHost` and never sends `baseURL`. Add host takes the MagicDNS
 name and enrolment code, validates `/auth/info`, enrolls, and stores the daemon's
 `host_id` and `https://<that name>`. The web Home/Settings host-management entry sends
-`manageHosts` to present the native sheet; remove the temporary floating Servers button
-when that entry is wired in P4b.
+`manageHosts` to present the native sheet (Settings > Servers, and "Add a server" when
+there are none). There is no floating native control.
 
 ## Project layout
 
@@ -655,6 +659,7 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 | Hidden keeps input | Hidden with the empty `inputView`: no blank keyboard area; hardware keys still reach the terminal; taps on the page don't show the keyboard |
 | Line field lending | Tap the field from `terminal` and from `hidden`: the keyboard switches without dropping and rising; a drag that starts on the field leaves the guard up afterwards; the toggle from the field lowers the keyboard and the field loses DOM focus. Record whether WebKit's ⌃ ⌄ ✓ bar appears. With the field focused: key-row taps and a terminal scroll keep the field and the keyboard; an image pasted through the field's paste menu reaches the page's `paste` event with its file (else the notice points to the edit menu and Files); Return (`enterkeyhint=send`) sends and keeps focus; rotation keeps the field focused |
 | Selection | WebKit's handles and Copy over the selection layer with the guard on; otherwise the `focus select` path |
+| Keyboard toggle (web) | The dock's toggle raises the keyboard (`focus terminal`) and lowers it (`focus hidden`), the key row following; toggling from the line field lowers it; the system dismissing the keyboard resets the toggle; selection (`focus select`) and back restores it |
 | Geometry | The dock rides the keyboard without a jump, in both geometry variants; WebKit does not also scroll for the keyboard; tmux's size changes only on rotation, including a rotation with the keyboard up |
 | Terminal input | Is there a QuickType bar? `hello world. it's "fine" -- ok` arrives exactly; two spaces stay two spaces; Backspace on an empty line sends BSpace; swipe typing and dictation (record what happens) |
 | Hardware keys | Esc; Ctrl+C, D, R, A, Z, B, Space, `[` `/` `\\`; Option+B, `.`, `<`, `>`, `=`, `` ` ``, `|`, Space and Enter; Cmd+V; verify warning haptic on ^C/^D; held keys stop on release and app deactivation |
@@ -676,10 +681,12 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 - **WKWebView adjusting for a keyboard it doesn't own**, fighting the frame resize.
   Device checklist, both geometry variants.
 - **Bridge latency under load**: unmeasured on iOS 26. Device checklist.
-- **Bridge v2 web adapter is P4b.** Consume the shared Swift fixtures, route the whole
-  `lifecycle`/`viewport` snapshots, gate token admission, and wire the keyboard toggle
-  to the native responder. The P4a screenshot proves bundled UI loads, not that P4b's
-  host transport or bridge routes work.
+- **Bridge v2 web adapter** (`web/platform/native/`, P4b) is built and decodes every
+  shared fixture. Simulator-verified: boot, token socket to a real daemon, listing, Home
+  safe area, background closes the socket and resume reconnects. Not verified (the
+  Simulator takes no touch or key input from here): the keyboard toggle through
+  `focus terminal`/`hidden`, `keyboardInset`, rotation, `select` and callout. Device
+  checklist.
 - **The empty-`inputView` trick for `hidden`** is common practice, not documented
   behaviour. Device checklist.
 - **WebSocket after resume in WKWebView** (WebKit 308073, seen in Safari): spike 3. A

@@ -21,7 +21,7 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
     private var inputFlushQueued = false
     private var activeTab: TabKey?
     private var lastViewport: Viewport?
-    private var pendingPickerTab: TabKey?
+    private var pendingPick: PendingPick?
     private lazy var messageHandlerProxy = WeakScriptMessageHandler(target: self)
 
     init(model: TetherAppModel) {
@@ -123,12 +123,11 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
                 send(.lifecycle, fields: ["lifecycle": try .encode(lifecycle)])
             case .hosts(let hosts):
                 send(.hosts, fields: ["hosts": try .encode(hosts)])
-            case .upload(let id, let host, let tab, let progress, let path, let error):
-                var fields: [String: JSONValue] = [
-                    "id": .string(id), "host": .string(host), "tab": try .encode(tab), "progress": .number(progress),
-                ]
+            case .upload(let id, let progress, let path, let error, let cancelled):
+                var fields: [String: JSONValue] = ["id": .string(id), "progress": .number(progress)]
                 if let path { fields["path"] = .string(path) }
                 if let error { fields["error"] = .string(error) }
+                if cancelled { fields["cancelled"] = .bool(true) }
                 send(.upload, fields: fields)
             }
         } catch {
@@ -305,13 +304,14 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
                 UIPasteboard.general.string = text
                 reply(try jsonObject("ok"), nil)
             case .readPasteboard:
-                let result = try readPasteboard(for: request.field("tab"))
+                let tab: TabKey = try request.field("tab")
+                let result = readPasteboard(host: tab.host, id: try request.field("id"))
                 reply(try jsonObject(result), nil)
             case .haptic:
                 haptics.send(try request.field("kind"))
                 reply(NSNull(), nil)
             case .pickMedia:
-                if let activeTab { showMediaPicker(for: activeTab) }
+                showMediaPicker(host: try request.field("host"), id: try request.field("id"))
                 reply(NSNull(), nil)
             case .playVideo:
                 let host: String = try request.field("host")
@@ -333,80 +333,85 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         }
     }
 
-    private func readPasteboard(for tab: TabKey) throws -> JSONValue {
-        if let image = UIPasteboard.general.image, let id = upload(image, for: tab) {
+    private func readPasteboard(host: String, id: String) -> JSONValue {
+        if let image = UIPasteboard.general.image {
+            upload(image, id: id, host: host)
             return .object(["uploading": .string(id)])
         }
         if let text = UIPasteboard.general.string { return .object(["text": .string(text)]) }
         return .string("empty")
     }
 
-    private func showMediaPicker(for tab: TabKey) {
+    private func showMediaPicker(host: String, id: String) {
+        let target = PendingPick(host: host, id: id)
+        // UIKit drops a present while another is up (a double tap on Upload); end the stream instead of leaving it open.
+        guard presentedViewController == nil else { cancel(target); return }
         let alert = UIAlertController(title: "Add image", message: nil, preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "Photo Library", style: .default) { [weak self] _ in self?.presentPhotoLibrary(for: tab) })
+        alert.addAction(UIAlertAction(title: "Photo Library", style: .default) { [weak self] _ in self?.presentPhotoLibrary(target) })
         if UIImagePickerController.isSourceTypeAvailable(.camera) {
-            alert.addAction(UIAlertAction(title: "Camera", style: .default) { [weak self] _ in self?.presentCamera(for: tab) })
+            alert.addAction(UIAlertAction(title: "Camera", style: .default) { [weak self] _ in self?.presentCamera(target) })
         }
         alert.addAction(UIAlertAction(title: "Paste Image", style: .default) { [weak self] _ in
-            guard let image = UIPasteboard.general.image else { return }
-            _ = self?.upload(image, for: tab)
+            guard let image = UIPasteboard.general.image else { self?.cancel(target); return }
+            self?.upload(image, id: id, host: host)
         })
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.cancel(target) })
         alert.popoverPresentationController?.sourceView = view
         alert.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
         present(alert, animated: true)
     }
 
-    private func presentPhotoLibrary(for tab: TabKey) {
+    private func presentPhotoLibrary(_ target: PendingPick) {
         var configuration = PHPickerConfiguration()
         configuration.filter = .images
         configuration.selectionLimit = 1
         let picker = PHPickerViewController(configuration: configuration)
         picker.delegate = self
-        pendingPickerTab = tab
+        pendingPick = target
         present(picker, animated: true)
     }
 
-    private func presentCamera(for tab: TabKey) {
+    private func presentCamera(_ target: PendingPick) {
         let picker = UIImagePickerController()
         picker.sourceType = .camera
         picker.mediaTypes = ["public.image"]
         picker.delegate = self
-        pendingPickerTab = tab
+        pendingPick = target
         present(picker, animated: true)
     }
 
-    private func upload(_ image: UIImage, for tab: TabKey) -> String? {
-        guard let data = Self.jpegData(image),
-              let host = model.hosts.first(where: { $0.id == tab.host }) else {
-            sendUploadFailure(hostID: tab.host, tab: tab, message: "Couldn't prepare this image.")
-            return nil
+    /// Every `upload` event is deferred one turn: a paste's reply to the page goes out first, so its
+    /// stream exists before the first event arrives.
+    private func sendUpload(id: String, progress: Double, path: String? = nil, error: String? = nil, cancelled: Bool = false) {
+        Task { @MainActor [weak self] in
+            self?.send(.upload(id: id, progress: progress, path: path, error: error, cancelled: cancelled))
         }
-        guard case .token(let token) = model.token(for: tab.host) else {
-            sendUploadFailure(hostID: tab.host, tab: tab, message: "Unlock tether to upload this image.")
-            return nil
-        }
-        var uploadID = ""
-        guard let acceptedID = uploader.upload(host: host, data: data, fileName: "image.jpg", token: token, rejectedToken: { [weak model = self.model] rejectedToken in
-            model?.rejectedToken(for: host.id, token: rejectedToken)
-        }, progress: { [weak self] progress in
-            self?.send(.upload(id: uploadID, host: host.id, tab: tab, progress: progress, path: nil, error: nil))
-        }, completion: { [weak self] result in
-            switch result {
-            case .success(let path): self?.send(.upload(id: uploadID, host: host.id, tab: tab, progress: 1, path: path, error: nil))
-            case .failure(let error): self?.send(.upload(id: uploadID, host: host.id, tab: tab, progress: 1, path: nil, error: error.localizedDescription))
-            }
-        }) else {
-            sendUploadFailure(hostID: host.id, tab: tab, message: "Wait for the current uploads to finish.")
-            return nil
-        }
-        uploadID = acceptedID
-        send(.upload(id: acceptedID, host: host.id, tab: tab, progress: 0, path: nil, error: nil))
-        return uploadID
     }
 
-    private func sendUploadFailure(hostID: String, tab: TabKey, message: String) {
-        send(.upload(id: UUID().uuidString.lowercased(), host: hostID, tab: tab, progress: 1, path: nil, error: message))
+    private func cancel(_ pick: PendingPick) { sendUpload(id: pick.id, progress: 1, cancelled: true) }
+
+    private func upload(_ image: UIImage, id: String, host hostID: String) {
+        guard let data = Self.jpegData(image),
+              let host = model.hosts.first(where: { $0.id == hostID }) else {
+            sendUpload(id: id, progress: 1, error: "Couldn't prepare this image.")
+            return
+        }
+        guard case .token(let token) = model.token(for: hostID) else {
+            sendUpload(id: id, progress: 1, error: "Unlock tether to upload this image.")
+            return
+        }
+        let accepted = uploader.upload(id: id, host: host, data: data, fileName: "image.jpg", token: token, rejectedToken: { [weak model = self.model] rejectedToken in
+            model?.rejectedToken(for: host.id, token: rejectedToken)
+        }, progress: { [weak self] progress in
+            self?.sendUpload(id: id, progress: progress)
+        }, completion: { [weak self] result in
+            switch result {
+            case .success(let path): self?.sendUpload(id: id, progress: 1, path: path)
+            case .failure(let error): self?.sendUpload(id: id, progress: 1, error: error.localizedDescription)
+            }
+        })
+        if accepted { sendUpload(id: id, progress: 0) }
+        else { sendUpload(id: id, progress: 1, error: "Wait for the current uploads to finish.") }
     }
 
     private func playVideo(host: String, path: String) {
@@ -507,35 +512,53 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        let tab = pendingPickerTab
-        pendingPickerTab = nil
+        let pick = pendingPick
+        pendingPick = nil
         dismiss(animated: true)
-        guard let tab, let provider = results.first?.itemProvider,
-              provider.canLoadObject(ofClass: UIImage.self) else { return }
+        guard let pick else { return }
+        guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else {
+            cancel(pick)
+            return
+        }
         provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
-            guard let image = object as? UIImage else { return }
-            Task { @MainActor in _ = self?.upload(image, for: tab) }
+            Task { @MainActor in
+                guard let image = object as? UIImage else {
+                    self?.sendUpload(id: pick.id, progress: 1, error: "Couldn't read this image.")
+                    return
+                }
+                self?.upload(image, id: pick.id, host: pick.host)
+            }
         }
     }
 
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-        let tab = pendingPickerTab
-        pendingPickerTab = nil
+        let pick = pendingPick
+        pendingPick = nil
         dismiss(animated: true)
-        if let tab, let image = info[.originalImage] as? UIImage { _ = upload(image, for: tab) }
+        guard let pick else { return }
+        if let image = info[.originalImage] as? UIImage { upload(image, id: pick.id, host: pick.host) }
+        else { cancel(pick) }
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        pendingPickerTab = nil
+        let pick = pendingPick
+        pendingPick = nil
         dismiss(animated: true)
+        if let pick { cancel(pick) }
     }
 }
+/// A pick the page asked for: where to upload it, and the id its `upload` events carry.
+private struct PendingPick {
+    let host: String
+    let id: String
+}
+
 enum NativeEvent {
     case input(tab: TabKey, events: [InputEvent])
     case viewport(Viewport)
     case lifecycle(Lifecycle)
     case hosts([PlatformHost])
-    case upload(id: String, host: String, tab: TabKey, progress: Double, path: String?, error: String?)
+    case upload(id: String, progress: Double, path: String?, error: String?, cancelled: Bool)
 }
 
 @MainActor

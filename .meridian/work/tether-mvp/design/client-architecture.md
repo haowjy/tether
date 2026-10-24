@@ -464,11 +464,13 @@ interface Transport {
 }
 ```
 
-- **Native** fetches the token from the bridge asynchronously inside the `Link`. A
-  `{ locked }` reply closes the link with a synthetic code that `Host` maps to the
-  halt `locked`, and `{ notEnrolled }` closes it with a synthetic code that
-  `net/admission.ts` reads as a token refusal. `Host`'s synchronous `open` therefore
-  stays as it is.
+- **Native** asks the bridge `socket { host }` asynchronously inside the `Link` and gets
+  `{ url, token }`, `{ locked }` or `{ notEnrolled }`. The URL and token stay in the
+  Link (`platform/native/transport.ts`); only the daemon's 4401 sends the exact token back
+  as `hostRejected`. `{ locked }` closes the link as a retryable loss (`lifecycle.locked`
+  stops and restarts the sockets), and `{ notEnrolled }` closes it with 4401, which
+  `net/admission.ts` reads as a token refusal. `Host`'s synchronous `open` stays as it is.
+  A republished `hosts` event lets a refused host try again.
 - **Browser** opens `wss://<origin>/ws` offering `tether.v1` only.
 - **Stuck sockets.** When two sockets in a row stick in CONNECTING, `Host` reports
   `stuck`. The controller runs persist now, then calls `platform.restart("stuck")`.
@@ -630,7 +632,7 @@ interface Lifecycle {
 
 The browser listens to `visibilitychange`, `pagehide`/`pageshow` and `online`/`offline`;
 it always reports `covered: false`. Native's boot result sets the initial `covered` value,
-and `lifecycle.covered` changes it as native screens cover or reveal Terminal. Native also
+and each full `lifecycle` snapshot carries the current `covered`. Native also
 listens to `lifecycle`, `network` and its app lock. Each lifecycle update reaches the
 controller, which splits the work between owners:
 
@@ -697,10 +699,11 @@ The saved workspace arrives in `BootResult`; a draft another page changed arrive
 survives a crash of the web content process. Drafts go through the same `DraftStore`
 interface over the bridge (`draftGet`, `draftPut`, `draftDelete`, `draftList`), and
 native persists the records. The line field is a web control in both environments, so
-the web applies every draft rule (§7.4) and Swift holds none. **The revision check runs
-in JS:** the native `DraftStore` compares `baseRevision` with its cached copy of the
-record before calling `draftPut`, and returns `conflict` itself. Native has one page, so
-no other writer can slip between the check and the write.
+the web applies every draft rule (§7.4) beyond the write check. **The revision check runs
+natively:** `draftPut` returns `conflict` when the stored record's revision is greater than
+`baseRevision`, and writes otherwise. A put's base is the last revision the web *issued*, not
+the last stored, so a retry after a `failed` put is ahead of the store and still writes.
+Native has one page, so no other writer can slip between the check and the write.
 
 
 ### 5.7 Uploads, file pick and image paste
@@ -728,8 +731,11 @@ type UploadEvent =
   Both `pick` and `send` stream the upload to `/fs/upload`. The daemon takes one upload
   at a time, so the client sends one file at a time and queues at most four. A fifth is
   refused with "Wait for the current uploads to finish".
-- **Native** keeps its own picker and uploader (`pickMedia` and `upload` events). An
-  image read by the edit menu's Paste uploads natively too (§5.8).
+- **Native** keeps its own picker and uploader. The web names the upload: `pickMedia { id,
+  host }` carries the host Files shows and an id the web chose, and every `upload` event
+  carries that id back, so the adapter routes by id alone and needs no open tab. A dismissed
+  picker ends the stream with an `upload { cancelled }` event. An image read by the edit
+  menu's Paste uploads natively too under its own id (§5.8).
 - **The insertion target is never the adapter's concern.** The caller captures the tab
   key when the action starts and offers or performs insertion into that tab only
   (§7.5).
@@ -750,7 +756,8 @@ comes back as `text`, an image as `image`, which the caller sends through
 `uploads.send`. Native routes both through the bridge to `UIPasteboard` (`copy`,
 `readPasteboard`), because WebKit may not treat the `tether-app://` scheme as a secure
 context for the Clipboard API (a G3 probe); an image there uploads natively and comes
-back as `uploading`, followed by `upload` events for `tab`.
+back as `uploading`, followed by `upload` events under the id `readPasteboard` carried
+(native sends the first after its reply).
 
 ### 5.9 Three implementations
 
@@ -785,16 +792,16 @@ becomes 2.
 | "The bridge": `prompt` | removed. Web forms take the keyboard in `webText` (§3.3) |
 | "Focus: one controller, native" | Done in the spec (2026-10-24): `compose` is gone; the line field is lent by touch location (`lineField { rect }`); the web sends the resting mode on every destination or overlay change: `terminal` or `hidden` on Terminal with no overlay, and `webText` everywhere else. The `select` mode is entered by touch selection (§7.6); when selection ends the web sends the resting mode again |
 | "Keyboard geometry" | unchanged for native sizing. The new invariant (§5.4) is stated in the shared terms |
-| "The bridge": `input` | gains `tab` (the tab key native targeted). The web drops events whose tab key is no longer that tab's. `window.__tether.activeTab()` stays, so native knows the target |
+| "The bridge": `input` | gains `tab` (the tab key native targeted). The web drops events whose tab key is no longer that tab's. the web sends `activeTab { tab }` whenever the active tab changes (native no longer calls the page); it serves keyboard batches only |
 | "The bridge": drafts | new. Web → native `draftGet`, `draftPut`, `draftDelete`, `draftList` back the `DraftStore` (§5.6). Native has no draft UI, so nothing flows back |
-| "The bridge": `upload` | `tab` becomes the tab key. On `path`, the web no longer inserts automatically: it offers "Insert path into `<tab>`" (§7.5) |
+| "The bridge": `upload` | Carries the web-chosen `id` only (no `host`/`tab`); `cancelled` ends a dismissed pick. On `path`, a Files upload offers "Insert path into `<tab>`" and a pasted image inserts (§7.5) |
 | "The bridge": clipboard | new `copy { text }` → `UIPasteboard`. `readPasteboard` is already in the spec (2026-10-24) |
 | "Haptics" | unchanged kinds. The entries for suggestion chips go, along with the strip |
 | "What is native and what is web" | the suggestion strip leaves the web column. The accessory and compose field are already gone from the spec (2026-10-24) |
 | "Project layout" | `web/native/bridge.ts` becomes `web/platform/native/bridge.ts`; the `--safe-*` tokens move to `ui/tokens/semantic.css` |
-| "Hosts" | `hostRejected` stays. The native transport turns it into a token refusal, which `net/admission.ts` maps to `notEnrolled` |
+| "Hosts" | `socket { host }` returns `{ url, token }` (never in `PlatformHost`); `manageHosts` opens the native server sheet; `copy` always writes; `hostRejected` stays. The native transport turns it into a token refusal, which `net/admission.ts` maps to `notEnrolled` |
 | "The bridge": lock | the app lock state rides the `lifecycle` event as `locked` (§5.5) |
-| "The bridge": terminal coverage | `boot` includes the initial `covered` value; native sends `lifecycle.covered { covered }` on changes. It updates `Lifecycle.covered` (§5.5), which the terminal's one watch predicate combines with `shownTab(workspace)` |
+| "The bridge": terminal coverage | `boot` includes the initial `covered` value; each `lifecycle` snapshot carries `covered`. It updates `Lifecycle.covered` (§5.5), which the terminal's one watch predicate combines with `shownTab(workspace)` |
 
 
 ### 5.11 Development without a shim
@@ -1423,8 +1430,9 @@ opening it lowers the keyboard like any overlay. On the phone layout nothing els
   into `<tab label>`" for the tab active when the upload started. With no connected
   tab, the action is disabled with "Open a terminal tab first", and with "That tab isn't
   connected" while the target is reconnecting, refused for the session limit or closed.
-  A path waiting for its watch is dropped, with a notice, if the watch fails first. Native's `upload` events follow the same offer instead of inserting
-  automatically.
+  A path waiting for its watch is dropped, with a notice, if the watch fails first. Native's
+  Files uploads follow the same offer. A pasted image is the exception in both platforms: the
+  user pasted into that tab, so its path is inserted automatically (the image-paste rule above).
 - **One owner decides.** `Terminals.canInsert(id)` and `Terminals.insertPath(id, path)` read
   the driver's own state: a connecting or live tab takes the path (it waits for the watch, or
   for the tab to be on screen), a reconnecting, limited or closed one refuses it. Files and
@@ -2104,7 +2112,7 @@ follow the theme (§8.5), and each server's installed PWA is named
 | R3 F10 "overlay" names two things | Fixed: the primitive is `StatusBand` | §2, §8.2, §6.4 |
 | R3 F11 token rule, CSS scoping, `Sheet` | Fixed: the rule covers colour only, with a preflight grep; CSS modules; `Sheet` is a `Dialog` variant | §8.3, §3.2, §8.2 |
 | R3 F12 budget units, stubs | Fixed: gzipped figure quoted; every file counted; `manualChunks` | §8.4 |
-| R3 F13 native revision check | Fixed: compared in JS before `draftPut` | §5.6 |
+| R3 F13 native revision check | Settled natively: `DraftStore.put` conflicts only when the stored revision is greater than `baseRevision` | §5.6 |
 | R3 F14 `effects.ts` hooks | Fixed by deletion: screens call their cores through `useApp()` | §3.2 |
 | Wrap map stays in the daemon (snapshot-wrap review 1) | Applied: the pipeline gets no wrap map; history chunks carry `wraps` for the history view's copy | §3.1, §7.6, §10 |
 | Tech-lead calls, 2026-10-23 | Applied: picker sheet follows the theme; PWA named "tether <host>"; no worktree exception; coders don't commit. Closed-tab drafts stay open for Jimmy | §8.5, §9.1, §11, §14 |
