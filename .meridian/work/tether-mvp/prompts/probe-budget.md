@@ -11,3 +11,6 @@ Use a clean `git archive HEAD` export (HEAD is 71944d7 or later) in a Debian con
 6. macOS (this Mac, native build): idle RSS and CPU only, for comparison.
 Drive clients with the repo's existing tooling (the real-daemon e2e stack in `web/e2e/shared/stack.ts`, or a small throwaway WebSocket client under /tmp/tether-meridian-501/budget-<spawn id>/). No source edits; record numbers and commands in `$MERIDIAN_ACTIVE_WORK_DIR/evidence/budget/README.md` (excerpts, not dumps). Defects: file:line and a proposed fix. Remove your containers/images after. Report: table of numbers vs targets, verdict per target, defects.
 Spawn env TMPDIR=/tmp/tether-meridian-501.
+
+## Retry note (after p153)
+p153 failed to build in the container: Node 18 lacks `util.styleText` for Rolldown, and with Node 22 the Linux arm64 Rolldown binding was missing — because `node_modules` came from the Mac. p139 built the same tree in Docker successfully: run `pnpm --dir web install --frozen-lockfile` *inside* the container with Node 22 on a clean export that has no `node_modules` (see `.meridian/work/tether-mvp/evidence/linux-docker/README.md` and `meridian spawn show p139`). HEAD 3f7799c is later than 71944d7; that's fine. Extend `evidence/budget/README.md`.
