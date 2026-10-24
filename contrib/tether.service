@@ -7,8 +7,9 @@
 [Unit]
 Description=tether: phone-first client for tmux, over Tailscale
 Documentation=https://github.com/haowjy/tether/blob/main/docs/running.md
-# Restarts back off instead (RestartSteps below): at boot tailscaled, a system unit
-# this user unit can't order itself after, may not be up yet.
+# Restarts back off instead (RestartSteps below, systemd 254+; older ones ignore it and
+# retry every RestartSec): at boot tailscaled, a system unit this user unit can't order
+# itself after, may not be up yet.
 StartLimitIntervalSec=0
 
 [Service]

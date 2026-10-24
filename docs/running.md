@@ -90,7 +90,9 @@ journalctl --user -u tether -f
 
 The unit carries the resource limits from [plan.md](design/plan.md#resource-budget),
 `KillMode=mixed` so a stop reaches tether alone, and a restart backoff, since tailscaled
-may not be up yet at boot. Logs go to the journal; `RUST_LOG=debug` (in the unit's `Environment=`) shows more.
+may not be up yet at boot. The backoff (`RestartSteps`, `RestartMaxDelaySec`) needs
+systemd 254 or later (`systemctl --version`); an older systemd logs "Unknown key" for
+both and restarts every 2 s instead, which still works. Logs go to the journal; `RUST_LOG=debug` (in the unit's `Environment=`) shows more.
 They hold ids, lengths and logins, never terminal contents, tokens or codes.
 
 ## Set up completion
