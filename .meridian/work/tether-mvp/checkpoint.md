@@ -1,20 +1,19 @@
 # Client implementation checkpoint
 
-## Current state (2026-10-24, evening) — read this first
+## Current state (2026-10-24, night) — read this first
 
-Pushed to main through 71944d7: dock design, window-size design, PC paste confirmation,
-PS-daemon, P3a dock/line field/switcher, PS-web (2456488), systemd 254 note (2b668f8),
-native iOS shell bridge v2 native side (ab61cd5, reviews p142/p148 closed), P3b touch
-gestures (71944d7, reviews p141/p144/p147 closed). Decisions: [phone-input-decisions.md](phone-input-decisions.md).
-Plan: [build-plan.md](build-plan.md). Jimmy asked to push through P5 autonomously.
+Built, reviewed and pushed through P5's automated gate (main at the "P5 gate passes"
+work-log commit): phone dock, window sizing by last activity, touch gestures, native iOS
+shell (both halves of bridge v2), the tmux 3.4 subscription crash fix (8db5622).
+P5 gate: preflight, MSRV, real-tmux 18/18 on 3.4/3.7b/3.8, all real e2e on 3.4/3.7b,
+harness 648/648, iOS check (evidence/p5-gate/). Budget and backpressure measured
+(evidence/budget/, evidence/backpressure/). KB captured (p164).
 
-In flight: p152 P4b (web half of the native bridge, W5; brief prompts/p-lane-p4b.md);
-p153 resource budget probe (Docker Linux + macOS; brief prompts/probe-budget.md).
-Next: review P4b; G3 Simulator probe of the native app; P5 (end-to-end on isolated tmux
-3.4/3.7b, docs, CHANGELOG, @kb-lead capture, /post-dev). Jimmy's device checklists:
-g3-iphone-checklist.md and ios-shell.md §Device checklist.
-Blocked on Jimmy: `ssh pop-os` host key (tailnet gates auth.md G1–G12 need the real box);
-macOS Serve can't reach Tailscale identity. Docker works for Linux checks.
+Left, all needing Jimmy: [device-guide.md](device-guide.md) — install on pop-os
+(`ssh pop-os` host key first), the phone-browser checklist, the iOS app checklist;
+auth gates G1–G12 on pop-os. When the work item closes, move
+design/client-architecture.md into docs/design/ (web/AGENTS.md and the KB point at it).
+Coder profiles commit despite "don't commit" briefs: check `git log` after each coder lane.
 
 Everything below is the historical log; where it conflicts with the above, the above wins.
 
