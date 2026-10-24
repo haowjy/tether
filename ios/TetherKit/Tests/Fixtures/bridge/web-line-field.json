@@ -1,0 +1,13 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "lineField",
+    "rect": {
+      "x": 12,
+      "y": 735,
+      "width": 370,
+      "height": 44
+    }
+  },
+  "reply": null
+}

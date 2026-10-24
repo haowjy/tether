@@ -1,0 +1,14 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "activeTab",
+    "tab": {
+      "host": "a234567bcdefghjk",
+      "window": {
+        "server": "main",
+        "window": "@2"
+      }
+    }
+  },
+  "reply": null
+}

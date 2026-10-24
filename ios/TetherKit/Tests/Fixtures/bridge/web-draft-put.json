@@ -1,0 +1,20 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "draftPut",
+    "record": {
+      "key": {
+        "host": "host-01",
+        "window": {
+          "server": "$1",
+          "window": "@2"
+        }
+      },
+      "text": "git status",
+      "revision": 3,
+      "editedAt": 1792867200000
+    },
+    "baseRevision": 2
+  },
+  "reply": "ok"
+}

@@ -1,0 +1,14 @@
+{
+  "direction": "nativeToWeb",
+  "message": {
+    "type": "hosts",
+    "hosts": [
+      {
+        "handle": "host-01",
+        "hostId": "host-01",
+        "name": "pop-os",
+        "pageOrigin": null
+      }
+    ]
+  }
+}

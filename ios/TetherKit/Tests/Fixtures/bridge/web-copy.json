@@ -1,0 +1,8 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "copy",
+    "text": "copied from terminal"
+  },
+  "reply": "ok"
+}

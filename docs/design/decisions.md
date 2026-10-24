@@ -3319,3 +3319,124 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 - **What:** leaving Terminal for Files lowers the keyboard in landscape as in portrait
   ([browser-behaviors.md](client/browser-behaviors.md#phone-dock)); no layout keeps it
   up over Files.
+
+### iOS Link resolves the socket without exposing host routing in page state
+
+- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **What:** a `HostLink` asks native with `{type:"socket", host}`; native replies with
+  `{url, token}`, `{locked:true}` or `{notEnrolled:true}`. The URL is
+  `wss://<stored host>/ws`. The URL and token stay inside that Link and are never
+  persisted or copied into `PlatformHost`, workspace or general app state.
+- **Why:** the web must own the socket for direct frame delivery, but it does not need
+  the native host registry or a second credential store.
+- **Rejected:** putting `baseURL` on `PlatformHost` (host routing leaks into ordinary
+  page state); WebSocket over `tether-app://` (a scheme handler cannot carry it); native
+  `URLSessionWebSocketTask` (keep as fallback only if spike 3 finds stuck sockets).
+
+### Native caches the web's active tab for keyboard batches
+
+- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **What:** web sends `activeTab { tab: TabKey | null }` when selection changes; native
+  uses that cache to tag a whole coalesced keyboard batch. The web still drops input
+  for a stale or closed tab.
+- **Why:** the hot input path needs one native-to-web bridge crossing per batch.
+- **Rejected:** asking `activeTab()` for every batch (a second bridge round trip for
+  every keystroke); native mirroring the workspace's tab model.
+
+### Host management has a typed native presentation request
+
+- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **What:** the web's Home/Settings host-management entry sends `manageHosts`; native
+  presents the server sheet. Remove the floating native Servers control when that web
+  entry lands.
+- **Why:** one intentional web entry avoids covering application content while the
+  sensitive host/enrolment screen remains native.
+- **Rejected:** a generic `nativeModal` bridge (arbitrary page-driven native UI is not a
+  stable contract); retaining the floating overlay after the web entry exists.
+
+### User Copy is not an OSC 52 server write
+
+- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **What:** bridge `copy { text }` always writes user-selected terminal text to the
+  system pasteboard. Server-origin OSC 52 remains a separate, disabled web policy.
+- **Why:** applying the server-write gate to user-initiated Copy made the terminal's
+  Copy command silently fail by default.
+- **Rejected:** gating every copy through a native setting; conflating user and server
+  clipboard provenance in one bridge message.
+
+### Restore the existing iOS auth and background policy
+
+- **Decided:** 2026-10-24, tech lead (P4a review, p142), per
+  [auth.md](auth.md#swift-side-keychain-item-and-app-lock).
+- **What:** one `tether.tokens` Keychain item stores the token map with
+  `WhenPasscodeSetThisDeviceOnly` and `.biometryCurrentSet`. Reading it is the Face ID
+  unlock, done off the main thread; tokens stay in memory until lock. Reset tokens is
+  explicit recovery. Background starts a short task so the web closes sockets; the app
+  locks only on foreground after more than five minutes away.
+- **Why:** one read unlocks all hosts without repeating prompts, while short app
+  switches do not force another biometric check.
+- **Rejected:** a Keychain item per host; app-level passcode authentication in front of
+  a separately protected token; locking at every background transition.
+
+### Keep the Termius-quality keyboard layout without a WebKit bar
+
+- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **What:** suppress the WebKit form accessory bar through the private
+  `WKContentView` input-accessory path; if the class path is absent, leave the bar in
+  place rather than fail the app. Keep the ^C/^D warning haptic for native hardware
+  input and expose the warning kind for the web key row.
+- **Why:** the `⌃ ⌄ ✓` strip between keyboard and dock falls below Jimmy's Termius UI
+  bar; explicit warning feedback stays attached to terminal interrupts.
+- **Rejected:** accepting the form bar as a permanent layout element; dropping the
+  warning haptic and treating ^C/^D as ordinary key taps.
+
+### Defer the Debug dev-server asset source
+
+- **Decided:** 2026-10-24, P4a review (p142).
+- **What:** P4a always bundles its web assets. A Debug-only dev-server source/HMR path
+  is deferred to `ios/.context/FUTURE`; the bundled CSP is not relaxed for it.
+- **Why:** the optional shortcut needs a separate trusted-origin, certificate, HMR and
+  CSP check; desktop browser/Vite remains available for iteration.
+- **Rejected:** shipping an unverified dev-server route and broader CSP with the shell.
+
+### Native lifecycle messages are full snapshots
+
+- **Decided:** 2026-10-24, P4a review (p142).
+- **What:** app visibility, reachability, lock and native coverage travel together in a
+  complete `lifecycle` snapshot; `covered` is not a separate bridge event.
+- **Why:** web admission and socket watching recompute one predicate from the current state,
+  without merging deltas that may arrive after a page restart.
+- **Rejected:** a separate `lifecycle.covered { covered }` event alongside a partial lifecycle
+  update. Reconcile the earlier bridge table in the P4b design source before implementing it.
+
+### Track expected token-item state without storing credentials in app preferences
+
+- **Decided:** 2026-10-24, P4a review (p142).
+- **What:** a non-secret preference records whether a non-empty Keychain token map is
+  expected. A missing expected item stays locked so the user can explicitly reset it;
+  Reset clears the marker while preserving saved host labels as not enrolled.
+- **Why:** Keychain can report an item as missing after a Face ID change, which must not
+  silently turn an auth recovery state into an ordinary un-enrolled state.
+- **Rejected:** treating every missing item as an explicit reset (the recovery screen
+  becomes unreachable) or persisting any token data outside the one Keychain item.
+
+### P4a round-two review: gate focus, validate keys, and bind revocation to its token
+
+- **Decided:** 2026-10-24, implementation follow-up to review p148.
+- **What:** `FocusController` records focus requests while a native cover is up and
+  applies the latest request on uncover; queued terminal input is discarded while locked
+  or covered. `KeyMapper` omits Shift for names outside the daemon's shiftable set,
+  exhaustively checks mapped key codes and modifiers against `is_key_name`, and sends
+  Option plus printable non-alphanumeric ASCII as ESC-prefixed bytes (Option+Space is
+  `M-Space`). Keychain updates reuse the successful unlock's `LAContext` and all
+  Keychain operations run on a serial background queue; lock invalidates that context.
+  A 401 refusal carries the exact sent token and revokes only a matching stored token;
+  a refusal arriving while locked keeps only a token digest. Native media requests use
+  the cached `activeTab` bridge message rather than querying page state.
+- **Why:** review probes found that focus/input could bypass covers, Shift on Escape or
+  Backspace generated names rejected for the entire batch, and a late 401 could erase a
+  replacement credential. The one cached active-tab path keeps media and keyboard targets
+  consistent without a second WebKit crossing.
+- **Rejected:** restoring only the focus saved when the cover first appeared (it loses
+  requests made under the cover); accepting unvalidated named keys; deleting by host id
+  alone; and asking page JavaScript for its active tab a second time.

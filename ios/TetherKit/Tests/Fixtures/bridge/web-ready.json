@@ -1,0 +1,64 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "ready"
+  },
+  "reply": {
+    "bridgeVersion": 2,
+    "hosts": [
+      {
+        "handle": "host-01",
+        "hostId": "host-01",
+        "name": "pop-os",
+        "pageOrigin": null
+      }
+    ],
+    "workspace": {
+      "version": 1,
+      "tabs": [
+        {
+          "key": {
+            "host": "host-01",
+            "window": {
+              "server": "$1",
+              "window": "@2"
+            }
+          },
+          "session": "main",
+          "window": "shell"
+        }
+      ],
+      "active": "host-01/$1/@2",
+      "files": null,
+      "expanded": {
+        "host-01": [
+          "main"
+        ]
+      },
+      "hostName": "pop-os"
+    },
+    "viewport": {
+      "layout": "phone",
+      "density": "touch",
+      "directInput": "native",
+      "scheme": "dark",
+      "width": 402,
+      "stableHeight": 874,
+      "visibleHeight": 874,
+      "keyboardInset": 0,
+      "safeArea": {
+        "top": 62,
+        "right": 0,
+        "bottom": 34,
+        "left": 0
+      },
+      "keyboard": false
+    },
+    "lifecycle": {
+      "visible": true,
+      "online": true,
+      "locked": false,
+      "covered": false
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "direction": "nativeToWeb",
+  "message": {
+    "type": "lifecycle",
+    "lifecycle": {
+      "visible": false,
+      "online": true,
+      "locked": false,
+      "covered": false
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "recreateWebView"
+  },
+  "reply": null
+}

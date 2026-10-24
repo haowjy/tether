@@ -1,0 +1,16 @@
+{
+  "direction": "nativeToWeb",
+  "message": {
+    "type": "upload",
+    "id": "upload-01",
+    "host": "host-01",
+    "tab": {
+      "host": "host-01",
+      "window": {
+        "server": "$1",
+        "window": "@2"
+      }
+    },
+    "progress": 0.5
+  }
+}

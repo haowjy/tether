@@ -1,0 +1,16 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "readPasteboard",
+    "tab": {
+      "host": "host-01",
+      "window": {
+        "server": "$1",
+        "window": "@2"
+      }
+    }
+  },
+  "reply": {
+    "text": "clipboard text"
+  }
+}

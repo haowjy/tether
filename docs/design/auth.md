@@ -595,10 +595,19 @@ row fields means an older daemon never reads a guest row as a full device.
   synced, not in backups, deleted by iOS if the passcode is removed.
 - **Reading the item is the unlock.** `SecItemCopyMatching` with an `LAContext` whose
   `localizedReason` is "Unlock tether" shows the Face ID prompt. One read returns every
-  host's token, so one prompt unlocks every host. The tokens stay in memory until the
-  app locks; requests never prompt.
-- Adding or removing a host deletes the item and adds it again with the new map, which
-  needs no prompt (only reads are gated).
+  host's token, so one prompt unlocks every host. Reads and writes run on a serial
+  background queue, not the main thread or a WebKit bridge callback. The tokens stay in
+  native memory until the app locks; bridge and HTTP requests read memory only and never
+  prompt.
+- Adding or removing a host replaces the JSON map without reading it. While unlocked,
+  `SecItemUpdate` reuses the successful unlock's `LAContext` through
+  `kSecUseAuthenticationContext`; locking invalidates that context. Creating the first
+  item does not need an authentication context. The device checklist verifies updates
+  don't prompt again.
+  A non-secret app preference records whether a non-empty token map is expected. This
+  lets launch distinguish an intentional Reset (which keeps saved host labels as
+  not-enrolled) from a Keychain item lost after a Face ID change; the latter stays
+  locked until Jimmy resets it.
 
 **When the app asks for Face ID:**
 
@@ -606,19 +615,26 @@ row fields means an older daemon never reads a guest row as a full device.
 stateDiagram-v2
   [*] --> Locked
   Locked --> Unlocked: read tokens item (Face ID)
-  Unlocked --> Locked: foreground after more than the lock delay in background
+  Unlocked --> Locked: foreground after more than 5 minutes in background
 ```
 
-- **On launch, and on foreground after more than the lock delay** in the background.
-  There is no "never", which would undo the lock. iOS can't run a timer in a suspended
-  app, so the check runs first thing on foreground, from the time the app entered the
-  background.
-- **Locking** drops the tokens from native memory and tells the web (`lock`), which
-  drops its copies. The web closed its sockets when the app went to the background, so
-  nothing is connected. A native lock screen covers the web view until the next read
-  succeeds.
+- **On launch when a token item exists or is expected**, and on foreground after more
+  than 5 minutes in the background. With no hosts or tokens the app opens without a
+  prompt. There is no "never", which would undo the lock. iOS can't run a timer in a
+  suspended app, so the check runs first thing on foreground, from the time the app
+  entered the background. On a normal background transition a short
+  `beginBackgroundTask` window lets the web receive lifecycle and close its sockets; it
+  does not lock the app.
+- **Locking** drops the tokens from native memory and tells the web (`lifecycle` with
+  `locked: true`), which drops its copies. A native lock screen covers
+  the web view until the next read succeeds. If the background lasted over five minutes,
+  the foreground read is the unlock; a shorter trip restores without a prompt.
 - **Cancel, a failed match or biometry lockout:** the app stays locked with an Unlock
-  button. Nothing is deleted.
+  button. Cancellation shows no error; other failures show a readable message. Nothing
+  is deleted.
+- **A late 401:** the app removes only the exact token that was sent. If a request's 401
+  arrives while locked, native retains only that token's digest and removes the token on
+  unlock only if the stored token still matches it.
 
 
 ## Recovery
@@ -626,7 +642,7 @@ stateDiagram-v2
 
 | Situation | What happens | Fix |
 |---|---|---|
-| Face ID re-enrolled, or an appearance added | `.biometryCurrentSet` makes the item unreadable for good. The read fails with an error that isn't cancel or lockout, possibly "item not found" (the [iOS device checklist](ios-shell.md#device-checklist) records which); "not found" while `HostStore` lists hosts counts as this case | The lock screen offers "Reset tokens": it deletes the item and marks every host "not enrolled"; Jimmy runs `tether enroll` on each host and adds them again. The app never deletes on its own: a misread error would cost re-enrolling every host |
+| Face ID re-enrolled, or an appearance added | `.biometryCurrentSet` makes the item unreadable for good. The read fails with an error that isn't cancel or lockout, possibly "item not found" (the [iOS device checklist](ios-shell.md#device-checklist) records which); "not found" while `HostStore` lists hosts counts as this case | The lock screen offers "Reset tokens": after confirmation it deletes the item and treats every host as "not enrolled"; Jimmy runs `tether enroll` on each host and adds them again. The app never deletes on its own: a misread error would cost re-enrolling every host |
 | Phone lost | Tokens stay on the lost phone, behind its Face ID | On each host, `tether device remove <name>`; live sockets close at the next re-check |
 | Device removed while the app still has its token | 401 or close 4401 | The host shows "not enrolled" with Add host |
 | `auth.toml` unreadable on the server (a bad hand edit) | 503 or close 4503, including on live sockets at their next re-check | Nothing on the phone: it keeps its token and retries. Fix the file on the server (the log names the line) |
@@ -650,7 +666,7 @@ On the Swift side, Security and LocalAuthentication cover everything.
 `ios/Tether/Auth/`:
 
 - `TokenStore`: read the item with an `LAContext`, rewrite it, delete it.
-- `Unlocker`: the lock state machine; holds the tokens while unlocked.
+- `AppModel`: owns the lock state and holds the token map in memory while unlocked.
 - `AuthClient`: `/auth/info` and `/auth/enroll` for one host, on an ephemeral
   `URLSession`.
 

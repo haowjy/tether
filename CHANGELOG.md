@@ -5,6 +5,11 @@ version section on release.
 
 ## [Unreleased]
 
+- Native iOS shell with bundled web assets, device-token auth and bridge-v2 support for
+  keyboard input, host management and native media.
+- Native focus and terminal input stay gated behind lock/native covers; hardware-key
+  names follow the daemon's allowlist, Option punctuation maps to terminal Meta bytes,
+  and stale auth refusals cannot revoke a newly enrolled token.
 - Phone dock and session switcher: on a touch phone Terminal ends in one row (tab chip, line
   field, keyboard toggle) with a key row (esc, arrows, ^R, ^C, tab, ctrl, alt, | ~ / -) above
   it while the keyboard is up. Return in the line field sends the line and Enter together,

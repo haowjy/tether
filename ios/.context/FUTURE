@@ -1,0 +1,6 @@
+# iOS follow-up
+
+- Add a Debug-only dev-server asset source and HMR route if bundled rebuilds become a
+  real iteration bottleneck. P4a keeps the bundled asset path only; the server URL,
+  certificate, HMR origin and any CSP expansion need a separate design and device
+  check. Desktop browser/Vite remains the development loop for now.

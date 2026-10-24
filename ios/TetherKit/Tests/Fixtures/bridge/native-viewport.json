@@ -1,0 +1,23 @@
+{
+  "direction": "nativeToWeb",
+  "message": {
+    "type": "viewport",
+    "viewport": {
+      "layout": "phone",
+      "density": "touch",
+      "directInput": "native",
+      "scheme": "dark",
+      "width": 402,
+      "stableHeight": 874,
+      "visibleHeight": 520,
+      "keyboardInset": 354,
+      "safeArea": {
+        "top": 62,
+        "right": 0,
+        "bottom": 34,
+        "left": 0
+      },
+      "keyboard": true
+    }
+  }
+}

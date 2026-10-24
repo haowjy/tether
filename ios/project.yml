@@ -1,0 +1,42 @@
+name: Tether
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  TetherKit:
+    path: TetherKit
+schemes:
+  Tether:
+    build:
+      targets:
+        Tether: all
+    run:
+      config: Debug
+targets:
+  Tether:
+    type: application
+    platform: iOS
+    sources:
+      - path: Tether
+    dependencies:
+      - package: TetherKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jimmyyao.tether
+        PRODUCT_NAME: tether
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSFaceIDUsageDescription: "Unlock tether to connect to your servers."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Take a photo to upload it to a tmux session."
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+    postBuildScripts:
+      - name: Build bundled web UI
+        script: |
+          "${PROJECT_DIR}/scripts/build-web.sh"
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/WebUI/index.html

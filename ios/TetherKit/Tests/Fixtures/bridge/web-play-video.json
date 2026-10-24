@@ -1,0 +1,9 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "playVideo",
+    "host": "host-01",
+    "path": "/home/jimmy/movie.mp4"
+  },
+  "reply": null
+}

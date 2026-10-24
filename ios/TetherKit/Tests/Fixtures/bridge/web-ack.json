@@ -1,0 +1,8 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "ack",
+    "id": 42
+  },
+  "reply": null
+}

@@ -1,0 +1,14 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "draftGet",
+    "key": {
+      "host": "host-01",
+      "window": {
+        "server": "$1",
+        "window": "@2"
+      }
+    }
+  },
+  "reply": null
+}

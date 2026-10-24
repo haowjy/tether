@@ -1,0 +1,8 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "openURL",
+    "url": "https://example.com/"
+  },
+  "reply": null
+}

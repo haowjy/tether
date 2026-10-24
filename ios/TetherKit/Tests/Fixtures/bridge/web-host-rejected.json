@@ -1,0 +1,9 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "hostRejected",
+    "host": "host-01",
+    "token": "fixture-token"
+  },
+  "reply": null
+}

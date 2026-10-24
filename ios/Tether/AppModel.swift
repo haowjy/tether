@@ -1,0 +1,330 @@
+import CryptoKit
+import Foundation
+import LocalAuthentication
+import Network
+import SwiftUI
+import TetherKit
+import UIKit
+
+enum TokenAccess {
+    case token(String)
+    case locked
+    case notEnrolled
+}
+
+@MainActor
+final class TetherAppModel: ObservableObject {
+    private static let backgroundLockDelay: TimeInterval = 5 * 60
+
+    @Published private(set) var hosts: [HostEntry]
+    @Published private(set) var isLocked: Bool
+    @Published var showingServers = false
+    @Published var errorMessage: String?
+
+    let hostStore = HostStore()
+    let tokenStore = TokenStore()
+    let drafts = DraftStore()
+    private let authClient = AuthClient()
+    private let defaults = UserDefaults.standard
+    private let expectedTokenItemKey = "tether.tokens.expected"
+    private var tokens: [String: String]?
+    private var authenticationContext: LAContext?
+    // A late 401 can finish while locked; keep a digest, not the discarded credential.
+    private var rejectedTokenDigestsWhileLocked: [String: Data] = [:]
+    private var visible = true
+    private var covered = false
+    private var online = false
+    private var backgroundEnteredAt: Date?
+    private var backgroundHadTokens = false
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var shouldAutoUnlock = false
+    private var unlockInFlight = false
+    private weak var shell: WebShellController?
+    private let pathMonitor = NWPathMonitor()
+
+    init() {
+        let storedHosts = hostStore.load()
+        hosts = storedHosts
+        let expectsTokenItem = defaults.object(forKey: expectedTokenItemKey) as? Bool ?? !storedHosts.isEmpty
+        isLocked = expectsTokenItem
+        tokens = expectsTokenItem ? nil : [:]
+        shouldAutoUnlock = expectsTokenItem
+        startNetworkMonitor()
+    }
+
+    var lifecycle: Lifecycle {
+        Lifecycle(visible: visible, online: online, locked: isLocked, covered: covered)
+    }
+
+    func attach(_ controller: WebShellController) {
+        shell = controller
+        controller.coverNativeScreen(isLocked || covered)
+    }
+
+    func boot(viewport: Viewport) -> Boot {
+        Boot(hosts: platformHosts, workspace: loadWorkspace(), viewport: viewport, lifecycle: lifecycle)
+    }
+
+    var platformHosts: [PlatformHost] { hosts.map(\.platformHost) }
+
+    func saveWorkspace(_ workspace: SavedWorkspace) {
+        guard let data = try? JSONEncoder().encode(workspace) else { return }
+        defaults.set(data, forKey: "tether.workspace.v1")
+    }
+
+    func loadWorkspace() -> SavedWorkspace? {
+        guard let data = defaults.data(forKey: "tether.workspace.v1") else { return nil }
+        return try? JSONDecoder().decode(SavedWorkspace.self, from: data)
+    }
+
+    func token(for hostID: String) -> TokenAccess {
+        guard hosts.contains(where: { $0.id == hostID }) else { return .notEnrolled }
+        guard !isLocked, let tokens else { return .locked }
+        guard let token = tokens[hostID] else { return .notEnrolled }
+        return .token(token)
+    }
+
+    func socket(for hostID: String) -> SocketReply {
+        guard let host = hosts.first(where: { $0.id == hostID }) else { return .notEnrolled }
+        guard !isLocked, let tokens else { return .locked }
+        guard let token = tokens[hostID] else { return .notEnrolled }
+        guard var components = URLComponents(string: host.baseURL),
+              components.scheme?.lowercased() == "https",
+              components.host != nil,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.path.isEmpty || components.path == "/" else { return .notEnrolled }
+        components.scheme = "wss"
+        components.path = "/ws"
+        guard let url = components.url else { return .notEnrolled }
+        return .socket(url: url.absoluteString, token: token)
+    }
+
+    func rejectedToken(for hostID: String, token rejectedToken: String) {
+        Task { await applyRejectedToken(for: hostID, token: rejectedToken) }
+    }
+
+    private func applyRejectedToken(for hostID: String, token rejectedToken: String) async {
+        guard hosts.contains(where: { $0.id == hostID }) else { return }
+        guard var tokens else {
+            rejectedTokenDigestsWhileLocked[hostID] = Self.tokenDigest(rejectedToken)
+            shell?.send(.hosts(platformHosts))
+            return
+        }
+        guard tokens[hostID] == rejectedToken else { return }
+        tokens.removeValue(forKey: hostID)
+        self.tokens = tokens
+        do {
+            try await saveTokens(tokens)
+            errorMessage = nil
+        } catch {
+            errorMessage = "The rejected server token couldn't be removed from Keychain."
+        }
+        shell?.send(.hosts(platformHosts))
+    }
+
+    func enroll(server: String, code: String, deviceName: String) async throws {
+        guard !isLocked, tokens != nil else { throw TokenStore.StoreError.locked }
+        let result = try await authClient.enroll(server: server, code: code, deviceName: deviceName)
+        guard !isLocked, let currentTokens = tokens else { throw TokenStore.StoreError.locked }
+        var nextTokens = currentTokens
+        nextTokens[result.entry.id] = result.token
+        tokens = nextTokens
+        do {
+            try await saveTokens(nextTokens)
+        } catch {
+            if tokens == nextTokens { tokens = currentTokens }
+            throw error
+        }
+        var nextHosts = hosts.filter { $0.id != result.entry.id }
+        nextHosts.append(result.entry)
+        do {
+            try hostStore.save(nextHosts)
+        } catch {
+            if tokens == nextTokens { tokens = currentTokens }
+            try? await saveTokens(currentTokens)
+            throw error
+        }
+        hosts = nextHosts
+        errorMessage = nil
+        shell?.send(.hosts(platformHosts))
+    }
+
+    func removeHost(_ host: HostEntry) async {
+        guard let currentTokens = tokens else {
+            errorMessage = "Unlock tether before removing a server."
+            return
+        }
+        var nextTokens = currentTokens
+        nextTokens.removeValue(forKey: host.id)
+        let nextHosts = hosts.filter { $0.id != host.id }
+        tokens = nextTokens
+        do {
+            try await saveTokens(nextTokens)
+            do {
+                try hostStore.save(nextHosts)
+            } catch {
+                if tokens == nextTokens { tokens = currentTokens }
+                try? await saveTokens(currentTokens)
+                throw error
+            }
+            hosts = nextHosts
+            errorMessage = nil
+            shell?.send(.hosts(platformHosts))
+            publishLifecycle()
+        } catch {
+            if tokens == nextTokens { tokens = currentTokens }
+            errorMessage = "Couldn't remove this server."
+        }
+    }
+
+    func resetTokens() async {
+        do {
+            try await tokenStore.deleteAll(context: authenticationContext)
+            authenticationContext?.invalidate()
+            authenticationContext = nil
+            defaults.set(false, forKey: expectedTokenItemKey)
+            tokens = [:]
+            rejectedTokenDigestsWhileLocked.removeAll()
+            isLocked = false
+            errorMessage = nil
+            updateNativeCoverage()
+            shell?.send(.hosts(platformHosts))
+            publishLifecycle()
+        } catch {
+            errorMessage = "Couldn't reset the stored tokens."
+        }
+    }
+
+    func setCovered(_ value: Bool) {
+        guard covered != value else { return }
+        covered = value
+        updateNativeCoverage()
+        publishLifecycle()
+    }
+
+    func sceneChanged(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            visible = true
+            let elapsed = backgroundEnteredAt.map { Date().timeIntervalSince($0) } ?? 0
+            backgroundEnteredAt = nil
+            endBackgroundTask()
+            if backgroundHadTokens && elapsed > Self.backgroundLockDelay {
+                lockApp()
+                shouldAutoUnlock = true
+            }
+            backgroundHadTokens = false
+            shell?.restoreFocus()
+            publishLifecycle()
+            if isLocked && shouldAutoUnlock {
+                shouldAutoUnlock = false
+                Task { await unlock() }
+            }
+        case .background:
+            visible = false
+            if backgroundEnteredAt == nil {
+                backgroundEnteredAt = Date()
+                backgroundHadTokens = tokens?.isEmpty == false
+            }
+            beginBackgroundTask()
+            if let shell {
+                shell.sendLifecycle(lifecycle) { [weak self] in self?.endBackgroundTask() }
+            } else {
+                endBackgroundTask()
+            }
+        case .inactive:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    func unlock() async {
+        guard !unlockInFlight else { return }
+        unlockInFlight = true
+        defer { unlockInFlight = false }
+        errorMessage = nil
+        do {
+            guard let result = try await tokenStore.readAll(localizedReason: "Unlock tether") else {
+                errorMessage = "No token item is available. Reset tokens, then enrol your servers again."
+                return
+            }
+            var unlockedTokens = result.tokens
+            for (hostID, rejectedDigest) in rejectedTokenDigestsWhileLocked
+            where unlockedTokens[hostID].map(Self.tokenDigest) == rejectedDigest {
+                unlockedTokens.removeValue(forKey: hostID)
+            }
+            authenticationContext = result.context
+            if unlockedTokens != result.tokens {
+                do {
+                    try await saveTokens(unlockedTokens)
+                } catch {
+                    authenticationContext?.invalidate()
+                    authenticationContext = nil
+                    throw error
+                }
+            }
+            tokens = unlockedTokens
+            if unlockedTokens == result.tokens { defaults.set(!unlockedTokens.isEmpty, forKey: expectedTokenItemKey) }
+            rejectedTokenDigestsWhileLocked.removeAll()
+            isLocked = false
+            errorMessage = nil
+            updateNativeCoverage()
+            publishLifecycle()
+        } catch {
+            if let storeError = error as? TokenStore.StoreError {
+                errorMessage = storeError.unlockMessage
+            } else {
+                errorMessage = "Couldn't read the stored tokens. Try again, or reset tokens if Face ID changed."
+            }
+        }
+    }
+
+    func lockApp() {
+        tokens = nil
+        authenticationContext?.invalidate()
+        authenticationContext = nil
+        isLocked = true
+        updateNativeCoverage()
+    }
+
+    func publishLifecycle() { shell?.send(.lifecycle(lifecycle)) }
+
+    private func updateNativeCoverage() { shell?.coverNativeScreen(isLocked || covered) }
+
+    private func saveTokens(_ tokens: [String: String]) async throws {
+        try await tokenStore.save(tokens, context: authenticationContext)
+        defaults.set(!tokens.isEmpty, forKey: expectedTokenItemKey)
+    }
+
+    private static func tokenDigest(_ token: String) -> Data {
+        Data(SHA256.hash(data: Data(token.utf8)))
+    }
+
+    private func beginBackgroundTask() {
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Close tether sockets") { [weak self] in
+            Task { @MainActor in self?.endBackgroundTask() }
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
+
+    private func startNetworkMonitor() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                guard let self, self.online != (path.status == .satisfied) else { return }
+                self.online = path.status == .satisfied
+                self.publishLifecycle()
+            }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "com.jimmyyao.tether.network"))
+    }
+}

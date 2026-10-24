@@ -1,0 +1,27 @@
+{
+  "direction": "nativeToWeb",
+  "message": {
+    "type": "input",
+    "tab": {
+      "host": "host-01",
+      "window": {
+        "server": "$1",
+        "window": "@2"
+      }
+    },
+    "events": [
+      {
+        "text": "ls"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "bytes": "G1sxMzsydQ=="
+      },
+      {
+        "paste": "multiline\ntext"
+      }
+    ]
+  }
+}

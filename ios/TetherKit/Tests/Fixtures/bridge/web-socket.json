@@ -1,0 +1,11 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "socket",
+    "host": "a234567bcdefghjk"
+  },
+  "reply": {
+    "url": "wss://pop-os.ts.net/ws",
+    "token": "fixture-token"
+  }
+}

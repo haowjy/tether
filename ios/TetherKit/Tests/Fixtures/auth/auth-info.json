@@ -1,0 +1,11 @@
+{
+  "browserOrigin": null,
+  "browserRefused": null,
+  "daemonVersion": "0.0.1",
+  "hostId": "a234567bcdefghjk",
+  "name": "pop-os",
+  "protocol": {
+    "max": 1,
+    "min": 1
+  }
+}

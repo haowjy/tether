@@ -1,0 +1,31 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "saveWorkspace",
+    "workspace": {
+      "version": 1,
+      "tabs": [
+        {
+          "key": {
+            "host": "host-01",
+            "window": {
+              "server": "$1",
+              "window": "@2"
+            }
+          },
+          "session": "main",
+          "window": "shell"
+        }
+      ],
+      "active": "host-01/$1/@2",
+      "files": null,
+      "expanded": {
+        "host-01": [
+          "main"
+        ]
+      },
+      "hostName": "pop-os"
+    }
+  },
+  "reply": null
+}
