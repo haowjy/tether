@@ -1,19 +1,18 @@
 # Client implementation checkpoint
 
-## Current state (2026-10-24, session c62 follow-up) — read this first
+## Current state (2026-10-24, late) — read this first
 
-P2 (web client) is closed and pushed (f23d015). The phone input design was reset after Jimmy
-ran the keyboard spike: one-row dock (tab chip, line field, keyboard toggle; key row while the
-keyboard is up), switcher sheet, long-press arrow pad / word selection, paste confirmation.
-Committed as 7372e37 (spike deleted). Record of every decision: [phone-input-decisions.md](phone-input-decisions.md);
-visual reference canvas: https://claude.ai/artifact/HqphCamD9rj2CbBnAS4sGJ (private to Jimmy).
-Plan and lanes: [build-plan.md](build-plan.md). Jimmy asked to push through P5 autonomously.
+Pushed to main: 7372e37 dock design, e334e0e window-size design, 96216b1 PC paste confirmation,
+7073a33 PS-daemon, 2a5c401 P3a dock/line field/switcher, a098d17 macOS Serve note,
+2456488 PS-web (window sized by last activity, band + Fit, DOM renderer while larger).
+Decisions: [phone-input-decisions.md](phone-input-decisions.md). Plan: [build-plan.md](build-plan.md).
+Jimmy asked to push through P5 autonomously.
 
-In flight: p115 window size follows the last-active client (design, docs only); p116 lane PC
-paste confirmation (daemon + web, uncommitted until reviewed). Next: review PC, then P3a
-(dock, line field, owned input, switcher), P3b gestures, G3 probes + Jimmy's phone checklist,
-P4 native shell, P5 final gate. Waiting on Jimmy: OK to use this Mac's `tailscale serve` for
-the Serve/PWA gate; `ssh pop-os` host key (or Docker) for Linux checks.
+In flight: p138 P3b gestures (brief prompts/p-lane-p3b.md); p139 Linux-in-Docker probe
+(build/test, tmux 3.4/3.7b, systemd caps, resource budget; brief prompts/probe-linux-docker.md).
+Next: review P3b, G3 (Simulator + Jimmy's g3-iphone-checklist.md), P4 native shell, P5.
+Docker works on the Mac now; `ssh pop-os` still fails host-key verification, and the tailnet
+gates (auth.md G1–G12) need the real Linux box. macOS Serve is blocked (no LocalAPI socket).
 
 Everything below is the historical log; where it conflicts with the above, the above wins.
 
