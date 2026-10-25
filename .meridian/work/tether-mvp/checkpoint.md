@@ -1,6 +1,26 @@
 # Client implementation checkpoint
 
-## Current state (2026-10-24, night) — read this first
+## First real use on pop-os (2026-10-25) — read this first
+
+Setup and teardown shipped to main at 64b78c3 (earlier session c106). Jimmy then ran
+`tether setup` (terminal mode) on pop-os (ssh/mosh `homebox`), with tether running in his
+tmux session `f2`, which he lets the lead drive. Fixed from his use, all on local main
+and **not pushed to GitHub** (Jimmy hasn't said to push); homebox runs them from branch
+`dbg` in `~/gitrepos/tether`:
+
+- 35df7dd, 57cba05, 8385ba2, f184ff3: shorter setup report; the 401 message names
+  Tailscale's full-name sudo check (#21204). Reviews p210, p211.
+- 03c3af0: WebSocket handshakes admitted without `Sec-Fetch-Site` (the browser couldn't
+  load sessions). Jimmy confirmed the browser works.
+- 9a987e0 + 4ef3b5f: `attachedElsewhere` and its note removed, protocol kept at 1
+  (review p214).
+- c0b9ca4: focus rings no longer clipped by scroll containers (p212).
+
+Evidence: evidence/setup-linux/README.md, evidence/web-spacing/. Open: S1–S8/S12 Linux
+gates beyond this first run; p212's proposed ring-clipping assertion (Jimmy hasn't been
+asked); "Find a sessio" placeholder truncation at 320px (minor).
+
+## State before first real use (2026-10-24, night)
 
 Built, reviewed and pushed through P5's automated gate (main at the "P5 gate passes"
 work-log commit): phone dock, window sizing by last activity, touch gestures, native iOS
