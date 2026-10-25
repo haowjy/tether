@@ -1,0 +1,4 @@
+# pnpm 12 reads settings only from here, not from package.json's "pnpm" field.
+overrides:
+  # Keep @axe-core/playwright on the same playwright-core as @playwright/test.
+  playwright-core: 1.54.2
