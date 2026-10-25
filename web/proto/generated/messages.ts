@@ -1,7 +1,7 @@
 // Generated from src/proto by `UPDATE_PROTO_TYPES=1 cargo test --lib proto::typescript`. Do not edit.
 
 /** The protocol this build speaks (daemon-core.md §5.2). */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** WebSocket close codes (daemon-core.md §5.2). */
 export const CloseCode = {
@@ -18,7 +18,7 @@ export const CloseCode = {
 
 export type ClientMsg = { "type": "hello", "data": { protocol: number, client: ClientInfo, } }
   | { "type": "ping", "data": { t: number, } }
-  | { "type": "watch", "data": { watch: number, window: WindowRef, size: Size,
+  | { "type": "watch", "data": { watch: number, session: SessionRef, size: Size,
 /**
  * Automatic re-watches don't claim the window again.
  */
@@ -26,20 +26,33 @@ claim?: boolean, } }
   | { "type": "unwatch", "data": { watch: number, } }
   | { "type": "resize", "data": { watch: number, size: Size, } }
   | { "type": "resync", "data": { watch: number, } }
-  | { "type": "input", "data": { watch: number, items: Array<InputItem>, } }
-  | { "type": "paste", "data": { req: number, watch: number, text: string,
+  | { "type": "input", "data": { watch: number,
+/**
+ * The window the tab showed when the input was made.
+ */
+window: number, items: Array<InputItem>, } }
+  | { "type": "paste", "data": { req: number, watch: number,
+/**
+ * The window the tab showed when the paste was made.
+ */
+window: number, text: string,
 /**
  * Run Enter after the paste in the same tmux command group.
  */
 enter?: boolean, } }
   | { "type": "history", "data": { req: number, watch: number, start: number, end: number, } }
+  | { "type": "selectWindow", "data": { req: number, watch: number, window: number, } }
   | { "type": "listSessions", "data": { req: number, } }
   | { "type": "newWindow", "data": { req: number, session: SessionRef, name?: string,
 /**
  * Absolute and a directory, checked by the connection (fs.md "Path
  * resolution"); not checked against the file roots.
  */
-dir?: string, } }
+dir?: string,
+/**
+ * The current tab to claim the new current window for.
+ */
+watch?: number, } }
   | { "type": "newSession", "data": { req: number, name?: string,
 /**
  * As `newWindow`'s.
@@ -53,21 +66,19 @@ scratch?: boolean, } };
 export type ServerMsg = { "type": "welcome", "data": { protocol: number, daemon: DaemonInfo, host: HostInfo, } }
   | { "type": "incompatible", "data": { min: number, max: number, daemonVersion: string, } }
   | { "type": "pong", "data": { t: number, } }
-  | { "type": "watching", "data": { watch: number, window: WindowRef, session: SessionRef, pane: number,
+  | { "type": "watching", "data": { watch: number, window: ShownWindow, session: SessionRef, pane: number,
 /**
  * Null until tmux first reports it.
  */
 cwd: string | null, } }
   | { "type": "watchEnded", "data": { watch: number, reason: WatchEndReason, message?: string, } }
-  | { "type": "windowClosed", "data": { window: WindowRef, } }
   | { "type": "sessionClosed", "data": { session: SessionRef, } }
   | { "type": "serverExited", "data": { server: string, } }
-  | { "type": "windowRenamed", "data": { window: WindowRef, name: string, } }
   | { "type": "sessionsChanged" }
   | { "type": "sessions", "data": { req: number, tmux: TmuxListing | null, } }
-  | { "type": "historyChunk", "data": { req: number, watch: number, start: number,
+  | { "type": "historyChunk", "data": { req: number, watch: number, pane: number, start: number,
 /**
- * Retained row count at capture time; optional for protocol v1 compatibility.
+ * Retained row count when supplied; joins reset if it changes.
  */
 historySize?: number, lines: Array<Base64>,
 /**
@@ -93,6 +104,11 @@ export type SessionRef = { server: string,
  * `$N`.
  */
 session: number, };
+
+/**
+ * The session's current window as shown by the daemon.
+ */
+export type ShownWindow = { id: number, index: number, name: string, size: Size, };
 
 /**
  * A terminal size; the daemon clamps what clients send (daemon-core.md §6).

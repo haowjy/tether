@@ -17,8 +17,8 @@ use std::{env, fs};
 use bytes::Bytes;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use tether::tmux::{
-    Event, Found, Location, MAX_IN_FLIGHT, PaneId, Reply, Session, SessionId, SessionLocation,
-    Size, Tag, TmuxError, WindowId,
+    Event, Found, Location, MAX_IN_FLIGHT, PaneId, Reply, Session, SessionId, Size, Tag, TmuxError,
+    WindowId,
 };
 
 const SEEDS: [u64; 4] = [0x5445_5448_4552, 0x1984_0314, 0xdead_beef, 0x3437];
@@ -50,7 +50,7 @@ fn replay(name: &str, chunk: impl FnMut(usize) -> usize) -> Replay {
 fn replay_in(dir: &Path, name: &str, mut chunk: impl FnMut(usize) -> usize) -> Replay {
     let out = fs::read(dir.join(format!("{name}.out"))).expect("read .out");
     let script = fs::read_to_string(dir.join(format!("{name}.script"))).expect("read .script");
-    let (session, step) = Session::new();
+    let (session, step) = Session::new(SessionId(0));
     let mut replay = Replay {
         session,
         events: step.events,
@@ -135,7 +135,7 @@ fn startup_sets_the_client_size_from_the_current_window_before_ready() {
         .filter(|at| out[*at..].starts_with(b"%end "))
         .nth(2)
         .expect("attach, startup and client-size replies");
-    let (mut session, _) = Session::new();
+    let (mut session, _) = Session::new(SessionId(0));
     let step = session.feed(&out[..end]);
     assert!(
         !step
@@ -451,6 +451,7 @@ fn notifications_become_events() {
             Event::Layout {
                 window: WindowId(0),
                 panes,
+                ..
             } => Some(panes.clone()),
             _ => None,
         })
@@ -473,17 +474,6 @@ fn notifications_become_events() {
         window: WindowId(2),
         name: "name with spaces #x".into()
     }));
-    let unlinked = replay
-        .events
-        .iter()
-        .filter(|event| {
-            **event
-                == Event::WindowUnlinked {
-                    window: WindowId(2),
-                }
-        })
-        .count();
-    assert_eq!(unlinked, 3, "moved out, moved in, killed");
     assert!(replay.events.contains(&Event::SessionsChanged));
 
     let replay = whole("subscription");
@@ -519,22 +509,26 @@ fn notifications_become_events() {
 }
 
 #[test]
-fn locate_reads_the_window_and_the_server_instance() {
+fn locate_reads_the_session_current_window_and_server_instance() {
     let replay = whole("locate");
     let location = |tag| match done(&replay, tag) {
         Ok(Reply::Location(location)) => location.clone(),
         other => panic!("tag {tag}: {other:?}"),
     };
     let Location { server, found } = location(1);
-    assert_eq!(
+    assert!(matches!(
         found,
         Some(Found {
             session: SessionId(0),
+            window: WindowId(0),
+            index: 0,
             pane: PaneId(0),
             size: Size { cols: 80, rows: 24 },
-            session_name: "fixture".to_owned(),
-        })
-    );
+            window_size: Size { cols: 80, rows: 24 },
+            session_name,
+            ..
+        }) if session_name == "fixture"
+    ));
     assert_eq!(
         location(2).found.map(|found| found.session),
         Some(SessionId(1))
@@ -546,25 +540,6 @@ fn locate_reads_the_window_and_the_server_instance() {
             found: None
         },
         "killed"
-    );
-    assert_eq!(
-        location(4).found.map(|found| found.session),
-        Some(SessionId(1)),
-        "moved"
-    );
-    assert_eq!(
-        done(&replay, 5),
-        &Ok(Reply::SessionLocation(SessionLocation {
-            server,
-            exists: true
-        }))
-    );
-    assert_eq!(
-        done(&replay, 6),
-        &Ok(Reply::SessionLocation(SessionLocation {
-            server,
-            exists: false
-        }))
     );
 }
 

@@ -5,9 +5,9 @@
     "record": {
       "key": {
         "host": "host-01",
-        "window": {
-          "server": "$1",
-          "window": "@2"
+        "session": {
+          "server": "main:42-7",
+          "session": 2
         }
       },
       "text": "git status",

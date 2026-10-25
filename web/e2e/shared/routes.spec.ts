@@ -9,7 +9,7 @@ const SCREENS: { name: string; fixture: string; hash: string; ready: string; act
   { name: "terminal", fixture: "restored", hash: "#/terminal", ready: "[aria-current='true'], button[aria-label$='open sessions']" },
   { name: "terminal-live", fixture: "terminalLive", hash: "#/terminal", ready: ".xterm:not([data-blank] *)" },
   { name: "terminal-limited", fixture: "terminalLimited", hash: "#/terminal", ready: "text=allows 1 tmux session" },
-  { name: "terminal-empty", fixture: "home", hash: "#/terminal", ready: "text=/Open a window (with \\+ or from Home|from Sessions)\\./" },
+  { name: "terminal-empty", fixture: "home", hash: "#/terminal", ready: "text=/Open a session (with \\+ or from Home|from Sessions)\\./" },
   { name: "enrol", fixture: "enrol", hash: "#/", ready: "text=Enrol this device" },
   { name: "wrong-origin", fixture: "wrongOrigin", hash: "#/", ready: "text=Open tether at" },
   { name: "origin-refused", fixture: "originRefused", hash: "#/", ready: "text=can't use" },

@@ -30,15 +30,15 @@ function splitText(text: string, limit: number): string[] {
 }
 
 /**
- * Events in order become `input` messages, each under the limit, with a `paste` message
+ * Events in order become `input` messages for `window`, each under the limit, with a `paste` message
  * wherever a paste event stands. Events that are not text are never reordered around it.
  */
-export function toMessages(watch: number, events: InputEvent[], nextReq: () => number): ClientMsg[] {
+export function toMessages(watch: number, window: number, events: InputEvent[], nextReq: () => number): ClientMsg[] {
   const out: ClientMsg[] = [];
   let items: InputItem[] = [];
   let size = 0;
   const flush = (): void => {
-    if (items.length) out.push({ type: "input", data: { watch, items } });
+    if (items.length) out.push({ type: "input", data: { watch, window, items } });
     items = [];
     size = 0;
   };
@@ -50,7 +50,7 @@ export function toMessages(watch: number, events: InputEvent[], nextReq: () => n
   for (const event of events) {
     if ("paste" in event) {
       flush();
-      out.push({ type: "paste", data: { req: nextReq(), watch, text: event.paste } });
+      out.push({ type: "paste", data: { req: nextReq(), watch, window, text: event.paste } });
     } else if ("text" in event) {
       for (const piece of splitText(event.text, MAX_INPUT_BYTES)) add({ text: piece }, encoder.encode(piece).length);
     } else if ("key" in event) {

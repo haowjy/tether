@@ -4,7 +4,7 @@
 //
 //   connecting --bound--> live --linkLost/watchEnded--> reconnecting --retry/nudge/linkUp--> connecting
 //   connecting --watchEnded(limit)--> limited --retry/nudge--> connecting
-//   any state ------------- windowClosed / serverExited / userClosed ----------------> closed
+//   any state ------------- sessionClosed / serverExited / userClosed ----------------> closed
 
 import type { WatchEndReason } from "../proto/generated/messages";
 
@@ -18,7 +18,7 @@ export type ConnectionState =
   | { kind: "reconnecting"; attempt: number; retryInMs: number | null; halt: Halt | null; message?: string }
   /** The daemon refused the watch for its session limit (resource-limits.md §3.6); `attempt` climbs the backoff. */
   | { kind: "limited"; attempt: number; retryInMs: number; message: string | undefined }
-  | { kind: "closed"; reason: "windowClosed" | "serverExited" | "user" };
+  | { kind: "closed"; reason: "sessionClosed" | "serverExited" | "user" };
 
 export type ConnectionEvent =
   | { type: "bound" } // `watching` arrived
@@ -28,7 +28,7 @@ export type ConnectionEvent =
   | { type: "retry" } // the backoff timer fired
   | { type: "nudge" } // became visible, came online, or the pill was tapped
   | { type: "rewatch" } // the tab returned to the screen: a new `watch`, a fresh snapshot
-  | { type: "windowClosed" }
+  | { type: "sessionClosed" }
   | { type: "serverExited" }
   | { type: "userClosed" };
 
@@ -56,7 +56,7 @@ function lost(attempt: number, retryInMs: number | null, halt: Halt | null): Con
 export function reduce(state: ConnectionState, event: ConnectionEvent): ConnectionState {
   if (state.kind === "closed") return state;
   switch (event.type) {
-    case "windowClosed":
+    case "sessionClosed":
     case "serverExited":
       return { kind: "closed", reason: event.type };
     case "userClosed":

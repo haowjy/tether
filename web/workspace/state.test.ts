@@ -5,37 +5,41 @@ import { tabLabels } from "./labels";
 import { tabId } from "../platform/tabKey";
 import { initialWorkspace, reduce, savedTabs, shownTab, type WorkspaceEvent, type WorkspaceState } from "./state";
 
-const key = (window: number, server = "main:1-1", host = "h1"): TabKey => ({ host, window: { server, window } });
-const open = (state: WorkspaceState, window: number, session = "s", name = `w${String(window)}`, server?: string) =>
-  reduce(state, { type: "opened", key: key(window, server), session, window: name, index: window });
+const key = (session: number, server = "main:1-1", host = "h1"): TabKey => ({ host, session: { server, session } });
+const open = (state: WorkspaceState, session: number, name = "s", window = `w${String(session)}`, server?: string) =>
+  reduce(state, { type: "opened", key: key(session, server), session: name, window });
 const run = (events: WorkspaceEvent[], from: WorkspaceState = initialWorkspace) =>
   events.reduce((acc, e) => { const r = reduce(acc.state, e); return { state: r.state, effects: [...acc.effects, ...r.effects] }; }, { state: from, effects: [] as ReturnType<typeof reduce>["effects"] });
+/** One session per id, each showing `w<id>` as its current window. */
 const listing = (server: string, ids: number[]): TmuxListing => ({
   server,
   version: "3.4",
-  sessions: [{ id: 1, name: "s", windows: ids.map((id) => ({ id, index: id, name: `w${String(id)}`, active: false, activity: 0 })) }],
+  sessions: ids.map((id) => ({
+    id,
+    name: "s",
+    windows: [{ id: id * 10, index: 0, name: `w${String(id)}`, active: true, activity: 0 }],
+  })),
 });
 const saved = (ids: number[], active: number): SavedWorkspace => ({
-  version: 1,
+  version: 2,
   tabs: ids.map((i) => ({ key: key(i), session: "s", window: `w${String(i)}` })),
   active: tabId(key(active)),
   files: null,
-  expanded: {},
 });
 
 describe("opening and closing", () => {
   it("opens and activates; opening again activates the same tab", () => {
     const r = run([
-      { type: "opened", key: key(1), session: "s", window: "a", index: 1 },
-      { type: "opened", key: key(2), session: "s", window: "b", index: 2 },
-      { type: "opened", key: key(1), session: "s", window: "a", index: 1 },
+      { type: "opened", key: key(1), session: "s", window: "a" },
+      { type: "opened", key: key(2), session: "s", window: "b" },
+      { type: "opened", key: key(1), session: "s", window: "a" },
     ]);
     expect(r.state.tabs).toHaveLength(2);
     expect(r.state.active).toBe(tabId(key(1)));
   });
 
   it("closing the active tab activates the right neighbour, else the left", () => {
-    let s = run([1, 2, 3].map((i): WorkspaceEvent => ({ type: "opened", key: key(i), session: "s", window: `w${String(i)}`, index: i })));
+    let s = run([1, 2, 3].map((i): WorkspaceEvent => ({ type: "opened", key: key(i), session: "s", window: `w${String(i)}` })));
     s = run([{ type: "activated", id: tabId(key(2)) }, { type: "closed", id: tabId(key(2)) }], s.state);
     expect(s.state.active).toBe(tabId(key(3)));
     s = run([{ type: "closed", id: tabId(key(3)) }], s.state);
@@ -43,7 +47,7 @@ describe("opening and closing", () => {
   });
 
   it("closing an inactive tab leaves the active tab", () => {
-    const s = run([1, 2].map((i): WorkspaceEvent => ({ type: "opened", key: key(i), session: "s", window: "w", index: i })));
+    const s = run([1, 2].map((i): WorkspaceEvent => ({ type: "opened", key: key(i), session: "s", window: "w" })));
     const r = reduce(s.state, { type: "closed", id: tabId(key(1)) });
     expect(r.state.active).toBe(tabId(key(2)));
   });
@@ -66,35 +70,34 @@ describe("navigation and focus", () => {
   });
 
   it("activating a tab already on Terminal only focuses it", () => {
-    const s = run([{ type: "opened", key: key(1), session: "s", window: "a", index: 1 }, { type: "navigated", onTerminal: true }]).state;
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", onTerminal: true }]).state;
     const r = reduce(s, { type: "activated", id: tabId(key(1)) });
     expect(r.effects).toEqual([{ type: "focus", target: "terminal" }]);
   });
 
   it("closing the last tab on Terminal navigates Home before focusing Home search", () => {
-    const s = run([{ type: "opened", key: key(1), session: "s", window: "a", index: 1 }, { type: "navigated", onTerminal: true }]).state;
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", onTerminal: true }]).state;
     const r = reduce(s, { type: "closed", id: tabId(key(1)) });
     expect(r.effects.map((e) => e.type)).toEqual(expect.arrayContaining(["navigate", "focus"]));
     expect(r.effects.findIndex((e) => e.type === "navigate")).toBeLessThan(r.effects.findIndex((e) => e.type === "focus"));
     expect(r.effects).toContainEqual({ type: "navigate", to: "home" });
   });
 
-  it("changes nothing, and so saves nothing, when a rename or a listing says what is known", () => {
-    const s = run([{ type: "opened", key: key(1), session: "s", window: "w1", index: 1 }]).state;
+  it("changes nothing, and so saves nothing, when a watching or a listing says what is known", () => {
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "w1" }]).state;
     const same = (e: WorkspaceEvent): void => { const r = reduce(s, e); expect(r.state).toBe(s); expect(r.effects).toEqual([]); };
-    same({ type: "renamed", hostId: "h1", window: key(1).window, name: "w1" });
-    same({ type: "renamed", hostId: "h1", window: key(9).window, name: "x" });
+    same({ type: "watching", id: tabId(key(1)), window: "w1" });
     same({ type: "listing", hostId: "h1", listing: listing("main:1-1", [1]) });
   });
 });
 
 describe("what is on screen", () => {
   it("watches only the active tab on the Terminal destination", () => {
-    let r = run([{ type: "opened", key: key(1), session: "s", window: "a", index: 1 }]);
+    let r = run([{ type: "opened", key: key(1), session: "s", window: "a" }]);
     expect(shownTab(r.state)).toBeNull();
     r = run([{ type: "navigated", onTerminal: true }], r.state);
     expect(shownTab(r.state)).toBe(tabId(key(1)));
-    r = run([{ type: "opened", key: key(2), session: "s", window: "b", index: 2 }], r.state);
+    r = run([{ type: "opened", key: key(2), session: "s", window: "b" }], r.state);
     expect(shownTab(r.state)).toBe(tabId(key(2)));
     r = run([{ type: "navigated", onTerminal: false }], r.state);
     expect(shownTab(r.state)).toBeNull();
@@ -106,13 +109,11 @@ describe("what is on screen", () => {
     expect(reduce(s, { type: "navigated", onTerminal: true }).effects.some((e) => e.type === "save")).toBe(false);
   });
 
-  it("does not save when only what is not saved changed (restoring, index)", () => {
+  it("does not save when only what is not saved changed (restoring)", () => {
     const restored = reduce(initialWorkspace, { type: "restored", saved: saved([1], 1) }).state;
-    const proven = reduce(restored, { type: "watching", id: tabId(key(1)) });
+    const proven = reduce(restored, { type: "watching", id: tabId(key(1)), window: "w1" });
+    expect(proven.state.tabs[0]?.restoring).toBe(false);
     expect(proven.effects.some((e) => e.type === "save")).toBe(false);
-    const moved = reduce(proven.state, { type: "listing", hostId: "h1", listing: { ...listing("main:1-1", [1]), sessions: [{ id: 1, name: "s", windows: [{ id: 1, index: 7, name: "w1", active: false, activity: 0 }] }] } });
-    expect(moved.state.tabs[0]?.index).toBe(7);
-    expect(moved.effects.some((e) => e.type === "save")).toBe(false);
   });
 });
 
@@ -126,9 +127,10 @@ describe("restore and pruning", () => {
 
   it("a watching reply proves a restoring tab", () => {
     const s = reduce(initialWorkspace, { type: "restored", saved: saved([1], 1) }).state;
-    const r = reduce(s, { type: "watching", id: tabId(key(1)) });
+    const r = reduce(s, { type: "watching", id: tabId(key(1)), window: "w1" });
     expect(r.state.tabs[0]?.restoring).toBe(false);
   });
+
 
   it("the first listing keeps listed tabs and closes the rest with one notice", () => {
     const s = reduce(initialWorkspace, { type: "restored", saved: saved([1, 2, 3], 3) }).state;
@@ -136,10 +138,10 @@ describe("restore and pruning", () => {
     expect(r.state.tabs.map((t) => t.id)).toEqual([tabId(key(1))]);
     expect(r.state.tabs[0]?.restoring).toBe(false);
     expect(r.state.active).toBe(tabId(key(1)));
-    expect(r.effects).toContainEqual({ type: "notice", text: "2 tabs closed: their windows are gone" });
+    expect(r.effects).toContainEqual({ type: "notice", text: "2 tabs closed: their sessions are gone" });
   });
 
-  it("never substitutes a same-named window", () => {
+  it("never substitutes a same-named session", () => {
     const s = reduce(initialWorkspace, { type: "restored", saved: saved([5], 5) }).state;
     const l = listing("main:1-1", [9]);
     expect(reduce(s, { type: "listing", hostId: "h1", listing: l }).state.tabs).toHaveLength(0);
@@ -147,7 +149,7 @@ describe("restore and pruning", () => {
 
   it("a restarted tmux (same endpoint, new run) closes its old tabs; another endpoint is untouched", () => {
     let s = reduce(initialWorkspace, { type: "restored", saved: saved([1], 1) }).state;
-    s = run([{ type: "opened", key: key(7, "scratch:2-2"), session: "x", window: "y", index: 7 }], s).state;
+    s = run([{ type: "opened", key: key(7, "scratch:2-2"), session: "x", window: "y" }], s).state;
     const r = reduce(s, { type: "listing", hostId: "h1", listing: listing("main:9-9", [1]) });
     expect(r.state.tabs.map((t) => t.id)).toEqual([tabId(key(7, "scratch:2-2"))]);
   });
@@ -169,52 +171,50 @@ describe("restore and pruning", () => {
     expect(reduce(s, { type: "hostsKnown", ids: ["h2"], complete: true }).state.tabs).toHaveLength(0);
   });
 
-  it("a listing refreshes names and indices", () => {
-    const s = reduce(initialWorkspace, { type: "restored", saved: saved([1], 1) }).state;
-    const l = listing("main:1-1", [1]);
-    const r = reduce(s, { type: "listing", hostId: "h1", listing: l });
-    expect(r.state.tabs[0]).toMatchObject({ index: 1, window: "w1" });
+  it("a listing refreshes the session name and, off screen, the current window's name", () => {
+    const s = reduce(initialWorkspace, { type: "restored", saved: { ...saved([1], 1), tabs: [{ key: key(1), session: "old", window: "older" }] } }).state;
+    const r = reduce(s, { type: "listing", hostId: "h1", listing: listing("main:1-1", [1]) });
+    expect(r.state.tabs[0]).toMatchObject({ session: "s", window: "w1", restoring: false });
   });
+
+
 });
 
 describe("daemon events", () => {
-  it("windowClosed and serverExited remove tabs", () => {
-    const s = run([1, 2].map((i): WorkspaceEvent => ({ type: "opened", key: key(i), session: "s", window: "w", index: i }))).state;
-    expect(reduce(s, { type: "windowClosed", id: tabId(key(1)) }).state.tabs).toHaveLength(1);
+  it("sessionClosed and serverExited remove tabs", () => {
+    const s = run([1, 2].map((i): WorkspaceEvent => ({ type: "opened", key: key(i), session: "s", window: "w" }))).state;
+    expect(reduce(s, { type: "sessionClosed", id: tabId(key(1)) }).state.tabs).toHaveLength(1);
     expect(reduce(s, { type: "serverExited", hostId: "h1", server: "main:1-1" }).state.tabs).toHaveLength(0);
-  });
-  it("a rename changes the window part", () => {
-    const s = open(initialWorkspace, 1).state;
-    const r = reduce(s, { type: "renamed", hostId: "h1", window: key(1).window, name: "vim" });
-    expect(r.state.tabs[0]?.window).toBe("vim");
   });
 });
 
 describe("savedTabs", () => {
   it("round-trips through restored", () => {
-    const s = run([1, 2].map((i): WorkspaceEvent => ({ type: "opened", key: key(i), session: "s", window: `w${String(i)}`, index: i }))).state;
-    const again = reduce(initialWorkspace, { type: "restored", saved: { version: 1, ...savedTabs(s), files: null, expanded: {} } }).state;
+    const s = run([1, 2].map((i): WorkspaceEvent => ({ type: "opened", key: key(i), session: "s", window: `w${String(i)}` }))).state;
+    const again = reduce(initialWorkspace, { type: "restored", saved: { version: 2, ...savedTabs(s), files: null } }).state;
     expect(again.tabs.map((t) => [t.id, t.session, t.window])).toEqual(s.tabs.map((t) => [t.id, t.session, t.window]));
   });
 });
 
 describe("tabLabels", () => {
   const host = (id: string): string => (id === "h1" ? "pop-os" : "mac");
-  it("is session / window, with the index only for colliding window names", () => {
+  it("is the session, then its current window, with no separator", () => {
     const tabs = run([
-      { type: "opened", key: key(1), session: "tether", window: "shell", index: 1 },
-      { type: "opened", key: key(2), session: "notes", window: "shell", index: 0 },
-      { type: "opened", key: key(3), session: "tether", window: "agent", index: 2 },
+      { type: "opened", key: key(1), session: "tether", window: "shell" },
+      { type: "opened", key: key(2), session: "notes", window: "shell" },
     ]).state.tabs;
-    expect(tabLabels(tabs, host).map((l) => l.full)).toEqual(["tether / 1: shell", "notes / 0: shell", "tether / agent"]);
+    expect(tabLabels(tabs, host).map((l) => [l.session, l.window, l.full])).toEqual([
+      ["tether", "shell", "tether shell"],
+      ["notes", "shell", "notes shell"],
+    ]);
   });
   it("names the host only when several are open", () => {
     const one = open(initialWorkspace, 1).state.tabs;
     expect(tabLabels(one, host)[0]?.host).toBeNull();
     const two = run([
-      { type: "opened", key: key(1), session: "a", window: "x", index: 1 },
-      { type: "opened", key: key(1, "main:1-1", "h2"), session: "b", window: "y", index: 1 },
+      { type: "opened", key: key(1), session: "a", window: "x" },
+      { type: "opened", key: key(1, "main:1-1", "h2"), session: "b", window: "y" },
     ]).state.tabs;
-    expect(tabLabels(two, host).map((l) => l.full)).toEqual(["a / x on pop-os", "b / y on mac"]);
+    expect(tabLabels(two, host).map((l) => l.full)).toEqual(["a x on pop-os", "b y on mac"]);
   });
 });

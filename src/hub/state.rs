@@ -1,5 +1,5 @@
 //! The hub's pure core (daemon-core.md §4.1–§4.6): every control client's `Session`,
-//! the watched windows with their streams and owners, and each connection's credit,
+//! the watched sessions with their windows, streams and owners, and each connection's credit,
 //! in one value. `handle` turns one input into effects; `reconcile` (reconcile.rs) then
 //! sends tmux whatever the watches need. No I/O and no clock: time comes in with each
 //! input.
@@ -16,10 +16,11 @@ use bytes::Bytes;
 use tracing::warn;
 
 use super::names::cut;
+use super::view::{Inflight, View, ViewKey, ViewPhase, Vote, WatchKey};
 use super::{
     CAPTURE_RESERVATION, COLS, ConnId, Endpoints, FromConn, PasteFile, ROWS, ToConn, charge,
 };
-use crate::proto::{self, ErrorCode, ServerMsg, WatchEndReason};
+use crate::proto::{self, ErrorCode, ServerMsg, ShownWindow as ProtoShownWindow, WatchEndReason};
 use crate::tmux::{
     ClientId, Endpoint, Event, OneShotCmd, Op, PaneId, PumpMsg, Reply, ServerInstance, Session,
     SessionId, Size, Step, Tag, TmuxError, WindowId,
@@ -83,7 +84,7 @@ pub struct State {
     /// The budget tier's control-client cap.
     pub(super) max_clients: usize,
     pub(super) clients: BTreeMap<ClientId, Client>,
-    pub(super) windows: BTreeMap<WinKey, Window>,
+    pub(super) views: BTreeMap<ViewKey, View>,
     pub(super) conns: BTreeMap<ConnId, Conn>,
     /// Exited control clients whose session is being checked (§4.5).
     pub(super) exits: BTreeMap<ClientId, ExitCheck>,
@@ -109,72 +110,6 @@ pub(super) struct EndpointState {
     pub(super) live: Option<ServerInstance>,
 }
 
-/// A window on one run of one endpoint's server.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct WinKey {
-    pub(super) endpoint: usize,
-    pub(super) server: ServerInstance,
-    pub(super) window: WindowId,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct WatchKey {
-    pub(super) conn: ConnId,
-    pub(super) watch: u32,
-}
-
-/// A watched window and the stream of the pane it shows (§4.2, §4.3). It exists while
-/// it has a watch.
-pub(super) struct Window {
-    pub(super) watches: BTreeSet<WatchKey>,
-    /// The watch whose last action currently sizes the window, if any.
-    pub(super) claim: Option<WatchKey>,
-    pub(super) phase: Phase,
-    pub(super) locate: Locate,
-    pub(super) stream: Stream,
-    pub(super) cwd: Option<String>,
-}
-
-pub(super) enum Phase {
-    /// Being found. `after` is how its owner ended, applied by the first answer that
-    /// finds the window still in that owner's session. `on` is the control client
-    /// whose session it was found in, which may still be starting or waiting to
-    /// respawn: the Locate runs on it, since the window binds only from an answer its
-    /// owner gave, which is ordered with the owner's notifications.
-    Locating {
-        after: Option<Exit>,
-        on: Option<ClientId>,
-    },
-    /// The owner's output, layout, active pane and cwd are the window's.
-    Bound {
-        owner: ClientId,
-        session: SessionId,
-        pane: PaneId,
-    },
-    /// The owner exited; waits for its session check.
-    Orphaned { client: ClientId },
-}
-
-/// One Locate per window in flight; a trigger during it runs it again afterwards.
-#[derive(Default)]
-pub(super) struct Locate {
-    pub(super) needed: bool,
-    pub(super) in_flight: Option<Tag>,
-}
-
-pub(super) struct Stream {
-    /// False: output is dropped until a snapshot lands.
-    pub(super) live: bool,
-    pub(super) size: Size,
-    /// The snapshot that can make it live, and the watches whose credit it reserved.
-    pub(super) inflight: Option<Inflight>,
-}
-
-pub(super) struct Inflight {
-    pub(super) tag: Tag,
-    pub(super) reserved: BTreeSet<WatchKey>,
-}
-
 #[derive(Default)]
 pub(super) struct Conn {
     /// Charged bytes not yet returned.
@@ -187,7 +122,7 @@ pub(super) struct Conn {
 }
 
 pub(super) struct Watch {
-    pub(super) window: WinKey,
+    pub(super) view: ViewKey,
     /// The size this watch last claimed with `watch` or `resize`.
     pub(super) size: Size,
     /// Gets the next snapshot, and no output until then.
@@ -201,7 +136,10 @@ pub(super) struct Watch {
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct Told {
-    pub(super) session: SessionId,
+    pub(super) window: WindowId,
+    pub(super) index: u32,
+    pub(super) name: String,
+    pub(super) size: Size,
     pub(super) pane: PaneId,
     pub(super) cwd: Option<String>,
 }
@@ -212,14 +150,16 @@ pub(super) struct Client {
     pub(super) session_name: String,
     pub(super) phase: ClientPhase,
     /// Votes and subscriptions sent, which count as applied.
-    pub(super) votes: BTreeMap<WindowId, Size>,
+    pub(super) votes: BTreeMap<WindowId, Vote>,
     pub(super) subscriptions: BTreeSet<WindowId>,
+    pub(super) current_subscribed: bool,
     /// What each tag in flight is for.
     pub(super) pending: BTreeMap<Tag, Work>,
     /// When a group last completed, or the first of the groups in flight went out.
     pub(super) progress: Instant,
     pub(super) linger: Option<Instant>,
     pub(super) last_crash: Option<Instant>,
+    pub(super) moved: bool,
 }
 
 pub(super) enum ClientPhase {
@@ -236,7 +176,7 @@ pub(super) enum ClientPhase {
 
 pub(super) enum Work {
     Locate {
-        window: WinKey,
+        view: ViewKey,
     },
     SessionCheck {
         exited: ClientId,
@@ -244,7 +184,7 @@ pub(super) enum Work {
     /// Holds a capture slot until tmux answers, even once the window's stream no
     /// longer waits for this tag.
     Snapshot {
-        window: WinKey,
+        view: ViewKey,
     },
     History {
         conn: ConnId,
@@ -252,10 +192,18 @@ pub(super) enum Work {
         req: u32,
         start: i32,
         end: i32,
+        pane: PaneId,
     },
     Input {
         conn: ConnId,
         watch: u32,
+    },
+    SelectWindow {
+        conn: ConnId,
+        watch: u32,
+        req: u32,
+        view: ViewKey,
+        window: WindowId,
     },
     Paste {
         conn: ConnId,
@@ -269,7 +217,7 @@ pub(super) enum Work {
 
 pub(super) enum OneShotWork {
     Locate {
-        window: WinKey,
+        view: ViewKey,
     },
     SessionCheck {
         exited: ClientId,
@@ -284,6 +232,8 @@ pub(super) enum OneShotWork {
         endpoint: usize,
         /// The instance a new window's session belongs to; `None` for a new session.
         server: Option<ServerInstance>,
+        watch: Option<WatchKey>,
+        session: Option<SessionId>,
     },
 }
 
@@ -317,7 +267,7 @@ impl State {
             host_name,
             max_clients,
             clients: BTreeMap::new(),
-            windows: BTreeMap::new(),
+            views: BTreeMap::new(),
             conns: BTreeMap::new(),
             exits: BTreeMap::new(),
             oneshot: None,
@@ -454,31 +404,46 @@ impl State {
                     self.break_stream(key);
                 }
             }
-            Event::Layout { window, panes } => {
+            Event::Layout {
+                window,
+                size,
+                panes,
+            } => {
+                self.vote_layout(client, window, size);
                 let Some(key) = self.owned(client, window) else {
                     return;
                 };
-                let Some(window) = self.windows.get_mut(&key) else {
+                let Some(view) = self.views.get_mut(&key) else {
                     return;
                 };
-                let Phase::Bound { pane, .. } = window.phase else {
+                let ViewPhase::Bound { pane, .. } = view.phase else {
                     return;
                 };
-                let size = panes
+                let pane_size = panes
                     .iter()
                     .find(|(id, _)| *id == pane)
                     .map(|(_, size)| *size);
-                if let Some(size) = size.filter(|size| *size != window.stream.size) {
-                    window.stream.size = size;
+                let mut changed = false;
+                if let Some(current) = &mut view.shown {
+                    if current.size != size {
+                        current.size = size;
+                        changed = true;
+                    }
+                }
+                if let Some(pane_size) = pane_size.filter(|size| *size != view.stream.size) {
+                    view.stream.size = pane_size;
                     self.break_stream(key);
+                }
+                if changed {
+                    self.tell(key);
                 }
             }
             Event::ActivePane { window, pane } => {
                 let Some(key) = self.owned(client, window) else {
                     return;
                 };
-                if let Some(Phase::Bound { pane: current, .. }) =
-                    self.windows.get_mut(&key).map(|window| &mut window.phase)
+                if let Some(ViewPhase::Bound { pane: current, .. }) =
+                    self.views.get_mut(&key).map(|view| &mut view.phase)
                 {
                     if *current != pane {
                         *current = pane;
@@ -488,55 +453,36 @@ impl State {
                 }
             }
             Event::Acted { window } => {
+                if let Some(key) = self.targeted(client, window) {
+                    if let Some(view) = self.views.get_mut(&key) {
+                        view.yield_if(window);
+                    }
+                }
+            }
+            Event::Cwd { window, .. } => {
                 if let Some(key) = self.owned(client, window) {
-                    if let Some(window) = self.windows.get_mut(&key) {
-                        window.claim = None;
-                    }
-                }
-            }
-            Event::Cwd { window, path } => {
-                let Some(key) = self.owned(client, window) else {
-                    return;
-                };
-                if let Some(window) = self.windows.get_mut(&key) {
-                    if window.cwd.as_deref() != Some(&path) {
-                        window.cwd = Some(path);
-                        self.tell(key);
-                    }
-                }
-            }
-            Event::WindowUnlinked { window } => {
-                // Closed or moved: only a Locate tells which.
-                let Some(record) = self.clients.get(&client) else {
-                    return;
-                };
-                let (endpoint, server) = (record.endpoint, record.server());
-                let mut held = false;
-                for (key, watched) in &mut self.windows {
-                    if key.endpoint == endpoint
-                        && Some(key.server) == server
-                        && key.window == window
-                    {
-                        held = true;
-                        if matches!(watched.phase, Phase::Bound { .. } | Phase::Locating { .. }) {
-                            watched.locate.needed = true;
-                        }
-                    }
-                }
-                // No watch will find out: tabs off screen learn it from the listing.
-                if !held && self.reporter(client).is_some() {
-                    self.relist = true;
+                    self.tell(key);
                 }
             }
             Event::WindowRenamed { window, name } => {
-                if let Some((endpoint, server)) = self.reporter(client) {
-                    let window = self.window_ref(endpoint, server, window);
-                    self.broadcast(&ServerMsg::WindowRenamed {
-                        window,
-                        name: cut(name),
-                    });
+                if self.reporter(client).is_some() {
+                    self.relist = true;
+                }
+                if let Some(key) = self.owned(client, window) {
+                    if let Some(current) = self
+                        .views
+                        .get_mut(&key)
+                        .and_then(|view| view.shown.as_mut())
+                    {
+                        if current.name != name {
+                            current.name = cut(name);
+                            self.tell(key);
+                        }
+                    }
                 }
             }
+            Event::CurrentWindow { window } => self.current_window(client, window),
+            Event::SessionChanged => self.owner_moved(client),
             Event::SessionsChanged => {
                 if self.reporter(client).is_some() {
                     self.relist = true;
@@ -549,18 +495,35 @@ impl State {
         }
     }
 
+    pub(super) fn vote_layout(&mut self, client: ClientId, window: WindowId, size: Size) {
+        let Some(vote) = self
+            .clients
+            .get_mut(&client)
+            .and_then(|record| record.votes.get_mut(&window))
+        else {
+            return;
+        };
+        if vote.size == size {
+            vote.confirmed = true;
+            vote.take_due = false;
+        } else if vote.confirmed {
+            vote.confirmed = false;
+            vote.take_due = true;
+        }
+    }
+
     pub(super) fn output(&mut self, client: ClientId, pane: PaneId, bytes: Bytes) {
         let Some(key) = self.owned_pane(client, pane) else {
             return;
         };
-        let Some(window) = self.windows.get(&key) else {
+        let Some(view) = self.views.get(&key) else {
             return;
         };
-        if !window.stream.live {
+        if !view.stream.live {
             return;
         }
         let charge = u64::from(charge(bytes.len()));
-        let watches: Vec<WatchKey> = window.watches.iter().copied().collect();
+        let watches: Vec<WatchKey> = view.watches.iter().copied().collect();
         for key in watches {
             let room = self.output_room(key.conn);
             let Some(conn) = self.conns.get_mut(&key.conn) else {
@@ -591,30 +554,26 @@ impl State {
     }
 
     pub(super) fn snapshot(&mut self, client: ClientId, tag: Tag, size: Size, restore: Bytes) {
-        let Some(Work::Snapshot { window: key }) = self
+        let Some(Work::Snapshot { view: key }) = self
             .clients
             .get_mut(&client)
             .and_then(|record| record.pending.remove(&tag))
         else {
             return;
         };
-        let Some(window) = self.windows.get_mut(&key) else {
+        let Some(view) = self.views.get_mut(&key) else {
             return;
         };
-        let Some(inflight) = window
-            .stream
-            .inflight
-            .take_if(|inflight| inflight.tag == tag)
-        else {
+        let Some(inflight) = view.stream.inflight.take_if(|inflight| inflight.tag == tag) else {
             return;
         };
         if restore.len() as u64 > CAPTURE_RESERVATION {
             self.abandon(inflight);
             let message = "the pane's screen is too large to show".to_owned();
-            return self.end_window(key, WatchEndReason::Error, Some(message));
+            return self.end_view(key, WatchEndReason::Error, Some(message));
         }
-        window.stream.live = true;
-        window.stream.size = size;
+        view.stream.live = true;
+        view.stream.size = size;
         let charge = u64::from(charge(restore.len()));
         let size = proto::Size {
             cols: size.cols,
@@ -651,11 +610,10 @@ impl State {
             return;
         };
         match work {
-            Work::Locate { window } => self.located(window, tag, Some(client), result),
+            Work::Locate { view } => self.located(view, tag, Some(client), result),
             Work::SessionCheck { exited } => self.checked(exited, tag, result),
-            Work::Snapshot { window: key } => {
-                let Some(stream) = self.windows.get_mut(&key).map(|window| &mut window.stream)
-                else {
+            Work::Snapshot { view: key } => {
+                let Some(stream) = self.views.get_mut(&key).map(|view| &mut view.stream) else {
                     return;
                 };
                 let Some(inflight) = stream.inflight.take_if(|inflight| inflight.tag == tag) else {
@@ -665,16 +623,16 @@ impl State {
                 match result {
                     // The window's active pane changed or it closed: find out which.
                     Err(TmuxError::PaneGone) => {
-                        if let Some(window) = self.windows.get_mut(&key) {
-                            window.locate.needed = true;
+                        if let Some(view) = self.views.get_mut(&key) {
+                            view.locate.needed = true;
                         }
                     }
-                    Err(TmuxError::Torn) => self.end_window(
+                    Err(TmuxError::Torn) => self.end_view(
                         key,
                         WatchEndReason::Error,
                         Some("a tmux hook keeps changing the pane during snapshots".to_owned()),
                     ),
-                    Err(TmuxError::TooLarge) => self.end_window(
+                    Err(TmuxError::TooLarge) => self.end_view(
                         key,
                         WatchEndReason::Error,
                         Some("the pane's screen is too large to show".to_owned()),
@@ -682,25 +640,41 @@ impl State {
                     // A stream waits only for a snapshot of a pane its owner shows,
                     // which it doesn't release; reconcile sends another.
                     Err(TmuxError::Released) | Ok(_) => {}
-                    Err(error) => self.end_window(
+                    Err(error) => self.end_view(
                         key,
                         WatchEndReason::Error,
                         Some(cut(format!("snapshot failed: {error}"))),
                     ),
                 }
             }
-            Work::History {
-                conn,
-                watch,
-                req,
-                start,
-                end,
-            } => self.history_answered(conn, watch, req, start, end, result),
+            work @ Work::History { .. } => self.history_answered(work, result),
             Work::Input { conn, watch } => {
                 if let Err(error) = result {
                     self.refuse_tmux(conn, None, Some(watch), &error);
                 }
             }
+            Work::SelectWindow {
+                conn,
+                watch,
+                req,
+                view: key,
+                window,
+            } => match result {
+                Ok(Reply::Ok) => {
+                    if let Some(view) = self.views.get_mut(&key) {
+                        if view.select_replied(window) {
+                            view.locate.needed = true;
+                        }
+                    }
+                }
+                Err(error) => {
+                    if let Some(view) = self.views.get_mut(&key) {
+                        view.select_failed(window);
+                    }
+                    self.refuse_tmux(conn, Some(req), Some(watch), &error);
+                }
+                Ok(_) => self.refuse_tmux(conn, Some(req), Some(watch), &TmuxError::BadReply),
+            },
             Work::Paste {
                 conn,
                 watch,
@@ -721,14 +695,14 @@ impl State {
     /// A tag that will never be answered: its control client is gone.
     pub(super) fn settle(&mut self, client: ClientId, tag: Tag, work: Work) {
         match work {
-            Work::Locate { window } => {
-                if let Some(window) = self.windows.get_mut(&window) {
-                    if window.locate.in_flight == Some(tag) {
-                        window.locate.in_flight = None;
-                        window.locate.needed = true;
+            Work::Locate { view: key } => {
+                if let Some(view) = self.views.get_mut(&key) {
+                    if view.locate.in_flight == Some(tag) {
+                        view.locate.in_flight = None;
+                        view.locate.needed = true;
                     }
-                    if let Phase::Locating { on, .. } = &mut window.phase {
-                        on.take_if(|on| *on == client);
+                    if matches!(view.phase, ViewPhase::Locating { owner } if owner == client) {
+                        view.phase = ViewPhase::Checking;
                     }
                 }
             }
@@ -737,13 +711,11 @@ impl State {
                     check.in_flight = check.in_flight.filter(|current| *current != tag);
                 }
             }
-            Work::Snapshot { window: key } => {
-                let inflight = self.windows.get_mut(&key).and_then(|window| {
-                    window
-                        .stream
-                        .inflight
-                        .take_if(|inflight| inflight.tag == tag)
-                });
+            Work::Snapshot { view: key } => {
+                let inflight = self
+                    .views
+                    .get_mut(&key)
+                    .and_then(|view| view.stream.inflight.take_if(|inflight| inflight.tag == tag));
                 if let Some(inflight) = inflight {
                     self.abandon(inflight);
                 }
@@ -775,6 +747,24 @@ impl State {
                     "tmux stopped answering before confirming the paste; it may have been sent",
                 );
             }
+            Work::SelectWindow {
+                conn,
+                watch,
+                req,
+                view: key,
+                window,
+            } => {
+                if let Some(view) = self.views.get_mut(&key) {
+                    view.select_failed(window);
+                }
+                self.refuse(
+                    conn,
+                    Some(req),
+                    Some(watch),
+                    ErrorCode::Tmux,
+                    "tmux stopped answering before confirming the window selection",
+                );
+            }
             Work::Input { .. } | Work::Maintenance => {}
         }
     }
@@ -783,13 +773,13 @@ impl State {
 
     /// The stream's continuity is lost: every watch waits for a fresh snapshot, and one
     /// already in flight may predate the cause, so it is forgotten.
-    pub(super) fn break_stream(&mut self, key: WinKey) {
-        let Some(window) = self.windows.get_mut(&key) else {
+    pub(super) fn break_stream(&mut self, key: ViewKey) {
+        let Some(view) = self.views.get_mut(&key) else {
             return;
         };
-        window.stream.live = false;
-        let inflight = window.stream.inflight.take();
-        for watch in &window.watches {
+        view.stream.live = false;
+        let inflight = view.stream.inflight.take();
+        for watch in &view.watches {
             if let Some(watch) = self
                 .conns
                 .get_mut(&watch.conn)
@@ -813,21 +803,40 @@ impl State {
     }
 
     /// Sends `watching` to every watch whose last one is out of date.
-    pub(super) fn tell(&mut self, key: WinKey) {
-        let Some(window) = self.windows.get(&key) else {
+    pub(super) fn tell(&mut self, key: ViewKey) {
+        let Some(view) = self.views.get(&key) else {
             return;
         };
-        let Phase::Bound { session, pane, .. } = window.phase else {
+        let ViewPhase::Bound { pane, owner } = view.phase else {
             return;
+        };
+        let Some(current) = &view.shown else {
+            return;
+        };
+        let shown = ProtoShownWindow {
+            id: current.id.0,
+            index: current.index,
+            name: current.name.clone(),
+            size: proto::Size {
+                cols: current.size.cols,
+                rows: current.size.rows,
+            },
         };
         let told = Told {
-            session,
+            window: current.id,
+            index: current.index,
+            name: current.name.clone(),
+            size: current.size,
             pane,
-            cwd: window.cwd.clone(),
+            cwd: self
+                .clients
+                .get(&owner)
+                .and_then(Client::tmux)
+                .and_then(|tmux| tmux.cwd(current.id))
+                .map(str::to_owned),
         };
-        let watches: Vec<WatchKey> = window.watches.iter().copied().collect();
-        let window_ref = self.window_ref(key.endpoint, key.server, key.window);
-        let session_ref = self.session_ref(key.endpoint, key.server, session);
+        let watches: Vec<WatchKey> = view.watches.iter().copied().collect();
+        let session_ref = self.session_ref(key.endpoint, key.server, key.session);
         for watch_key in watches {
             let Some(watch) = self
                 .conns
@@ -842,7 +851,7 @@ impl State {
             watch.told = Some(told.clone());
             let msg = ServerMsg::Watching {
                 watch: watch_key.watch,
-                window: window_ref.clone(),
+                window: shown.clone(),
                 session: session_ref.clone(),
                 pane: pane.0,
                 cwd: told.cwd.clone(),
@@ -851,25 +860,25 @@ impl State {
         }
     }
 
-    pub(super) fn remove_window(&mut self, key: WinKey) -> Option<Window> {
-        let mut window = self.windows.remove(&key)?;
-        if let Some(inflight) = window.stream.inflight.take() {
+    pub(super) fn remove_view(&mut self, key: ViewKey) -> Option<View> {
+        let mut view = self.views.remove(&key)?;
+        if let Some(inflight) = view.stream.inflight.take() {
             self.abandon(inflight);
         }
-        Some(window)
+        Some(view)
     }
 
-    /// Ends every watch on the window with `watchEnded`, and drops it.
-    pub(super) fn end_window(
+    /// Ends every watch on the view with `watchEnded`, and drops it.
+    pub(super) fn end_view(
         &mut self,
-        key: WinKey,
+        key: ViewKey,
         reason: WatchEndReason,
         message: Option<String>,
     ) {
-        let Some(window) = self.remove_window(key) else {
+        let Some(view) = self.remove_view(key) else {
             return;
         };
-        for watch in window.watches {
+        for watch in view.watches {
             if let Some(conn) = self.conns.get_mut(&watch.conn) {
                 conn.watches.remove(&watch.watch);
             }
@@ -882,39 +891,43 @@ impl State {
         }
     }
 
-    /// Drops the window and its watches without a word: a closure broadcast has told
+    /// Drops the view and its watches without a word: a closure broadcast has told
     /// the clients.
-    pub(super) fn drop_window(&mut self, key: WinKey) {
-        let Some(window) = self.remove_window(key) else {
+    pub(super) fn drop_view(&mut self, key: ViewKey) {
+        let Some(view) = self.remove_view(key) else {
             return;
         };
-        for watch in window.watches {
+        for watch in view.watches {
             if let Some(conn) = self.conns.get_mut(&watch.conn) {
                 conn.watches.remove(&watch.watch);
             }
         }
     }
 
-    /// A watch has gone; its window goes with its last watch.
-    pub(super) fn leave(&mut self, watch: WatchKey, key: WinKey) {
-        let Some(window) = self.windows.get_mut(&key) else {
+    /// A watch has gone; its view goes with its last watch.
+    pub(super) fn leave(&mut self, watch: WatchKey, key: ViewKey) {
+        let Some(view) = self.views.get_mut(&key) else {
             return;
         };
-        window.watches.remove(&watch);
-        if window.claim == Some(watch) {
-            window.claim = None;
+        view.watches.remove(&watch);
+        if view
+            .claim
+            .as_ref()
+            .is_some_and(|claim| claim.watch == watch)
+        {
+            view.claim = None;
         }
-        let reserved = window
+        let reserved = view
             .stream
             .inflight
             .as_mut()
             .is_some_and(|inflight| inflight.reserved.remove(&watch));
-        let empty = window.watches.is_empty();
+        let empty = view.watches.is_empty();
         if reserved {
             self.unreserve(watch.conn, CAPTURE_RESERVATION);
         }
         if empty {
-            self.remove_window(key);
+            self.remove_view(key);
         }
     }
 
@@ -928,6 +941,13 @@ impl State {
             .is_some_and(|tmux| tmux.in_flight() < limit)
     }
 
+    pub(super) fn room_for(&self, client: ClientId, limit: usize, groups: usize) -> bool {
+        self.clients
+            .get(&client)
+            .and_then(Client::ready)
+            .is_some_and(|tmux| tmux.in_flight() + groups <= limit)
+    }
+
     /// Snapshots and history captures in flight, daemon-wide.
     pub(super) fn captures(&self) -> usize {
         self.clients
@@ -935,17 +955,6 @@ impl State {
             .flat_map(|client| client.pending.values())
             .filter(|work| matches!(work, Work::Snapshot { .. } | Work::History { .. }))
             .count()
-    }
-}
-
-impl Window {
-    /// The control client the window depends on: its owner, or the one it waits for.
-    pub(super) fn client(&self) -> Option<ClientId> {
-        match self.phase {
-            Phase::Bound { owner, .. } => Some(owner),
-            Phase::Locating { on, .. } => on,
-            Phase::Orphaned { .. } => None,
-        }
     }
 }
 

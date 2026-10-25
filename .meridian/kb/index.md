@@ -9,4 +9,6 @@
 - [tailscale-and-launchd-shapes.md](tailscale-and-launchd-shapes.md): where tailscaled's
   and `launchctl`'s real stored and printed shapes differ from what a client assumes,
   and why fixtures must be captured from the real program.
+- [reviews.md](reviews.md): how reviews are staffed and triaged: Opus reviewers, the
+  lead's judgment over each finding, and when new tests stay.
 - [corrections.md](corrections.md): register of Jimmy's corrections of agents.

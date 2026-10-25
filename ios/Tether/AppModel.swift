@@ -66,6 +66,8 @@ final class TetherAppModel: ObservableObject {
             seeded = true
         }
         #endif
+        // A v1 workspace names window tabs; tabs follow sessions now, so it is dropped whole.
+        defaults.removeObject(forKey: "tether.workspace.v1")
         startNetworkMonitor()
     }
 
@@ -86,11 +88,11 @@ final class TetherAppModel: ObservableObject {
 
     func saveWorkspace(_ workspace: SavedWorkspace) {
         guard let data = try? JSONEncoder().encode(workspace) else { return }
-        defaults.set(data, forKey: "tether.workspace.v1")
+        defaults.set(data, forKey: "tether.workspace.v2")
     }
 
     func loadWorkspace() -> SavedWorkspace? {
-        guard let data = defaults.data(forKey: "tether.workspace.v1") else { return nil }
+        guard let data = defaults.data(forKey: "tether.workspace.v2") else { return nil }
         return try? JSONDecoder().decode(SavedWorkspace.self, from: data)
     }
 

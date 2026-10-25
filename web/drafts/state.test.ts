@@ -3,7 +3,7 @@ import { tabId } from "../platform/tabKey";
 import type { TabKey } from "../platform/types";
 import { checkEdit, initialDrafts, MAX_DRAFT_BYTES, MAX_DRAFTS, pendingKey, reduce, type DraftsEvent, type DraftsState } from "./state";
 
-const key = (window: number): TabKey => ({ host: "h", window: { server: "s", window } });
+const key = (session: number): TabKey => ({ host: "h", session: { server: "s", session } });
 const NONE: ReadonlySet<string> = new Set();
 const draftText = (state: DraftsState, id: string): string => state.drafts[id]?.text ?? "";
 const ID = tabId(key(1));
@@ -131,7 +131,7 @@ describe("send states by req", () => {
   });
 
   it("keeps two hosts' lines apart when their requests share a number", () => {
-    const other: TabKey = { host: "other", window: { server: "s", window: 9 } };
+    const other: TabKey = { host: "other", session: { server: "s", session: 9 } };
     const both = run(initialDrafts, edit(1, "a"), { type: "submit", key: key(1), text: "a", req: 7, now: 1 }, { type: "edit", key: other, text: "b", now: 2, open: NONE }, { type: "submit", key: other, text: "b", req: 7, now: 3 });
     expect(Object.keys(both.pending)).toHaveLength(2);
     const after = run(both, { type: "answered", id: ID, req: 7, open: NONE, outcome: { kind: "pasted" } });

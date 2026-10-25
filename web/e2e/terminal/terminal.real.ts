@@ -35,12 +35,11 @@ for (const version of VERSIONS) {
       await expect.poll(() => pane(session), { timeout }).toMatch(typeof text === "string" ? new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) : text);
     };
 
-    /** Opens `session`'s first window from Home and waits until the tab is connected and holds the focus. */
+    /** Opens `session` from Home and waits until the tab is connected and holds the focus. */
     async function openTerminal(page: Page, session: string, connected = true, viewport = DESKTOP): Promise<void> {
       await page.setViewportSize(viewport);
       await page.goto(`${stack.url}/#/`);
       await page.getByRole("button", { name: new RegExp(`^${session}\\b`) }).click();
-      await page.getByRole("button", { name: /^0: / }).click();
       if (!connected) {
         await expect(page.locator("[aria-current='true']").first()).toBeVisible();
         return;
@@ -57,7 +56,7 @@ for (const version of VERSIONS) {
       await page.keyboard.type("echo typed-ok");
       await page.keyboard.press("Enter");
       await paneIncludes(s, /^typed-ok$/m);
-      await expect(page.locator("[aria-current='true']")).toHaveAttribute("aria-label", new RegExp(`^${s} / `));
+      await expect(page.locator("[aria-current='true']")).toHaveAttribute("aria-label", new RegExp(`^${s} `));
     });
 
     test("routes named keys by name: vim and less", async ({ page }) => {
@@ -288,18 +287,25 @@ for (const version of VERSIONS) {
         }
       });
 
-      test("a smaller pane sits top-left with no band", async ({ page }) => {
+      test("a smaller pane sits top-left, with the band after 1 s; Fit takes the window back", async ({ page }) => {
         const s = newSession();
         await openTerminal(page, s, true, SMALL);
+        await expect.poll(() => windowSize(s)).not.toBe("100x30");
+        const phone = windowSize(s);
         const laptop = await stack.attach(s, { cols: 60, rows: 20 });
         try {
-          await takeWindow(s, laptop, "60x19", "echo hi\r");
+          const since = await takeWindow(s, laptop, "60x19", "echo hi\r");
           // 19 rows of a box that holds 30 or so.
           await expect.poll(async () => { const v = await drawn(page); return v.height < v.hostHeight * 0.7; }).toBe(true);
           const view = await drawn(page);
           expect(view.width).toBeLessThan(view.hostWidth);
           expect(view.transform).toBe("");
-          await page.waitForTimeout(1500);
+          // The band says so for a smaller window as for a larger one.
+          await expect(band(page)).toBeVisible();
+          expect(Date.now() - since).toBeGreaterThanOrEqual(800);
+
+          await band(page).getByRole("button", { name: "Fit" }).click();
+          await expect.poll(() => windowSize(s)).toBe(phone);
           await expect(band(page)).toHaveCount(0);
         } finally {
           laptop.detach();

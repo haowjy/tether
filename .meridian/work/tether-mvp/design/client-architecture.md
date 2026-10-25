@@ -11,6 +11,16 @@ roll call, the second listing fetcher, the copies of navigation state, admission
 adapter, and the browser's second focus owner. The
 [disposition table](#review-disposition) at the end says where each finding went.
 
+**Superseded in part by tabs-follow-a-session (2026-10-25).** A tab is a tmux *session*,
+not a window; the current rules are in
+[design-session-follow-and-folder-find.md](../design-session-follow-and-folder-find.md) §1,
+`docs/design/daemon-core.md` (§3.6 sizing and claims, the protocol table) and
+`docs/design/ios-shell.md` (bridge 3). Where this spec says `WindowRef`, a window tab, a
+window in a list, bridge 2 or saved workspace version 1, read session; the passages that
+carried the old rule are corrected in place (glossary, §5.4 band and re-watch, §6.1 tab
+key, labels and saved workspace, §6.2 restore). Sections about other subjects, and the
+review logs and disposition table, are historical and untouched.
+
 This spec covers the web client that replaces today's `web/` views. That client runs
 in three places: a desktop browser, a phone browser or installed PWA, and the native
 iPhone app's WKWebView. Behaviour comes from
@@ -125,8 +135,8 @@ One name per concept. The code, the specs and the UI copy use these.
 
 | Term | Meaning | Not to be confused with |
 |---|---|---|
-| **host** | One tether daemon endpoint, identified by `hostId` (`/auth/info.hostId`, `welcome.host.id`). The browser has exactly one, the daemon behind its page origin. Native has a saved list | `WindowRef.server`, a tmux server *instance*. UI copy shows the host's name (`pop-os`) with no label word; native settings call the list "Servers" (connection-roadmap.md) |
-| **tab** | A tether tab: one tmux window open in tether. Its identity is the **tab key**, `(hostId, WindowRef)` | A browser tab. Closing a tether tab never touches tmux |
+| **host** | One tether daemon endpoint, identified by `hostId` (`/auth/info.hostId`, `welcome.host.id`). The browser has exactly one, the daemon behind its page origin. Native has a saved list | `SessionRef.server`, a tmux server *instance*. UI copy shows the host's name (`pop-os`) with no label word; native settings call the list "Servers" (connection-roadmap.md) |
+| **tab** | A tether tab: one tmux session open in tether, showing whichever window the session shows. Its identity is the **tab key**, `(hostId, SessionRef)` | A browser tab. Closing a tether tab never touches tmux |
 | **destination** | Home, Terminal or Files: the top level of navigation | |
 | **overlay** | A modal surface stacked on a destination: the picker, the switcher, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files; the **status band** |
 | **navigation stack** | The browser history entries tether pushes: destination, overlay, Files folder and preview (§6.6). Its only writer is the router | The tab strip, which never enters history |
@@ -580,23 +590,26 @@ needs no event reason. Only the adapters differ, in how they define `stableHeigh
     WebKit's canvas limit and mostly clipped.
   - **The band.** The status band says "Sized for another terminal" with **Fit**, which
     sends `resize` with the tab's own size at once and so claims the window; typing,
-    pasting and rotating claim it as well. It shows once the pane has been wider or
-    taller than the size the tab last sent for one second, so a rotation's debounce,
-    a claim's round trip and a first snapshot that predates the vote don't flash it,
-    and hides as soon as the pane fits. The tab knows this without the daemon: a
-    window the tab holds is never larger than the size it sent. Reconnecting, limited
-    and failed replace it.
-  - **Smaller:** drawn from the top-left corner on the terminal background, with no
-    band: a claim caps the window and never grows it past the size of the client tmux
-    sizes it by. With two tether tabs on one window, the smaller holds it until the
-    other acts (two phones aren't designed for).
+    pasting and rotating claim it as well. It shows once the window's size, as the last
+    `watching` reported it, has differed from the size the tab last sent for longer than
+    max(1 s, ping round trip + 0.5 s), in either direction, so a rotation's debounce, a
+    claim's round trip and a first snapshot that predates the vote don't flash it. Each
+    claiming send restarts the wait, a match clears the band, and no wait runs while the
+    tab is not live. The band is presentation only; nothing decides ownership from it.
+    Reconnecting, limited and failed replace it.
+  - **Smaller:** drawn from the top-left corner on the terminal background, with the
+    band after the same wait: a claim caps the window and never grows it past the size
+    of the client tmux sizes it by. With two tether tabs on one window, the smaller
+    holds it until the other acts (two phones aren't designed for).
   - **Re-watching by itself.** A tab that comes on screen through the user (opened,
     switched to, back from Home, Files or a native screen, the app unlocked or brought
-    forward) sends `watch` as a claim. A re-watch the client makes by itself (a
-    reconnect while visible, a daemon restart, a backoff retry) sends `claim: false`
-    unless the tab held the window when its watch ended, which it knows from the band
-    rule: its pane was no larger than the size it sent. A network blip therefore never
-    takes a window the laptop holds.
+    forward) sends `watch` as a claim (`claimNext`). A re-watch the client makes by
+    itself (a reconnect while visible, a daemon restart, a backoff retry) sends
+    `claim: false` unless the tab still holds the window: the size of the shown window in
+    the last `watching` equals the size the tab last sent (`holdsWindow`). That compares
+    two facts the tab already has; it never reads the band. Before the first `watching`
+    nothing is known, and `claimNext` is set, so the first watch claims. A network blip
+    therefore never takes a window the laptop holds, even inside the band's wait.
   - Taps, selection and `cellAt` already map through measured cells and the pan, so
     they hold at any pane size.
 - **Keyboard detection (browser).** `keyboard` is true when all of these hold: a text
@@ -832,7 +845,7 @@ Consequences:
 ### 6.1 The workspace core
 
 `workspace/` is a pure reducer over the open tabs and nothing else. Events go in:
-`opened`, `closed`, `activated`, `listing`, `windowClosed`, `serverExited`, `renamed`,
+`opened`, `closed`, `activated`, `listing`, `sessionClosed`, `serverExited`, `hostsKnown`,
 `navigated`, `restored`, `watching`. State and effects come out: `save`, `navigate`,
 `focus`, `notice`. The controller in `app/` runs the effects against the router, the focus
 controller and persist now. `TabDriver` keeps owning its own watch and its connection states,
@@ -843,7 +856,7 @@ every driver from that predicate, so no second copy owns which tab is shown or w
 watch is active.
 
 ```ts
-type TabKey = { host: string; window: WindowRef };   // WindowRef = { server, window }
+type TabKey = { host: string; session: SessionRef };   // SessionRef = { server, session: $N }
 interface WorkspaceState {
   tabs: Tab[];                    // in strip order
   active: string | null;          // the active tab's key string
@@ -853,7 +866,7 @@ interface WorkspaceState {
 
 **State that is not here has its own owner.** Overlays, Files folders and the preview
 are the navigation stack (§6.6). The Files place is held by `FileBrowser`, the
-listing by `sessions/`, expansion by `sessions/`, the focus owner by `app/focus.ts`.
+listing by `sessions/`, the focus owner by `app/focus.ts`.
 Each lane therefore extends its own state without asking W0.
 
 **The saved workspace is assembled, not owned.** `app/persist.ts` builds it from each
@@ -861,23 +874,22 @@ owner when it saves, and hands each owner its part at boot:
 
 ```ts
 interface SavedWorkspace {
-  version: 1;
+  version: 2;                       // a version-1 (window tabs) workspace is dropped whole, never migrated
   tabs: { key: TabKey; session: string; window: string }[];   // the last names, so restored pills have them
   active: string | null;
   files: { hostId: string; place: FilesPlace } | null;   // FileBrowser's place
-  expanded: Record<string, string[]>;       // sessions/ expansion, by hostId
 }
 ```
 
 A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
 `net/hosts.ts` knows that host's `hostId` (§6.2).
 
-- **Identity is the tab key**, never a name or an index. Opening a window that already
+- **Identity is the tab key**, never a name or an index. Opening a session that already
   has a tab activates that tab.
 - **Labels** are derived in `workspace/labels.ts`:
-  - The label is `session / window`.
-  - The real window index is appended when two open tabs' window names collide.
-  - When the label is truncated, the window part is kept before the session part.
+  - The label is the session name, then the window the session shows now (`watching`'s,
+    else the listing's current window).
+  - When the label is truncated, the window part goes first.
   - The host's name is appended only when tabs from more than one host are open
     (native).
   - The full label is the pill's tooltip and accessible name.
@@ -913,12 +925,12 @@ A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
    reconnecting colour with "Checking…", with input disabled.
 2. The active tab's `watch` is sent once the socket is up and the stable box is
    measured, in parallel with the listing. A reload therefore costs one round trip on a
-   slow link. A `watching` reply proves the daemon found the window: the tab becomes
+   slow link. A `watching` reply proves the daemon found the session: the tab becomes
    live and takes input.
 3. The **first authoritative listing** from that host decides every tab still
    `restoring` whose `server` is the listing's tmux server. Such a tab is kept if a
-   window in the listing has its `WindowRef`, and closed otherwise. One notice reports
-   the closures: "2 tabs closed: their windows are gone". Same-named windows are never
+   session in the listing has its `SessionRef`, and closed otherwise. One notice reports
+   the closures: "2 tabs closed: their sessions are gone". Same-named sessions are never
    substituted. Tabs on another server instance follow plan.md's rule: the listing
    covers the `main` server only, so it never prunes scratch tabs.
 4. A refused or failed listing decides nothing. The listing fetcher (§6.3) retries it
@@ -931,16 +943,15 @@ A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
 
 ### 6.3 The sessions listing
 
-`sessions/` caches one listing per host and exposes search and expansion as pure
-functions over it. It never fetches. The controller owns the cache (`app.sessions`) and
-feeds it the fetcher's events, so a save before any screen mounts still writes the
-saved expansion.
+`sessions/` caches one listing per host and exposes session search as pure functions
+over it. It never fetches. The controller owns the cache (`app.sessions`) and feeds it
+the fetcher's events.
 
 - **One fetcher.** `app/listing.ts` joins each host as a `TabPort` and is the only code
   that sends `listSessions`. Each result goes two ways from the same reply: to
   `sessions/` as `listed`, which Home and the picker render, and to the workspace
   reducer as `listing`, which drives pruning (§6.2). Both therefore see the same
-  listing. It also forwards `windowRenamed` to the workspace as `renamed`.
+  listing. Window labels come from each tab's `watching` event.
 - **When it fetches:**
   - entering Home;
   - opening the picker;

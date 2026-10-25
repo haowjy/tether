@@ -29,7 +29,7 @@
 .pill[data-tone="reconnecting"] { --pill-color: var(--color-status-reconnecting); }
 .pill[data-tone="error"] { --pill-color: var(--color-status-error); }
 .pill[data-tone="gone"] { --pill-color: var(--color-status-gone); }
-.active { background: var(--tab-bg-active); font-weight: var(--weight-bold); }
+.active { background: var(--tab-bg-active); }
 
 .select {
   display: flex;
@@ -43,7 +43,7 @@
   font-weight: inherit;
   white-space: nowrap;
 }
-.session { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
-/* The window part is kept before the session part: long session names truncate first. */
-.window { flex: none; margin-left: 0.3em; }
+/* The session name is bold and the window's regular, set apart by space alone. The window name truncates first: it gives up width a hundred times faster than the session name. */
+.session { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 0.01 auto; font-weight: var(--weight-bold); }
+.window { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; margin-left: var(--space-2); font-weight: normal; }
 .close { width: var(--tab-height); height: var(--tab-height); flex: none; color: var(--color-text-muted); }

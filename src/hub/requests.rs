@@ -1,27 +1,24 @@
-//! What connections ask of the hub (daemon-core.md §4.2, §5.3): watches, input,
-//! pastes, history, the session listing and new windows. User requests are refused
-//! with `busy` rather than queued.
+//! Handle client requests against the session views. User requests are refused with
+//! `busy` rather than queued.
 
 use std::collections::BTreeSet;
 
 use super::names::cut;
-use super::state::{
-    Effect, Locate, MAIN, OneShotWork, Phase, State, Stream, Watch, WatchKey, WinKey, Window, Work,
-    clamp,
-};
+use super::state::{Effect, MAIN, OneShotWork, State, Watch, Work, clamp};
+use super::view::{Locate, Stream, Take, View, ViewKey, ViewPhase, Vote, WatchKey, vote_plan};
 use super::{
     CAPTURE_RESERVATION, CAPTURE_SLOTS, ConnId, FromConn, HISTORY_ROWS, LISTING_RESERVATION,
     MAX_INPUT, MAX_WATCHES, PasteFile, USER_IN_FLIGHT,
 };
 use crate::proto::{
     self, Base64, ClientMsg, ErrorCode, ServerMsg, SessionListing, SessionRef, TmuxListing,
-    WatchEndReason, WindowListing, WindowRef,
+    WatchEndReason, WindowListing,
 };
 use crate::tmux::{
-    ClientId, InputItem, OneShotCmd, Op, PaneId, Reply, ServerInstance, SessionId, Tag, TmuxError,
-    WindowId,
+    ClientId, InputItem, OneShotCmd, Op, PaneId, Reply, SessionId, Size, Tag, TmuxError, WindowId,
 };
 
+#[derive(Clone, Copy)]
 enum Refusal {
     UnknownWatch,
     NotBound,
@@ -35,9 +32,10 @@ impl State {
             FromConn::Paste {
                 req,
                 watch,
+                window,
                 enter,
                 file,
-            } => self.paste(conn, req, watch, enter, file),
+            } => self.paste(conn, req, watch, WindowId(window), enter, file),
             FromConn::Credit { bytes } => {
                 if let Some(state) = self.conns.get_mut(&conn) {
                     state.outstanding = state.outstanding.saturating_sub(u64::from(bytes));
@@ -54,30 +52,18 @@ impl State {
         match msg {
             ClientMsg::Watch {
                 watch,
-                window,
+                session,
                 size,
                 claim,
-            } => self.watch(conn, watch, window, size, claim.unwrap_or(true)),
+            } => self.watch(conn, watch, session, size, claim.unwrap_or(true)),
             ClientMsg::Unwatch { watch } => {
                 if let Some(state) = self.conns.get_mut(&conn) {
                     if let Some(removed) = state.watches.remove(&watch) {
-                        self.leave(WatchKey { conn, watch }, removed.window);
+                        self.leave(WatchKey { conn, watch }, removed.view);
                     }
                 }
             }
-            ClientMsg::Resize { watch, size } => {
-                if let Some(key) = self.watch_window(conn, watch) {
-                    let watch_key = WatchKey { conn, watch };
-                    if let Some(current) = self
-                        .conns
-                        .get_mut(&conn)
-                        .and_then(|state| state.watches.get_mut(&watch))
-                    {
-                        current.size = clamp(size);
-                        self.claim(key, watch_key);
-                    }
-                }
-            }
+            ClientMsg::Resize { watch, size } => self.resize(conn, watch, size),
             ClientMsg::Resync { watch } => {
                 if let Some(watch) = self
                     .conns
@@ -88,20 +74,29 @@ impl State {
                     watch.starved = false;
                 }
             }
-            ClientMsg::Input { watch, items } => self.input(conn, watch, items),
+            ClientMsg::Input {
+                watch,
+                window,
+                items,
+            } => self.input(conn, watch, WindowId(window), items),
+            ClientMsg::Paste { .. } => {}
             ClientMsg::History {
                 req,
                 watch,
                 start,
                 end,
             } => self.history(conn, req, watch, start, end),
+            ClientMsg::SelectWindow { req, watch, window } => {
+                self.select_window(conn, req, watch, WindowId(window))
+            }
             ClientMsg::ListSessions { req } => self.list(conn, req),
             ClientMsg::NewWindow {
                 req,
                 session,
                 name,
                 dir,
-            } => self.new_window(conn, req, &session, name, dir),
+                watch,
+            } => self.new_window(conn, req, &session, watch, name, dir),
             ClientMsg::NewSession {
                 req,
                 name,
@@ -117,25 +112,30 @@ impl State {
                         "scratch shells aren't available yet",
                     );
                 }
-                let cmd = OneShotCmd::NewSession {
-                    name,
-                    dir: dir.map(Into::into),
-                };
-                self.create(conn, req, MAIN, None, cmd);
+                self.create(
+                    OneShotCmd::NewSession {
+                        name,
+                        dir: dir.map(Into::into),
+                    },
+                    OneShotWork::Create {
+                        conn,
+                        req,
+                        endpoint: MAIN,
+                        server: None,
+                        watch: None,
+                        session: None,
+                    },
+                );
             }
-            // The connection's own: handshake, heartbeat, and pastes as files.
-            ClientMsg::Hello { .. }
-            | ClientMsg::Ping { .. }
-            | ClientMsg::Paste { .. }
-            | ClientMsg::Unknown => {}
+            ClientMsg::Hello { .. } | ClientMsg::Ping { .. } | ClientMsg::Unknown => {}
         }
     }
 
-    pub(super) fn watch(
+    fn watch(
         &mut self,
         conn: ConnId,
         watch: u32,
-        window: WindowRef,
+        session: SessionRef,
         size: proto::Size,
         claim: bool,
     ) {
@@ -143,8 +143,13 @@ impl State {
             return;
         };
         if state.watches.contains_key(&watch) {
-            let message = "that watch id is in use";
-            return self.refuse(conn, None, Some(watch), ErrorCode::BadRequest, message);
+            return self.refuse(
+                conn,
+                None,
+                Some(watch),
+                ErrorCode::BadRequest,
+                "that watch id is in use",
+            );
         }
         if state.watches.len() >= MAX_WATCHES {
             let msg = ServerMsg::WatchEnded {
@@ -154,12 +159,14 @@ impl State {
             };
             return self.send(conn, &msg, Some(watch));
         }
-        let Some((endpoint, server)) = self.parse_server(&window.server) else {
-            // Not a server this daemon can ever reach: close the tab.
-            let msg = ServerMsg::ServerExited {
-                server: window.server,
-            };
-            return self.send(conn, &msg, None);
+        let Some((endpoint, server)) = self.parse_server(&session.server) else {
+            return self.send(
+                conn,
+                &ServerMsg::ServerExited {
+                    server: session.server,
+                },
+                None,
+            );
         };
         if self.endpoints[endpoint]
             .live
@@ -167,40 +174,40 @@ impl State {
         {
             return self.server_gone(endpoint, server);
         }
-        let key = WinKey {
+        let key = ViewKey {
             endpoint,
             server,
-            window: WindowId(window.window),
+            session: SessionId(session.session),
         };
         let size = clamp(size);
-        let entry = self.windows.entry(key).or_insert_with(|| Window {
+        let owner = self.client_for(endpoint, key.session);
+        let entry = self.views.entry(key).or_insert_with(|| View {
             watches: BTreeSet::new(),
             claim: None,
-            phase: Phase::Locating {
-                after: None,
-                on: None,
-            },
+            selecting: None,
+            phase: owner.map_or(ViewPhase::Checking, |owner| ViewPhase::Locating { owner }),
             locate: Locate {
                 needed: true,
-                ..Locate::default()
+                ..Default::default()
             },
+            shown: None,
+            next: None,
             stream: Stream {
                 live: false,
                 size,
                 inflight: None,
             },
-            cwd: None,
         });
         let watch_key = WatchKey { conn, watch };
         entry.watches.insert(watch_key);
         if claim {
-            entry.claim = Some(watch_key);
+            entry.claim(watch_key, Take::Due);
         }
         if let Some(state) = self.conns.get_mut(&conn) {
             state.watches.insert(
                 watch,
                 Watch {
-                    window: key,
+                    view: key,
                     size,
                     awaiting: true,
                     starved: false,
@@ -212,42 +219,146 @@ impl State {
         self.tell(key);
     }
 
-    pub(super) fn watch_window(&self, conn: ConnId, watch: u32) -> Option<WinKey> {
-        Some(self.conns.get(&conn)?.watches.get(&watch)?.window)
+    fn resize(&mut self, conn: ConnId, watch: u32, size: proto::Size) {
+        let Some(key) = self.watch_view(conn, watch) else {
+            return;
+        };
+        let watch_key = WatchKey { conn, watch };
+        let Some(current) = self
+            .conns
+            .get_mut(&conn)
+            .and_then(|state| state.watches.get_mut(&watch))
+        else {
+            return;
+        };
+        let old_size = current.size;
+        current.size = clamp(size);
+        let size = current.size;
+        let Some(view) = self.views.get_mut(&key) else {
+            return;
+        };
+        view.claim(
+            watch_key,
+            if old_size == size {
+                Take::Fit
+            } else {
+                Take::Due
+            },
+        );
     }
 
-    /// The owner and pane a user request on this watch goes to, or why it can't.
-    fn user_target(&self, conn: ConnId, watch: u32) -> Result<(WinKey, ClientId, PaneId), Refusal> {
-        let key = self
-            .watch_window(conn, watch)
-            .ok_or(Refusal::UnknownWatch)?;
-        let window = self.windows.get(&key).ok_or(Refusal::UnknownWatch)?;
-        let Phase::Bound { owner, pane, .. } = window.phase else {
+    fn watch_view(&self, conn: ConnId, watch: u32) -> Option<ViewKey> {
+        self.conns
+            .get(&conn)?
+            .watches
+            .get(&watch)
+            .map(|watch| watch.view)
+    }
+
+    fn user_target(
+        &self,
+        conn: ConnId,
+        watch: u32,
+    ) -> Result<(ViewKey, ClientId, PaneId), Refusal> {
+        let key = self.watch_view(conn, watch).ok_or(Refusal::UnknownWatch)?;
+        let view = self.views.get(&key).ok_or(Refusal::UnknownWatch)?;
+        let ViewPhase::Bound { owner, pane } = view.phase else {
             return Err(Refusal::NotBound);
         };
         if !self.room(owner, USER_IN_FLIGHT) {
             return Err(Refusal::Busy);
         }
+        if self
+            .conns
+            .get(&conn)
+            .and_then(|state| state.watches.get(&watch))
+            .is_none_or(|watch| watch.told.is_none())
+        {
+            return Err(Refusal::NotBound);
+        }
         Ok((key, owner, pane))
     }
 
-    pub(super) fn input(&mut self, conn: ConnId, watch: u32, items: Vec<proto::InputItem>) {
-        let size: usize = items
+    pub(super) fn record_vote(
+        &mut self,
+        owner: ClientId,
+        window: WindowId,
+        size: Size,
+        take: bool,
+    ) {
+        self.record_vote_state(owner, window, size);
+        let tag = self.next_tag();
+        self.request(
+            owner,
+            tag,
+            Op::Vote { window, size, take },
+            Work::Maintenance,
+        );
+    }
+
+    fn record_vote_state(&mut self, owner: ClientId, window: WindowId, size: Size) {
+        if let Some(client) = self.clients.get_mut(&owner) {
+            client.votes.insert(
+                window,
+                Vote {
+                    size,
+                    confirmed: false,
+                    take_due: false,
+                },
+            );
+        }
+    }
+
+    fn input(&mut self, conn: ConnId, watch: u32, window: WindowId, items: Vec<proto::InputItem>) {
+        let size_bytes: usize = items
             .iter()
             .map(|item| match item {
                 proto::InputItem::Text(text) | proto::InputItem::Key(text) => text.len(),
                 proto::InputItem::Bytes(bytes) => bytes.0.len(),
             })
             .sum();
-        if size > MAX_INPUT {
-            let message = format!("input over {MAX_INPUT} bytes");
-            return self.refuse(conn, None, Some(watch), ErrorCode::InputTooLarge, &message);
+        if size_bytes > MAX_INPUT {
+            return self.refuse(
+                conn,
+                None,
+                Some(watch),
+                ErrorCode::InputTooLarge,
+                &format!("input over {MAX_INPUT} bytes"),
+            );
         }
         let (key, owner, _) = match self.user_target(conn, watch) {
             Ok(target) => target,
             Err(refusal) => return self.refuse_for(conn, None, watch, refusal),
         };
-        self.claim(key, WatchKey { conn, watch });
+        let claim = self
+            .views
+            .get(&key)
+            .is_some_and(|view| view.target() == Some(window));
+        let size = self.conns[&conn].watches[&watch].size;
+        let plan = if claim {
+            vote_plan(
+                self.clients
+                    .get(&owner)
+                    .and_then(|client| client.votes.get(&window)),
+                size,
+                Take::Due,
+            )
+        } else {
+            None
+        };
+        let (vote, take) = plan.map_or((false, false), |take| (true, take));
+        let groups = 1 + usize::from(vote);
+        if !self.room_for(owner, USER_IN_FLIGHT, groups) {
+            return self.refuse(conn, None, Some(watch), ErrorCode::Busy, "tmux is busy");
+        }
+        if claim {
+            if let Some(view) = self.views.get_mut(&key) {
+                view.claim(WatchKey { conn, watch }, Take::None);
+            }
+        }
+        if vote {
+            self.record_vote(owner, window, size, take);
+        }
         let items = items
             .into_iter()
             .map(|item| match item {
@@ -257,18 +368,20 @@ impl State {
             })
             .collect();
         let tag = self.next_tag();
-        let op = Op::Input {
-            window: key.window,
-            items,
-        };
-        self.request(owner, tag, op, Work::Input { conn, watch });
+        self.request(
+            owner,
+            tag,
+            Op::Input { window, items },
+            Work::Input { conn, watch },
+        );
     }
 
-    pub(super) fn paste(
+    fn paste(
         &mut self,
         conn: ConnId,
         req: u32,
         watch: u32,
+        window: WindowId,
         enter: bool,
         file: PasteFile,
     ) {
@@ -282,17 +395,50 @@ impl State {
                 return self.refuse_for(conn, Some(req), watch, refusal);
             }
         };
-        self.claim(key, WatchKey { conn, watch });
-        let tag = self.next_tag();
-        let op = Op::Paste {
-            window: key.window,
-            path: file.path.clone(),
-            enter,
+        let claim = self
+            .views
+            .get(&key)
+            .is_some_and(|view| view.target() == Some(window));
+        let size = self.conns[&conn].watches[&watch].size;
+        let plan = if claim {
+            vote_plan(
+                self.clients
+                    .get(&owner)
+                    .and_then(|client| client.votes.get(&window)),
+                size,
+                Take::Due,
+            )
+        } else {
+            None
         };
+        let (vote, take) = plan.map_or((false, false), |take| (true, take));
+        if !self.room_for(owner, USER_IN_FLIGHT, 1 + usize::from(vote)) {
+            self.effects.push(Effect::RemoveFile { file });
+            return self.refuse(
+                conn,
+                Some(req),
+                Some(watch),
+                ErrorCode::Busy,
+                "tmux is busy",
+            );
+        }
+        if claim {
+            if let Some(view) = self.views.get_mut(&key) {
+                view.claim(WatchKey { conn, watch }, Take::None);
+            }
+        }
+        if vote {
+            self.record_vote(owner, window, size, take);
+        }
+        let tag = self.next_tag();
         self.request(
             owner,
             tag,
-            op,
+            Op::Paste {
+                window,
+                path: file.path.clone(),
+                enter,
+            },
             Work::Paste {
                 conn,
                 watch,
@@ -302,10 +448,55 @@ impl State {
         );
     }
 
-    pub(super) fn history(&mut self, conn: ConnId, req: u32, watch: u32, start: i32, end: i32) {
+    fn select_window(&mut self, conn: ConnId, req: u32, watch: u32, window: WindowId) {
+        let (key, owner, _) = match self.user_target(conn, watch) {
+            Ok(target) => target,
+            Err(refusal) => return self.refuse_for(conn, Some(req), watch, refusal),
+        };
+        if !self.room_for(owner, USER_IN_FLIGHT, 1) {
+            return self.refuse(
+                conn,
+                Some(req),
+                Some(watch),
+                ErrorCode::Busy,
+                "tmux is busy",
+            );
+        }
+        let watch_key = WatchKey { conn, watch };
+        let size = self.conns[&conn].watches[&watch].size;
+        if let Some(view) = self.views.get_mut(&key) {
+            view.select(window, watch_key);
+            view.locate.needed = true;
+        }
+        self.record_vote_state(owner, window, size);
+        let tag = self.next_tag();
+        self.request(
+            owner,
+            tag,
+            Op::SelectWindow {
+                session: key.session,
+                window,
+                vote: size,
+            },
+            Work::SelectWindow {
+                conn,
+                watch,
+                req,
+                view: key,
+                window,
+            },
+        );
+    }
+
+    fn history(&mut self, conn: ConnId, req: u32, watch: u32, start: i32, end: i32) {
         if end < start {
-            let message = "history end is before its start";
-            return self.refuse(conn, Some(req), Some(watch), ErrorCode::BadRequest, message);
+            return self.refuse(
+                conn,
+                Some(req),
+                Some(watch),
+                ErrorCode::BadRequest,
+                "history end is before its start",
+            );
         }
         if self.captures() >= CAPTURE_SLOTS || !self.can_reserve(conn, CAPTURE_RESERVATION) {
             return self.refuse_for(conn, Some(req), watch, Refusal::Busy);
@@ -315,8 +506,6 @@ impl State {
         self.capture_history(conn, req, watch, start, end);
     }
 
-    /// Captures rows `start..=end` under a reservation the caller holds, which goes back
-    /// if the capture can't be asked for.
     fn capture_history(&mut self, conn: ConnId, req: u32, watch: u32, start: i32, end: i32) {
         let (_, owner, pane) = match self.user_target(conn, watch) {
             Ok(target) => target,
@@ -326,29 +515,34 @@ impl State {
             }
         };
         let tag = self.next_tag();
-        let work = Work::History {
+        self.request(
+            owner,
+            tag,
+            Op::History { pane, start, end },
+            Work::History {
+                conn,
+                watch,
+                req,
+                start,
+                end,
+                pane,
+            },
+        );
+    }
+
+    pub(super) fn history_answered(&mut self, work: Work, result: Result<Reply, TmuxError>) {
+        let Work::History {
             conn,
             watch,
             req,
             start,
             end,
+            pane,
+        } = work
+        else {
+            unreachable!("only history work reaches history_answered")
         };
-        self.request(owner, tag, Op::History { pane, start, end }, work);
-    }
-
-    pub(super) fn history_answered(
-        &mut self,
-        conn: ConnId,
-        watch: u32,
-        req: u32,
-        start: i32,
-        end: i32,
-        result: Result<Reply, TmuxError>,
-    ) {
         if matches!(result, Err(TmuxError::TooLarge)) && start < end {
-            // Over the reply cap: ask again for the first half, under the same
-            // reservation and in the slot this answer freed. The client gets a shorter
-            // chunk and asks again from where it ends.
             let half = (end - start + 1) / 2;
             return self.capture_history(conn, req, watch, start, start + half - 1);
         }
@@ -360,10 +554,10 @@ impl State {
         };
         let start = history.start;
         let history_size = history.history_size;
-        // Keep the rows that fit the reservation; the client asks again from there.
         let chunk = |lines: Vec<Base64>, wraps| ServerMsg::HistoryChunk {
             req,
             watch,
+            pane: pane.0,
             start,
             history_size: Some(history_size),
             lines,
@@ -373,11 +567,8 @@ impl State {
         let mut lines_size = 0;
         let mut fit = 0_usize;
         for row in &history.rows {
-            // Base64 in quotes, and a comma after the first.
             let row_size = (row.len() as u64).div_ceil(3) * 4 + 2 + u64::from(fit > 0);
             let next_fit = fit + 1;
-            // `wraps` is a base64 JSON string; reserve the packed bytes for every
-            // candidate prefix before deciding whether its final row fits.
             let wraps_size = (next_fit.div_ceil(8) as u64).div_ceil(3) * 4;
             if base + lines_size + row_size + wraps_size > CAPTURE_RESERVATION {
                 break;
@@ -386,7 +577,6 @@ impl State {
             fit = next_fit;
         }
         if fit == 0 && !history.rows.is_empty() {
-            // Not even the first row fits, and an empty chunk would be asked for again.
             return self.refuse_tmux(conn, Some(req), Some(watch), &TmuxError::TooLarge);
         }
         history.truncate(fit);
@@ -435,86 +625,160 @@ impl State {
                     .collect(),
             })
             .collect();
-        let msg = ServerMsg::Sessions {
+        let json = ServerMsg::Sessions {
             req,
             tmux: Some(TmuxListing {
                 server: self.server_name(MAIN, listing.server),
                 version: listing.version.to_string(),
                 sessions,
             }),
-        };
-        let json = msg.encode();
+        }
+        .encode();
         if json.len() as u64 > LISTING_RESERVATION {
-            let message = "the session list is too large";
-            return self.refuse(conn, Some(req), None, ErrorCode::Tmux, message);
+            return self.refuse(
+                conn,
+                Some(req),
+                None,
+                ErrorCode::Tmux,
+                "the session list is too large",
+            );
         }
         self.send_encoded(conn, json, None);
     }
 
-    pub(super) fn new_window(
+    fn new_window(
         &mut self,
         conn: ConnId,
         req: u32,
         session: &SessionRef,
+        watch: Option<u32>,
         name: Option<String>,
         dir: Option<String>,
     ) {
         let Some((endpoint, server)) = self.parse_server(&session.server) else {
-            let message = "unknown tmux server";
-            return self.refuse(conn, Some(req), None, ErrorCode::BadRequest, message);
+            return self.refuse(
+                conn,
+                Some(req),
+                None,
+                ErrorCode::BadRequest,
+                "unknown tmux server",
+            );
         };
-        // tmux checks the instance itself: what the hub last saw may be stale.
-        let cmd = OneShotCmd::NewWindow {
-            server,
-            session: SessionId(session.session),
-            name,
-            dir: dir.map(Into::into),
+        let session_id = SessionId(session.session);
+        let watch_key = if let Some(watch) = watch {
+            let Some(key) = self.watch_view(conn, watch) else {
+                return self.refuse(
+                    conn,
+                    Some(req),
+                    Some(watch),
+                    ErrorCode::BadRequest,
+                    "no such watch",
+                );
+            };
+            if key.endpoint != endpoint || key.server != server || key.session != session_id {
+                return self.refuse(
+                    conn,
+                    Some(req),
+                    Some(watch),
+                    ErrorCode::BadRequest,
+                    "the watch is on another session",
+                );
+            }
+            Some(WatchKey { conn, watch })
+        } else {
+            None
         };
-        self.create(conn, req, endpoint, Some(server), cmd);
-    }
-
-    pub(super) fn create(
-        &mut self,
-        conn: ConnId,
-        req: u32,
-        endpoint: usize,
-        server: Option<ServerInstance>,
-        cmd: OneShotCmd,
-    ) {
         if self.oneshot.is_some() {
             return self.refuse(conn, Some(req), None, ErrorCode::Busy, "tmux is busy");
         }
-        let work = OneShotWork::Create {
+        self.create(
+            OneShotCmd::NewWindow {
+                server,
+                session: session_id,
+                name,
+                dir: dir.map(Into::into),
+            },
+            OneShotWork::Create {
+                conn,
+                req,
+                endpoint,
+                server: Some(server),
+                watch: watch_key,
+                session: Some(session_id),
+            },
+        );
+    }
+
+    fn create(&mut self, cmd: OneShotCmd, work: OneShotWork) {
+        let OneShotWork::Create {
+            conn,
+            req,
+            endpoint,
+            watch,
+            ..
+        } = &work
+        else {
+            unreachable!("only create work reaches create")
+        };
+        if self.oneshot.is_some() {
+            return self.refuse(
+                *conn,
+                Some(*req),
+                watch.map(|watch| watch.watch),
+                ErrorCode::Busy,
+                "tmux is busy",
+            );
+        }
+        self.run_oneshot(*endpoint, cmd, work);
+    }
+
+    pub(super) fn created(&mut self, work: OneShotWork, result: Result<Reply, TmuxError>) {
+        let OneShotWork::Create {
             conn,
             req,
             endpoint,
             server,
+            watch,
+            session,
+        } = work
+        else {
+            unreachable!("only create work reaches created")
         };
-        self.run_oneshot(endpoint, cmd, work);
-    }
-
-    pub(super) fn created(
-        &mut self,
-        conn: ConnId,
-        req: u32,
-        endpoint: usize,
-        server: Option<ServerInstance>,
-        result: Result<Reply, TmuxError>,
-    ) {
         match result {
             Err(TmuxError::NoServer) => {
-                // The instance the window was for, or the one last seen, is gone.
                 if let Some(gone) = server.or(self.endpoints[endpoint].live) {
                     self.server_gone(endpoint, gone);
                 }
-                let message = match server {
-                    Some(_) => "that tmux server has exited",
-                    None => "no tmux server running",
+                let message = if server.is_some() {
+                    "that tmux server has exited"
+                } else {
+                    "no tmux server running"
                 };
-                self.refuse(conn, Some(req), None, ErrorCode::NoServer, message);
+                self.refuse(
+                    conn,
+                    Some(req),
+                    watch.map(|watch| watch.watch),
+                    ErrorCode::NoServer,
+                    message,
+                );
             }
             Ok(Reply::Created(created)) => {
                 self.learned(endpoint, created.server);
+                if let (Some(watch), Some(session)) = (watch, session) {
+                    let key = ViewKey {
+                        endpoint,
+                        server: created.server,
+                        session,
+                    };
+                    if let Some(view) = self
+                        .views
+                        .get_mut(&key)
+                        .filter(|view| view.watches.contains(&watch))
+                    {
+                        view.created(created.window, watch);
+                        view.locate.needed = true;
+                    }
+                }
                 let msg = ServerMsg::Created {
                     req,
                     window: self.window_ref(endpoint, created.server, created.window),
@@ -522,8 +786,17 @@ impl State {
                 };
                 self.send(conn, &msg, None);
             }
-            Err(error) => self.refuse_tmux(conn, Some(req), None, &error),
-            Ok(_) => self.refuse_tmux(conn, Some(req), None, &TmuxError::BadReply),
+            Err(error) => {
+                self.refuse_tmux(conn, Some(req), watch.map(|watch| watch.watch), &error);
+            }
+            Ok(_) => {
+                self.refuse_tmux(
+                    conn,
+                    Some(req),
+                    watch.map(|watch| watch.watch),
+                    &TmuxError::BadReply,
+                );
+            }
         }
     }
 
@@ -548,41 +821,29 @@ impl State {
             return;
         };
         match work {
-            OneShotWork::Locate { window } => self.located(window, tag, None, result),
+            OneShotWork::Locate { view } => self.located(view, tag, None, result),
             OneShotWork::SessionCheck { exited } => self.checked(exited, tag, result),
             OneShotWork::List { conn, req } => self.listed(conn, req, result),
-            OneShotWork::Create {
-                conn,
-                req,
-                endpoint,
-                server,
-            } => self.created(conn, req, endpoint, server, result),
+            work @ OneShotWork::Create { .. } => self.created(work, result),
         }
     }
 
-    /// The connection is gone, by its own close or as wedged.
     pub(super) fn closed(&mut self, conn: ConnId) {
         let Some(state) = self.conns.remove(&conn) else {
             return;
         };
         self.effects.push(Effect::DropConn { conn });
         for (watch, removed) in state.watches {
-            self.leave(WatchKey { conn, watch }, removed.window);
+            self.leave(WatchKey { conn, watch }, removed.view);
         }
     }
 
     fn refuse_for(&mut self, conn: ConnId, req: Option<u32>, watch: u32, refusal: Refusal) {
         let (code, message) = match refusal {
             Refusal::UnknownWatch => (ErrorCode::BadRequest, "no such watch"),
-            Refusal::NotBound => (ErrorCode::Busy, "the window isn't connected yet"),
+            Refusal::NotBound => (ErrorCode::Busy, "the session isn't connected yet"),
             Refusal::Busy => (ErrorCode::Busy, "tmux is busy"),
         };
         self.refuse(conn, req, Some(watch), code, message);
-    }
-
-    fn claim(&mut self, window: WinKey, watch: WatchKey) {
-        if let Some(window) = self.windows.get_mut(&window) {
-            window.claim = Some(watch);
-        }
     }
 }

@@ -29,6 +29,9 @@ pub struct Step {
 }
 
 pub struct Session {
+    session: super::SessionId,
+    client_name: String,
+    current_window: Option<WindowId>,
     parser: Parser,
     phase: Phase,
     pending: VecDeque<Pending>,
@@ -97,7 +100,6 @@ enum Purpose {
 
 enum Request {
     Locate,
-    LocateSession,
     Snapshot {
         pane: PaneId,
         group: Group,
@@ -138,8 +140,11 @@ struct ClientEntry {
 
 impl Session {
     /// A session for a freshly attached control client, and its startup line.
-    pub fn new() -> (Self, Step) {
+    pub fn new(session: super::SessionId) -> (Self, Step) {
         let mut this = Self {
+            session,
+            client_name: String::new(),
+            current_window: None,
             parser: Parser::default(),
             phase: Phase::Starting,
             pending: VecDeque::new(),
@@ -162,6 +167,11 @@ impl Session {
     /// Panes this client wants output from: each `Snapshot` until its `Release`.
     pub fn wanted(&self) -> impl Iterator<Item = PaneId> + '_ {
         self.wanted.iter().copied()
+    }
+
+    /// The latest subscribed path for this window, absent until its first value.
+    pub fn cwd(&self, window: WindowId) -> Option<&str> {
+        self.subscriptions.get(&window)?.path.as_deref()
     }
 
     /// Whether tmux said `%exit`. A client that ends without it crashed or was killed;
@@ -194,7 +204,7 @@ impl Session {
             return step;
         }
         debug_assert!(self.pending.len() < MAX_IN_FLIGHT, "request over capacity");
-        let group = match command::op(&op, tag) {
+        let group = match command::op(&op, tag, self.session, &self.client_name) {
             Ok(group) => group,
             Err(error) => {
                 step.events.push(Event::Done {
@@ -206,7 +216,6 @@ impl Session {
         };
         let request = match op {
             Op::Locate { .. } => Request::Locate,
-            Op::LocateSession { .. } => Request::LocateSession,
             Op::Snapshot { pane } => {
                 self.wanted.insert(pane);
                 self.deferred_pauses.retain(|deferred| *deferred != pane);
@@ -235,7 +244,12 @@ impl Session {
             }
             Op::History { start, end, .. } => Request::History { start, end },
             Op::Paste { .. } => Request::Paste,
-            Op::Vote { .. } | Op::ClearVote { .. } | Op::Input { .. } => Request::Plain,
+            Op::Vote { .. }
+            | Op::ClearVote { .. }
+            | Op::WatchCurrent
+            | Op::UnwatchCurrent
+            | Op::SelectWindow { .. }
+            | Op::Input { .. } => Request::Plain,
         };
         self.send(group, Purpose::Request { tag, request }, &mut step);
         step
@@ -344,17 +358,19 @@ impl Session {
                 let mut layouts = rest.split(|byte| *byte == b' ');
                 let window_layout = layouts.next().unwrap_or_default();
                 let visible = layouts.next().unwrap_or(window_layout);
-                let Some(panes) = layout::panes(visible) else {
+                let Some(layout) = layout::parse(visible) else {
                     return;
                 };
-                Event::Layout { window, panes }
+                Event::Layout {
+                    window,
+                    size: layout.size,
+                    panes: layout.panes,
+                }
             }
-            NotificationKind::WindowClose | NotificationKind::UnlinkedWindowClose => {
-                let Some(window) = WindowId::parse(first) else {
-                    return;
-                };
-                Event::WindowUnlinked { window }
-            }
+            NotificationKind::WindowClose
+            | NotificationKind::UnlinkedWindowClose
+            | NotificationKind::WindowAdd
+            | NotificationKind::UnlinkedWindowAdd => Event::SessionsChanged,
             NotificationKind::WindowRenamed | NotificationKind::UnlinkedWindowRenamed => {
                 let Some(window) = WindowId::parse(first) else {
                     return;
@@ -371,10 +387,32 @@ impl Session {
                 };
                 Event::ActivePane { window, pane }
             }
-            NotificationKind::WindowAdd
-            | NotificationKind::UnlinkedWindowAdd
-            | NotificationKind::SessionsChanged
-            | NotificationKind::SessionRenamed => Event::SessionsChanged,
+            NotificationKind::SessionWindowChanged => {
+                let (Some(session), Some(window)) = (
+                    super::SessionId::parse(first),
+                    WindowId::parse(rest.split(|byte| *byte == b' ').next().unwrap_or_default()),
+                ) else {
+                    return;
+                };
+                if session != self.session {
+                    return;
+                }
+                self.current_window(window, step);
+                return;
+            }
+            NotificationKind::SessionChanged => {
+                let Some(session) = super::SessionId::parse(first) else {
+                    return;
+                };
+                if session != self.session {
+                    step.events.push(Event::SessionChanged);
+                }
+                return;
+            }
+            NotificationKind::ClientSessionChanged => return,
+            NotificationKind::SessionsChanged | NotificationKind::SessionRenamed => {
+                Event::SessionsChanged
+            }
             NotificationKind::SubscriptionChanged => {
                 self.subscription_changed(first, rest, step);
                 return;
@@ -388,6 +426,20 @@ impl Session {
     }
 
     fn subscription_changed(&mut self, name: &[u8], rest: &[u8], step: &mut Step) {
+        if name == b"c" {
+            let Some(marker) = rest.windows(3).position(|bytes| bytes == b" : ") else {
+                return;
+            };
+            let mut fields = rest[..marker].split(|byte| *byte == b' ');
+            let session = fields.next().and_then(super::SessionId::parse);
+            let window = WindowId::parse(&rest[marker + 3..]);
+            if session == Some(self.session) {
+                if let Some(window) = window {
+                    self.current_window(window, step);
+                }
+            }
+            return;
+        }
         // `%subscription-changed w<W> $S @W <index> - : <acts>|<path>`.
         let Some(window) = name
             .strip_prefix(b"w")
@@ -431,6 +483,13 @@ impl Session {
                 window,
                 path: path.to_owned(),
             });
+        }
+    }
+
+    fn current_window(&mut self, window: WindowId, step: &mut Step) {
+        if self.current_window != Some(window) {
+            self.current_window = Some(window);
+            step.events.push(Event::CurrentWindow { window });
         }
     }
 
@@ -549,10 +608,6 @@ impl Session {
                     .and_then(|row| reply::location(&row))
                     .map(Reply::Location)
                     .ok_or(TmuxError::BadReply),
-                Request::LocateSession => first_row(&done.replies)
-                    .and_then(|row| reply::session_location(&row))
-                    .map(Reply::SessionLocation)
-                    .ok_or(TmuxError::BadReply),
                 Request::History { start, end } => {
                     history::from_replies(start, end, done.replies).map(Reply::History)
                 }
@@ -578,12 +633,13 @@ impl Session {
             (None, false, Some(row)) => reply::startup(row),
             _ => None,
         };
-        let Some((version, server, size)) = parsed else {
+        let Some((version, server, size, client_name)) = parsed else {
             return self.fatal(SessionError::Startup, step);
         };
         if !version.is_supported() {
             return self.fatal(SessionError::TmuxTooOld(version), step);
         }
+        self.client_name = client_name;
         self.phase = Phase::SizingClient { server, version };
         self.send(command::client_size(size), Purpose::ClientSize, step);
     }
@@ -703,9 +759,12 @@ mod tests {
 
     /// A session past startup on tmux `version`, and the events startup produced.
     fn started(version: &str) -> (Session, Vec<Event>) {
-        let (mut session, _) = Session::new();
+        let (mut session, _) = Session::new(super::super::SessionId(0));
         let mut events = session
-            .feed(format!("%begin 1 1 1\n{version}\t42\t7\t80\t24\n%end 1 1 1\n").as_bytes())
+            .feed(
+                format!("%begin 1 1 1\n{version}\t42\t7\t80\t24\tclient-fake\n%end 1 1 1\n")
+                    .as_bytes(),
+            )
             .events;
         events.extend(session.feed(b"%begin 1 2 1\n%end 1 2 1\n").events);
         (session, events)
@@ -896,7 +955,7 @@ mod tests {
         session.request(
             Tag(2),
             Op::Locate {
-                window: WindowId(0),
+                session: super::super::SessionId(0),
             },
         );
         let mut stream = b"%begin 1 3 1\n1000 24\n%end 1 3 1\n%begin 1 4 1\n".to_vec();
@@ -906,7 +965,7 @@ mod tests {
             stream.push(b'\n');
         }
         stream.extend_from_slice(
-            b"%end 1 4 1\n%begin 1 5 1\n%end 1 5 1\n%begin 1 6 1\n1000 24\n%end 1 6 1\n%begin 1 7 1\n42\t7\t$0\t@0\t%0\t80\t24\twork\n%end 1 7 1\n",
+            b"%end 1 4 1\n%begin 1 5 1\n%end 1 5 1\n%begin 1 6 1\n1000 24\n%end 1 6 1\n%begin 1 7 1\n42\t7\t$0\t@0\t0\t%0\t80\t24\t80\t24\twork\twork\n%end 1 7 1\n",
         );
         let events = session.feed(&stream).events;
         assert_eq!(

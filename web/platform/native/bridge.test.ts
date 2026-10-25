@@ -74,6 +74,6 @@ describe("native events", () => {
     expect(parseEvent("viewport")).toBeNull();
   });
   it("refuses a boot from another bridge version", async () => {
-    await expect(new Bridge(() => Promise.resolve({ bridgeVersion: 1 })).ready()).rejects.toThrow(/bridge 1/);
+    await expect(new Bridge(() => Promise.resolve({ bridgeVersion: 2 })).ready()).rejects.toThrow(/bridge 2/);
   });
 });

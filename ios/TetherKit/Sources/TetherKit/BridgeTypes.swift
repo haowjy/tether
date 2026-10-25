@@ -1,7 +1,7 @@
 import Foundation
 
 public enum BridgeContract {
-    public static let version = 2
+    public static let version = 3
 }
 
 public struct SafeArea: Codable, Equatable, Sendable {
@@ -69,23 +69,23 @@ public struct Lifecycle: Codable, Equatable, Sendable {
     }
 }
 
-public struct WindowRef: Codable, Equatable, Hashable, Sendable {
+public struct SessionRef: Codable, Equatable, Hashable, Sendable {
     public var server: String
-    public var window: String
+    public var session: Int
 
-    public init(server: String, window: String) {
+    public init(server: String, session: Int) {
         self.server = server
-        self.window = window
+        self.session = session
     }
 }
 
 public struct TabKey: Codable, Equatable, Hashable, Sendable {
     public var host: String
-    public var window: WindowRef
+    public var session: SessionRef
 
-    public init(host: String, window: WindowRef) {
+    public init(host: String, session: SessionRef) {
         self.host = host
-        self.window = window
+        self.session = session
     }
 }
 
@@ -127,26 +127,23 @@ public struct SavedWorkspace: Codable, Equatable, Sendable {
     public var tabs: [WorkspaceTab]
     public var active: String?
     public var files: SavedFilesPlace?
-    public var expanded: [String: [String]]
     public var hostName: String?
 
     public init(
-        version: Int = 1,
+        version: Int = 2,
         tabs: [WorkspaceTab] = [],
         active: String? = nil,
         files: SavedFilesPlace? = nil,
-        expanded: [String: [String]] = [:],
         hostName: String? = nil
     ) {
         self.version = version
         self.tabs = tabs
         self.active = active
         self.files = files
-        self.expanded = expanded
         self.hostName = hostName
     }
 
-    private enum CodingKeys: String, CodingKey { case version, tabs, active, files, expanded, hostName }
+    private enum CodingKeys: String, CodingKey { case version, tabs, active, files, hostName }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -154,7 +151,6 @@ public struct SavedWorkspace: Codable, Equatable, Sendable {
         try container.encode(tabs, forKey: .tabs)
         if let active { try container.encode(active, forKey: .active) } else { try container.encodeNil(forKey: .active) }
         if let files { try container.encode(files, forKey: .files) } else { try container.encodeNil(forKey: .files) }
-        try container.encode(expanded, forKey: .expanded)
         try container.encodeIfPresent(hostName, forKey: .hostName)
     }
 }

@@ -1,0 +1,15 @@
+.button { width: var(--tab-height); height: var(--tab-height); flex: none; color: var(--color-text-muted); }
+/* The popover's own UA styles centre it; it is placed from the button instead. */
+.menu {
+  inset: auto;
+  margin: 0;
+  min-width: 14rem;
+  max-width: min(24rem, calc(100vw - 2 * var(--space-gutter)));
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  box-shadow: var(--shadow-1);
+  overflow-y: auto; /* its height is capped to the viewport below the button when it opens */
+}

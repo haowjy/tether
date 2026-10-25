@@ -12,6 +12,7 @@ import { TabStrip } from "../../ui/primitives/TabStrip";
 import { useStore } from "../../ui/store";
 import { Button } from "../../ui/primitives/Button";
 import { Dock } from "./dock/Dock";
+import { WindowsMenu } from "./WindowsMenu";
 import { EditMenu } from "./selection/EditMenu";
 import { bandTone, lookOf, tabPills } from "./tabView";
 import { terminalsOf } from "./terminals";
@@ -63,6 +64,7 @@ export function TerminalScreen({ active }: { active: boolean }) {
         active={workspace.active}
         onSelect={(id) => { terminals.activate(id); }}
         onClose={(id) => { app.dispatch({ type: "closed", id }); }}
+        activeAction={current && <WindowsMenu tab={current} />}
       />
       <IconButton icon="plus" label="Open another session" focusTarget="plus" onClick={(e) => { app.openOverlay({ screen: "picker", name: "open" }, e.currentTarget); }} />
       {!phone && current && look && <span class={styles.hostLabel} data-tone={look.tone}>{hostName(current.key.host)}</span>}
@@ -76,7 +78,7 @@ export function TerminalScreen({ active }: { active: boolean }) {
       <div class={styles.surface} ref={slot}>
         {current === undefined && (
           <div class={styles.empty}>
-            <EmptyState icon="terminal" title={dock && phone ? "Open a window from Sessions." : "Open a window with + or from Home."} />
+            <EmptyState icon="terminal" title={dock && phone ? "Open a session from Sessions." : "Open a session with + or from Home."} />
           </div>
         )}
         {scrolled && (

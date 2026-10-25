@@ -15,13 +15,16 @@ The Terminal destination. The design is client-architecture.md §5.4, §5.5, §5
   size beneath a native screen. The reducer and controller never address a driver. The first
   size goes out in that `watch`; later ones go out 150 ms after the last change (`term/size.ts`).
 - **The pane keeps tmux's size, whatever the box** (§5.4). The sizer's inputs and the size sent
-  stay the tab's own; the snapshot's size is drawn at the tab's font. `TabDriver` reports
-  `onLarger` when the pane exceeds the size it sent; `terminals.ts` turns that into the DOM
-  renderer at once (`setWebgl(false)`) and `sizedForOther` after 1 s, which shows the Fit band.
-  Claims live in the driver: `watch` omits `claim` for the user's own acts (`claimNext`: set by
-  `uncover` and by returning from background, cleared once a watch binds) and sends
-  `claim: false` otherwise unless the pane was no larger than the size sent. Nothing sends
-  `resize` after a re-watch except a real size change, since `resize` claims.
+  stay the tab's own; the snapshot's size is drawn at the tab's font. The driver owns the
+  sizing facts: `sentSize` (what the daemon last heard) and `shown.size` (the window's, from the
+  last `watching`). `terminals.ts` turns a window larger than the box into the DOM renderer at
+  once (`setWebgl(false)`). The band is `onSizedForOther`, raised by the driver's timer once the
+  two sizes have differed for max(1 s, RTT + 0.5 s), either direction, restarted by each claiming
+  send and stopped while the tab isn't live. It is presentation only: `watch` omits `claim` for the
+  user's own acts (`claimNext`: set by `uncover` and by returning from background, cleared once a
+  watch binds) and sends `claim: false` otherwise unless `holdsWindow()`, i.e. the last `watching`'s
+  size equals `sentSize`. Nothing sends `resize` after a re-watch except a real size change, since
+  `resize` claims.
 - **The surface hides until a tab's own snapshot has painted** (`data-blank`), so no tab shows
   another's content, and an empty terminal never looks live. Reconnecting keeps the last content.
   `painted` records whose snapshot the surface holds; `showPainted()` blanks it on Terminal
@@ -30,6 +33,10 @@ The Terminal destination. The design is client-architecture.md §5.4, §5.5, §5
 - **Keystrokes are batched for 8 ms.** The daemon answers a burst of separate `input` messages
   with `busy` and, with no `req`, the client never learns: characters were lost under load. The
   batch goes to the tab that was shown when the keys were typed, in order, and before any paste.
+- **Input names its window when it starts, never when it finishes.** `Pastes.target()` captures the
+  shown tab and its window; the edit menu's Paste takes it before the clipboard read (iOS can hold
+  the read behind a prompt) and carries it through text and image upload. A closed target refuses
+  with a notice; nothing is redirected to another tab or window.
 - **For other lanes.** `Terminals.insertPath(id, path)` and `canInsert(id)` are the one way a
   path reaches a tab (Files, image paste): quoted, no Enter, into that tab only, once it is
   watching. The driver's own state decides (connecting and live accept; reconnecting, limited

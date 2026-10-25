@@ -116,3 +116,5 @@ Order: 2 and 1a in parallel, 1b after 1a (1a needs the hub change to compile: la
   the window gets when tether stops holding it (browser-behaviors, plan), Locate on a
   select's reply, `Layout` in §4.2, band wait vs RTT, linked window with two owners as
   an accepted cost, failed select drops the claim. Not re-reviewed: last design round.
+
+Daemon implementation and verification handoff: [session-follow-daemon.md](evidence/session-follow-daemon.md).

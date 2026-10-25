@@ -8,14 +8,14 @@ import { SessionList } from "../../screens/sessions/SessionList";
 const NO_OP = (): void => undefined;
 const fresh = { failure: null, updating: false } as const;
 
-const STATES: { name: string; unreachable?: boolean; sessions?: HostSessions; query?: string; expanded?: string[] }[] = [
+const STATES: { name: string; unreachable?: boolean; sessions?: HostSessions; query?: string; active?: string }[] = [
   { name: "Loading" },
   { name: "Unreachable", unreachable: true },
   { name: "Offline, nothing cached", sessions: { listing: undefined, failure: "offline", updating: false } },
   { name: "Refused, nothing cached", sessions: { listing: undefined, failure: "refused", updating: false } },
   { name: "No tmux server", sessions: { listing: null, ...fresh } },
   { name: "Empty server", sessions: { listing: { server: "main:1-1", version: "3.4", sessions: [] }, ...fresh } },
-  { name: "Updating", sessions: { listing: LISTING, ...fresh, updating: true }, expanded: ["main:1-1/1"] },
+  { name: "Updating", sessions: { listing: LISTING, ...fresh, updating: true }, active: "1" },
   { name: "Stale, offline", sessions: { listing: LISTING, failure: "offline", updating: false } },
   { name: "Stale, refused", sessions: { listing: LISTING, failure: "refused", updating: false } },
   { name: "No match", sessions: { listing: LISTING, ...fresh }, query: "zzz" },
@@ -30,7 +30,7 @@ function Block({ title, children }: { title: string; children: ComponentChildren
   );
 }
 
-/** The one open tab, window 1. */
+/** The one open tab, session 1. */
 const OPEN: ReadonlySet<string> = new Set(["1"]);
 
 export function States() {
@@ -44,14 +44,13 @@ export function States() {
             hostName={`pop-os (${s.name.toLowerCase()})`}
             unreachable={s.unreachable ?? false}
             sessions={s.sessions}
-            expanded={new Set(s.expanded ?? [])}
             query={s.query ?? ""}
-            tabIdOf={(w) => String(w.id)}
+            tabIdOf={(session) => String(session.id)}
             open={OPEN}
-            onToggle={NO_OP}
+            {...(s.active !== undefined && { active: s.active })}
             onOpen={NO_OP}
             onRetry={NO_OP}
-            creation={{ onNewSession: NO_OP, onNewWindow: NO_OP }}
+            creation={{ onNewSession: NO_OP }}
           />
         </Block>
       ))}

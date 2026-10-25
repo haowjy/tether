@@ -1,13 +1,13 @@
 // The Platform interface and every type it names (client-architecture.md §5). Types only:
 // nothing here may import an implementation, and nothing here names an environment.
 import type { LinkHandlers } from "../proto/link";
-import type { WindowRef } from "../proto/generated/messages";
+import type { SessionRef } from "../proto/generated/messages";
 import type { Link } from "../net/host";
 
-/** A tether tab's identity: the daemon's `hostId` and the tmux window (never a name or index). */
+/** A tether tab's identity: the daemon's `hostId` and the tmux session it follows (never a name or an index). */
 export interface TabKey {
   host: string;
-  window: WindowRef;
+  session: SessionRef;
 }
 
 /** Terminal input: text, a tmux key name, raw bytes (base64) or a paste. */
@@ -62,14 +62,12 @@ export type FilesPlace = { kind: "roots" } | { kind: "dir"; path: string } | { k
 
 /** What persists across a reload. `app/persist.ts` assembles it from each owner. */
 export interface SavedWorkspace {
-  version: 1;
-  /** The last names of each tab, so restored pills have them before the listing. */
+  version: 2;
+  /** The last names of each tab (its session, and the window it showed), so restored pills have them before the listing. */
   tabs: { key: TabKey; session: string; window: string }[];
   /** The active tab's key string. */
   active: string | null;
   files: { hostId: string; place: FilesPlace } | null;
-  /** Expanded session ids, by hostId. */
-  expanded: Record<string, string[]>;
   /** The host's last known name: an offline launch cannot ask `/auth/info`, yet still says "Can't reach pop-os". */
   hostName?: string;
 }

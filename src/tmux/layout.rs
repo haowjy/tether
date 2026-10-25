@@ -6,13 +6,20 @@
 
 use super::{PaneId, Size};
 
-/// The panes of a layout, in layout order; `None` if it is malformed.
-pub fn panes(layout: &[u8]) -> Option<Vec<(PaneId, Size)>> {
+/// The root window size and panes of a layout, in layout order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layout {
+    pub size: Size,
+    pub panes: Vec<(PaneId, Size)>,
+}
+
+/// Parses a tmux layout; `None` if it is malformed.
+pub fn parse(layout: &[u8]) -> Option<Layout> {
     let comma = layout.iter().position(|byte| *byte == b',')?;
     let mut cursor = Cursor(&layout[comma + 1..]);
     let mut panes = Vec::new();
-    cursor.cell(&mut panes, 0)?;
-    cursor.0.is_empty().then_some(panes)
+    let size = cursor.cell(&mut panes, 0)?;
+    cursor.0.is_empty().then_some(Layout { size, panes })
 }
 
 /// Far deeper than tmux nests; keeps a hostile string from recursing without limit.
@@ -21,7 +28,7 @@ const MAX_DEPTH: usize = 64;
 struct Cursor<'a>(&'a [u8]);
 
 impl Cursor<'_> {
-    fn cell(&mut self, panes: &mut Vec<(PaneId, Size)>, depth: usize) -> Option<()> {
+    fn cell(&mut self, panes: &mut Vec<(PaneId, Size)>, depth: usize) -> Option<Size> {
         if depth > MAX_DEPTH {
             return None;
         }
@@ -39,7 +46,7 @@ impl Cursor<'_> {
         let close = match self.take()? {
             b',' => {
                 panes.push((PaneId(self.number()?), size));
-                return Some(());
+                return Some(size);
             }
             b'{' => b'}',
             b'[' => b']',
@@ -49,7 +56,7 @@ impl Cursor<'_> {
             self.cell(panes, depth + 1)?;
             match self.take()? {
                 b',' => {}
-                byte if byte == close => return Some(()),
+                byte if byte == close => return Some(size),
                 _ => return None,
             }
         }
@@ -89,24 +96,33 @@ mod tests {
     #[test]
     fn reads_single_and_nested_layouts() {
         assert_eq!(
-            panes(b"a87d,100x30,0,0,0"),
-            Some(vec![(PaneId(0), size(100, 30))])
+            parse(b"a87d,100x30,0,0,0"),
+            Some(Layout {
+                size: size(100, 30),
+                panes: vec![(PaneId(0), size(100, 30))],
+            })
         );
         assert_eq!(
-            panes(b"43ff,80x24,0,0[80x6,0,0,0,80x5,0,7,2,80x11,0,13,1]"),
-            Some(vec![
-                (PaneId(0), size(80, 6)),
-                (PaneId(2), size(80, 5)),
-                (PaneId(1), size(80, 11)),
-            ])
+            parse(b"43ff,80x24,0,0[80x6,0,0,0,80x5,0,7,2,80x11,0,13,1]"),
+            Some(Layout {
+                size: size(80, 24),
+                panes: vec![
+                    (PaneId(0), size(80, 6)),
+                    (PaneId(2), size(80, 5)),
+                    (PaneId(1), size(80, 11)),
+                ],
+            })
         );
         assert_eq!(
-            panes(b"b25f,80x24,0,0{40x24,0,0,1,39x24,41,0[39x12,41,0,2,39x11,41,13,3]}"),
-            Some(vec![
-                (PaneId(1), size(40, 24)),
-                (PaneId(2), size(39, 12)),
-                (PaneId(3), size(39, 11)),
-            ])
+            parse(b"b25f,80x24,0,0{40x24,0,0,1,39x24,41,0[39x12,41,0,2,39x11,41,13,3]}"),
+            Some(Layout {
+                size: size(80, 24),
+                panes: vec![
+                    (PaneId(1), size(40, 24)),
+                    (PaneId(2), size(39, 12)),
+                    (PaneId(3), size(39, 11)),
+                ],
+            })
         );
     }
 
@@ -121,9 +137,9 @@ mod tests {
             b"a87d,100x30,0,0{80x6,0,0,0]",
             b"a87d,70000x30,0,0,0",
         ] {
-            assert_eq!(panes(bad), None, "{}", String::from_utf8_lossy(bad));
+            assert_eq!(parse(bad), None, "{}", String::from_utf8_lossy(bad));
         }
         let deep = format!("x,{}1x1,0,0,0{}", "1x1,0,0[".repeat(100), "]".repeat(100));
-        assert_eq!(panes(deep.as_bytes()), None);
+        assert_eq!(parse(deep.as_bytes()), None);
     }
 }

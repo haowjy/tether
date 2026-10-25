@@ -5,7 +5,7 @@ import { expect, test, type Page } from "@playwright/test";
 // real admission, real viewport and real IndexedDB run.
 // The harness server playwright.config.ts starts: the same port variable.
 const ORIGIN = `http://localhost:${process.env["TETHER_E2E_PORT"] ?? "5199"}`;
-const INFO = { hostId: "h-real", name: "pop-os", daemonVersion: "0", protocol: { min: 1, max: 1 }, browserOrigin: ORIGIN, browserRefused: null };
+const INFO = { hostId: "h-real", name: "pop-os", daemonVersion: "0", protocol: { min: 2, max: 2 }, browserOrigin: ORIGIN, browserRefused: null };
 
 async function fakeDaemon(page: Page, node: { enrolled: boolean }): Promise<{ hellos: unknown[] }> {
   const seen = { hellos: [] as unknown[] };

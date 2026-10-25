@@ -248,9 +248,6 @@ impl fmt::Display for TmuxVersion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
     Locate {
-        window: WindowId,
-    },
-    LocateSession {
         session: SessionId,
     },
     /// Makes the pane wanted and captures it; answered by `Event::Snapshot`.
@@ -264,6 +261,7 @@ pub enum Op {
     Vote {
         window: WindowId,
         size: Size,
+        take: bool,
     },
     ClearVote {
         window: WindowId,
@@ -274,6 +272,8 @@ pub enum Op {
     Unsubscribe {
         window: WindowId,
     },
+    WatchCurrent,
+    UnwatchCurrent,
     History {
         pane: PaneId,
         start: i32,
@@ -288,6 +288,11 @@ pub enum Op {
         path: PathBuf,
         enter: bool,
     },
+    SelectWindow {
+        session: SessionId,
+        window: WindowId,
+        vote: Size,
+    },
 }
 
 /// Work for a one-shot `tmux -N` (§3.8): when no control client can run it, or when it
@@ -297,9 +302,6 @@ pub enum OneShotCmd {
     /// The session sheet: answered by `Reply::Listing`.
     List,
     Locate {
-        window: WindowId,
-    },
-    LocateSession {
         session: SessionId,
     },
     /// Answered by `Reply::Created`, or `NoServer` if the server running isn't
@@ -356,15 +358,12 @@ pub enum Event {
     },
     Layout {
         window: WindowId,
+        size: Size,
         panes: Vec<(PaneId, Size)>,
     },
     ActivePane {
         window: WindowId,
         pane: PaneId,
-    },
-    /// The window left some session: closed, or moved.
-    WindowUnlinked {
-        window: WindowId,
     },
     WindowRenamed {
         window: WindowId,
@@ -379,6 +378,10 @@ pub enum Event {
     Acted {
         window: WindowId,
     },
+    CurrentWindow {
+        window: WindowId,
+    },
+    SessionChanged,
     /// The control client can't continue; the caller closes it.
     Fatal(SessionError),
 }
@@ -388,7 +391,6 @@ pub enum Event {
 pub enum Reply {
     Ok,
     Location(Location),
-    SessionLocation(SessionLocation),
     /// `capture-pane -e` rows, without line ends, labelled from tmux's history range.
     History(History),
     Listing(Listing),
@@ -449,7 +451,7 @@ pub struct Created {
     pub window: WindowId,
 }
 
-/// Where a window is. `found` is `None` when the window is gone.
+/// The current window in a session. `found` is `None` when the session is gone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Location {
     pub server: ServerInstance,
@@ -459,15 +461,15 @@ pub struct Location {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
     pub session: SessionId,
+    pub window: WindowId,
+    pub index: u32,
     pub pane: PaneId,
+    /// The active pane's size.
     pub size: Size,
+    /// The window's size (which can exceed the pane's when it is split).
+    pub window_size: Size,
+    pub name: String,
     pub session_name: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SessionLocation {
-    pub server: ServerInstance,
-    pub exists: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

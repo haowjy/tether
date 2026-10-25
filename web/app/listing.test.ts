@@ -171,12 +171,4 @@ describe("ListingFetcher", () => {
     expect(t.lists()).toBe(2);
     expect(t.events.every((e) => e.type !== "listed")).toBe(true);
   });
-
-  it("forwards renames", () => {
-    const t = setup();
-    t.fetcher.setWanted("h1", true);
-    t.link().welcome();
-    t.link().say({ type: "windowRenamed", data: { window: { server: "a", window: 4 }, name: "vim" } });
-    expect(t.events.filter((e) => e.type !== "requested")).toEqual([{ type: "renamed", handle: "h1", window: { server: "a", window: 4 }, name: "vim" }]);
-  });
 });

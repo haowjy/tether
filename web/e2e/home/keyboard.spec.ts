@@ -21,7 +21,7 @@ async function tabTo(page: Page, browser: string, target: Locator, max = 40): Pr
 const session = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(`^${name} \\d+ windows?`) });
 
 test.describe("keyboard only", () => {
-  test("Home: search, the sessions list, expansion and opening a window", async ({ page, browserName }) => {
+  test("Home: search, the sessions list and opening a session", async ({ page, browserName }) => {
     await openFixture(page, "home", desktop);
     await expect(page.getByRole("heading", { name: "On pop-os" })).toBeVisible();
 
@@ -42,16 +42,10 @@ test.describe("keyboard only", () => {
     await page.keyboard.press("ArrowUp");
     await expect(session(page, "tether")).toBeFocused();
 
-    // Enter expands; the windows join the arrow order; Enter on one opens its tab.
-    await page.keyboard.press("Enter");
-    await expect(session(page, "tether")).toHaveAttribute("aria-expanded", "true");
-    await page.keyboard.press("ArrowDown");
-    await expect(page.getByRole("button", { name: "0: agent" })).toBeFocused();
-    await page.keyboard.press("ArrowDown");
-    await expect(page.getByRole("button", { name: "1: shell" })).toBeFocused();
+    // Enter opens the session's tab, which shows its current window.
     await page.keyboard.press("Enter");
     await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/terminal");
-    await expect(page.getByRole("button", { name: /^tether \/ shell, / })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^tether agent, / })).toBeVisible();
   });
 
   test("the picker: opens from the keyboard, traps focus, and Escape returns focus to +", async ({ page, browserName }) => {
@@ -74,33 +68,29 @@ test.describe("keyboard only", () => {
     await tab(page, browserName, true);
     expect(await contained()).toBe(true);
 
-    // Into the list, expand, pick the first window: the dialog closes and Terminal shows the tab.
+    // Into the list: one row per session, the arrows move among them, and Escape leaves without opening anything.
     await picker.getByRole("searchbox").focus();
     await tab(page, browserName);
     await expect(picker.getByRole("button", { name: /^tether \d+ windows?/ })).toBeFocused();
-    await page.keyboard.press("Enter");
     await page.keyboard.press("ArrowDown");
-    await expect(picker.getByRole("button", { name: "0: agent" })).toBeFocused();
+    await expect(picker.getByRole("button", { name: /^notes \d+ windows?/ })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(picker).toBeHidden();
     await expect(plus).toBeFocused();
     expect(await page.evaluate(() => location.hash)).toBe("#/terminal");
 
-    // Opened again, Enter on a window opens its tab.
+    // Opened again, Enter on a session opens its tab.
     await page.keyboard.press("Enter");
     await expect(picker).toBeVisible();
     await tab(page, browserName);
-    // The session stayed expanded from the first open: the arrow goes straight to its first window.
-    await page.keyboard.press("ArrowDown");
-    await expect(picker.getByRole("button", { name: "0: agent" })).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(picker).toBeHidden();
-    await expect(page.getByRole("button", { name: /^tether \/ agent, / })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^tether agent, / })).toBeVisible();
   });
 
   test("a focused terminal is left with Ctrl+Shift+F, which moves focus to the tab strip", async ({ page }) => {
     await openFixture(page, "restored", desktop, "#/terminal");
-    const active = page.getByRole("button", { name: /^tether \/ agent, / });
+    const active = page.getByRole("button", { name: /^tether agent, / });
     await expect(active).toBeVisible();
     // The terminal's own input holds focus on arrival.
     await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
@@ -112,5 +102,40 @@ test.describe("keyboard only", () => {
     // Enter on the tab returns to the terminal.
     await page.keyboard.press("Enter");
     await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
+  });
+
+  test("the windows menu: Tab reaches its button, arrows move, Enter switches the window, Escape returns to the terminal", async ({ page, browserName }) => {
+    await openFixture(page, "terminalLive", desktop, "#/terminal");
+    const active = page.getByRole("button", { name: /^tether agent, / });
+    // The "shown" mark comes from the tab's `watching`: the daemon answers the watch in this fixture, and the menu is checked once it has.
+    await expect(page.getByRole("button", { name: "tether agent, connected" })).toBeVisible();
+    await page.keyboard.press("Control+Shift+F");
+    await expect(active).toBeFocused();
+    await tab(page, browserName);
+    const button = page.getByRole("button", { name: "Windows in tether" });
+    await expect(button).toBeFocused();
+    await page.keyboard.press("Enter");
+    const menu = page.getByRole("menu", { name: "Windows in tether" });
+    await expect(menu).toBeVisible();
+    // Opens on the first row; the shown window is marked in words.
+    await expect(menu.getByRole("menuitem", { name: "0: agent shown" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(menu.getByRole("menuitem", { name: "1: shell" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(menu.getByRole("menuitem", { name: "New window" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
+
+    // Choosing another window sends selectWindow, and the tab follows with the next watching.
+    await page.keyboard.press("Control+Shift+F");
+    await tab(page, browserName);
+    await page.keyboard.press("Enter");
+    // The menu takes focus when it opens: an arrow pressed before that goes nowhere.
+    await expect(menu.getByRole("menuitem", { name: "0: agent shown" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: /^tether shell, / })).toBeVisible();
+    await expect(menu).toBeHidden();
   });
 });

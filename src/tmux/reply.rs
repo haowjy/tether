@@ -5,40 +5,43 @@
 
 use super::{
     Created, Found, ListedSession, ListedWindow, Listing, Location, PaneId, ServerInstance,
-    SessionId, SessionLocation, Size, TmuxVersion, WindowId,
+    SessionId, Size, TmuxVersion, WindowId,
 };
 
 /// The control client's first reply: version, server instance, and the size of the
 /// session's current window.
 pub(super) const STARTUP_FORMAT: &str =
-    "#{version}\t#{pid}\t#{start_time}\t#{window_width}\t#{window_height}";
+    "#{version}\t#{pid}\t#{start_time}\t#{window_width}\t#{window_height}\t#{client_name}";
 
-pub(super) fn startup(row: &[u8]) -> Option<(TmuxVersion, ServerInstance, Size)> {
-    let [version, pid, start_time, cols, rows] = tab_fields(row)?[..] else {
+pub(super) fn startup(row: &[u8]) -> Option<(TmuxVersion, ServerInstance, Size, String)> {
+    let [version, pid, start_time, cols, rows, client_name] = tab_fields(row)?[..] else {
         return None;
     };
     Some((
         TmuxVersion::parse(version),
         ServerInstance::from_fields(pid, start_time)?,
         size(cols, rows)?,
+        (!client_name.is_empty()).then(|| client_name.to_owned())?,
     ))
 }
 
-/// Where a window is: server instance, then its session, active pane and that pane's
-/// size and session name. tmux leaves the target fields empty for a window that is
-/// gone.
-pub(super) const LOCATE_FORMAT: &str = "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{session_name}";
+/// A session's current window. tmux leaves the target fields empty when it is gone.
+pub(super) const LOCATE_FORMAT: &str = "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}\t#{window_index}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{window_width}\t#{window_height}\t#{session_name}\t#{window_name}";
 
 pub(super) fn location(row: &[u8]) -> Option<Location> {
     let [
         pid,
         start_time,
         session,
-        _window,
+        window,
+        index,
         pane,
         cols,
         rows,
+        window_cols,
+        window_rows,
         session_name,
+        name,
     ] = tab_fields(row)?[..]
     else {
         return None;
@@ -54,23 +57,14 @@ pub(super) fn location(row: &[u8]) -> Option<Location> {
         server,
         found: Some(Found {
             session: SessionId::parse(session.as_bytes())?,
+            window: WindowId::parse(window.as_bytes())?,
+            index: index.parse().ok()?,
             pane: PaneId::parse(pane.as_bytes())?,
             size: size(cols, rows)?,
+            window_size: size(window_cols, window_rows)?,
+            name: name.to_owned(),
             session_name: session_name.to_owned(),
         }),
-    })
-}
-
-/// Server instance and session id, the id empty for a session that is gone.
-pub(super) const LOCATE_SESSION_FORMAT: &str = "#{pid}\t#{start_time}\t#{session_id}";
-
-pub(super) fn session_location(row: &[u8]) -> Option<SessionLocation> {
-    let [pid, start_time, session] = tab_fields(row)?[..] else {
-        return None;
-    };
-    Some(SessionLocation {
-        server: ServerInstance::from_fields(pid, start_time)?,
-        exists: !session.is_empty(),
     })
 }
 

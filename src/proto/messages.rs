@@ -25,6 +25,15 @@ pub struct SessionRef {
     pub session: u32,
 }
 
+/// The session's current window as shown by the daemon.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ShownWindow {
+    pub id: u32,
+    pub index: u32,
+    pub name: String,
+    pub size: Size,
+}
+
 /// A terminal size; the daemon clamps what clients send (daemon-core.md §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Size {
@@ -45,7 +54,7 @@ impl Serialize for Base64 {
 
 impl<'de> Deserialize<'de> for Base64 {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = <&str>::deserialize(deserializer)?;
+        let text = String::deserialize(deserializer)?;
         STANDARD
             .decode(text)
             .map(|bytes| Self(Bytes::from(bytes)))
@@ -69,10 +78,10 @@ pub enum ClientMsg {
     Ping {
         t: u64,
     },
-    /// The tab came on screen. The id is the client's, never reused on a connection.
+    /// The tab came on screen. A tab follows the session's current window.
     Watch {
         watch: u32,
-        window: WindowRef,
+        session: SessionRef,
         size: Size,
         /// Automatic re-watches don't claim the window again.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,12 +104,16 @@ pub enum ClientMsg {
     /// To the window's active pane, in order. Refused with `busy` before `watching`.
     Input {
         watch: u32,
+        /// The window the tab showed when the input was made.
+        window: u32,
         items: Vec<InputItem>,
     },
     /// Through `paste-buffer -p`, which brackets it if the pane asked for that.
     Paste {
         req: u32,
         watch: u32,
+        /// The window the tab showed when the paste was made.
+        window: u32,
         text: String,
         /// Run Enter after the paste in the same tmux command group.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -113,6 +126,11 @@ pub enum ClientMsg {
         watch: u32,
         start: i32,
         end: i32,
+    },
+    SelectWindow {
+        req: u32,
+        watch: u32,
+        window: u32,
     },
     ListSessions {
         req: u32,
@@ -128,6 +146,10 @@ pub enum ClientMsg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         dir: Option<String>,
+        /// The current tab to claim the new current window for.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        watch: Option<u32>,
     },
     NewSession {
         req: u32,
@@ -230,10 +252,10 @@ pub enum ServerMsg {
     Pong {
         t: u64,
     },
-    /// The watch is bound; re-sent when its session, pane or cwd changes.
+    /// The watch is bound; re-sent when the shown window, pane or cwd changes.
     Watching {
         watch: u32,
-        window: WindowRef,
+        window: ShownWindow,
         session: SessionRef,
         pane: u32,
         /// Null until tmux first reports it.
@@ -248,21 +270,13 @@ pub enum ServerMsg {
         #[ts(optional)]
         message: Option<String>,
     },
-    /// Closes every tab on the window, watched or not.
-    WindowClosed {
-        window: WindowRef,
-    },
-    /// The session is gone. Closes no tab: its windows may have moved.
+    /// The session is gone. Closes its tabs.
     SessionClosed {
         session: SessionRef,
     },
     /// Closes every tab on that server.
     ServerExited {
         server: String,
-    },
-    WindowRenamed {
-        window: WindowRef,
-        name: String,
     },
     /// The listing changed (sessions, or a window no watch is on closed or moved):
     /// refetch it if the sheet is open, and prune tabs against it.
@@ -277,8 +291,9 @@ pub enum ServerMsg {
     HistoryChunk {
         req: u32,
         watch: u32,
+        pane: u32,
         start: i32,
-        /// Retained row count at capture time; optional for protocol v1 compatibility.
+        /// Retained row count when supplied; joins reset if it changes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         history_size: Option<u32>,
@@ -444,9 +459,10 @@ mod tests {
         assert!(decode(r#"{"type":"watch","data":{"watch":"x"}}"#).is_err());
         assert!(decode(r#"{"data":{}}"#).is_err());
         assert_eq!(
-            decode(r#"{"type":"input","data":{"watch":1,"items":[{"text":"a"},{"bytes":"AAE="},{"key":"Enter"}],"later":0}}"#).ok(),
+            decode(r#"{"type":"input","data":{"watch":1,"window":0,"items":[{"text":"a"},{"bytes":"AAE="},{"key":"Enter"}],"later":0}}"#).ok(),
             Some(Decoded::Msg(ClientMsg::Input {
                 watch: 1,
+                window: 0,
                 items: vec![
                     InputItem::Text("a".into()),
                     InputItem::Bytes(Base64(Bytes::from_static(&[0, 1]))),

@@ -29,6 +29,7 @@ fn declarations(config: &Config) -> Vec<(TypeId, String)> {
         declare::<ServerMsg>(config),
         declare::<WindowRef>(config),
         declare::<SessionRef>(config),
+        declare::<ShownWindow>(config),
         declare::<Size>(config),
         declare::<Base64>(config),
         declare::<ClientInfo>(config),

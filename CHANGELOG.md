@@ -5,6 +5,13 @@ version section on release.
 
 ## [Unreleased]
 
+- Tabs follow tmux sessions. Home and pickers list sessions; the window switcher selects
+  or creates a window, and laptop window changes move the tab too. Typing, pasting or
+  Fit takes the window at tether's size, even when the laptop is smaller. The sizing
+  band shows differences in either direction.
+- Update the daemon and clients together: this build requires daemon protocol 2 and
+  native bridge 3. Old window-based tabs, drafts and saved workspace are discarded
+  on first launch; enrolled servers and credentials remain.
 - Files finds folders by typing a path: one field at the top completes the folders as you type
   (ghost text, tap a row or press `/`, Tab or → to accept, Go to open), without a request per
   keystroke. `~` outside your folders lists your home folder with rows marked "not added", and
@@ -39,19 +46,17 @@ version section on release.
   field, keyboard toggle) with a key row (esc, arrows, ^R, ^C, tab, ctrl, alt, | ~ / -) above
   it while the keyboard is up. Return in the line field sends the line and Enter together,
   each tab keeps its own draft across tab switches and reloads, a refused line comes back
-  marked "Not sent", and the tab chip opens a sheet with the open tabs, every session and its
-  windows, search and New session.
-- Session tabs follow the session's current window when it changes in tmux, and selecting or
-  opening a window takes it at the tab's size before input is sent.
-- A window now takes the size of whichever terminal acted on it last. Opening or returning to
+  marked "Not sent", and the tab chip opens a sheet with the open tabs, every session, the
+  current session's windows with New window, search and New session.
+- A window takes the size of whichever terminal acted on it last. Opening or returning to
   a tab, typing, pasting and rotating size it to the phone; typing in another terminal (the
-  laptop) takes it back, and a reconnect after a network blip leaves it there. A window sized
-  for another terminal is drawn at the phone's own font from the left edge, wider content cut
-  off at the right and taller content following the cursor; after a second the terminal's top
-  edge says "Sized for another terminal" with Fit, which sizes the window to the phone. A
-  smaller window sits in the top-left corner.
-- Home, the session picker and Settings: open tabs, a search over sessions and windows,
-  New session and New window (with an optional start directory), every listing state
+  laptop) takes it back, and a reconnect after a network blip leaves it with the laptop
+  unless the phone still held it. A window sized for another terminal, larger or smaller, is
+  drawn at the phone's own font from the left edge (wider content cut off at the right, taller
+  content following the cursor); after about a second the terminal's top edge says "Sized for
+  another terminal" with Fit, which sizes the window to the phone.
+- Home, the session picker and Settings: open tabs, a search over sessions,
+  New session (with an optional start directory), every listing state
   (loading, offline, refused, no tmux server, stale with Retry), and Settings with Remove
   this device, Clear local data and Add to Home Screen steps. An offline launch says "Can't
   reach <host>" and its tabs read "Reconnecting…".

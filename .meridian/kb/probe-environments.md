@@ -19,9 +19,19 @@ it. tmux 3.4 crashed expanding the window subscription's `L:` client loop, throu
 `#{client_name}` on a client that had connected but not yet identified itself
 ([research](../../docs/design/research/tmux-subscription-format-crash.md)); the crash
 was reproduced on an isolated server. Pausing a pane with `'%P:off'` crashes 3.2a–3.6b
-when output is queued (`docs/design/daemon-core.md` §3.3). So:
+when output is queued (`docs/design/daemon-core.md` §3.3). On 3.4 and 3.7b, a
+`select-window` that changes a session's current window followed by `kill-session` on
+that session, in one command list (commands joined by ` ; ` on one line, as tether's
+command groups are), kills the whole server whenever any control client
+is attached, even one on another session; tmux 3.8 has the fix (`daemon-core.md`,
+risk 4). So:
 
 - Probe and test only on a private `tmux -L <name>` server, and kill it afterwards.
+- Never put a command that changes a session's current window in the same tmux command
+  list as one that destroys that session. Separate commands survived every trial,
+  which is not proof they are safe.
+- Leave the installed tmux binaries alone. Which tmux the dev box runs day to day is
+  Jimmy's call ([issue #2](https://github.com/haowjy/tether/issues/2)).
 - 3.4 is the oldest supported tmux, and newer releases fixed crashes it still has. A
   change to anything tether sends to tmux runs the real-tmux suite on both 3.4 and
   3.7b before landing (`TETHER_TMUX_TESTS=1 TETHER_TMUX=<tmux binary> cargo test --test
@@ -93,3 +103,14 @@ range can fail while the tip passes. Folding review fixes in with `git rebase
 --autosquash` has left an intermediate commit failing clippy under a tip that passed.
 After any history rewrite, run `scripts/preflight.sh full` on a `git archive` export of
 every commit in the range before pushing.
+
+### tmux pre-3.7 control-client handshake hazard
+
+A separate ordinary-use attach/detach race crashed tmux 3.4 during browser integration
+verification. Notifications can reach a control client before `control_state` exists;
+early client exit also crashes. Upstream e5a2a25f / 31c93c48 fix these in 3.7. The
+raw-tmux probe reproduced the exact crash stack on 3.4, not on 3.7b. This does not
+clear 3.7b of the distinct select-and-destroy crash above. Issue #2 tracks the combined
+baseline/backport decision; no installed binary changes or daily-use sign-off without
+Jimmy. See `docs/design/daemon-core.md` §9 and work evidence
+`session-follow-tmux-attach-crash.md`.

@@ -1,76 +1,23 @@
-%begin 1792748624 272 0
-%end 1792748624 272 0
+%begin 1792950923 272 0
+%end 1792950923 272 0
 %session-changed $0 fixture
-%begin 1792748624 277 1
-3.4	95016	1792748624	80	24
-%end 1792748624 277 1
-%begin 1792748624 278 1
-%end 1792748624 278 1
+%begin 1792950923 277 1
+3.4	98138	1792950923	80	24	client-98155
+%end 1792950923 277 1
+%begin 1792950923 278 1
+%end 1792950923 278 1
 %layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
-%extended-output %0 0 : print
-%extended-output %0 0 : f '
-%extended-output %0 0 : %s
-%extended-output %0 0 : \134n
-%extended-output %0 0 : ' '
-%extended-output %0 0 : %
-%extended-output %0 0 : b
-%extended-output %0 0 : eg
-%extended-output %0 0 : in
-%extended-output %0 0 :  
-%extended-output %0 0 : 12
-%extended-output %0 0 : 3 
-%extended-output %0 0 : 4
-%extended-output %0 0 : 5
-%extended-output %0 0 : 6
-%extended-output %0 0 :  
-%extended-output %0 0 : 1'
-%extended-output %0 0 :  '
-%extended-output %0 0 : %o
-%extended-output %0 0 : ut
-%extended-output %0 0 : pu
-%extended-output %0 0 : t
-%extended-output %0 0 :  
-%extended-output %0 0 : %
-%extended-output %0 0 : 1
-%extended-output %0 0 :  
-%extended-output %0 0 : f
-%extended-output %0 0 : a
-%extended-output %0 0 : k
-%extended-output %0 0 : e
-%extended-output %0 0 : '
-%extended-output %0 0 :  
-%extended-output %0 0 : '
-%extended-output %0 0 : %
-%extended-output %0 0 : e
-%extended-output %0 0 : n
-%extended-output %0 0 : d
-%extended-output %0 0 :  
-%extended-output %0 0 : 1
-%extended-output %0 0 : 2
-%extended-output %0 0 : 3
-%extended-output %0 0 :  
-%extended-output %0 0 : 4
-%extended-output %0 0 : 5
-%extended-output %0 0 : 6
-%extended-output %0 0 :  
-%extended-output %0 0 : 1
-%extended-output %0 0 : '
-%extended-output %0 0 :  
-%extended-output %0 0 : '
-%extended-output %0 0 : l
-%extended-output %0 0 : a
-%extended-output %0 0 : s
-%extended-output %0 0 : t'
-%extended-output %0 0 : \015\012
-%extended-output %0 0 : %begin 123 456 1\015\012%output %1 fake\015\012%end 123 456 1\015\012last\015\012
-%extended-output %0 0 : $ 
-%begin 1792748624 285 1
+%extended-output %0 0 : p
+%extended-output %0 0 : rin
+%extended-output %0 0 : tf '%s\134n' '%begin 123 456 1' '%output %1 fake' '%end 123 456 1' 'last'
+%extended-output %0 0 : \015\012%begin 123 456 1\015\012%output %1 fake\015\012%end 123 456 1\015\012last\015\012$ 
+%begin 1792950923 285 1
 %pause %0
-%end 1792748624 285 1
-%begin 1792748624 286 1
+%end 1792950923 285 1
+%begin 1792950923 286 1
 0 24
-%end 1792748624 286 1
-%begin 1792748624 287 1
+%end 1792950923 286 1
+%begin 1792950923 287 1
 $ printf '%s\n' '%begin 123 456 1' '%output %1 fake' '%end 123 456 1' 'last'
 %begin 123 456 1
 %output %1 fake
@@ -79,8 +26,8 @@ last
 $ 
 
 
-%end 1792748624 287 1
-%begin 1792748624 288 1
+%end 1792950923 287 1
+%begin 1792950923 288 1
 $ printf '%s\n' '%begin 123 456 1' '%output %1 fake' '%end 123 456 1' 'last'
 %begin 123 456 1
 %output %1 fake
@@ -89,9 +36,9 @@ last
 $ 
 
 
-%end 1792748624 288 1
-%begin 1792748624 289 1
+%end 1792950923 288 1
+%begin 1792950923 289 1
 0 24
-%end 1792748624 289 1
+%end 1792950923 289 1
 %window-renamed @0 bash
 %exit

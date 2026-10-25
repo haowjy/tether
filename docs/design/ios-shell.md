@@ -477,7 +477,7 @@ token to native solely for comparison and revocation, never into storage or logs
 | `socket { host }` | `{ url, token }`, `{ locked: true }` or `{ notEnrolled: true }` | Resolve the WebSocket endpoint and credential inside `HostLink`; keep both there except echoing the exact refused token to native for `hostRejected` |
 | `hostRejected { host, token }` | `null` | Clear that exact rejected token only, then re-publish `hosts` |
 | `recreateWebView` | `null` | Discard/reload the page after unrecoverable WebSocket connection failure |
-| `saveWorkspace { workspace }` | `null` | Persist the entire v1 `SavedWorkspace` |
+| `saveWorkspace { workspace }` | `null` | Persist the entire `SavedWorkspace` |
 | `focus { mode }` | `null` | `terminal`, `hidden`, `webText` or `select`; native alone changes first responder |
 | `activeTab { tab: TabKey | null }` | `null` | Update native's cached target for coalesced keyboard batches |
 | `lineField { rect }` | `null` | Update the line field's rect in web-view coordinates, or `null` when unavailable |
@@ -529,9 +529,9 @@ Boot = { bridgeVersion: 3, hosts: PlatformHost[],
   means token admission). Never send the base URL or token to JS.
 - A tab is a tmux session, so `TabKey` names the session (server instance and `$N`);
   `session` and `window` in a saved tab are the last names shown, for the label while
-  restoring. Bridge version 3 carries this shape. A saved workspace of version 1
-  (window tabs) doesn't decode and is dropped, so the app starts at Home with no tabs;
-  the web deletes the drafts keyed by the old `TabKey` at the same boot.
+  restoring. Bridge version 3 carries this shape. Native stores the workspace
+  and the drafts under v2 keys and deletes the v1 keys (window tabs) at launch, so the app
+  starts at Home with no tabs and no stale drafts. Nothing migrates; no id is guessed.
 - Native treats `SavedWorkspace` as an opaque snapshot and saves it as given. The web
   owns tabs, their keys and the meaning of `active`; native does not turn the workspace
   into a parallel tab model.
@@ -687,7 +687,7 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 - **WKWebView adjusting for a keyboard it doesn't own**, fighting the frame resize.
   Device checklist, both geometry variants.
 - **Bridge latency under load**: unmeasured on iOS 26. Device checklist.
-- **Bridge v2 web adapter** (`web/platform/native/`, P4b) is built and decodes every
+- **Bridge web adapter** (bridge 3) (`web/platform/native/`, P4b) is built and decodes every
   shared fixture. Simulator-verified: boot, token socket to a real daemon, listing, Home
   safe area, background closes the socket and resume reconnects. Not verified (the
   Simulator takes no touch or key input from here): the keyboard toggle through

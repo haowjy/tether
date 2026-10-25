@@ -60,7 +60,7 @@ impl State {
             match due {
                 Due::Respawn => {
                     let awaited = self
-                        .windows
+                        .views
                         .values()
                         .any(|window| window.client() == Some(client));
                     if awaited {

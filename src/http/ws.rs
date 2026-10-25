@@ -325,9 +325,13 @@ impl Conn<'_> {
             ClientMsg::Paste {
                 req,
                 watch,
+                window,
                 text,
                 enter,
-            } => self.paste(req, watch, text, enter.unwrap_or(false)).await,
+            } => {
+                self.paste(req, watch, window, text, enter.unwrap_or(false))
+                    .await
+            }
             msg => {
                 if let Some((req, dir)) = start_dir(&msg) {
                     if let Err(cause) = self.check_dir(dir.to_owned()).await {
@@ -346,7 +350,14 @@ impl Conn<'_> {
     /// Writes the text to a 0600 file under a paste slot, on the auth lane, so the hub
     /// holds a path, not the text (daemon-core.md §3.4). The hub deletes the file, which
     /// frees the slot.
-    async fn paste(&mut self, req: u32, watch: u32, text: String, enter: bool) -> Result<(), End> {
+    async fn paste(
+        &mut self,
+        req: u32,
+        watch: u32,
+        window: u32,
+        text: String,
+        enter: bool,
+    ) -> Result<(), End> {
         if text.len() > MAX_PASTE {
             self.refuse(
                 Some(req),
@@ -385,6 +396,7 @@ impl Conn<'_> {
         self.hub(FromConn::Paste {
             req,
             watch,
+            window,
             enter,
             file,
         })

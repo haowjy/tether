@@ -10,6 +10,8 @@ import { tabId } from "../../platform/tabKey";
 import type { InputEvent, Viewport } from "../../platform/types";
 import { acceptsInsert, type ConnectionState } from "../../tabs/connection";
 import { TabDriver } from "../../tabs/driver";
+import type { SessionRef, ShownWindow } from "../../proto/generated/messages";
+import type { CreationFields } from "../../sessions/creation";
 import { createXtermRenderer, type PromptLine, type TerminalRenderer } from "../../term";
 import { TerminalSizer } from "../../term/size";
 import { ArmedModifiers } from "../../touch/armed";
@@ -29,8 +31,10 @@ export interface TabStatus {
   downSince: number;
   /** When the next automatic retry fires, null if none is due. */
   retryAt: number | null;
-  /** The pane has been larger than this tab's size for {@link SIZED_FOR_OTHER_MS}: another terminal holds the window. */
+  /** The window's size has differed from this tab's for longer than the driver's wait: another terminal holds the window. */
   sizedForOther: boolean;
+  /** The session's current window as the tab's latest `watching` says; null before the first. */
+  shown: ShownWindow | null;
 }
 
 interface TerminalsView {
@@ -45,11 +49,6 @@ interface TerminalsView {
 
 /** A few frames for xterm to paint and the cell to become measurable. */
 const MEASURE_FRAMES = 30;
-/**
- * A pane larger than the tab shows the band only after this long, so a rotation's debounce, a
- * claim's round trip and a first snapshot that predates the vote don't flash it.
- */
-const SIZED_FOR_OTHER_MS = 1000;
 /**
  * Keys typed within this long go as one `input` message. The daemon refuses a burst of
  * separate messages with `busy` once enough are in flight, and a refused input has no reply
@@ -80,13 +79,12 @@ export class Terminals extends Store<TerminalsView> {
   private registered: HTMLElement | null = null;
   /** The tab whose snapshot is on the surface. Another tab's content never shows under a pill that isn't its own. Closing that tab clears it. */
   private painted: string | null = null;
-  private batch: { id: string; events: InputEvent[] } | null = null;
+  /** Keys typed for one tab and one window, which is the window the tab showed when they were typed. */
+  private batch: { id: string; window: number | null; events: InputEvent[] } | null = null;
   private batchTimer: ReturnType<typeof setTimeout> | undefined;
   /** tether's own input on a phone browser; created the first time it is needed. */
   private owned: HTMLTextAreaElement | null = null;
   private panArea: number | null = null;
-  /** The timers that will say in the band that a tab's pane is larger than its size. */
-  private readonly bandTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** The shell's command line under the cursor, for a tap on the prompt row. */
   private promptLine: PromptLine | null = null;
   /** The touch side of looking at the shown tab: scroll, history, selection, gestures. */
@@ -158,6 +156,17 @@ export class Terminals extends Store<TerminalsView> {
     if (status?.state.kind === "reconnecting" || status?.state.kind === "limited") this.drivers.get(id)?.nudge();
   }
 
+  /** Makes `window` the tab's session's current window; the tab follows with the next `watching`. */
+  selectWindow(id: string, window: number): void {
+    if (!this.drivers.get(id)?.selectWindow(window)) this.app.notify("Couldn't switch window: the tab isn't connected");
+  }
+
+  /** Creates a window in the tab's session and shows it. Rejects with the daemon's refusal. */
+  newWindow(id: string, fields: CreationFields): Promise<void> {
+    const driver = this.drivers.get(id);
+    return driver ? driver.newWindow(fields) : Promise.reject(new Error("that tab is closed"));
+  }
+
   /** The band's Fit: sizes the window to this tab and so takes it from the other terminal. */
   fit(id: string): void {
     this.drivers.get(id)?.fit();
@@ -215,13 +224,11 @@ export class Terminals extends Store<TerminalsView> {
     for (const tab of workspace.tabs) {
       if (this.drivers.has(tab.id)) continue;
       const client = this.app.hosts.byHostId(tab.key.host);
-      if (client) this.open(tab.id, tab.key.window, client);
+      if (client) this.open(tab.id, tab.key.session, client);
     }
     for (const [id, driver] of this.drivers) {
       if (workspace.tabs.some((t) => t.id === id)) continue;
       this.drivers.delete(id);
-      clearTimeout(this.bandTimers.get(id));
-      this.bandTimers.delete(id);
       if (this.painted === id) this.painted = null;
       driver.close();
       this.update({ tabs: Object.fromEntries(Object.entries(this.snapshot.tabs).filter(([key]) => key !== id)) });
@@ -237,19 +244,9 @@ export class Terminals extends Store<TerminalsView> {
     this.view.show(shown);
   }
 
-  private paneLarger(id: string, larger: boolean): void {
-    clearTimeout(this.bandTimers.get(id));
-    this.bandTimers.delete(id);
-    if (larger) {
-      this.bandTimers.set(id, setTimeout(() => { this.setSizedForOther(id, true); }, SIZED_FOR_OTHER_MS));
-    } else {
-      this.setSizedForOther(id, false);
-    }
-  }
-
-  private setSizedForOther(id: string, sizedForOther: boolean): void {
+  private patchStatus(id: string, patch: Partial<Pick<TabStatus, "sizedForOther" | "shown">>): void {
     const status = this.snapshot.tabs[id];
-    if (status && status.sizedForOther !== sizedForOther) this.update({ tabs: { ...this.snapshot.tabs, [id]: { ...status, sizedForOther } } });
+    if (status) this.update({ tabs: { ...this.snapshot.tabs, [id]: { ...status, ...patch } } });
   }
 
   /** On Terminal the surface shows a tab only once its own snapshot has painted; off Terminal it keeps what it holds, for the return, unless no tab is left. */
@@ -260,10 +257,10 @@ export class Terminals extends Store<TerminalsView> {
     else if (workspace.onTerminal) this.element.removeAttribute("data-blank");
   }
 
-  private open(id: string, window: { server: string; window: number }, client: HostClient): void {
+  private open(id: string, session: SessionRef, client: HostClient): void {
     const hostId = client.hostId ?? "";
     const driver = new TabDriver({
-      window,
+      session,
       renderer: {
         output: (bytes) => { this.renderer?.output(bytes); },
         snapshot: async (snapshot) => {
@@ -285,9 +282,12 @@ export class Terminals extends Store<TerminalsView> {
       size: () => this.sizer.sizeForWatch(),
       // A tab never watches before the box is measured: tmux must not see the 80x24 placeholder.
       covered: true,
-      onState: (state) => { this.stateChanged(id, hostId, window.server, state); },
-      onLarger: (larger) => { this.paneLarger(id, larger); },
-      onWatching: () => { this.app.dispatch({ type: "watching", id }); },
+      onState: (state) => { this.stateChanged(id, hostId, session.server, state); },
+      onSizedForOther: (sizedForOther) => { this.patchStatus(id, { sizedForOther }); },
+      onWatching: (watching) => {
+        this.patchStatus(id, { shown: watching.window });
+        this.app.dispatch({ type: "watching", id, window: watching.window.name });
+      },
       onNotice: (text) => { this.app.notify(text); },
       onPasteResult: (result) => { this.pastes.result(id, result); },
     });
@@ -303,11 +303,12 @@ export class Terminals extends Store<TerminalsView> {
       downSince: down ? (before?.state.kind !== "live" && before ? before.downSince : now) : now,
       retryAt: state.kind === "reconnecting" && state.retryInMs !== null ? now + state.retryInMs : state.kind === "limited" ? now + state.retryInMs : null,
       sizedForOther: before?.sizedForOther ?? false,
+      shown: before?.shown ?? null,
     };
     this.update({ tabs: { ...this.snapshot.tabs, [id]: status } });
     if (state.kind !== "closed") return;
-    // A window or server that went away closes the tab; a tab the user closed already left.
-    if (state.reason === "windowClosed") this.app.dispatch({ type: "windowClosed", id });
+    // A session or server that went away closes the tab; a tab the user closed already left.
+    if (state.reason === "sessionClosed") this.app.dispatch({ type: "sessionClosed", id });
     else if (state.reason === "serverExited") this.app.dispatch({ type: "serverExited", hostId, server });
   }
 
@@ -322,9 +323,11 @@ export class Terminals extends Store<TerminalsView> {
     if (id !== this.shownTerminalTab()) return;
     // Typing returns to the newest line.
     if (!this.view.scroll.atLatest) this.view.scroll.toLatest();
-    if (this.batch && this.batch.id !== id) this.flushInput();
+    // Keys go to the window the tab showed when they were typed, even if it follows its session to another within the batch.
+    const window = this.drivers.get(id)?.windowId ?? null;
+    if (this.batch && (this.batch.id !== id || this.batch.window !== window)) this.flushInput();
     if (this.batch) this.batch.events.push(...events);
-    else this.batch = { id, events: [...events] };
+    else this.batch = { id, window, events: [...events] };
     this.batchTimer ??= setTimeout(() => { this.flushInput(); }, INPUT_BATCH_MS);
   }
 
@@ -334,7 +337,7 @@ export class Terminals extends Store<TerminalsView> {
     this.batchTimer = undefined;
     const batch = this.batch;
     this.batch = null;
-    if (batch) this.drivers.get(batch.id)?.input(batch.events);
+    if (batch) this.drivers.get(batch.id)?.input(batch.events, batch.window);
   }
 
   private shownDriver(): TabDriver | undefined {

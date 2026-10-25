@@ -3,14 +3,13 @@
 #[path = "support/fake_hub.rs"]
 mod fake_hub;
 
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::Bytes;
 use fake_hub::{
     Got, Hub, SERVER_NAME, capture_history, kind, kinds, let_go_of_window_0, line_for, release,
-    size, snapshot, vote,
+    size, snapshot, take_vote, vote,
 };
 use serde_json::json;
 use tether::budget;
@@ -18,7 +17,7 @@ use tether::hub::{
     CAPTURE_RESERVATION, CREDIT, FromConn, Input, LINGER, OVERDRAFT, SNAPSHOT_SPACING,
     USER_IN_FLIGHT,
 };
-use tether::proto::{self, SessionRef, WindowRef};
+use tether::proto::{self, SessionRef};
 use tether::tmux::{
     InputItem, MAX_IN_FLIGHT, OneShotCmd, Op, PaneId, PumpMsg, Size, WindowId, command,
 };
@@ -29,9 +28,10 @@ fn a_watch_binds_after_locating_and_catches_up_by_snapshot() {
     let conn = hub.connect();
     hub.watch(conn, 1, 0);
     // No control client exists yet, so the first Locate is a one-shot.
-    assert!(
-        matches!(hub.oneshots.front(), Some((_, OneShotCmd::Locate { window })) if *window == WindowId(0))
-    );
+    assert!(matches!(
+        hub.oneshots.front(),
+        Some((_, OneShotCmd::Locate { session })) if *session == tether::tmux::SessionId(0)
+    ));
     hub.settle();
     let client = hub.client(0);
     let got = hub.take(conn);
@@ -39,7 +39,7 @@ fn a_watch_binds_after_locating_and_catches_up_by_snapshot() {
         got,
         [
             Got::Json(
-                json!({"type": "watching", "data": {"watch": 1, "window": {"server": SERVER_NAME, "window": 0}, "session": {"server": SERVER_NAME, "session": 0}, "pane": 0, "cwd": null}})
+                json!({"type": "watching", "data": {"watch": 1, "window": {"id": 0, "index": 0, "name": "window0", "size": {"cols": 80, "rows": 24}}, "session": {"server": SERVER_NAME, "session": 0}, "pane": 0, "cwd": null}})
             ),
             Got::Snapshot(1, size(80, 24)),
         ]
@@ -48,7 +48,7 @@ fn a_watch_binds_after_locating_and_catches_up_by_snapshot() {
     assert!(lines.contains(&line_for(Op::Subscribe {
         window: WindowId(0)
     })));
-    assert!(lines.contains(&vote(0, 80, 24)));
+    assert!(lines.contains(&take_vote(0, 80, 24)));
 
     hub.output(client, 0, "hi");
     assert_eq!(hub.take(conn), [Got::Output(1, Bytes::from_static(b"hi"))]);
@@ -58,7 +58,7 @@ fn a_watch_binds_after_locating_and_catches_up_by_snapshot() {
 
     hub.send(
         conn,
-        json!({"type": "input", "data": {"watch": 1, "items": [{"text": "ls"}, {"key": "Enter"}]}}),
+        json!({"type": "input", "data": {"watch": 1, "window": 0, "items": [{"text": "ls"}, {"key": "Enter"}]}}),
     );
     hub.settle();
     let input = Op::Input {
@@ -132,6 +132,12 @@ fn a_resize_votes_and_a_new_pane_size_breaks_the_stream() {
         client,
         "%layout-change @0 b25d,500x5,0,0,0 b25d,500x5,0,0,0 *\n",
     );
+    let watching = hub.take_json(conn);
+    assert_eq!(kinds(&watching), ["watching"]);
+    assert_eq!(
+        watching[0]["data"]["window"]["size"],
+        json!({"cols":500,"rows":5})
+    );
     hub.output(client, 0, "dropped: the snapshot holds it");
     assert!(hub.take(conn).is_empty());
     hub.settle();
@@ -169,9 +175,9 @@ fn another_clients_act_yields_a_claim_and_input_or_resize_claims_again() {
 
     hub.send(
         conn,
-        json!({"type":"input","data":{"watch":1,"items":[{"text":"x"}]}}),
+        json!({"type":"input","data":{"watch":1,"window":0,"items":[{"text":"x"}]}}),
     );
-    assert!(hub.lines(client).contains(&vote(0, 110, 35)));
+    assert!(hub.lines(client).contains(&take_vote(0, 110, 35)));
     hub.settle();
     hub.take_json(conn);
 
@@ -184,7 +190,7 @@ fn another_clients_act_yields_a_claim_and_input_or_resize_claims_again() {
         conn,
         json!({"type":"resize","data":{"watch":1,"size":{"cols":90,"rows":28}}}),
     );
-    assert!(hub.lines(client).contains(&vote(0, 90, 28)));
+    assert!(hub.lines(client).contains(&take_vote(0, 90, 28)));
 }
 
 #[test]
@@ -292,9 +298,9 @@ fn an_unclaimed_rewatch_and_nonclaiming_requests_do_not_vote() {
     let claims_before = hub
         .lines(client)
         .iter()
-        .filter(|line| **line == vote(0, 80, 24))
+        .filter(|line| **line == take_vote(0, 80, 24))
         .count();
-    hub.send(conn, json!({"type":"watch","data":{"watch":2,"window":{"server":SERVER_NAME,"window":0},"size":{"cols":120,"rows":40},"claim":false}}));
+    hub.send(conn, json!({"type":"watch","data":{"watch":2,"session":{"server":SERVER_NAME,"session":0},"size":{"cols":120,"rows":40},"claim":false}}));
     hub.settle();
     assert_eq!(
         hub.lines(client)
@@ -331,7 +337,7 @@ fn leaving_the_claiming_watch_clears_its_vote_but_keeps_other_watches() {
     hub.take(claiming);
     hub.send(
         other,
-        json!({"type":"watch","data":{"watch":2,"window":{"server":SERVER_NAME,"window":0},"size":{"cols":140,"rows":45},"claim":false}}),
+        json!({"type":"watch","data":{"watch":2,"session":{"server":SERVER_NAME,"session":0},"size":{"cols":140,"rows":45},"claim":false}}),
     );
     hub.settle();
     hub.take(other);
@@ -371,64 +377,75 @@ fn an_active_pane_change_during_a_snapshot_forgets_it_and_snapshots_the_new_pane
 }
 
 #[test]
-fn a_moved_window_rehomes_its_watch_with_a_fresh_snapshot() {
+fn a_swap_reported_by_the_current_window_subscription_is_followed() {
     let mut hub = Hub::new();
+    hub.add_window(1, 0, 1);
     let conn = hub.connect();
     hub.open(conn, 1, 0);
-    let old = hub.client(0);
+    let owner = hub.client(0);
     hub.take(conn);
-    // move-window -s $0:@0 -t $1:
-    hub.sessions.insert(1);
-    hub.window(0).sessions = vec![1];
-    hub.feed(old, "%unlinked-window-close @0\n");
+    // The initial value confirms @0; the later subscription change reports the swap to @1.
+    hub.feed(owner, "%subscription-changed c $0 - - - : @0\n");
+    hub.current_windows.insert(0, 1);
+    hub.feed(owner, "%subscription-changed c $0 - - - : @1\n");
     hub.settle();
-    let new = hub.client(1);
     let got = hub.take(conn);
     let [Got::Json(watching), snapshot] = &got[..] else {
         panic!("{got:?}");
     };
     assert_eq!(kind(watching), "watching");
-    assert_eq!(watching["data"]["session"]["session"], 1);
+    assert_eq!(watching["data"]["session"]["session"], 0);
+    assert_eq!(watching["data"]["window"]["id"], 1);
     assert_eq!(*snapshot, Got::Snapshot(1, size(80, 24)));
-    // The old owner's copy no longer counts; it lets go of the window.
-    hub.output(old, 0, "stale");
-    hub.output(new, 0, "live");
+    // The same owner now counts only the newly shown pane.
+    hub.output(owner, 0, "stale");
+    hub.output(owner, 1, "live");
     assert_eq!(
         hub.take(conn),
         [Got::Output(1, Bytes::from_static(b"live"))]
     );
-    let [_, clear_vote, unsubscribe] = let_go_of_window_0();
-    assert!(hub.lines(old).contains(&clear_vote) && hub.lines(old).contains(&unsubscribe));
-    hub.advance(LINGER + Duration::from_nanos(1));
-    assert!(hub.clients[&old].closed);
-    assert!(!hub.clients[&new].closed);
+    assert!(hub.lines(owner).contains(&release(0)));
+    assert!(hub.lines(owner).contains(&line_for(Op::Unsubscribe {
+        window: WindowId(0)
+    })));
+    assert!(!hub.clients[&owner].closed);
+
+    hub.send(
+        conn,
+        json!({"type":"input","data":{"watch":1,"window":1,"items":[{"text":"x"}]}}),
+    );
+    assert!(
+        hub.lines(owner).contains(&take_vote(1, 80, 24)),
+        "a new current window has no applied vote"
+    );
 }
 
 #[test]
-fn moving_a_sessions_last_window_rebinds_after_the_session_check() {
+fn an_owner_moved_by_session_destruction_closes_the_gone_session() {
     let mut hub = Hub::new();
     let conn = hub.connect();
     hub.open(conn, 1, 0);
     let old = hub.client(0);
     hub.take(conn);
-    // The session dies with its last window: tmux sends %exit and the client ends.
-    hub.sessions = BTreeSet::from([1]);
-    hub.window(0).sessions = vec![1];
-    hub.feed(old, "%exit\n");
+    // With detach-on-destroy off tmux moves the owner and names its new session.
+    hub.sessions.clear();
+    hub.windows.clear();
+    hub.current_windows.clear();
+    hub.feed(old, "%session-changed $1\n");
     hub.exited(old);
     hub.settle();
     let got = hub.take(conn);
-    let [Got::Json(closed), Got::Json(watching), snapshot] = &got[..] else {
-        panic!("{got:?}");
-    };
     assert_eq!(
-        (kind(closed), kind(watching)),
-        ("sessionClosed", "watching")
+        got,
+        [Got::Json(json!({
+            "type": "sessionClosed",
+            "data": {"session": {"server": SERVER_NAME, "session": 0}}
+        }))]
     );
-    assert_eq!(closed["data"]["session"]["session"], 0);
-    assert_eq!(watching["data"]["session"]["session"], 1);
-    assert_eq!(*snapshot, Got::Snapshot(1, size(80, 24)));
-    assert!(!hub.clients[&hub.client(1)].closed);
+    assert!(
+        hub.clients.values().all(|client| client.closed),
+        "the dead session is not rehomed"
+    );
 }
 
 #[test]
@@ -465,7 +482,7 @@ fn a_crashed_client_respawns_once_and_a_second_crash_ends_the_watch() {
     hub.settle();
     let second = hub.client(0);
     assert_ne!(first, second);
-    assert!(hub.lines(second).contains(&vote(0, 100, 30)));
+    assert!(hub.lines(second).contains(&take_vote(0, 100, 30)));
     // Same session and pane: no new `watching`, just the snapshot.
     assert_eq!(hub.take(conn), [Got::Snapshot(1, size(80, 24))]);
     hub.advance(Duration::from_secs(30));
@@ -484,7 +501,7 @@ fn a_client_that_stops_answering_is_killed_as_a_crash() {
     let client = hub.client(0);
     hub.send(
         conn,
-        json!({"type": "input", "data": {"watch": 1, "items": [{"text": "x"}]}}),
+        json!({"type": "input", "data": {"watch": 1, "window": 0, "items": [{"text": "x"}]}}),
     );
     hub.advance(Duration::from_secs(9));
     assert!(!hub.clients[&client].closed);
@@ -528,10 +545,7 @@ fn a_killed_session_broadcasts_and_its_closed_window_too() {
     hub.feed(client, "%exit\n");
     hub.exited(client);
     hub.settle();
-    assert_eq!(
-        kinds(&hub.take_json(conn)),
-        ["sessionClosed", "windowClosed"]
-    );
+    assert_eq!(kinds(&hub.take_json(conn)), ["sessionClosed"]);
 }
 
 #[test]
@@ -562,23 +576,24 @@ fn session_changes_broadcast_once_and_only_from_the_reporter() {
     assert!(hub.take(reporter_conn).is_empty());
     assert!(hub.take(other_conn).is_empty());
 
-    // A watched close is resolved by Locate and reported as WindowClosed, not a relist.
+    // A current-window notification triggers Locate; an empty result closes only that
+    // session's watches.
     hub.windows.remove(&0).expect("the watched fake window");
-    hub.feed(reporter, "%window-close @0\n");
+    hub.sessions.remove(&0);
+    hub.current_windows.remove(&0);
+    hub.feed(reporter, "%session-window-changed $0 @9\n");
     hub.settle();
     assert_eq!(
         hub.take(reporter_conn),
-        [Got::Json(json!({
-            "type": "windowClosed",
-            "data": {"window": {"server": SERVER_NAME, "window": 0}}
-        }))]
+        [Got::Json(
+            json!({"type": "sessionClosed", "data": {"session": {"server": SERVER_NAME, "session": 0}}})
+        )]
     );
     assert_eq!(
         hub.take(other_conn),
-        [Got::Json(json!({
-            "type": "windowClosed",
-            "data": {"window": {"server": SERVER_NAME, "window": 0}}
-        }))]
+        [Got::Json(
+            json!({"type": "sessionClosed", "data": {"session": {"server": SERVER_NAME, "session": 0}}})
+        )]
     );
 }
 
@@ -625,18 +640,29 @@ fn a_window_binds_only_from_its_owners_own_answer() {
     hub.add_window(2, 1, 2);
     let conn = hub.connect();
     hub.open(conn, 1, 0);
-    hub.open(conn, 2, 1);
-    let (first, owner) = (hub.client(0), hub.client(1));
+    let non_owner = hub.client(0);
     let other = hub.connect();
     hub.take(conn);
-    // @2's Locate runs on $0's client, which answers with the pane as it is now…
-    hub.watch(other, 1, 2);
-    let answer = hub.reply_bytes(first).expect("a Locate on $0's client");
-    assert!(answer.contains("\t%2\t"));
-    // …but the owner reports a new active pane before that answer is read.
-    hub.window(2).pane = 9;
-    hub.feed(owner, "%window-pane-changed @2 %9\n");
-    hub.feed(first, &answer);
+    // A ready client can check the session, but its Locate cannot bind the view.
+    hub.watch(other, 1, 1);
+    let answer = hub.reply_bytes(non_owner).expect("a session check Locate");
+    assert!(answer.contains("\t%1\t"));
+    hub.feed(non_owner, &answer);
+    assert!(
+        hub.take(other).is_empty(),
+        "the view is not bound by the checker"
+    );
+
+    // The owner starts and performs the binding Locate itself.
+    let locate = line_for(Op::Locate {
+        session: tether::tmux::SessionId(1),
+    });
+    hub.settle_until(|line| line == locate);
+    let owner = hub.client(1);
+    hub.window(1).pane = 9;
+    let answer = hub.reply_bytes(owner).expect("the owner's Locate");
+    assert!(answer.contains("\t%9\t"));
+    hub.feed(owner, &answer);
     hub.settle();
     let watching = hub.take_json(other);
     assert_eq!(kinds(&watching), ["watching"]);
@@ -646,11 +672,11 @@ fn a_window_binds_only_from_its_owners_own_answer() {
 #[test]
 fn output_past_the_credit_starves_one_watch_until_a_spaced_snapshot() {
     let mut hub = Hub::new();
-    hub.add_window(1, 0, 1);
+    hub.add_window(1, 1, 1);
     let conn = hub.connect();
     hub.open(conn, 1, 0);
     hub.open(conn, 2, 1);
-    let client = hub.client(0);
+    let (client, second_owner) = (hub.client(0), hub.client(1));
     hub.take(conn);
     // Fill most of the credit with watch 1's output, nothing returned.
     let chunk = "x".repeat(60_000);
@@ -666,7 +692,7 @@ fn output_past_the_credit_starves_one_watch_until_a_spaced_snapshot() {
         "then it starved"
     );
     // Watch 1 starved; watch 2's output now fits only above watch 1's reservation.
-    hub.output(client, 1, "y");
+    hub.output(second_owner, 1, "y");
     assert!(hub.take(conn).is_empty(), "the waiting snapshot goes first");
     // It starves too. Credit back: both catch up, no sooner than the spacing.
     hub.credit(conn, CREDIT as u32);
@@ -677,7 +703,7 @@ fn output_past_the_credit_starves_one_watch_until_a_spaced_snapshot() {
     let got = hub.take(conn);
     assert!(got.contains(&Got::Snapshot(1, size(80, 24))), "{got:?}");
     assert!(got.contains(&Got::Snapshot(2, size(80, 24))), "{got:?}");
-    hub.output(client, 1, "z");
+    hub.output(second_owner, 1, "z");
     assert_eq!(hub.take(conn), [Got::Output(2, Bytes::from_static(b"z"))]);
 }
 
@@ -770,19 +796,22 @@ fn history_and_listings_need_a_capture_slot_and_credit() {
 #[test]
 fn a_released_snapshot_holds_its_capture_slot_until_tmux_answers_it() {
     let mut hub = Hub::new();
-    hub.add_window(1, 0, 1);
-    hub.add_window(2, 0, 2);
+    hub.add_window(1, 1, 1);
+    hub.add_window(2, 2, 2);
     // One watch per connection, so credit never holds a capture back.
     let (conn, one, two) = (hub.connect(), hub.connect(), hub.connect());
     hub.open(conn, 1, 0);
     hub.open(one, 1, 1);
     hub.open(two, 1, 2);
     hub.take(conn);
-    let client = hub.client(0);
+    let clients = [hub.client(0), hub.client(1), hub.client(2)];
     let snapshots = [snapshot(0), snapshot(1), snapshot(2)];
     let continues = |hub: &Hub| {
-        let lines = hub.lines(client);
-        lines.iter().filter(|line| snapshots.contains(line)).count()
+        clients
+            .iter()
+            .flat_map(|client| hub.lines(*client))
+            .filter(|line| snapshots.contains(line))
+            .count()
     };
     let resync_both = |hub: &mut Hub| {
         hub.send(one, json!({"type": "resync", "data": {"watch": 1}}));
@@ -792,7 +821,7 @@ fn a_released_snapshot_holds_its_capture_slot_until_tmux_answers_it() {
     // A snapshot of %0 goes out; the tab closes before it lands.
     hub.send(conn, json!({"type": "resync", "data": {"watch": 1}}));
     hub.send(conn, json!({"type": "unwatch", "data": {"watch": 1}}));
-    assert!(hub.lines(client).ends_with(&let_go_of_window_0()));
+    assert!(hub.lines(clients[0]).ends_with(&let_go_of_window_0()));
     // Until tmux answers it, the released snapshot holds one of the two slots.
     resync_both(&mut hub);
     assert_eq!(continues(&hub), before + 2);
@@ -816,7 +845,7 @@ fn user_requests_stop_at_the_threshold_and_maintenance_continues() {
     for _ in 0..MAX_IN_FLIGHT {
         hub.send(
             conn,
-            json!({"type": "input", "data": {"watch": 1, "items": [{"text": "x"}]}}),
+            json!({"type": "input", "data": {"watch": 1, "window": 0, "items": [{"text": "x"}]}}),
         );
     }
     let busy = hub
@@ -836,6 +865,7 @@ fn user_requests_stop_at_the_threshold_and_maintenance_continues() {
         FromConn::Paste {
             req: 77,
             watch: 1,
+            window: 0,
             enter: true,
             file: paste_file,
         },
@@ -897,7 +927,7 @@ fn daemon_limits_end_or_refuse_what_is_over_them() {
     let text = "q".repeat(4097);
     hub.send(
         a,
-        json!({"type": "input", "data": {"watch": 1, "items": [{"text": text}]}}),
+        json!({"type": "input", "data": {"watch": 1, "window": 0, "items": [{"text": text}]}}),
     );
     let refused = hub.take_json(a);
     assert_eq!(
@@ -941,6 +971,7 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
         FromConn::Paste {
             req: 11,
             watch: 1,
+            window: 0,
             enter: true,
             file,
         },
@@ -949,7 +980,7 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
     assert_eq!(
         hub.take_json(conn),
         [
-            json!({"type":"error","data":{"req":11,"watch":1,"code":"busy","message":"the window isn't connected yet"}})
+            json!({"type":"error","data":{"req":11,"watch":1,"code":"busy","message":"the session isn't connected yet"}})
         ]
     );
     hub.settle(); // the watch is now bound
@@ -967,7 +998,7 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
         "%subscription-changed w0 $0 @0 0 - : laptop.2.200x50.attached,focused,UTF-8;|/tmp\n",
     );
     hub.settle();
-    let vote_line = vote(0, 80, 24);
+    let vote_line = take_vote(0, 80, 24);
     let votes_before_paste = hub
         .lines(client)
         .iter()
@@ -981,11 +1012,25 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
         FromConn::Paste {
             req: 12,
             watch: 1,
+            window: 0,
             enter: true,
             file,
         },
     ));
     assert_eq!(hub.removed.len(), 1);
+    let lines = hub.lines(client);
+    let take_at = lines
+        .iter()
+        .position(|line| *line == vote_line)
+        .expect("claim vote");
+    let paste_at = lines
+        .iter()
+        .rposition(|line| line.contains("paste-buffer -p"))
+        .expect("paste group");
+    assert!(
+        take_at < paste_at,
+        "the take-and-vote group precedes the paste group"
+    );
     hub.settle();
     assert_eq!(
         hub.take_json(conn),
@@ -1009,6 +1054,7 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
         FromConn::Paste {
             req: 13,
             watch: 1,
+            window: 0,
             enter: true,
             file,
         },
@@ -1028,6 +1074,7 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
         FromConn::Paste {
             req: 14,
             watch: 9,
+            window: 9,
             enter: true,
             file,
         },
@@ -1047,6 +1094,7 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
         FromConn::Paste {
             req: 15,
             watch: 1,
+            window: 0,
             enter: true,
             file,
         },
@@ -1067,6 +1115,7 @@ fn every_paste_path_removes_its_file_and_answers_req_once() {
         FromConn::Paste {
             req: 16,
             watch: 1,
+            window: 0,
             enter: true,
             file,
         },
@@ -1097,14 +1146,8 @@ fn control_json_past_the_overdraft_wedges_the_connection() {
         renames += 1;
         assert!(renames < 40_000);
     }
-    let rename = proto::ServerMsg::WindowRenamed {
-        window: WindowRef {
-            server: SERVER_NAME.into(),
-            window: 0,
-        },
-        name: "x".into(),
-    };
-    let charge = rename.encode().len() as u64;
+    let rename = proto::ServerMsg::SessionsChanged;
+    let charge = rename.encode().len().max(64) as u64;
     // The first message past the credit plus the overdraft.
     assert_eq!(renames, (CREDIT + OVERDRAFT) / charge + 1);
     hub.take(quiet);

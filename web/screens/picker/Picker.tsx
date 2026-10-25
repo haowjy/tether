@@ -1,5 +1,5 @@
-// The Open session picker behind terminal `+` (client-architecture.md §6.3): existing windows
-// only, the same hierarchy and rows as Home, in a centred dialog. On a touch phone the
+// The Open session picker behind terminal `+` (client-architecture.md §6.3): existing sessions
+// only, the same rows as Home, in a centred dialog. On a touch phone the
 // switcher is the only picker. The router owns when it is open, so Back, Escape and the
 // backdrop all close it the same way, leaving the active tab as it was.
 import { useState } from "preact/hooks";
@@ -7,7 +7,7 @@ import { useApp, useAppView, useOverlay } from "../../app/context";
 import { Dialog } from "../../ui/primitives/Dialog";
 import { SearchField } from "../../ui/primitives/TextField";
 import { HostSessionLists } from "../sessions/HostSessionLists";
-import { openWindow } from "../sessions/openWindow";
+import { openSession } from "../sessions/openSession";
 import styles from "./Picker.module.css";
 
 /** Mounted only while the picker is open, so every open starts with an empty search and a fresh listing. */
@@ -17,7 +17,7 @@ function PickerBody() {
   return (
     <div class={styles.body}>
       <SearchField label="Find a session" placeholder="Find a session" value={query} onInput={setQuery} data-initial-focus="" />
-      <HostSessionLists query={query} onOpen={(h, listing, session, window) => { app.router.closeOverlay(() => { openWindow(app, h, listing, session, window); }); }} />
+      <HostSessionLists query={query} onOpen={(h, listing, session) => { app.router.closeOverlay(() => { openSession(app, h, listing, session); }); }} />
     </div>
   );
 }

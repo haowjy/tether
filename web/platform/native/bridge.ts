@@ -4,7 +4,7 @@
 import type { DraftRecord, HostEntry, InputEvent, Lifecycle, SavedWorkspace, TabKey, Viewport } from "../types";
 
 /** Bumped with every incompatible change here and in ios/TetherKit/.../Bridge.swift. */
-export const BRIDGE_VERSION = 2;
+export const BRIDGE_VERSION = 3;
 
 export interface Boot {
   bridgeVersion: number;

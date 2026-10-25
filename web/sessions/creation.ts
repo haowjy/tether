@@ -1,7 +1,7 @@
-// What the two creation dialogs send (client-architecture.md §6.3 "Creation"). Both fields
+// What the creation dialogs send (client-architecture.md §6.3 "Creation"). Both fields
 // are optional: a blank name lets tmux choose, a blank directory uses tmux's default. The
 // daemon checks that the directory exists, so this only catches what can't be a path at all.
-import type { ClientMsg, SessionRef } from "../proto/generated/messages";
+import type { ClientMsg } from "../proto/generated/messages";
 
 export interface CreationFields {
   name?: string;
@@ -19,8 +19,4 @@ export function parseCreation(name: string, dir: string): CreationParse {
 
 export function newSessionMsg(req: number, fields: CreationFields): ClientMsg {
   return { type: "newSession", data: { req, ...fields } };
-}
-
-export function newWindowMsg(req: number, session: SessionRef, fields: CreationFields): ClientMsg {
-  return { type: "newWindow", data: { req, session, ...fields } };
 }

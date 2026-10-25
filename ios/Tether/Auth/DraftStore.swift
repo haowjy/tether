@@ -3,12 +3,16 @@ import TetherKit
 
 final class DraftStore {
     private let defaults: UserDefaults
-    private let key = "tether.drafts.v1"
+    private let key = "tether.drafts.v2"
     private let lock = NSLock()
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    /// v1 drafts are keyed by window tabs; tabs follow sessions now and nothing maps one to the other, so they go.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        defaults.removeObject(forKey: "tether.drafts.v1")
+    }
 
     func get(_ key: TabKey) -> DraftRecord? {
         lock.lock(); defer { lock.unlock() }

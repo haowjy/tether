@@ -7,6 +7,7 @@
 #[path = "support/tmux_server.rs"]
 mod tmux_server;
 
+use std::io::Write as _;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -66,18 +67,25 @@ impl Conn {
         sent.expect("the hub is running");
     }
 
-    async fn watch(&mut self, watch: u32, server: &str, window: u32) {
-        let size = json!({"cols": 80, "rows": 24});
-        let window = json!({"server": server, "window": window});
-        let msg =
-            json!({"type": "watch", "data": {"watch": watch, "window": window, "size": size}});
-        self.send(msg).await;
+    async fn watch(&mut self, watch: u32, server: &str, session: u32) {
+        self.send(json!({
+            "type": "watch",
+            "data": {
+                "watch": watch,
+                "session": {"server": server, "session": session},
+                "size": {"cols": 80, "rows": 24}
+            }
+        }))
+        .await;
     }
 
-    async fn input(&mut self, watch: u32, text: &str) {
+    async fn input(&mut self, watch: u32, window: u32, text: &str) {
         let items = json!([{"text": text}, {"key": "Enter"}]);
-        self.send(json!({"type": "input", "data": {"watch": watch, "items": items}}))
-            .await;
+        self.send(json!({
+            "type": "input",
+            "data": {"watch": watch, "window": window, "items": items}
+        }))
+        .await;
     }
 
     /// Takes the next message into the outbox and writes out everything due,
@@ -166,6 +174,7 @@ impl Conn {
                 .iter()
                 .filter_map(|got| match got {
                     Got::Output(of, bytes) if *of == watch => Some(bytes.to_vec()),
+                    Got::Snapshot(of, _, bytes) if *of == watch => Some(bytes.to_vec()),
                     _ => None,
                 })
                 .flatten()
@@ -174,7 +183,11 @@ impl Conn {
                 return;
             }
             let left = deadline.saturating_duration_since(Instant::now());
-            assert!(!left.is_zero(), "no {needle:?} within {WAIT:?}");
+            assert!(
+                !left.is_zero(),
+                "no {needle:?} within {WAIT:?}; got {:?}",
+                self.got
+            );
             self.next(left).await;
         }
     }
@@ -234,7 +247,7 @@ async fn a_watch_echoes_input_and_a_rewatch_snapshots_what_it_showed() {
         .await;
 
     let mark = conn.got.len();
-    conn.input(1, "echo tether-$((6*7))").await;
+    conn.input(1, 0, "echo tether-$((6*7))").await;
     conn.wait_output(mark, 1, "tether-42").await;
 
     conn.send(json!({"type": "unwatch", "data": {"watch": 1}}))
@@ -251,52 +264,62 @@ async fn a_watch_echoes_input_and_a_rewatch_snapshots_what_it_showed() {
 }
 
 #[tokio::test]
-async fn a_moved_window_rehomes_its_watch_and_a_closed_one_is_broadcast() {
-    let Some((_serial, server)) = setup("move").await else {
+async fn a_session_watch_follows_prefix_n_and_swap() {
+    let Some((_serial, server)) = setup("session-follow").await else {
         return;
     };
     let name = server_name(&server);
-    server
-        .run(&["new-window", "-d", "-t", tmux_server::SESSION])
+    let next = server
+        .run(&[
+            "new-window",
+            "-d",
+            "-t",
+            tmux_server::SESSION,
+            "-P",
+            "-F",
+            "#{window_id}",
+        ])
         .expect("a second window");
-    server
-        .run(&["new-session", "-d", "-s", "other", "-x", "80", "-y", "24"])
-        .expect("a second session");
-    let other = server
-        .run(&["display-message", "-p", "-t", "other", "#{session_id}"])
-        .expect("its id");
-    let other: u32 = other.trim().trim_start_matches('$').parse().expect("an id");
+    let next: u32 = next
+        .trim()
+        .trim_start_matches('@')
+        .parse()
+        .expect("a window id");
     let hub = start(&server);
     let mut conn = Conn::open(&hub).await;
-    conn.watch(1, &name, 1).await;
-    conn.wait_json(0, "watching", |value| {
-        value["data"]["session"]["session"] == 0
-    })
-    .await;
+    conn.watch(1, &name, 0).await;
+    conn.wait_json(0, "watching", |value| value["data"]["window"]["id"] == 0)
+        .await;
     conn.wait_snapshot(0, 1).await;
+    let mut laptop = server.attach_terminal().expect("attach pty laptop");
 
     let mark = conn.got.len();
-    server
-        .run(&["move-window", "-s", "@1", "-t", "other:"])
-        .expect("move the window");
+    laptop
+        .stdin
+        .as_mut()
+        .expect("laptop stdin")
+        .write_all(b"\x02n")
+        .expect("send prefix-n");
     conn.wait_json(mark, "watching", |value| {
-        value["data"]["session"]["session"] == other
+        value["data"]["window"]["id"] == next
     })
     .await;
     conn.wait_snapshot(mark, 1).await;
-    // Output now comes from the new owner.
+
+    // Input names the window from the last watching frame.
     let mark = conn.got.len();
-    conn.input(1, "echo moved-$((2+2))").await;
-    conn.wait_output(mark, 1, "moved-4").await;
+    conn.input(1, next, "echo followed-$((2+2))").await;
+    conn.wait_output(mark, 1, "followed-4").await;
 
     let mark = conn.got.len();
     server
-        .run(&["kill-window", "-t", "@1"])
-        .expect("kill the window");
-    conn.wait_json(mark, "windowClosed", |value| {
-        value["data"]["window"] == json!({"server": name, "window": 1})
-    })
-    .await;
+        .run(&["swap-window", "-s", "fixture:1", "-t", "fixture:0"])
+        .expect("swap the current window");
+    conn.wait_json(mark, "watching", |value| value["data"]["window"]["id"] == 0)
+        .await;
+    conn.wait_snapshot(mark, 1).await;
+    let _ = laptop.kill();
+    let _ = laptop.wait();
 }
 
 #[tokio::test]

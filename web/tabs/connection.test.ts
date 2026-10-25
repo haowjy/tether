@@ -81,7 +81,7 @@ describe("tab connection", () => {
   it("a lost socket supersedes a refusal, and a limited tab never closes by itself", () => {
     const limited = run([{ type: "watchEnded", reason: "limit", jitter: 0.5 }]);
     expect(reduce(limited, lostMid)).toMatchObject({ kind: "reconnecting", halt: null });
-    expect(reduce(limited, { type: "windowClosed" })).toEqual({ kind: "closed", reason: "windowClosed" });
+    expect(reduce(limited, { type: "sessionClosed" })).toEqual({ kind: "closed", reason: "sessionClosed" });
   });
 
   it("a returning tab rewatches from live only", () => {
@@ -92,11 +92,11 @@ describe("tab connection", () => {
 
   it("closes only on window/server closure or the user, from any state, and stays closed", () => {
     for (const from of [initialState, run([{ type: "bound" }]), run([lostMid])]) {
-      expect(reduce(from, { type: "windowClosed" })).toEqual({ kind: "closed", reason: "windowClosed" });
+      expect(reduce(from, { type: "sessionClosed" })).toEqual({ kind: "closed", reason: "sessionClosed" });
       expect(reduce(from, { type: "serverExited" })).toEqual({ kind: "closed", reason: "serverExited" });
       expect(reduce(from, { type: "userClosed" })).toEqual({ kind: "closed", reason: "user" });
     }
-    const closed = run([{ type: "windowClosed" }]);
+    const closed = run([{ type: "sessionClosed" }]);
     expect(run([{ type: "bound" }, lostMid, { type: "nudge" }], closed)).toBe(closed);
   });
 

@@ -17,7 +17,7 @@ export function OpenTabs() {
     <section class={styles.section} aria-labelledby="open-tabs">
       <h2 id="open-tabs" class={styles.heading}>Open tabs</h2>
       {labels.length === 0 ? (
-        <p class={styles.none}>No tabs open. Choose a window from your sessions to open one.</p>
+        <p class={styles.none}>No tabs open. Choose a session to open one.</p>
       ) : (
         <ul class={styles.tabs}>
           {labels.map((l) => {

@@ -64,6 +64,9 @@
   justify-content: space-between;
   gap: var(--space-1);
 }
-.chipName { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The session name is bold and the window's regular, set apart by space alone; the window truncates first. */
+.chipSession, .chipWindow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chipSession { flex: 0 0.01 auto; font-weight: var(--weight-bold); }
+.chipWindow { flex: 0 1 auto; margin-right: auto; }
 .chipCount { flex: none; font-size: var(--font-size-1); color: var(--color-text-muted); }
 .toggle { width: var(--dock-control-height); padding: 0; }

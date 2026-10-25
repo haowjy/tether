@@ -16,20 +16,19 @@ const hash = (page: Page): Promise<string> => page.evaluate(() => location.hash)
 const title = (page: Page, name: string | RegExp) => page.getByRole("heading", { level: 1, name });
 /** The fake daemon's `/fs` requests so far, `"METHOD /path?query"`. */
 const fsRequests = (page: Page): Promise<string[]> => page.evaluate(() => window.__harness?.platform.daemon.requests.filter((r) => r.includes(" /fs/")) ?? []);
-/** Each `[tmux window, text]` the app typed into a tab: the real driver's `input` messages, by the window their watch is on. */
-const typed = (page: Page): Promise<[number | undefined, string][]> =>
+/** Each `[tmux window, text]` the app typed into a tab: the real driver's `input` messages, by the window they name. */
+const typed = (page: Page): Promise<[number, string][]> =>
   page.evaluate(() => {
     const sent = window.__harness?.platform.links.flatMap((l) => l.sent) ?? [];
-    const windowOf = new Map(sent.flatMap((m) => (m.type === "watch" ? [[m.data.watch, m.data.window.window] as const] : [])));
-    return sent.flatMap((m) => (m.type === "input" ? [[windowOf.get(m.data.watch), m.data.items.map((i) => ("text" in i ? i.text : `<${JSON.stringify(i)}>`)).join("")] as [number | undefined, string]] : []));
+    return sent.flatMap((m) => (m.type === "input" ? [[m.data.window, m.data.items.map((i) => ("text" in i ? i.text : `<${JSON.stringify(i)}>`)).join("")] as [number, string]] : []));
   });
 const script = (page: Page, run: "push" | "end", event?: object): Promise<void> =>
   page.evaluate(([call, e]) => { const s = window.__harness?.platform.uploadScript; if (call === "push") s?.push(e as never); else s?.end(); }, [run, event] as const);
 
-/** The active tab's id in the fixture's saved workspace: tether / agent, tmux window 1. */
-const AGENT = "h-pop/main:1-1/1";
+/** The active tab's id in the fixture's saved workspace: the session tether, whose current window is 1. */
+const AGENT = "h-pop/main:1-1/$1";
 const AGENT_WINDOW = 1;
-const NOTES = "h-pop/main:1-1/3";
+const NOTES = "h-pop/main:1-1/$2";
 
 for (const [name, scenario] of SCREENS) {
   test.describe(`files on ${name}`, () => {
@@ -139,7 +138,7 @@ for (const [name, scenario] of SCREENS) {
 
     test("Insert path goes to the active tab, with no Enter, and opens Terminal there", async ({ page }) => {
       await openFixture(page, "filesCode", scenario, "#/files");
-      await page.getByRole("button", { name: "Insert path into tether / agent" }).click();
+      await page.getByRole("button", { name: "Insert path into tether agent" }).click();
       await expect.poll(() => hash(page)).toBe("#/terminal");
       // The quoted-or-bare path, as text and nothing else: no Enter. It is typed once the tab's watch binds.
       await expect.poll(() => typed(page), { timeout: 15_000 }).toEqual([[AGENT_WINDOW, `${REPO}/src/main.rs`]]);
@@ -153,7 +152,7 @@ for (const [name, scenario] of SCREENS) {
       await page.evaluate(() => window.__harness?.app.router.go("terminal"));
       await expect(page.getByText("allows 1 tmux session at a time").first()).toBeVisible();
       await page.evaluate(() => window.__harness?.app.router.go("files"));
-      const button = page.getByRole("button", { name: "Insert path into tether / agent" });
+      const button = page.getByRole("button", { name: "Insert path into tether agent" });
       await expect(button).toHaveAttribute("aria-disabled", "true");
       await expect(button).toHaveAccessibleDescription("That tab isn't connected");
       await button.click({ force: true });
@@ -168,7 +167,7 @@ for (const [name, scenario] of SCREENS) {
 
     test("Insert path says why it is unavailable with no tab open", async ({ page }) => {
       await openFixture(page, "filesCode", scenario, "#/files");
-      await page.evaluate(() => { for (const id of ["h-pop/main:1-1/1", "h-pop/main:1-1/3"]) window.__harness?.app.dispatch({ type: "closed", id }); });
+      await page.evaluate(() => { for (const id of ["h-pop/main:1-1/$1", "h-pop/main:1-1/$2"]) window.__harness?.app.dispatch({ type: "closed", id }); });
       const button = page.getByRole("button", { name: "Insert path" });
       await expect(button).toHaveAttribute("aria-disabled", "true");
       await expect(button).toHaveAccessibleDescription("Open a terminal tab first");
@@ -192,7 +191,7 @@ for (const [name, scenario] of SCREENS) {
       await script(page, "push", { id: "u1", path: UPLOADED });
       await script(page, "end");
       await expect(page.getByText("Saved 20261022-101010Z-abcd.jpg")).toBeVisible();
-      await page.getByRole("button", { name: "Insert path into tether / agent" }).click();
+      await page.getByRole("button", { name: "Insert path into tether agent" }).click();
       await expect.poll(() => hash(page)).toBe("#/terminal");
       await expect.poll(() => typed(page), { timeout: 15_000 }).toEqual([[AGENT_WINDOW, UPLOADED]]);
     });

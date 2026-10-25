@@ -1,17 +1,20 @@
-// Creation (client-architecture.md §6.3): `newSession` or `newWindow` over the host's one
-// socket, then the new window's tab. The `created` reply has refs, not names, so the tab is
-// opened from the next listing: the one fetcher answers, and the cache holds it.
+// Creation (client-architecture.md §6.3 "Creation"). A new session is `newSession` over the
+// host's one socket, then its tab, opened from the next listing: the `created` reply has refs,
+// not names. A new window is created through its tab (`Terminals.newWindow`): the daemon makes
+// it the session's current window and the tab follows it, so nothing is opened.
 import type { AppController } from "../../app/controller";
 import { RequestError } from "../../net/host";
 import type { HostClient } from "../../net/hosts";
-import type { SessionRef, WindowRef } from "../../proto/generated/messages";
-import { newSessionMsg, newWindowMsg, type CreationFields } from "../../sessions/creation";
-import { findWindow } from "../../sessions/groups";
-import { openWindow } from "../sessions/openWindow";
+import type { SessionRef } from "../../proto/generated/messages";
+import { newSessionMsg, type CreationFields } from "../../sessions/creation";
+import { findSession } from "../../sessions/groups";
+import { openSession } from "../sessions/openSession";
+import { terminalsOf } from "../terminal/terminals";
 
 const LISTING_WAIT_MS = 5_000;
 
-export type Target = { kind: "session" } | { kind: "window"; session: SessionRef };
+/** A session to create, or a window to create in the session the tab `tab` follows. */
+export type Target = { kind: "session" } | { kind: "window"; tab: string };
 
 export type CreateResult = { ok: true } | { error: string };
 
@@ -30,16 +33,16 @@ function failureText(error: unknown, hostName: string): string {
   }
 }
 
-/** Resolves with the window once a listing holds it, or null after a few seconds. */
-function listingWith(app: AppController, host: HostClient, ref: WindowRef): Promise<ReturnType<typeof findWindow> | null> {
+/** Resolves with the session once a listing holds it, or null after a few seconds. */
+function listingWith(app: AppController, host: HostClient, ref: SessionRef): Promise<ReturnType<typeof findSession> | null> {
   const cache = app.sessions;
   const { handle } = host.entry;
   const found = () => {
     const listing = cache.snapshot.hosts[handle]?.listing;
-    return listing ? findWindow(listing, ref) : undefined;
+    return listing ? findSession(listing, ref) : undefined;
   };
   return new Promise((resolve) => {
-    const done = (value: ReturnType<typeof findWindow> | null): void => {
+    const done = (value: ReturnType<typeof findSession> | null): void => {
       clearTimeout(timer);
       off();
       resolve(value);
@@ -55,21 +58,30 @@ function listingWith(app: AppController, host: HostClient, ref: WindowRef): Prom
   });
 }
 
-/** Creates the session or window, then opens its tab and shows Terminal. The overlay closes first. */
+/** Creates the session and opens its tab, or creates the window and shows it. Every overlay closes first, the switcher's too. */
 export async function createAndOpen(app: AppController, host: HostClient, target: Target, fields: CreationFields): Promise<CreateResult> {
   const hostName = host.name ?? "the server";
+  if (target.kind === "window") {
+    try {
+      await terminalsOf(app).newWindow(target.tab, fields);
+    } catch (error) {
+      return { error: failureText(error, hostName) };
+    }
+    app.router.closeAllOverlays();
+    return { ok: true };
+  }
   let created;
   try {
     created = await host.socket.request(
-      (req) => (target.kind === "session" ? newSessionMsg(req, fields) : newWindowMsg(req, target.session, fields)),
+      (req) => newSessionMsg(req, fields),
       (reply) => (reply.type === "created" ? reply.data : undefined),
     );
   } catch (error) {
     return { error: failureText(error, hostName) };
   }
-  const hit = await listingWith(app, host, created.window);
+  const hit = await listingWith(app, host, created.session);
   const listing = app.sessions.snapshot.hosts[host.entry.handle]?.listing;
   if (!hit || !listing) return { error: "Created, but it hasn't appeared in the list yet. Close this to see the list." };
-  app.router.closeOverlay(() => { openWindow(app, host, listing, hit.session, hit.window); });
+  app.router.closeAllOverlays(() => { openSession(app, host, listing, hit); });
   return { ok: true };
 }

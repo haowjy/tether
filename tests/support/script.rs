@@ -19,11 +19,15 @@ pub struct Request {
 
 pub fn encode(offset: usize, tag: Tag, op: &Op) -> String {
     let op = match op {
-        Op::Locate { window } => format!("locate {window}"),
-        Op::LocateSession { session } => format!("locate-session {session}"),
+        Op::Locate { session } => format!("locate {session}"),
         Op::Snapshot { pane } => format!("snapshot {pane}"),
         Op::Release { pane } => format!("release {pane}"),
-        Op::Vote { window, size } => format!("vote {window} {}x{}", size.cols, size.rows),
+        Op::Vote { window, size, take } => format!(
+            "vote {window} {}x{}{}",
+            size.cols,
+            size.rows,
+            if *take { " take" } else { "" }
+        ),
         Op::ClearVote { window } => format!("clear-vote {window}"),
         Op::Subscribe { window } => format!("subscribe {window}"),
         Op::Unsubscribe { window } => format!("unsubscribe {window}"),
@@ -49,6 +53,7 @@ pub fn encode(offset: usize, tag: Tag, op: &Op) -> String {
             hex(path.to_str().expect("UTF-8 paste path").as_bytes()),
             if *enter { " enter" } else { "" }
         ),
+        _ => panic!("unexpected operation in a fixture script"),
     };
     format!("{offset} {} {op}", tag.0)
 }
@@ -67,9 +72,6 @@ pub fn decode(line: &str) -> Request {
     let pane = |word: &str| PaneId::parse(word.as_bytes()).expect("pane id");
     let op = match kind {
         "locate" => Op::Locate {
-            window: window(next()),
-        },
-        "locate-session" => Op::LocateSession {
             session: SessionId::parse(next().as_bytes()).expect("session id"),
         },
         "snapshot" => Op::Snapshot { pane: pane(next()) },
@@ -77,12 +79,14 @@ pub fn decode(line: &str) -> Request {
         "vote" => {
             let window = window(next());
             let (cols, rows) = next().split_once('x').expect("CxR");
+            let take = words.next() == Some("take");
             Op::Vote {
                 window,
                 size: Size {
                     cols: cols.parse().expect("cols"),
                     rows: rows.parse().expect("rows"),
                 },
+                take,
             }
         }
         "clear-vote" => Op::ClearVote {

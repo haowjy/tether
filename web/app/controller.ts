@@ -90,8 +90,7 @@ export class AppController extends Store<AppView> {
       restoring: () => this.snapshot.workspace.tabs.some((t) => t.restoring),
       visible: () => this.snapshot.lifecycle.visible,
     });
-    this.sessions = new SessionsCache(boot.workspace?.expanded);
-    this.persist.provideExpanded(() => this.sessions.saved());
+    this.sessions = new SessionsCache();
 
     this.applyViewport(boot.viewport);
     this.hosts.subscribe(() => { this.hostsChanged(); });
@@ -105,12 +104,9 @@ export class AppController extends Store<AppView> {
     this.listing.subscribe((event) => {
       const client = this.hosts.get(event.handle);
       if (event.type === "requested") this.sessions.requested(event.handle);
-      else if (event.type === "listed") this.sessions.listed(event.handle, event.listing, client?.hostId ?? null);
-      else if (event.type === "failed") this.sessions.failed(event.handle, event.reason);
-      else this.sessions.renamed(event.handle, event.window, event.name);
-      if (!client?.hostId) return;
-      if (event.type === "listed") this.dispatch({ type: "listing", hostId: client.hostId, listing: event.listing });
-      else if (event.type === "renamed") this.dispatch({ type: "renamed", hostId: client.hostId, window: event.window, name: event.name });
+      else if (event.type === "listed") this.sessions.listed(event.handle, event.listing);
+      else this.sessions.failed(event.handle, event.reason);
+      if (event.type === "listed" && client?.hostId) this.dispatch({ type: "listing", hostId: client.hostId, listing: event.listing });
     });
     platform.subscribe((event) => { this.platformEvent(event); });
     this.focus.screenChanged(router.entry.destination, router.entry.overlay !== null);

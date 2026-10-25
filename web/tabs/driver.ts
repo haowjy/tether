@@ -1,11 +1,11 @@
-import type { ClientMsg, ServerMsg, Size, WindowRef } from "../proto/generated/messages";
+import type { ClientMsg, ServerMsg, SessionRef, ShownWindow, Size } from "../proto/generated/messages";
 import type { Frame } from "../proto/frames";
 import type { Host, PasteResult, TabPort } from "../net/host";
 import type { TerminalRenderer } from "../term";
 import { acceptsInsert, initialState, reduce, type ConnectionEvent, type ConnectionState } from "./connection";
 import type { InputEvent } from "../platform/types";
 import { cannotInsert, shellQuote, toMessages } from "./input";
-import { sameWindow } from "../proto/window";
+import type { CreationFields } from "../sessions/creation";
 
 /** What became of a path: typed now, waiting for the watch, or refused (the tab can't take it, and nothing was kept). */
 export type InsertResult = "typed" | "queued" | "refused";
@@ -19,8 +19,13 @@ export interface HistoryRow {
 
 type Watching = Extract<ServerMsg, { type: "watching" }>["data"];
 
+/** The wait before the band says the window is sized for another terminal, at least: a claim's resize is on its way over until then. */
+const BAND_MIN_WAIT_MS = 1000;
+/** Added to the last ping round trip when that is the longer wait. */
+const BAND_RTT_MARGIN_MS = 500;
+
 export interface TabOptions {
-  window: WindowRef;
+  session: SessionRef;
   renderer: Pick<TerminalRenderer, "output" | "snapshot">;
   /** The host's shared socket. */
   host: Host;
@@ -30,11 +35,11 @@ export interface TabOptions {
   covered?: boolean;
   onState(state: ConnectionState): void;
   /**
-   * The pane became larger than the size this tab sent (another terminal holds the window), or
-   * stopped being. Called only on a change.
+   * The window's size has differed from the size this tab sent for longer than the wait, larger or
+   * smaller (another terminal holds the window), or stopped differing. Called only on a change.
    */
-  onLarger?(larger: boolean): void;
-  /** Bound, and again whenever the daemon reports a new session, pane or cwd. */
+  onSizedForOther?(sizedForOther: boolean): void;
+  /** Bound, and again whenever the shown window, its name or size, the pane or the cwd changes. */
   onWatching?(watching: Watching): void;
   /** A message for the user, such as an upload that could not be inserted. */
   onNotice(text: string): void;
@@ -59,16 +64,20 @@ export class TabDriver {
   private watchId: number | null = null;
   /** The size the daemon last heard for the current watch (in `watch`, or a `resize`). */
   private sentSize: Size | null = null;
-  /** The pane's size, from the last snapshot; it outlives a watch, as the content on screen does. */
-  private pane: Size | null = null;
-  private larger = false;
+  /** The session's current window as the last `watching` said; it outlives a watch, as the content on screen does. */
+  private shown: ShownWindow | null = null;
+  /** The pane of the last `watching`: a history chunk from any other pane is dropped. */
+  private pane: number | null = null;
+  private sizedForOther = false;
+  private bandTimer: ReturnType<typeof setTimeout> | undefined;
   /**
    * The user brought the tab on screen and no watch has bound since, so the next `watch` claims
    * the window. Any other watch is the client's own doing and claims only a window the tab held.
    */
   private claimNext = true;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly pendingInserts: string[] = [];
+  /** A path waits with the window it was meant for, null until the tab knows one. */
+  private readonly pendingInserts: { path: string; window: number | null }[] = [];
 
   /** What the host calls; the tab's public methods are for the UI. */
   private readonly port: TabPort = {
@@ -134,31 +143,60 @@ export class TabDriver {
     this.sendSize(this.opts.size(), true);
   }
 
-  /** Input goes only to a bound watch; otherwise it is dropped and `false` returned. */
-  input(events: InputEvent[]): boolean {
-    if (!this.bound || this.watchId === null) return false;
-    this.sendAll(toMessages(this.watchId, events, () => this.opts.host.nextReq()));
+  /** The window the tab shows now, null until its first `watching`. A caller that batches input captures this when the keys are typed. */
+  get windowId(): number | null {
+    return this.shown?.id ?? null;
+  }
+
+  /** Input goes only to a bound watch, to `window` (default: the one shown now); otherwise it is dropped and `false` returned. */
+  input(events: InputEvent[], window = this.windowId): boolean {
+    if (!this.bound || this.watchId === null || window === null) return false;
+    this.claiming();
+    this.sendAll(toMessages(this.watchId, window, events, () => this.opts.host.nextReq()));
     return true;
   }
 
   /** Sends one paste for a live watch and returns its `req`, which its answer names; null when the tab isn't live. Enter, when requested, stays in the same tmux group. */
-  paste(text: string, enter = false): number | null {
-    if (!this.bound || this.watchId === null) return null;
+  paste(text: string, enter = false, window = this.windowId): number | null {
+    if (!this.bound || this.watchId === null || window === null) return null;
+    this.claiming();
     const req = this.opts.host.nextReq();
-    this.send({ type: "paste", data: { req, watch: this.watchId, text, ...(enter ? { enter: true } : {}) } });
+    this.send({ type: "paste", data: { req, watch: this.watchId, window, text, ...(enter ? { enter: true } : {}) } });
     return req;
   }
 
   /**
-   * Types the path, quoted and without Enter: now if bound, else at the next `watching`.
-   * A path still waiting when the tab loses its connection or closes is dropped with a
-   * notice; one refused here is the caller's to report.
+   * Types the path, quoted and without Enter, into `window` (default: the one shown now): now if
+   * bound, else at the next `watching`. A path still waiting when the tab loses its connection or
+   * closes is dropped with a notice; one refused here is the caller's to report.
    */
-  insertPath(path: string): InsertResult {
+  insertPath(path: string, window = this.windowId): InsertResult {
     if (!acceptsInsert(this.state)) return "refused";
-    this.pendingInserts.push(path);
+    this.pendingInserts.push({ path, window });
     this.flushInserts();
     return this.pendingInserts.length === 0 ? "typed" : "queued";
+  }
+
+  /** Makes `window` the session's current window; the tab follows with the `watching` that answers. False when the tab isn't live. A refusal arrives as `onNotice`. */
+  selectWindow(window: number): boolean {
+    if (!this.bound || this.watchId === null) return false;
+    this.claiming();
+    this.send({ type: "selectWindow", data: { req: this.opts.host.nextReq(), watch: this.watchId, window } });
+    return true;
+  }
+
+  /**
+   * Creates a window in the session and makes it current. A live tab names its watch, so it
+   * claims the new window and follows it; a reconnecting one claims nothing. Rejects with the
+   * daemon's refusal.
+   */
+  async newWindow(fields: CreationFields): Promise<void> {
+    const watch = this.bound ? this.watchId : null;
+    if (watch !== null) this.claiming();
+    await this.opts.host.request(
+      (req) => ({ type: "newWindow", data: { req, session: this.opts.session, ...fields, ...(watch !== null && { watch }) } }),
+      (reply) => (reply.type === "created" ? true : undefined),
+    );
   }
 
   /**
@@ -171,6 +209,8 @@ export class TabDriver {
    */
   async history(start: number, end: number): Promise<HistoryRow[]> {
     const watch = this.watchId;
+    // One pane for the whole call: the watch outlives a window change, and chunks of two panes must not join.
+    const pane = this.pane;
     const rows: HistoryRow[] = [];
     let historySize: number | undefined;
     for (let next = start; next <= end; ) {
@@ -180,6 +220,8 @@ export class TabDriver {
         (req) => ({ type: "history", data: { req, watch, start: from, end } }),
         (reply) => (reply.type === "historyChunk" && reply.data.watch === watch ? reply.data : undefined),
       );
+      // The tab followed its session to another window's pane while the rows were on their way: they sit above the wrong screen.
+      if (chunk.pane !== pane || this.pane !== pane) throw new Error("pane changed");
       let broken = chunk.start !== from;
       if (chunk.historySize !== undefined) {
         broken ||= historySize !== undefined && chunk.historySize !== historySize;
@@ -229,12 +271,14 @@ export class TabDriver {
         break;
       case "reconnecting":
         this.watchId = null;
+        this.stopBandWait();
         this.dropInserts("the tab lost its connection");
         // With the socket down, the host is the one retrying; this timer is for a failed watch.
         if (next.retryInMs !== null && this.opts.host.ready) this.retryTimer = setTimeout(() => { this.dispatch({ type: "retry" }); }, next.retryInMs);
         break;
       case "limited":
         this.watchId = null;
+        this.stopBandWait();
         this.dropInserts("the tab couldn't connect");
         this.retryTimer = setTimeout(() => { this.dispatch({ type: "retry" }); }, next.retryInMs);
         break;
@@ -242,6 +286,7 @@ export class TabDriver {
         // Every way a tab ends comes through here: the daemon must hear it, or the watch and its tmux client leak.
         if (this.watchId !== null) this.send({ type: "unwatch", data: { watch: this.watchId } });
         this.watchId = null;
+        this.stopBandWait();
         this.opts.host.leave(this.port);
         this.dropInserts("the tab closed");
         break;
@@ -254,13 +299,13 @@ export class TabDriver {
     if (this.state.kind !== "connecting" || !this.opts.host.ready || this.covered || this.watchId !== null) return;
     this.watchId = this.opts.host.nextWatch();
     // Without `claim: false` the daemon sizes the window to this tab, so a reconnect would take it from the laptop.
-    // Decided before the new size is recorded: it asks whether the ended watch held the window.
-    // Accepted edge: a window held by a terminal no larger than this tab in either dimension also reads as "ours", so the re-watch claims it.
-    const claim = this.claimNext || !this.larger;
+    // A re-watch claims only a window whose size, as the last `watching` reported it, is still the one this tab sent.
+    // Decided before the new size is recorded. Before any `watching` the tab has held nothing, but `claimNext` is set then.
+    const claim = this.claimNext || this.holdsWindow();
     if (claim) this.claiming();
     const size = this.opts.size();
-    this.setSent(size);
-    this.send({ type: "watch", data: { watch: this.watchId, window: this.opts.window, size, ...(claim ? {} : { claim: false }) } });
+    this.sentSize = size;
+    this.send({ type: "watch", data: { watch: this.watchId, session: this.opts.session, size, ...(claim ? {} : { claim: false }) } });
   }
 
   private onMessage(msg: ServerMsg): void {
@@ -270,9 +315,12 @@ export class TabDriver {
       case "watching":
         if (msg.data.watch !== this.watchId) break;
         this.claimNext = false;
+        this.shown = msg.data.window;
+        this.pane = msg.data.pane;
         this.dispatch({ type: "bound" });
         // The terminal may have changed size while the watch was in flight.
         this.sendSize(this.opts.size());
+        this.checkBand(false);
         this.opts.onWatching?.(msg.data);
         this.flushInserts();
         break;
@@ -281,11 +329,14 @@ export class TabDriver {
         this.watchId = null;
         this.dispatch({ type: "watchEnded", reason: msg.data.reason, ...(msg.data.message !== undefined && { message: msg.data.message }), jitter: this.jitter() });
         break;
-      case "windowClosed":
-        if (sameWindow(msg.data.window, this.opts.window)) this.dispatch({ type: "windowClosed" });
+      case "sessionClosed":
+        if (msg.data.session.server === this.opts.session.server && msg.data.session.session === this.opts.session.session) this.dispatch({ type: "sessionClosed" });
         break;
       case "serverExited":
-        if (msg.data.server === this.opts.window.server) this.dispatch({ type: "serverExited" });
+        if (msg.data.server === this.opts.session.server) this.dispatch({ type: "serverExited" });
+        break;
+      case "error":
+        this.opts.onNotice(`Not sent: ${msg.data.message}`);
         break;
       default:
         break; // sessions, renames and the rest belong to other screens
@@ -295,48 +346,75 @@ export class TabDriver {
   private onFrame(frame: Frame): void {
     if (frame.watch !== this.watchId) return;
     if (frame.kind === "output") this.opts.renderer.output(frame.bytes);
-    else {
-      this.pane = { cols: frame.cols, rows: frame.rows };
-      this.checkLarger();
-      void this.opts.renderer.snapshot(frame);
-    }
+    else void this.opts.renderer.snapshot(frame);
   }
 
   private flushInserts(): void {
     if (!this.bound || this.watchId === null) return;
-    for (const path of this.pendingInserts.splice(0)) {
-      this.sendAll(toMessages(this.watchId, [{ text: shellQuote(path) }], () => this.opts.host.nextReq()));
+    for (const { path, window } of this.pendingInserts.splice(0)) {
+      const target = window ?? this.windowId;
+      if (target === null) continue;
+      this.claiming();
+      this.sendAll(toMessages(this.watchId, target, [{ text: shellQuote(path) }], () => this.opts.host.nextReq()));
     }
   }
 
   private sendSize(size: Size, force = false): void {
     if (this.watchId === null || (!force && this.sentSize?.cols === size.cols && this.sentSize.rows === size.rows)) return;
-    this.setSent(size);
+    this.sentSize = size;
+    this.claiming();
     this.send({ type: "resize", data: { watch: this.watchId, size } });
   }
 
-  private setSent(size: Size): void {
-    this.sentSize = size;
-    this.checkLarger();
+  /** The window's size, as the last `watching` said, is the size this tab sent: nobody has taken it since. */
+  private holdsWindow(): boolean {
+    const { shown, sentSize } = this;
+    return shown !== null && sentSize !== null && shown.size.cols === sentSize.cols && shown.size.rows === sentSize.rows;
   }
 
-  /** A claim is going out: the band restarts, so only a snapshot taken after the claim can raise it. */
+  /** A claim is going out: the band restarts, so only a `watching` that arrives after the wait can raise it. */
   private claiming(): void {
-    this.pane = null;
-    this.checkLarger();
+    this.checkBand(true);
   }
 
-  /** A window the tab holds is never larger than the size it sent (daemon-core.md §3.6). */
-  private checkLarger(): void {
-    const { pane, sentSize } = this;
-    const larger = pane !== null && sentSize !== null && (pane.cols > sentSize.cols || pane.rows > sentSize.rows);
-    if (larger === this.larger) return;
-    this.larger = larger;
-    this.opts.onLarger?.(larger);
+  /**
+   * Whether the window's size has differed from the size this tab sent for longer than the wait
+   * (daemon-core.md §3.6): either direction. `restart` is a claiming send, which clears the band
+   * and starts the wait afresh; otherwise a running wait is left alone and a match ends everything.
+   */
+  private checkBand(restart: boolean): void {
+    const differs = this.shown !== null && this.sentSize !== null && !this.holdsWindow();
+    if (!differs) {
+      this.stopBandWait();
+      this.setSizedForOther(false);
+      return;
+    }
+    if (restart) {
+      this.stopBandWait();
+      this.setSizedForOther(false);
+    }
+    if (this.sizedForOther || this.bandTimer !== undefined) return;
+    const wait = Math.max(BAND_MIN_WAIT_MS, this.opts.host.rtt + BAND_RTT_MARGIN_MS);
+    this.bandTimer = setTimeout(() => {
+      this.bandTimer = undefined;
+      this.setSizedForOther(true);
+    }, wait);
+  }
+
+  /** Without a live watch no wait runs; the next `watching` starts one if the sizes still differ. */
+  private stopBandWait(): void {
+    clearTimeout(this.bandTimer);
+    this.bandTimer = undefined;
+  }
+
+  private setSizedForOther(sizedForOther: boolean): void {
+    if (sizedForOther === this.sizedForOther) return;
+    this.sizedForOther = sizedForOther;
+    this.opts.onSizedForOther?.(sizedForOther);
   }
 
   private dropInserts(why: string): void {
-    for (const path of this.pendingInserts.splice(0)) this.opts.onNotice(cannotInsert(path, why));
+    for (const { path } of this.pendingInserts.splice(0)) this.opts.onNotice(cannotInsert(path, why));
   }
 
   private jitter(): number {

@@ -94,6 +94,7 @@ export class Host {
   private readonly watchRoutes = new Map<number, TabPort>();
   private readonly pending = new Map<number, Pending>();
   private readonly pastes = new Map<number, TabPort>();
+  private pingRtt = 0;
   private status: Status = "idle";
   private capped = false;
   private link: Link | null = null;
@@ -109,6 +110,11 @@ export class Host {
 
   get ready(): boolean {
     return this.status === "open" && this.link?.ready === true;
+  }
+
+  /** The last ping's round trip in ms, 0 before the first answer. */
+  get rtt(): number {
+    return this.pingRtt;
   }
 
   nextWatch(): number {
@@ -331,11 +337,15 @@ export class Host {
     }
     const req = replyTo(msg);
     if (req !== undefined) {
-      if (this.pending.get(req)?.answer(msg)) {
-        this.pending.delete(req);
-        this.closeIfUnused();
+      const pending = this.pending.get(req);
+      if (pending) {
+        if (pending.answer(msg)) {
+          this.pending.delete(req);
+          this.closeIfUnused();
+        }
+        return;
       }
-      return;
+      if (msg.type !== "error") return; // a late answer to a request that gave up
     }
     switch (msg.type) {
       case "watching":
@@ -347,8 +357,12 @@ export class Host {
         tab?.message(msg);
         break;
       }
-      case "error": // one naming no request (a refused input) has nobody waiting on it
+      case "error": // one no request awaits (a refused input or window switch): its watch's tab reports it
+        if (msg.data.watch !== undefined) this.watchRoutes.get(msg.data.watch)?.message(msg);
+        break;
       case "pong":
+        this.pingRtt = Math.max(0, Date.now() - msg.data.t);
+        break;
       case "welcome":
         break;
       default:

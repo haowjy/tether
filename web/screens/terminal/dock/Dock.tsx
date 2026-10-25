@@ -119,12 +119,13 @@ export function Dock({ active }: { active: boolean }) {
             <DockButton
               kind="control"
               class={styles.chip}
-              aria-label={tab && label ? `${label.window}, ${String(workspace.tabs.length)} ${workspace.tabs.length === 1 ? "tab" : "tabs"}, open sessions` : undefined}
+              aria-label={tab && label ? `${label.full}, ${String(workspace.tabs.length)} ${workspace.tabs.length === 1 ? "tab" : "tabs"}, open sessions` : undefined}
               onClick={(e) => { app.openOverlay({ screen: "switcher", name: "sessions" }, e.currentTarget); }}
             >
               {tab && label ? (
                 <>
-                  <span class={styles.chipName}>{label.window}</span>
+                  <span class={styles.chipSession}>{label.session}</span>
+                  <span class={styles.chipWindow}>{label.window}</span>
                   <span class={styles.chipCount}>{workspace.tabs.length}</span>
                 </>
               ) : (

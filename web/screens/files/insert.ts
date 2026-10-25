@@ -10,7 +10,7 @@ import { terminalsOf } from "../terminal/terminals";
 
 export interface InsertTarget {
   id: string;
-  /** `session / window`, as the tab's pill names it. */
+  /** The session and window, as the tab's pill names it. */
   label: string;
   /** Why Insert can't type into it now: a path typed after a long outage would land in whatever is then on screen. */
   blocked: string | null;

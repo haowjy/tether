@@ -77,6 +77,12 @@ interface PastesDeps {
   dismissSelection(): void;
 }
 
+/** A tab and the window it showed when a paste began (null: it had none yet). */
+export interface PasteTarget {
+  id: string;
+  window: number | null;
+}
+
 /** Paste, copy and inserted paths for the tab on screen, and what is said when they fail. */
 export class Pastes {
   /** Takes a paste's answer if it is for a line the dock sent; what it declines becomes a notice. */
@@ -89,20 +95,29 @@ export class Pastes {
     this.claimant = claimant;
   }
 
-  /** A paste into the tab on screen: text goes as one paste without Enter, an image is uploaded and its path typed. */
-  paste(pasted: Pasted): void {
-    // The tab is captured now: the upload below finishes later.
+  /** The tab on screen and the window it shows: where a paste started now belongs, however long it takes to finish. */
+  target(): PasteTarget | null {
     const id = this.deps.shown();
     const driver = id === null ? undefined : this.deps.driver(id);
-    if (pasted.kind === "empty" || id === null || !driver) return;
+    return id === null || !driver ? null : { id, window: driver.windowId };
+  }
+
+  /** A paste into `target` (default: the tab on screen): text goes as one paste without Enter, an image is uploaded and its path typed. */
+  paste(pasted: Pasted, target = this.target()): void {
+    if (pasted.kind === "empty" || !target) return;
+    const driver = this.deps.driver(target.id);
+    if (!driver) {
+      this.deps.app.notify("Not sent: that tab is closed");
+      return;
+    }
     this.deps.flushInput(); // what was typed before the paste goes first
     if (pasted.kind === "text") {
       const refusal = pasteRefusal(pasted.text);
       if (refusal) this.deps.app.notify(refusal);
-      else if (driver.paste(pasted.text) === null) this.deps.app.notify("Not sent: the tab isn't connected");
+      else if (driver.paste(pasted.text, false, target.window) === null) this.deps.app.notify("Not sent: the tab isn't connected");
       return;
     }
-    void this.pasteImage(id, pasted.file);
+    void this.pasteImage(target, pasted.file);
   }
 
   /** The edit menu's Copy, inside its tap: the selection's logical text goes to the clipboard. */
@@ -118,26 +133,27 @@ export class Pastes {
   /** The edit menu's Paste, inside its tap: the clipboard goes to the terminal as one paste, without Enter. */
   pasteFromMenu(): void {
     const { app } = this.deps;
-    const id = this.deps.shown();
-    const tab = app.snapshot.workspace.tabs.find((t) => t.id === id);
+    // Captured before the read: on iOS it can wait behind the paste prompt while the session changes windows or the tab closes.
+    const target = this.target();
+    const tab = app.snapshot.workspace.tabs.find((t) => t.id === target?.id);
     this.deps.dismissSelection();
-    if (!tab) return;
+    if (!target || !tab) return;
     void app.platform.clipboard.read(tab.key).then((result) => {
       if (result === "denied") app.notify("Couldn't paste: the browser refused clipboard access");
       else if (result === "empty") app.notify("Nothing to paste");
-      else if ("text" in result) this.paste({ kind: "text", text: result.text });
-      else if ("image" in result) this.paste({ kind: "image", file: result.image });
+      else if ("text" in result) this.paste({ kind: "text", text: result.text }, target);
+      else if ("image" in result) this.paste({ kind: "image", file: result.image }, target);
       else if (app.platform.uploads.follow) {
         app.notify("Uploading image…");
-        void this.followUpload(tab.id, app.platform.uploads.follow(result.uploading, new AbortController().signal));
+        void this.followUpload(target, app.platform.uploads.follow(result.uploading, new AbortController().signal));
       }
     });
   }
 
-  /** Types `path` into tab `id`, quoted. A refusal is reported here: the caller needn't. */
-  insertPath(id: string, path: string): InsertResult {
+  /** Types `path` into tab `id`, quoted, into `window` (default: the one it shows now). A refusal is reported here: the caller needn't. */
+  insertPath(id: string, path: string, window?: number): InsertResult {
     const driver = this.deps.driver(id);
-    const result = driver?.insertPath(path) ?? "refused";
+    const result = driver?.insertPath(path, window) ?? "refused";
     if (result === "refused") this.deps.app.notify(cannotInsert(path, driver ? "the tab isn't connected" : "that tab is closed") + " The file is still in Files.");
     return result;
   }
@@ -156,22 +172,22 @@ export class Pastes {
     app.notify(`${label} to ${tab}: ${result.data.message}`);
   }
 
-  /** Uploads the pasted image, then types its quoted path into the tab it was pasted in. */
-  private async pasteImage(id: string, file: File): Promise<void> {
+  /** Uploads the pasted image, then types its quoted path into the tab and window it was pasted in. */
+  private async pasteImage(target: PasteTarget, file: File): Promise<void> {
     const { app } = this.deps;
     const { platform } = app;
-    const tab = app.snapshot.workspace.tabs.find((t) => t.id === id);
+    const tab = app.snapshot.workspace.tabs.find((t) => t.id === target.id);
     const client = tab && app.hosts.byHostId(tab.key.host);
     if (!platform.uploads.send || !client) {
       app.notify("Paste images from Files → Upload");
       return;
     }
     app.notify("Uploading image…");
-    await this.followUpload(id, platform.uploads.send(client.entry.handle, file, new AbortController().signal));
+    await this.followUpload(target, platform.uploads.send(client.entry.handle, file, new AbortController().signal));
   }
 
-  /** Types the uploaded path into tab `id` when the upload finishes. */
-  private async followUpload(id: string, events: AsyncIterable<UploadEvent>): Promise<void> {
+  /** Types the uploaded path into `target` (window null: the tab had none yet, so the one it shows then), when the upload finishes. */
+  private async followUpload(target: PasteTarget, events: AsyncIterable<UploadEvent>): Promise<void> {
     const { app } = this.deps;
     for await (const event of events) {
       if ("error" in event) {
@@ -179,7 +195,7 @@ export class Pastes {
       } else if ("path" in event) {
         const name = event.path.split("/").pop() ?? event.path;
         // The tab may be covered or still connecting: the path then waits for its watch. A refusal says so itself.
-        const result = this.insertPath(id, event.path);
+        const result = this.insertPath(target.id, event.path, target.window ?? undefined);
         if (result === "typed") app.notify(`Inserted ${shellQuote(name)}`);
         else if (result === "queued") app.notify(`Uploaded ${name}: its path will be inserted when that tab is on screen and connected`);
       }

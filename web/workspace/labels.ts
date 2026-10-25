@@ -2,30 +2,25 @@ import type { Tab } from "./state";
 
 export interface TabLabel {
   id: string;
+  /** Shown bold. */
   session: string;
-  /** The window part, with `index: ` ahead of it when another open tab's window has the same name. */
+  /** The window the tab shows now, shown in regular weight after the session, set apart by spacing alone. */
   window: string;
-  /** Shown as the pill's tooltip and its accessible name: `session / window`, plus the host when several are open. */
+  /** The pill's tooltip and accessible name, and a list row's text: the session, then its window, then the host when several are open. */
   full: string;
   /** Set only when tabs from more than one host are open (native). */
   host: string | null;
 }
 
 /**
- * Pill labels for the open tabs. The label is `session / window`; the real window index is
- * appended when two open tabs' window names collide; the host's name is appended only when
- * tabs from more than one host are open. The window part is a separate field so a pill can
- * keep it visible when the session part is truncated.
+ * Labels for the open tabs. The two parts are separate fields so a pill can truncate the
+ * window name first and keep the session name; the host's name is added only when tabs
+ * from more than one host are open.
  */
 export function tabLabels(tabs: readonly Tab[], hostName: (hostId: string) => string): TabLabel[] {
-  const counts = new Map<string, number>();
-  for (const t of tabs) counts.set(t.window, (counts.get(t.window) ?? 0) + 1);
   const hosts = new Set(tabs.map((t) => t.key.host));
   return tabs.map((t) => {
-    const collides = (counts.get(t.window) ?? 0) > 1 && t.index !== null;
-    const window = collides ? `${String(t.index)}: ${t.window}` : t.window;
     const host = hosts.size > 1 ? hostName(t.key.host) : null;
-    const full = `${t.session} / ${window}${host ? ` on ${host}` : ""}`;
-    return { id: t.id, session: t.session, window, full, host };
+    return { id: t.id, session: t.session, window: t.window, full: `${t.session} ${t.window}${host ? ` on ${host}` : ""}`, host };
   });
 }

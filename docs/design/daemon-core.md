@@ -50,8 +50,10 @@ flowchart LR
 | **control client** | One `tmux -C attach-session` process, the pump that owns its pipes, and its `tmux::Session` in the hub. Attached to one tmux session for life. |
 | **command group** | One line written to a control client: tmux commands joined by ` ; `, answered by one reply block per command that runs. |
 | **watch** | One connection viewing one tmux session: the active pane of the session's current window. Its id is chosen by the client, unique and never reused within the connection. A watch exists only while its tab is on screen. |
-| **view** | The hub's state for one watched session: its owner, the session's current window and that window's active pane, the pane stream and the claim (§4.2). It exists while a watch is on the session. |
+| **view** | The hub's state for one watched session: its owner, the coherent shown window and pane, observed target, pane stream and claim (§4.2). It exists while a watch is on the session. |
 | **current window** | The window a tmux session shows its attached clients; every client attached to the session shares it. tmux reports a change as `%session-window-changed`. |
+| **shown window** | The last window and metadata from an accepted Locate answer, kept coherent with the pane and last `watching` (§4.2). |
+| **target** | The window used for a claim: the one being selected, else the pending reported current window, else the shown window (§3.6, §4.2). |
 | **owner** | The control client attached to a view's session. There is one view per watched session, and one owner per view. |
 | **Locate** | Asking tmux for a session's server instance, current window and that window's active pane. An empty answer means the session is gone (§3.4). |
 | **pane stream** | The hub's state for the pane a view shows: whether its output is live, its size and its snapshot in flight (§4.3). Part of the view. |
@@ -59,8 +61,8 @@ flowchart LR
 | **boundary** | Where a snapshot's replies sit in the control client's byte stream: pane output before it is inside the snapshot, output after it is live. |
 | **size vote** | A per-window size set with `refresh-client -C '@W:CxR'`; it caps that window, and sizes it while the control client is tmux's `latest` there. Cast only for a claimed window (§3.6). |
 | **take** | The owner making itself tmux's `latest` for its session's current window with a same-session `switch-client`, just before the vote that follows it; tmux then sizes the window to the vote exactly (§3.6). |
-| **claim** | A view's claim names the watch that acted last and the window it acted on, which is always the view's current window or the window a `selectWindow` is selecting. The owner votes that watch's size for it, taking `latest` when it starts voting the window. Another client acting **yields** it, and a change of current window drops it unless the change was the claim's own selection: the claim and the vote go, the watch stays (§3.6). |
-| **window subscription** | The owner's `w<W>` subscription on a view's current window: its cwd and the other clients acting on it (§3.7). |
+| **claim** | A view's claim names the watch that acted last and its pending take. Its window is derived from the view's target: the window being selected, else the latest window reported by the owner, else the last coherently shown window (§4.2). The owner votes that watch's size for the target, taking `latest` when it starts voting the window. Another client acting **yields** it, and a change of target drops it unless the change is the claim's own selection (§3.6). |
+| **window subscription** | The owner's `w<W>` subscription on the shown, pending and target windows: their cwd and the other clients acting on them (§3.7). |
 | **desired state** | What tmux should be doing for the current watches: wanted panes, votes, window subscriptions, needed snapshots and Locates (§4.4). |
 | **credit** | The bytes the hub may still have outstanding to one connection: sent on `ToConn` and not yet returned as written or discarded (§4.6). |
 | **linger** | The time (§6) a control client stays attached after it owns no view. Nothing else lingers. |
@@ -298,7 +300,7 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 
 | Op | Command group | Kind |
 |---|---|---|
-| `Locate { session }` | `display-message -p -t '$S' '<pid, start_time, session_id, window_id, window_index, pane_id, pane_width, pane_height, window_width, window_height, window_name>'` | maint. |
+| `Locate { session }` | `display-message -p -t '$S' '<pid, start_time, session_id, window_id, window_index, pane_id, pane_width, pane_height, window_width, window_height, session_name, window_name>'` | maint. |
 | `Snapshot { pane }` | §3.5 | maint. |
 | `Release { pane }` | `refresh-client -A '%P:pause'` | maint. |
 | `Vote { window, size, take }` / `ClearVote { window }` | `refresh-client -C '@W:CxR'`; with `take`, `switch-client -c '<client>' -t '$S' ; refresh-client -C '@W:CxR'` (§3.6) / `refresh-client -C '@W:'` | maint. |
@@ -307,16 +309,19 @@ Typed builders only. *Maintenance* ops come from desired state and are never ref
 | `History { pane, start, end }` | §3.4 history capture group | user |
 | `Input { window, items }` | text and bytes: `send-keys -t @W -H 68 69 …`, ≤ 512 bytes per command; a key: `send-keys -t @W <name>` | user |
 | `Paste { window, path, enter }` | `load-buffer -b tether-<tag> '<path>' ; paste-buffer -p -d -b tether-<tag> -t @W`; with `enter`, prepend `copy-mode -q -t @W` and append `; send-keys -t @W Enter` | user |
-| `SelectWindow { session, window, vote }` | `select-window -t '$S:@W' ; switch-client -c '<client>' -t '$S' ; refresh-client -C '@W:CxR'`: the select, then a take with the watch's size; without a vote, the `select-window` alone | user |
+| `SelectWindow { session, window, vote }` | `select-window -t '$S:@W' ; switch-client -c '<client>' -t '$S' ; refresh-client -C '@W:CxR'`: the select, then a take with the watch's size | user |
 
 - **Locate never errors.** On 3.4 and 3.7b, `display-message -t` a missing session
   succeeds with the target fields empty, in control mode and as a one-shot, while
   `#{pid}` and `#{start_time}` still expand
   ([probe](research/probe-locate-subscriptions.md),
   [probe](research/probe-session-follow.md)). It parses into `Location { server, found:
-  Option<{ window, index, pane, size, window_size, name }> }`; an empty `session_id` is gone. The
-  window name goes last and is split with `splitn` (§3.1). The same op is the view's
-  binding answer on its owner (§4.2) and the session check as a one-shot (§4.5).
+  Option<{ session, window, index, pane, size, window_size, session_name, name }> }`; an
+  empty `session_id` is gone. The session name precedes the window name because tmux
+  escapes it; the possibly-tabbed window name stays last and is split with `splitn`
+  (§3.1). Locate includes the session name so a control-client-cap refusal can name
+  the sessions holding the slots (§4.5). The same op is the view's binding answer on
+  its owner (§4.2) and the session check as a one-shot (§4.5).
 - **Select names the session.** `-t '$S:@W'` selects the window in that session even
   when the window is linked into others, where a bare `@W` could resolve to another
   session ([probe](research/probe-session-follow.md)). Every client attached to the
@@ -560,7 +565,7 @@ current window, so the claim is on that window and moves only by tether's own ac
   vote whose size changes while tmux shows the window at the old vote (rotation, a
   second watch acting) needs no take. A `SelectWindow` carries its own take, after the
   select (§3.4); a take at any other time applies to the session's current window,
-  which is the claim's window except while a change the hub hasn't heard of is on its
+  which is the claim target except while a change the hub hasn't heard of is on its
   way (costs, below).
 - **A take goes before the act that needs it.** The take-and-vote group a claiming
   `input` or `paste` needs is written just before that request's own group, so the keys
@@ -572,31 +577,29 @@ current window, so the claim is on that window and moves only by tether's own ac
   takes this size until a terminal acts there (below).
 - **A watch claims** with every `watch`, `resize`, `input`, `paste`, `selectWindow`
   and `newWindow` naming it, and the owner votes that watch's size (from its `watch`
-  and latest `resize`). The claim names a window:
-  - `watch`, `resize`, and `input` or `paste` aimed at the current window claim the
-    view's current window. Before the view is bound the claim waits, and takes the
-    window the first Locate answer names; a `watch` with `claim: false` leaves any
-    claim as it was.
-  - `input` or `paste` aimed at another window (sent just before a change the client
-    hadn't seen yet) claims nothing and leaves the claim where it was. While
-    `selecting` is set, input or paste aimed at the view's current window (the one
-    being left; the client hasn't had the new `watching` yet) still goes to that
-    window but also leaves the claim on `selecting`.
-  - `selectWindow` sets the view's `selecting` to its window and claims it before tmux
+  and latest `resize`). The claim carries no window id: its target is the window being
+  selected, else the latest current window reported by the owner, else the last
+  coherently shown window. `watch` and `resize` claim that target. Before the view
+  binds, the target is absent and a claim waits for the first Locate answer; a `watch`
+  with `claim: false` leaves any claim as it was.
+  - `input` and `paste` still go to the window named by the client's last `watching`,
+    but claim only when that window is the target. Thus input to the shown window
+    while `selecting` names another window leaves the selection's claim alone; input
+    aimed at another window just before an unobserved change claims nothing.
+  - `selectWindow` sets the view's target to its window and claims it before tmux
     confirms: its vote and take go in the same group, after the `select-window`
-    (§3.4), and the vote counts as applied. tmux's `%session-window-changed` arrives after the group's reply
-    ([probe](research/probe-session-follow.md)), and the owner's replies are ordered
-    with its notifications, so `selecting` clears at the group's failure or at the
-    first `CurrentWindow` or Locate answer from the owner after the group's reply. A
-    `CurrentWindow` before the reply (the laptop switched first) leaves the claim on
-    the selected window; one after it settles the claim by the rule below; and
-    selecting the window already current, which tmux doesn't announce, ends with the
-    Locate the reply triggers (§4.2). At the group's failure (the window has gone)
-    tmux ran neither the take nor the vote, so the claim drops and the vote's record
-    clears; the tab's next act claims again.
-  - `newWindow` with a watch claims the window it created once its `created` answer
-    arrives, if that window is current by then; if `created` comes first, the claim
-    waits for the `CurrentWindow` naming it.
+    (§3.4), and the vote counts as applied. A `resize` or claiming `watch` during the
+    selection also claims the selected window, not the one being left. The selection
+    settles on a matching `CurrentWindow` or the Locate after the group reply;
+    selecting the window already current, which tmux doesn't announce, settles by
+    that Locate (§4.2). A different `CurrentWindow` while the selection is unresolved
+    stays pending until Locate confirms the actual target, so a delayed notification
+    from an earlier select cannot retarget the newer claim. At group failure (the
+    window has gone), tmux ran neither the take nor the vote, so the selection claim
+    drops and its vote record clears; the tab's next act claims again.
+  - `newWindow` with a watch claims the created window when its `created` answer
+    arrives. If that window is not yet the target, it becomes the pending target and
+    the view is re-located. If the watch left before `created`, it does not claim.
   Bringing the tab on screen claims (opening it, switching to it, returning from Home
   or Files, unlocking the phone into it), and so do rotating, typing, pasting and the
   client's **Fit** tap (a `resize` with its unchanged size). A `watch` with `claim:
@@ -610,7 +613,7 @@ current window, so the claim is on that window and moves only by tether's own ac
   reports `Acted` when a tmux client other than a control client acts on the window
   as tmux counts it for `latest`: a key, mouse or focus-in event while it is that
   client's current window, switching to it, attaching onto it, or resizing its
-  terminal. When the reported window is the claim's, the hub drops the claim and
+  terminal. When the reported window is the claim target, the hub drops the claim and
   clears the vote; the watch stays. tmux then
   sizes the window by `latest`, which that act almost always just made the other
   client (a script's `select-window` moves a client onto the window without making it
@@ -620,12 +623,11 @@ current window, so the claim is on that window and moves only by tether's own ac
   watch remains, which claims with its own next act. The window returns to `latest`'s
   size, which is the owner's client size where the owner took it and no terminal has
   acted there since.
-- **A change of current window drops the claim** unless the claim's own window is the
-  new current window: the window `selecting` names, or the window a `newWindow` with
-  a watch created. A claim is never left on a window that isn't current.
-  This holds for both ways the view learns of a change (`CurrentWindow`, from tmux's
-  notification or the current-window subscription, and a Locate answer naming another
-  window), so a claim never outlives its window's turn and comes back later. When
+- **A change of target drops the old claim** when its known target changes to another
+  window; a claim made before binding has no target and survives the first binding.
+  This holds both when the owner reports `CurrentWindow` and when an authoritative
+  Locate corrects the pending target. A claim has no separately stored window id that
+  can diverge from the view's target. When
   the laptop's prefix-n, a window exiting, a `move-window`, a `swap-window` or a script
   changes the session's current window, the window left behind loses its vote and
   returns to `latest`'s size, and the new window keeps the size it had: no watch acted
@@ -717,7 +719,9 @@ refresh-client -B 'c::#{window_id}'
 An empty target is the attached session, so the value is one line per change, swaps
 included; a window linked twice into the session adds no lines. A value naming
 another window than the session's last becomes `CurrentWindow { window }`, as the
-notification does, and one naming the same window is dropped. It carries no client
+notification does, and one naming the same window is dropped. The first value is
+also reported: a swap between Locate and that value must not go unnoticed. The hub
+ignores a report matching its shown window when no transition is pending. It carries no client
 entries, so a terminal riding along on a switch can't read as an act. Cost: one format
 evaluation per owner per second, and a line only on a change; tmux's notification
 still gives the prompt follow, and this value only bounds a swap's lag at about a
@@ -1010,10 +1014,11 @@ State:
   votes and subscriptions, `pending` (each tag in flight and what its reply is for),
   when a group last completed, linger deadline, last crash.
 - `views`, keyed by session: the watches on it, its claim (the watch that acted last
-  and the window it acted on, possibly waiting for the first Locate, or none: §3.6),
-  `selecting` (the window a `selectWindow` in flight is selecting), its phase and Locate
-  state, its current window with that window's index, name and size (§4.2), whether a `Layout` has shown the window at the vote's size since the last take (§3.6), its stream
-  (§4.3) and cwd.
+  and pending take, or none: §3.6), `selecting`, its pending reported target, its phase
+  and Locate state, the last coherently shown window with its index, name and size
+  (§4.2), whether a `Layout` has shown the window at the vote's size since the last
+  take (§3.6), and its stream (§4.3). The owner's `tmux::Session` keeps each
+  subscribed window's cwd; the view does not duplicate it.
 - `conns`: credit outstanding and reserved (§4.6) and the connection's watches: session,
   its size (from `watch` and the latest `resize`), whether it awaits a snapshot, when
   it last had one, what its last `watching` said.
@@ -1029,9 +1034,11 @@ question to tmux; sessions don't move, so a view keeps its owner for life (respa
 after a crash, §4.5). What the hub asks the owner is which window the session shows.
 
 A view's phase is `Checking` (no control client for its session yet: the session is
-being checked, or its client is starting), `Locating` (the owner is `Ready`; a Locate
-is needed or in flight), `Bound` (current window, its index and name, pane and size
-known) or `Orphaned` (the owner exited; waiting for the session check, §4.5).
+being checked, or its client is starting), `Locating` (the owner is `Ready`; the first
+or recovery Locate is needed or in flight), `Bound` (the shown window, its index and
+name, pane and size are coherent) or `Orphaned` (the owner exited; waiting for the
+session check, §4.5). A bound view stays bound, with its shown pane stream live, while
+a re-Locate runs; the target may already be a different window.
 
 ```mermaid
 stateDiagram-v2
@@ -1081,39 +1088,47 @@ stateDiagram-v2
    - another server instance, or no server: the server is gone (§4.5);
    - empty: the session is gone. Broadcast `sessionClosed`; drop the view, its watches
      and stream (no `watchEnded`: the broadcast closes the tabs);
-   - found: if the window and pane are those the view has, nothing changes: it stays
-     bound and live, with no new snapshot. If not, the stream breaks (§4.3) and needs a
-     snapshot of the new pane.
+   - found: the Locate atomically updates the shown window and pane. If it confirms
+     the window and pane of an already Bound view, that view stays live with no new
+     snapshot. A different window or pane breaks the stream (§4.3) and needs a fresh
+     snapshot; a first or recovery binding also needs one.
 
    Each watch whose last `watching` is out of date gets a new one.
 5. **A Locate or session check that fails** with anything but `NoServer` (tmux can't
    run, a timeout, an unexpected reply) ends the view's watches with `watchEnded {
    error }`. `NoServer` means the server is gone (§4.5). A Locate lost because its
    control client exited is not a failure: it is needed again (§4.4).
-6. **Re-locate on:** the owner's `CurrentWindow` naming a window other than the view's
-   (a `select-window` from any client, a foreground `new-window`, the current window
-   closing or moving away, or a `swap-window` seen by the current-window subscription,
+6. **Re-locate on:** the owner's `CurrentWindow` naming a window other than the shown
+   one (a `select-window` from any client, a foreground `new-window`, the current
+   window closing or moving away, or a `swap-window` seen by the current-window subscription,
    §3.7), a `SelectWindow`'s reply (tmux announces nothing for a select of the window
    already current, and this answer ends its `selecting`), the owner respawning, a
-   snapshot failing because the pane is gone. `CurrentWindow` sets the view's current window at once, so its claim, vote
-   and subscription follow it in the same `reconcile` (§4.4); the Locate then finds the
-   window's pane, size and name. A Locate answer naming another window than the view
-   had is a change of current window too, with the same effect on the claim (§3.6). A `Bound` view stays bound, and its stream live, while
-   the Locate runs. A
+   snapshot failing because the pane is gone. `CurrentWindow` updates the pending
+   target at once, so subscriptions follow it in the same `reconcile` (§4.4); it does
+   not overwrite the shown window's metadata or pane. With no unresolved selection,
+   claims, votes and `Acted` matching follow that target immediately. While a
+   different selection is unresolved, it remains the target until a matching
+   `CurrentWindow` or authoritative Locate resolves it. A Locate answer atomically
+   replaces the shown window and pane, and corrects the target if it differs (§3.6).
+   A `Bound` view stays bound, and its old pane stream
+   stays live, while the Locate runs. A
    window that only flashed past (a foreground window whose shell exits at once) is
    answered by whichever Locate runs after it: the answer, not the notification, names
    the window.
-7. **Only the owner counts:** `Output` for the view's pane, and `CurrentWindow`,
-   `ActivePane`, `Layout`, `WindowRenamed`, `Acted` and `Cwd` for its current window,
-   are taken from the owner only. Other sessions' clients see a linked window's output
-   too, and pause the pane unless they own a view showing that window themselves
+7. **Only the owner counts:** `Output` for the shown pane, and `CurrentWindow`,
+   `ActivePane`, `Layout`, `WindowRenamed`, `Acted` and `Cwd` are taken from the owner
+   only. `ActivePane`, `WindowRenamed` and `Cwd` update shown state only; `Acted`
+   matches the target so it can yield a claim before the next Locate; `Layout` confirms
+   a vote even while its window is only the target. Other sessions' clients see a
+   linked window's output too, and pause the pane unless they own a view showing that
+   window themselves
    (§3.3); a former owner that still wants a pane gets `Release` from reconciliation.
-8. **`ActivePane`** changes the view's pane and breaks its stream; **`Cwd`** updates
-   the cwd; **`WindowRenamed`** updates the window name; **`Layout`** updates the
+8. **`ActivePane`** changes the view's pane and breaks its stream; **`Cwd`** triggers
+   a `watching` update using the shown window's path from the owner's subscription
+   state, or null until that path is known; **`WindowRenamed`** updates the window name; **`Layout`** updates the
    window's size from its root (and the pane's size, §4.3). Each re-sends `watching`
    when what it carries changed. **`Acted { window }`** yields the view's claim when
-   `window` is the claim's window; a late report for the window a `selectWindow` is
-   leaving yields nothing (§3.6).
+   `window` is its target (§3.6).
 9. **`SessionChanged`** means tmux moved the owner to another session (its own was
    destroyed under `detach-on-destroy off`, [probe](research/probe-session-follow.md)).
    The hub closes that client, which belongs to one session for life, and checks the
@@ -1170,8 +1185,8 @@ far as capacity allows. It walks a handful of views.
 | Desired, per control client C | Derived from | Sent as |
 |---|---|---|
 | wanted panes | the panes of the bound views C owns | `Snapshot` when one is needed; `Release` for a wanted pane no bound view of C shows |
-| size votes | the claimed window of each of C's views, which is its current window or the window `selecting` names: the claiming watch's size (§3.6) | `Vote`, with `take` when a take is due (§3.6: no applied vote, the window's size moved off a standing vote, or a Fit); `ClearVote` once no view of C claims the window |
-| window subscriptions | the current windows of C's views, and the current-window subscription while C owns a view | `Subscribe`, `WatchCurrent`; `Unsubscribe` once no view of C shows the window, `UnwatchCurrent` once C owns none |
+| size votes | the target window of each of C's claimed views, which can be selected or pending ahead of the shown window: the claiming watch's size (§3.6) | `Vote`, with `take` when a take is due (§3.6: no applied vote, the window's size moved off a standing vote, or a Fit); `ClearVote` once no view of C claims the window |
+| window subscriptions | the shown, pending and target windows of C's views, and the current-window subscription while C owns a view | `Subscribe`, `WatchCurrent`; `Unsubscribe` once no view of C shows, reports or targets the window, `UnwatchCurrent` once C owns none |
 | snapshots | bound views with awaiting watches, nothing in flight, and at least one awaiting watch whose connection can reserve credit (§4.6) | `Snapshot` |
 | Locates | views needing one, none in flight | `Locate` on the owner (§4.2) |
 | session checks | views without a client, exited clients (§4.5) | `Locate` on any `Ready` client of the endpoint, else a one-shot |
@@ -2110,8 +2125,22 @@ with the replay tests and the recorder in `tests/support/`):
    without a NULL check (`control-notify.c`, 3.4); tmux 3.8 fixed a deferred
    notification firing after its session was destroyed (upstream `035447b0`, issue
    5244). The path runs only with a control client attached, which tether always has,
-   and the session-follow design does not change that. The trigger is unprobed; probe
-   it on 3.4 before relying on following in daily use.
+   and the session-follow design does not change that. Reproduced on both versions:
+   `select-window` followed by `kill-session` in one command list crashes the whole
+   server while any control client is attached, even to another session. Separate
+   commands survived the observed trials, but this is not a general safety guarantee.
+   Tether must not combine selection and destruction; only a tmux version containing
+   the upstream fix protects against arbitrary other-client command lists. Resolve
+   that host-version decision before daily use; session-follow cannot fix it locally.
+   A separate pre-3.7 bug sends notifications to a control client before its identify
+   handshake has allocated `control_state` (upstream `e5a2a25f`, #4980); early client
+   exit also crashes `control_stop` (`31c93c48`, #5004). Ordinary attach/detach races
+   reproduced the entire-server crash on 3.4, including an integration-test crash;
+   3.7b survived those probes. Serializing tether's own actions cannot protect against
+   other terminals or an early client death. These are distinct from the destroyed-
+   session bug above: 3.7 fixes the handshake bugs but not that 3.7b reproduction.
+   Track the combined baseline/backport decision in GitHub issue #2; do not deploy on
+   the affected baseline or change the installed host binary without Jimmy's decision.
 5. **Every tab switch repaints from a snapshot.** Whether reset-and-write flashes in
    xterm.js 6 on iOS is measured in spike 3.
 6. **User hooks:** a waiting hook makes snapshots torn (retried, then `Torn`);

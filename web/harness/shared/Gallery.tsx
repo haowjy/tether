@@ -2,7 +2,6 @@ import { useState } from "preact/hooks";
 import { Banner } from "../../ui/primitives/Banner";
 import { Button } from "../../ui/primitives/Button";
 import { Dialog } from "../../ui/primitives/Dialog";
-import { Disclosure } from "../../ui/primitives/Disclosure";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { Icon, type IconName } from "../../ui/primitives/Icon";
 import { IconButton } from "../../ui/primitives/IconButton";
@@ -16,14 +15,14 @@ import { Toast } from "../../ui/primitives/Toast";
 import { NavButton } from "../../ui/primitives/NavButton";
 import styles from "./Gallery.module.css";
 
-const ICONS: IconName[] = ["home", "back", "sessions", "folder", "plus", "close", "keyboard", "chevron", "search", "terminal", "file", "refresh", "settings", "upload", "check", "alert", "image", "film", "external"];
+const ICONS: IconName[] = ["home", "back", "sessions", "folder", "plus", "close", "keyboard", "chevron", "chevronDown", "search", "terminal", "file", "refresh", "settings", "upload", "check", "alert", "image", "film", "external"];
 
 const PILLS: Pill[] = [
-  { id: "a", session: "tether", window: "agent", full: "tether / agent", tone: "live", state: "connected" },
-  { id: "b", session: "notes", window: "1: shell", full: "notes / 1: shell", tone: "reconnecting", state: "reconnecting" },
-  { id: "c", session: "a-very-long-session-name", window: "shell", full: "a-very-long-session-name / shell", tone: "error", state: "limited" },
-  { id: "d", session: "scratch", window: "vim", full: "scratch / vim", tone: "gone", state: "closed" },
-  { id: "e", session: "website", window: "dev", full: "website / dev", tone: "idle", state: "not on screen" },
+  { id: "a", session: "tether", window: "agent", full: "tether agent", tone: "live", state: "connected" },
+  { id: "b", session: "notes", window: "shell", full: "notes shell", tone: "reconnecting", state: "reconnecting" },
+  { id: "c", session: "a-very-long-session-name", window: "a-very-long-window-name", full: "a-very-long-session-name a-very-long-window-name", tone: "error", state: "limited" },
+  { id: "d", session: "scratch", window: "vim", full: "scratch vim", tone: "gone", state: "closed" },
+  { id: "e", session: "website", window: "dev", full: "website dev", tone: "idle", state: "not on screen" },
 ];
 
 function Section({ title, children }: { title: string; children: preact.ComponentChildren }) {
@@ -38,7 +37,6 @@ function Section({ title, children }: { title: string; children: preact.Componen
 /** Every primitive in every state: the design-system review's page, and the axe target for the primitives. */
 export function Gallery() {
   const [dialog, setDialog] = useState<"dialog" | "sheet" | null>(null);
-  const [expanded, setExpanded] = useState(true);
   const [active, setActive] = useState("a");
   const [query, setQuery] = useState("");
   const [name, setName] = useState("");
@@ -72,13 +70,8 @@ export function Gallery() {
       </Section>
       <Section title="Rows">
         <RovingList label="Sessions" class={styles.stack}>
-          <Disclosure roving icon="sessions" label="tether" meta="2 windows" expanded={expanded} onToggle={() => { setExpanded(!expanded); }}>
-            <Row roving icon="terminal" label="0: agent" meta="Open" selected />
-            <Row roving icon="terminal" label="1: shell" />
-          </Disclosure>
-          <Disclosure roving icon="sessions" label="notes" meta="1 window" expanded={false} onToggle={() => undefined}>
-            <Row icon="terminal" label="0: shell" />
-          </Disclosure>
+          <Row roving icon="sessions" label="tether" meta="2 windows" selected />
+          <Row roving icon="sessions" label="notes" meta="1 window" />
           <Row roving icon="folder" label="src" meta="Folder" trailing="chevron" />
           <Row roving icon="file" label="README.md" meta="2 KB" trailing="chevron" />
         </RovingList>

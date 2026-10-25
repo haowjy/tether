@@ -152,7 +152,7 @@ impl<'a> Recorder<'a> {
                 }
             }
         });
-        let (session, step) = Session::new();
+        let (session, step) = Session::new(SessionId(0));
         let mut recorder = Self {
             server,
             child,
@@ -319,10 +319,6 @@ impl<'a> Recorder<'a> {
     }
 }
 
-fn window(text: &str) -> WindowId {
-    WindowId::parse(text.trim().as_bytes()).expect("tmux printed a window id")
-}
-
 fn expect_ok(event: Event) -> Result<()> {
     match event {
         Event::Done {
@@ -354,7 +350,7 @@ fn pause_at_cap(r: &mut Recorder) -> Result<()> {
     thread::sleep(Duration::from_millis(300));
     while r.session.in_flight() < tether::tmux::MAX_IN_FLIGHT {
         r.request(Op::Locate {
-            window: WindowId(0),
+            session: SessionId(0),
         })?;
     }
     r.stall(false);
@@ -627,6 +623,7 @@ fn layout(r: &mut Recorder) -> Result<()> {
     expect_ok(r.run(Op::Vote {
         window: WindowId(0),
         size: Size { cols: 60, rows: 20 },
+        take: false,
     })?)?;
     r.settle()?;
     let new_pane = r
@@ -675,42 +672,20 @@ fn windows(r: &mut Recorder) -> Result<()> {
     r.settle()
 }
 
-/// Locate a live window, one in another session, one killed and one moved; check
-/// sessions alive and killed.
+/// Locate each session's current window, then a killed session.
 fn locate(r: &mut Recorder) -> Result<()> {
     r.server
         .run(&["new-session", "-d", "-s", "other", "-c", "/tmp"])?;
-    let other = window(
-        &r.server
-            .run(&["display-message", "-p", "-t", "other", "#{window_id}"])?,
-    );
-    let killed =
-        window(
-            &r.server
-                .run(&["new-window", "-d", "-t", "$0", "-P", "-F", "#{window_id}"])?,
-        );
-    let moved =
-        window(
-            &r.server
-                .run(&["new-window", "-d", "-t", "$0", "-P", "-F", "#{window_id}"])?,
-        );
     r.settle()?;
     r.run(Op::Locate {
-        window: WindowId(0),
-    })?;
-    r.run(Op::Locate { window: other })?;
-    r.server.run(&["kill-window", "-t", &killed.to_string()])?;
-    r.server
-        .run(&["move-window", "-s", &moved.to_string(), "-t", "other:"])?;
-    r.settle()?;
-    r.run(Op::Locate { window: killed })?;
-    r.run(Op::Locate { window: moved })?;
-    r.run(Op::LocateSession {
         session: SessionId(0),
+    })?;
+    r.run(Op::Locate {
+        session: SessionId(1),
     })?;
     r.server.run(&["kill-session", "-t", "other"])?;
     r.settle()?;
-    r.run(Op::LocateSession {
+    r.run(Op::Locate {
         session: SessionId(1),
     })?;
     r.settle()

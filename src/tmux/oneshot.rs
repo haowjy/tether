@@ -44,9 +44,6 @@ pub async fn run(endpoint: &Endpoint, cmd: &OneShotCmd) -> Result<Reply, TmuxErr
     match cmd {
         OneShotCmd::List => reply::listing(&stdout).map(Reply::Listing),
         OneShotCmd::Locate { .. } => reply::location(first_line).map(Reply::Location),
-        OneShotCmd::LocateSession { .. } => {
-            reply::session_location(first_line).map(Reply::SessionLocation)
-        }
         OneShotCmd::NewWindow { .. } | OneShotCmd::NewSession { .. } => {
             reply::created(first_line).map(Reply::Created)
         }

@@ -38,7 +38,7 @@ export function describe(state: ConnectionState, downSince: number, retryAt: num
       return {
         tone: "gone",
        
-        detail: state.reason === "serverExited" ? "tmux server exited" : state.reason === "windowClosed" ? "Window closed" : null,
+        detail: state.reason === "serverExited" ? "tmux server exited" : state.reason === "sessionClosed" ? "Session closed" : null,
         hint: null,
         action: null,
       };

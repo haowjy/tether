@@ -7,9 +7,10 @@ use tracing::warn;
 #[cfg(debug_assertions)]
 use super::LISTING_RESERVATION;
 use super::names::cut;
-use super::state::{Effect, State, WatchKey, WinKey};
+use super::state::{Effect, State};
 #[cfg(debug_assertions)]
 use super::state::{OneShotWork, Work};
+use super::view::{ViewKey, WatchKey};
 use super::{CAPTURE_RESERVATION, CREDIT, ConnId, OVERDRAFT, ToConn, charge};
 use crate::proto::{Encoded, ErrorCode, ServerMsg};
 use crate::tmux::TmuxError;
@@ -22,14 +23,14 @@ impl State {
             return 0;
         };
         let waiting = state.watches.iter().any(|(id, watch)| {
-            watch.awaiting && !self.reserved_for(WatchKey { conn, watch: *id }, watch.window)
+            watch.awaiting && !self.reserved_for(WatchKey { conn, watch: *id }, watch.view)
         });
         let hold = if waiting { CAPTURE_RESERVATION } else { 0 };
         CREDIT.saturating_sub(state.outstanding + state.reserved + hold)
     }
 
-    fn reserved_for(&self, watch: WatchKey, key: WinKey) -> bool {
-        self.windows
+    fn reserved_for(&self, watch: WatchKey, key: ViewKey) -> bool {
+        self.views
             .get(&key)
             .and_then(|window| window.stream.inflight.as_ref())
             .is_some_and(|inflight| inflight.reserved.contains(&watch))
@@ -67,7 +68,7 @@ impl State {
     #[cfg(debug_assertions)]
     fn reservations_in_flight(&self, conn: ConnId) -> u64 {
         let snapshots = self
-            .windows
+            .views
             .values()
             .filter_map(|window| window.stream.inflight.as_ref())
             .flat_map(|inflight| &inflight.reserved)

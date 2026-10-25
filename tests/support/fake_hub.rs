@@ -14,12 +14,12 @@ use serde_json::{Value, json};
 use tether::blocking::Lanes;
 use tether::budget::DEFAULT_CAPS;
 use tether::hub::{ConnId, Effect, Endpoints, FromConn, Input, PasteFile, State, ToConn};
-use tether::proto::{self, ClientMsg, WindowRef};
+use tether::proto::{self, ClientMsg, SessionRef};
 use tether::tmux::fake::{self, Capture, Command};
 use tether::tmux::{
     ClientId, Created, Endpoint, Found, ListedSession, Listing, Location, OneShotCmd, Op, PaneId,
-    PumpMsg, Reply, ServerInstance, SessionId, SessionLocation, Size, Socket, Tag, TmuxError,
-    TmuxVersion, WindowId, command,
+    PumpMsg, Reply, ServerInstance, SessionId, Size, Socket, Tag, TmuxError, TmuxVersion, WindowId,
+    command,
 };
 use tokio::sync::Semaphore;
 
@@ -61,6 +61,7 @@ pub(super) struct Hub {
     pub(super) alive: bool,
     pub(super) sessions: BTreeSet<u32>,
     pub(super) windows: BTreeMap<u32, FakeWindow>,
+    pub(super) current_windows: BTreeMap<u32, u32>,
     pub(super) clients: BTreeMap<ClientId, FakeClient>,
     pub(super) oneshots: VecDeque<(Tag, OneShotCmd)>,
     pub(super) got: BTreeMap<ConnId, Vec<Got>>,
@@ -98,6 +99,7 @@ impl Hub {
             alive: true,
             sessions: BTreeSet::from([0]),
             windows: BTreeMap::new(),
+            current_windows: BTreeMap::new(),
             clients: BTreeMap::new(),
             oneshots: VecDeque::new(),
             got: BTreeMap::new(),
@@ -115,6 +117,7 @@ impl Hub {
 
     pub(super) fn add_window(&mut self, window: u32, session: u32, pane: u32) {
         self.sessions.insert(session);
+        self.current_windows.entry(session).or_insert(window);
         self.windows.insert(
             window,
             FakeWindow {
@@ -201,11 +204,11 @@ impl Hub {
         cols: u16,
         rows: u16,
     ) {
-        let window = WindowRef {
+        let session = SessionRef {
             server: SERVER_NAME.into(),
-            window,
+            session: window,
         };
-        let msg = json!({"type": "watch", "data": {"watch": watch, "window": window, "size": {"cols": cols, "rows": rows}}});
+        let msg = json!({"type": "watch", "data": {"watch": watch, "session": session, "size": {"cols": cols, "rows": rows}}});
         self.send(conn, msg);
     }
 
@@ -282,9 +285,10 @@ impl Hub {
     /// tmux's stdout answering the client's oldest unanswered line, as the server is
     /// now; the caller feeds it.
     pub(super) fn reply_bytes(&mut self, client: ClientId) -> Option<String> {
-        let fake = self.clients.get_mut(&client)?;
-        let line = fake.unanswered.pop_front()?;
-        let session = fake.session;
+        let (line, session) = {
+            let fake = self.clients.get_mut(&client)?;
+            (fake.unanswered.pop_front()?, fake.session)
+        };
         let mut block = self.block;
         let stdout = fake::answer(&line, &mut block, |command| self.reply(session, command));
         self.block = block;
@@ -300,13 +304,10 @@ impl Hub {
             // tmux checks the instance before it creates anything (`command::only_on`).
             OneShotCmd::NewWindow { server, .. } if server != SERVER => Err(TmuxError::NoServer),
             cmd => Ok(match cmd {
-                OneShotCmd::Locate { window } => Reply::Location(self.locate(window.0, None)),
-                OneShotCmd::LocateSession { session } => Reply::SessionLocation(SessionLocation {
-                    server: SERVER,
-                    exists: self.sessions.contains(&session.0),
-                }),
+                OneShotCmd::Locate { session } => Reply::Location(self.locate_session(session.0)),
                 OneShotCmd::NewWindow { session, .. } => {
                     self.add_window(9, session.0, 9);
+                    self.current_windows.insert(session.0, 9);
                     Reply::Created(Created {
                         server: SERVER,
                         session,
@@ -335,8 +336,12 @@ impl Hub {
                 .unwrap_or(fake.sessions[0]);
             Found {
                 session: SessionId(session),
+                window: WindowId(window),
+                index: 0,
                 pane: PaneId(fake.pane),
                 size: fake.size,
+                window_size: fake.size,
+                name: format!("window{window}"),
                 session_name: fake.session_name.clone(),
             }
         });
@@ -346,9 +351,19 @@ impl Hub {
         }
     }
 
+    fn locate_session(&self, session: u32) -> Location {
+        let Some(window) = self.current_windows.get(&session).copied() else {
+            return Location {
+                server: SERVER,
+                found: None,
+            };
+        };
+        self.locate(window, Some(session))
+    }
+
     /// tmux's reply rows to one command from a client attached to `session`, or its
     /// error.
-    fn reply(&self, session: u32, command: &Command) -> Result<Vec<String>, String> {
+    fn reply(&mut self, session: u32, command: &Command) -> Result<Vec<String>, String> {
         match command {
             Command::Display { target, format } => {
                 let value = |name: &str| self.variable(session, target.as_deref(), name);
@@ -396,6 +411,7 @@ impl Hub {
             return match name {
                 "window_width" => "80".to_owned(),
                 "window_height" => "24".to_owned(),
+                "client_name" => "client-fake".to_owned(),
                 _ => panic!("no #{{{name}}} without a target"),
             };
         };
@@ -406,19 +422,33 @@ impl Hub {
             return match name {
                 "session_id" => found.session.to_string(),
                 "window_id" => window.to_string(),
+                "window_index" => "0".to_owned(),
                 "pane_id" => found.pane.to_string(),
                 "pane_width" => found.size.cols.to_string(),
                 "pane_height" => found.size.rows.to_string(),
+                "window_width" => found.window_size.cols.to_string(),
+                "window_height" => found.window_size.rows.to_string(),
+                "window_name" => found.name,
                 "session_name" => found.session_name,
                 _ => panic!("#{{{name}}} of a window"),
             };
         }
         if let Some(id) = SessionId::parse(target.as_bytes()) {
-            let exists = self.sessions.contains(&id.0);
-            return if exists {
-                id.to_string()
-            } else {
-                String::new()
+            let Some(found) = self.locate_session(id.0).found else {
+                return String::new();
+            };
+            return match name {
+                "session_id" => id.to_string(),
+                "window_id" => found.window.to_string(),
+                "window_index" => found.index.to_string(),
+                "pane_id" => found.pane.to_string(),
+                "pane_width" => found.size.cols.to_string(),
+                "pane_height" => found.size.rows.to_string(),
+                "window_width" => found.window_size.cols.to_string(),
+                "window_height" => found.window_size.rows.to_string(),
+                "window_name" => found.name,
+                "session_name" => found.session_name,
+                _ => panic!("#{{{name}}} of a session"),
             };
         }
         let pane = PaneId::parse(target.as_bytes()).expect("a pane target");
@@ -503,7 +533,9 @@ pub(super) fn size(cols: u16, rows: u16) -> proto::Size {
 
 /// The line the hub writes for `op`.
 pub(super) fn line_for(op: Op) -> String {
-    command::op(&op, Tag(0)).expect("a valid op").line
+    command::op(&op, Tag(0), SessionId(0), "client-fake")
+        .expect("a valid op")
+        .line
 }
 
 pub(super) fn vote(window: u32, cols: u16, rows: u16) -> String {
@@ -511,6 +543,16 @@ pub(super) fn vote(window: u32, cols: u16, rows: u16) -> String {
     line_for(Op::Vote {
         window: WindowId(window),
         size,
+        take: false,
+    })
+}
+
+pub(super) fn take_vote(window: u32, cols: u16, rows: u16) -> String {
+    let size = Size { cols, rows };
+    line_for(Op::Vote {
+        window: WindowId(window),
+        size,
+        take: true,
     })
 }
 
@@ -528,11 +570,12 @@ pub(super) fn capture_history(start: i32, end: i32) -> String {
 }
 
 /// What the hub writes once it lets go of window `@0`, whose pane is `%0`.
-pub(super) fn let_go_of_window_0() -> [String; 3] {
+pub(super) fn let_go_of_window_0() -> [String; 4] {
     let window = WindowId(0);
     [
         release(0),
         line_for(Op::ClearVote { window }),
         line_for(Op::Unsubscribe { window }),
+        line_for(Op::UnwatchCurrent),
     ]
 }

@@ -4,9 +4,9 @@
     "type": "activeTab",
     "tab": {
       "host": "a234567bcdefghjk",
-      "window": {
-        "server": "main",
-        "window": "@2"
+      "session": {
+        "server": "main:42-7",
+        "session": 2
       }
     }
   },

@@ -1,5 +1,5 @@
 // Home (client-architecture.md §6.3, browser-behaviors.md "Home: Sessions"): the open tabs,
-// a search over the host's sessions, and the creation actions. On a phone, Files is its second
+// a search over the host's sessions, and New session. On a phone, Files is its second
 // pane behind the bottom navigation, and fills the screen above it.
 import { useState } from "preact/hooks";
 import { useApp, useAppView } from "../../app/context";
@@ -7,8 +7,7 @@ import { Row } from "../../ui/primitives/Row";
 import { SearchField } from "../../ui/primitives/TextField";
 import { FilesScreen } from "../files/FilesScreen";
 import { HostSessionLists } from "../sessions/HostSessionLists";
-import { openWindow } from "../sessions/openWindow";
-import type { CreateParams } from "./CreateDialog";
+import { openSession } from "../sessions/openSession";
 import { HomeNav } from "./HomeNav";
 import { OpenTabs } from "./OpenTabs";
 import styles from "./Home.module.css";
@@ -33,10 +32,6 @@ function Sessions() {
   const host = hosts[0];
   const tone = !host || host.admission.kind === "unreachable" || host.admission.kind === "deciding" ? "reconnecting" : host.admission.kind === "admitted" ? "live" : "error";
 
-  const create = (from: HTMLElement, name: "newSession" | "newWindow", params: CreateParams): void => {
-    app.openOverlay({ screen: "home", name, params }, from);
-  };
-
   return (
     <div class={styles.home}>
       <header class={styles.header}>
@@ -49,13 +44,8 @@ function Sessions() {
           <SearchField label="Find a session" placeholder="Find a session" value={query} onInput={setQuery} focusTarget="homeSearch" />
           <HostSessionLists
             query={query}
-            onOpen={(h, listing, session, window) => { openWindow(app, h, listing, session, window); }}
-            creation={{
-              onNewSession: (h, el) => { create(el, "newSession", { handle: h.entry.handle }); },
-              onNewWindow: (h, listing, session, el) => {
-                create(el, "newWindow", { handle: h.entry.handle, session: { server: listing.server, session: session.id }, sessionName: session.name });
-              },
-            }}
+            onOpen={(h, listing, session) => { openSession(app, h, listing, session); }}
+            creation={{ onNewSession: (h, el) => { app.openOverlay({ screen: "home", name: "newSession", params: { handle: h.entry.handle } }, el); } }}
           />
           <Row icon="settings" label="Settings" trailing="chevron" onClick={(e) => { app.openOverlay({ screen: "settings", name: "settings" }, e.currentTarget); }} />
         </div>

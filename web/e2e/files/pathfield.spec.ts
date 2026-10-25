@@ -133,9 +133,13 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
 
     test("typing ~/repos/tether/web straight through costs one listing", async ({ page }) => {
       await openFixture(page, "filesFindRoots", scenario, "#/files");
+      const now = Date.now();
+      await page.clock.install({ time: now });
+      await page.clock.pauseAt(now + 1000);
+      // Keystroke delivery on a busy host must not count as a user's pause.
       await typeInto(page, "~/repos/tether/web");
+      await page.clock.runFor(400);
       await expect(option(page, /^web/)).toBeVisible();
-      await page.waitForTimeout(400);
       expect(await listings(page)).toEqual(["GET /fs/list/home/jimmy/repos/tether?offset=0&hidden=0"]);
     });
 

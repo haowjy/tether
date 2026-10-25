@@ -26,22 +26,22 @@ for (const version of VERSIONS) {
     };
     const sessionRow = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(`^${name} \\d+ windows?`) }).first();
 
-    test("lists the real sessions, and opening a window makes its tab", async ({ page }) => {
+    test("lists the real sessions, and opening one makes its tab", async ({ page }) => {
       await home(page);
+      await expect(sessionRow(page, "alpha")).toContainText("2 windows");
       await sessionRow(page, "alpha").click();
-      await expect(page.getByText("0: editor")).toBeVisible();
-      await page.getByRole("button", { name: "1: shell" }).click();
       await expect(page).toHaveURL(/#\/terminal$/);
       await page.getByRole("button", { name: "Home" }).click();
-      await expect(page.getByRole("button", { name: "alpha / shell", exact: true })).toBeVisible();
-      // The row is marked Open, and opening it again activates the tab: no duplicate.
-      await expect(page.getByRole("button", { name: /1: shell/ })).toContainText("open");
-      await page.getByRole("button", { name: /1: shell/ }).click();
+      // The tab shows the session's current window, the one tmux made current with new-window.
+      await expect(page.getByRole("button", { name: "alpha shell", exact: true })).toBeVisible();
+      // The row is marked, and opening it again activates the tab: no duplicate.
+      await expect(sessionRow(page, "alpha")).toContainText("open");
+      await sessionRow(page, "alpha").click();
       await page.getByRole("button", { name: "Home" }).click();
-      await expect(page.getByRole("button", { name: "alpha / shell", exact: true })).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "alpha shell", exact: true })).toHaveCount(1);
     });
 
-    test("creates a session and a window, and each lands in its tab", async ({ page }) => {
+    test("creates a session and a window, and the window lands in the session's tab", async ({ page }) => {
       await home(page);
       await page.getByRole("button", { name: "New session" }).click();
       await page.getByRole("textbox", { name: "Name" }).fill("made-here");
@@ -51,12 +51,15 @@ for (const version of VERSIONS) {
 
       await page.getByRole("button", { name: "Home" }).click();
       await sessionRow(page, "made-here").click();
-      await page.getByRole("button", { name: "New window" }).first().click();
+      await page.getByRole("button", { name: "Windows in made-here" }).click();
+      await page.getByRole("menuitem", { name: "New window" }).click();
       await page.getByRole("textbox", { name: "Name" }).fill("second");
       await page.getByRole("button", { name: "Create" }).click();
       await expect(page).toHaveURL(/#\/terminal$/);
       expect(stack.tmux("list-windows", "-t", "made-here", "-F", "#{window_name}")).toContain("second");
-      // Back from the new tab goes Home, not to the closed dialog.
+      // The tab follows the session to the new window.
+      await expect(page.getByRole("button", { name: /^made-here second, / })).toBeVisible();
+      // Back from the tab goes Home, not to the closed dialog.
       await page.goBack();
       await expect(page).toHaveURL(/#\/$/);
       await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -73,19 +76,16 @@ for (const version of VERSIONS) {
       await expect(page.getByRole("button", { name: "New session" })).toBeFocused();
     });
 
-    test("a tab under an off-screen Home is pruned when its window is killed", async ({ page }) => {
+    test("a tab under an off-screen Home closes when its session is killed", async ({ page }) => {
       stack.tmux("new-session", "-d", "-s", "doomed", "-n", "only");
-      stack.tmux("new-window", "-t", "doomed", "-n", "keep");
       await home(page);
       await sessionRow(page, "doomed").click();
-      await page.getByRole("button", { name: "0: only" }).click();
       await expect(page).toHaveURL(/#\/terminal$/);
-      // Off screen: Home covers the tab, so only a listing can say its window is gone.
+      // Off screen: Home covers the tab, and the daemon's closure broadcast removes it without a notice.
       await page.getByRole("button", { name: "Home" }).click();
-      await expect(page.getByRole("button", { name: "doomed / only", exact: true })).toBeVisible();
-      stack.tmux("kill-window", "-t", "doomed:only");
-      await expect(page.getByText(/1 tab closed/)).toBeVisible();
-      await expect(page.getByRole("button", { name: "doomed / only", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "doomed only", exact: true })).toBeVisible();
+      stack.tmux("kill-session", "-t", "doomed");
+      await expect(page.getByRole("button", { name: "doomed only", exact: true })).toHaveCount(0);
     });
 
     test("one listSessions per reconnect", async ({ page }) => {

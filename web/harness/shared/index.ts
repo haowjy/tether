@@ -4,7 +4,7 @@ import type { Fixtures } from "../fixture";
 import { serveTree } from "../files/fakes";
 import { Gallery } from "./Gallery";
 
-const key = (window: number): TabKey => ({ host: "h-pop", window: { server: "main:1-1", window } });
+const key = (session: number): TabKey => ({ host: "h-pop", session: { server: "main:1-1", session } });
 
 export const LISTING: TmuxListing = {
   server: "main:1-1",
@@ -22,17 +22,16 @@ export const LISTING: TmuxListing = {
   ],
 };
 
-/** Two tabs saved by a previous page load; the third names a window the daemon no longer has. */
+/** Two tabs saved by a previous page load; the third names a session the daemon no longer has. */
 export const SAVED: SavedWorkspace = {
-  version: 1,
+  version: 2,
   tabs: [
     { key: key(1), session: "tether", window: "agent" },
-    { key: key(3), session: "notes", window: "shell" },
+    { key: key(2), session: "notes", window: "shell" },
     { key: key(99), session: "gone", window: "window" },
   ],
-  active: "h-pop/main:1-1/1",
+  active: "h-pop/main:1-1/$1",
   files: null,
-  expanded: {},
 };
 
 export const fixtures: Fixtures = {
@@ -46,7 +45,7 @@ export const fixtures: Fixtures = {
   wrongOrigin: { daemon: (d) => { if (d.info !== "down") d.info = { ...d.info, browserOrigin: "https://other.tail.ts.net" }; } },
   originRefused: { daemon: (d) => { if (d.info !== "down") d.info = { ...d.info, browserOrigin: null, browserRefused: "ambiguous_origin" }; } },
   nodeRefused: { daemon: (d) => { d.node = "refused"; d.refusedReason = "routes"; } },
-  incompatible: { daemon: (d) => { if (d.info !== "down") d.info = { ...d.info, protocol: { min: 2, max: 3 } }; } },
+  incompatible: { daemon: (d) => { if (d.info !== "down") d.info = { ...d.info, protocol: { min: 3, max: 4 } }; } },
   unreachable: { daemon: (d) => { d.info = "down"; } },
   /** The daemon can't decide: Home keeps its place, and says "Checking access…" after 10 s. */
   deciding: { daemon: (d) => { d.node = "busy"; } },

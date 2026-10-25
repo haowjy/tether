@@ -49,7 +49,7 @@ test.describe("overlays and focus", () => {
     await page.keyboard.press("Escape");
     await expect(picker).toBeHidden();
     await expect(page.getByRole("button", { name: "Open another session" })).toBeFocused();
-    await expect(page.getByText("Open a window with + or from Home.")).toBeVisible();
+    await expect(page.getByText("Open a session with + or from Home.")).toBeVisible();
   });
 
   test("browser Back closes the overlay before leaving the destination", async ({ page }) => {
@@ -127,10 +127,10 @@ test.describe("lists", () => {
 test.describe("restore", () => {
   test("the first listing closes the tab whose window is gone, with one notice, and keeps the others", async ({ page }) => {
     await openFixture(page, "restored", desktop, "#/terminal");
-    await expect(page.getByText("1 tab closed: their windows are gone")).toBeVisible();
+    await expect(page.getByText("1 tab closed: their sessions are gone")).toBeVisible();
     const pills = page.locator("button[title]");
     await expect(pills).toHaveCount(2);
-    await expect(page.getByRole("button", { name: /^tether \/ agent/ })).toHaveAttribute("aria-current", "true");
+    await expect(page.getByRole("button", { name: /^tether agent, / })).toHaveAttribute("aria-current", "true");
   });
 
   test("tabs wait, restoring, until the host's id is known, and the active one is kept", async ({ page }) => {

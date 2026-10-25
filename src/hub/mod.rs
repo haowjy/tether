@@ -24,6 +24,7 @@ mod requests;
 mod run;
 mod state;
 mod time;
+mod view;
 
 pub use outbox::{Frame, Next, Outbox};
 pub use state::{Effect, Input, State};
@@ -98,6 +99,7 @@ pub enum FromConn {
     Paste {
         req: u32,
         watch: u32,
+        window: u32,
         enter: bool,
         file: PasteFile,
     },

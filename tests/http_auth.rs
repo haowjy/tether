@@ -127,7 +127,7 @@ async fn only_the_auth_routes_skip_the_device_check() {
     let login = [("Tailscale-User-Login", LOGIN)];
     let (status, body) = request(port, "GET", "/auth/info", &login, "").await;
     assert_eq!(status, 200, "{body}");
-    assert!(body.contains(r#""protocol":{"min":1,"max":1}"#), "{body}");
+    assert!(body.contains(r#""protocol":{"min":2,"max":2}"#), "{body}");
     // No code is pending: the handler, not a layer, refuses it.
     let wrong = r#"{"code":"AAAA-AAAA","deviceName":"phone"}"#;
     let (status, body) = request(port, "POST", "/auth/enroll", &login, wrong).await;
@@ -198,7 +198,7 @@ async fn only_the_auth_routes_skip_the_device_check() {
     .await
     .expect("upgraded");
     assert_eq!(protocol.as_deref(), Some("tether.v1"));
-    let hello = r#"{"type":"hello","data":{"protocol":1,"client":{"kind":"web","build":"test"}}}"#;
+    let hello = r#"{"type":"hello","data":{"protocol":2,"client":{"kind":"web","build":"test"}}}"#;
     socket.send(Message::text(hello)).await.expect("sent");
     let welcome = tokio::time::timeout(WAIT, socket.next())
         .await
@@ -1057,7 +1057,7 @@ async fn removing_a_node_closes_its_live_socket_at_the_recheck() {
         .expect("upgraded");
     socket
         .send(Message::text(
-            r#"{"type":"hello","data":{"protocol":1,"client":{"kind":"web","build":"test"}}}"#,
+            r#"{"type":"hello","data":{"protocol":2,"client":{"kind":"web","build":"test"}}}"#,
         ))
         .await
         .expect("hello sent");

@@ -7,7 +7,7 @@ import { FakeLink } from "./host";
 import { UploadScript } from "./uploads";
 import type { AuthInfo } from "../../net/admission";
 import type { LinkHandlers } from "../../proto/link";
-import type { ClientMsg, TmuxListing } from "../../proto/generated/messages";
+import type { ClientMsg, SessionRef, ShownWindow, Size, TmuxListing } from "../../proto/generated/messages";
 import type {
   BootResult,
   DraftRecord,
@@ -61,6 +61,8 @@ export interface FakeDaemon {
   listing: TmuxListing | null;
   /** How the daemon answers `watch`: a snapshot, a refusal for its session limit, or nothing (the default). */
   watch?: "ok" | { limit: string } | "never";
+  /** The size every watched window has: the watching tab's own size when unset. A size that is not the tab's shows the band. */
+  windowSize?: Size;
   /** Answers `/fs/*` requests (`serveFs` serves a tree); `undefined` falls through to a 404. */
   fs?: (request: { method: string; path: string; query: URLSearchParams; body: string | null }) => Response | Promise<Response> | undefined;
   /** Requests seen, `"METHOD /path?query"`, in order. */
@@ -104,7 +106,7 @@ export interface TestPlatform extends Platform {
 
 export function defaultDaemon(): FakeDaemon {
   return {
-    info: { hostId: "h-pop", name: "pop-os", protocol: { min: 1, max: 1 }, browserOrigin: PAGE_ORIGIN, browserRefused: null },
+    info: { hostId: "h-pop", name: "pop-os", protocol: { min: 2, max: 2 }, browserOrigin: PAGE_ORIGIN, browserRefused: null },
     node: "enrolled",
     nodeName: "laptop",
     refusedReason: "routes",
@@ -164,16 +166,46 @@ function nodeReply(daemon: FakeDaemon): Response {
   }
 }
 
-function answerWatch(link: FakeLink, daemon: FakeDaemon, msg: Extract<ClientMsg, { type: "watch" }>): void {
-  const { watch, window, size } = msg.data;
+/** Tells the tab which window its session shows now, with that window's snapshot, as the daemon does for a watch and for every change of the current window. */
+function showWindow(link: FakeLink, daemon: FakeDaemon, watch: number, session: SessionRef, size: Size): void {
+  const current = daemon.listing?.sessions.find((s) => s.id === session.session)?.windows.find((w) => w.active);
+  if (!current) return;
+  const window: ShownWindow = { id: current.id, index: current.index, name: current.name, size: daemon.windowSize ?? size };
+  link.say({ type: "watching", data: { watch, window, session, pane: current.id, cwd: null } });
+  link.frame({ kind: "snapshot", watch, cols: window.size.cols, rows: window.size.rows, restore: new TextEncoder().encode(`${current.name}$ `) });
+}
+
+function answerWatch(link: FakeLink, daemon: FakeDaemon, msg: Extract<ClientMsg, { type: "watch" }>, watches: Map<number, { session: SessionRef; size: Size }>): void {
+  const { watch, session, size } = msg.data;
   if (daemon.watch === undefined || daemon.watch === "never") return;
   if (daemon.watch !== "ok") {
     link.say({ type: "watchEnded", data: { watch, reason: "limit", message: daemon.watch.limit } });
     return;
   }
-  const session = daemon.listing?.sessions.find((s) => s.windows.some((w) => w.id === window.window));
-  link.say({ type: "watching", data: { watch, window, session: { server: window.server, session: session?.id ?? 1 }, pane: 1, cwd: null } });
-  link.frame({ kind: "snapshot", watch, cols: size.cols, rows: size.rows, restore: new TextEncoder().encode("$ ") });
+  watches.set(watch, { session, size });
+  showWindow(link, daemon, watch, session, size);
+}
+
+/** `selectWindow` and `newWindow` change the session's current window; the watching tab follows. */
+function changeWindow(link: FakeLink, daemon: FakeDaemon, msg: Extract<ClientMsg, { type: "selectWindow" | "newWindow" }>, watches: Map<number, { session: SessionRef; size: Size }>): void {
+  const session = msg.type === "newWindow" ? msg.data.session : watches.get(msg.data.watch)?.session;
+  const listed = daemon.listing?.sessions.find((s) => s.id === session?.session);
+  if (!session || !listed) return;
+  let target;
+  if (msg.type === "newWindow") {
+    target = { id: Math.max(0, ...listed.windows.map((w) => w.id)) + 1, index: listed.windows.length, name: msg.data.name ?? "sh", active: true, activity: 0 };
+    listed.windows.push(target);
+  } else {
+    target = listed.windows.find((w) => w.id === msg.data.window);
+    if (!target) {
+      link.say({ type: "error", data: { req: msg.data.req, watch: msg.data.watch, code: "tmux", message: "can't find window" } });
+      return;
+    }
+  }
+  for (const w of listed.windows) w.active = w === target;
+  if (msg.type === "newWindow") link.say({ type: "created", data: { req: msg.data.req, window: { server: session.server, window: target.id }, session } });
+  for (const [watch, w] of watches) if (w.session.session === session.session) showWindow(link, daemon, watch, session, w.size);
+  link.say({ type: "sessionsChanged" });
 }
 
 export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatform {
@@ -229,13 +261,15 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
           }
           const id = daemon.info.hostId;
           link.ready = true;
-          handlers.welcome({ protocol: 1, daemon: { version: "0", completion: false }, host: { id, name: daemon.info.name } });
+          handlers.welcome({ protocol: 2, daemon: { version: "0", completion: false }, host: { id, name: daemon.info.name } });
         });
         const send = link.send.bind(link);
+        const watches = new Map<number, { session: SessionRef; size: Size }>();
         link.send = (msg: ClientMsg) => {
           send(msg);
           if (msg.type === "listSessions") link.say({ type: "sessions", data: { req: msg.data.req, tmux: daemon.listing } });
-          else if (msg.type === "watch") answerWatch(link, daemon, msg);
+          else if (msg.type === "watch") answerWatch(link, daemon, msg, watches);
+          else if (msg.type === "selectWindow" || msg.type === "newWindow") changeWindow(link, daemon, msg, watches);
         };
         return link;
       },

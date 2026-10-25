@@ -15,9 +15,9 @@ pub use error::{ErrorBody, ErrorNode, HttpError};
 pub use messages::*;
 
 /// The protocol this daemon speaks; the newest a client may speak.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 /// The oldest protocol a client may speak.
-pub const MIN_PROTOCOL: u32 = 1;
+pub const MIN_PROTOCOL: u32 = 2;
 
 /// Whether a client speaking `protocol` gets `welcome` (else `incompatible`, 4001).
 pub fn accepts(protocol: u32) -> bool {

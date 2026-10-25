@@ -27,7 +27,7 @@ const PILL: Record<Tone, { tone: PillTone; state: string }> = {
 export function lookOf(tab: Tab, status: TabStatus | undefined, host: string, onScreen: boolean, now: number): TabLook {
   const known = status ?? { state: initialState, downSince: now, retryAt: null };
   const described = describe(known.state, known.downSince, known.retryAt, now, host, onScreen);
-  // A restored tab is unproven until the daemon finds its window: reconnecting colour, "Checking…", no input.
+  // A restored tab is unproven until the daemon finds its session: reconnecting colour, "Checking…", no input.
   if (tab.restoring && known.state.kind !== "closed") {
     const checking = described.tone === "connecting" || described.tone === "idle" || described.tone === "live";
     return {

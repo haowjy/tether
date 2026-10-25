@@ -1,12 +1,11 @@
-// One host's sessions, as Home and the picker draw them (the same rows in both, per the
-// contract): a heading with the host's name, then loading, error, no-server, empty, no-match
-// or the session groups. A view over the cache's state; it fetches and navigates nothing.
+// One host's sessions, as Home, the picker and the switcher draw them (the same rows in all,
+// per the contract): a heading with the host's name, then loading, error, no-server, empty,
+// no-match or one row per session. A view over the cache's state; it fetches and navigates nothing.
 import type { ComponentChildren } from "preact";
 import type { HostSessions } from "../../sessions/cache";
-import { groups, windowCount } from "../../sessions/groups";
-import type { SessionListing, TmuxListing, WindowListing } from "../../proto/generated/messages";
+import { matching, windowCount } from "../../sessions/groups";
+import type { SessionListing, TmuxListing } from "../../proto/generated/messages";
 import { Button } from "../../ui/primitives/Button";
-import { Disclosure } from "../../ui/primitives/Disclosure";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { RovingList } from "../../ui/primitives/RovingList";
 import { Row } from "../../ui/primitives/Row";
@@ -18,20 +17,18 @@ export interface SessionListProps {
   /** The host can't be reached at all (admission), as opposed to a listing that failed. */
   unreachable: boolean;
   sessions: HostSessions | undefined;
-  expanded: ReadonlySet<string>;
   query: string;
-  /** The id of this window's tab, whether or not it is open. */
-  tabIdOf: (window: WindowListing) => string | null;
+  /** The id of this session's tab, whether or not it is open. */
+  tabIdOf: (session: SessionListing) => string | null;
   /** The ids of the open tabs. */
   open: ReadonlySet<string>;
-  /** The active tab's id: its window reads "here" and other open windows "open", in words and never dots. */
+  /** The active tab's id: its session reads "here" and other open sessions "open", in words and never dots. */
   active?: string | null;
-  onToggle: (key: string) => void;
-  onOpen: (listing: TmuxListing, session: SessionListing, window: WindowListing) => void;
+  onOpen: (listing: TmuxListing, session: SessionListing) => void;
   /** A fresh listing, or admission again when the host is unreachable. */
   onRetry: () => void;
-  /** Home only: "New session" beside the heading, and "New window" in each session. */
-  creation?: { onNewSession: (opener: HTMLElement) => void; onNewWindow: (session: SessionListing, opener: HTMLElement) => void };
+  /** Home and the switcher: "New session" beside the heading. */
+  creation?: { onNewSession: (opener: HTMLElement) => void };
 }
 
 function Heading({ hostName, status, action }: { hostName: string; status: ComponentChildren; action: ComponentChildren }) {
@@ -45,7 +42,7 @@ function Heading({ hostName, status, action }: { hostName: string; status: Compo
 }
 
 export function SessionList(props: SessionListProps) {
-  const { hostName, unreachable, sessions, expanded, query, tabIdOf, open, active, onToggle, onOpen, onRetry, creation } = props;
+  const { hostName, unreachable, sessions, query, tabIdOf, open, active, onOpen, onRetry, creation } = props;
   const listing = sessions?.listing;
   const failure = sessions?.failure ?? null;
   const newSession = creation && (
@@ -99,44 +96,32 @@ export function SessionList(props: SessionListProps) {
   } else if (listing.sessions.length === 0) {
     body = <EmptyState icon="sessions" title={`No sessions on ${hostName}`}>{creation ? "Create one with New session." : "Create one from Home."}</EmptyState>;
   } else {
-    const shown = groups(listing, query, expanded);
+    const shown = matching(listing, query);
     body =
       shown.length === 0 ? (
         <EmptyState icon="search" title="No matching sessions">Nothing on {hostName} matches "{query.trim()}".</EmptyState>
       ) : (
         <RovingList label={`Sessions on ${hostName}`} class={styles.list}>
-          {shown.map((g) => (
-            <Disclosure
-              key={g.key}
-              roving
-              icon="sessions"
-              label={g.session.name}
-              meta={windowCount(g.session.windows.length)}
-              expanded={g.expanded}
-              onToggle={() => { onToggle(g.key); }}
-            >
-              {g.windows.map((w) => {
-                const id = tabIdOf(w);
-                const isOpen = id !== null && open.has(id);
-                return (
-                  <Row
-                    key={w.id}
-                    roving
-                    icon="terminal"
-                    label={`${String(w.index)}: ${w.name}`}
-                    meta={id !== null && id === active ? "here" : isOpen ? "open" : undefined}
-                    selected={isOpen}
-                    onClick={() => { onOpen(listing, g.session, w); }}
-                  />
-                );
-              })}
-              {creation && (
-                <Button variant="quiet" icon="plus" class={styles.newWindow} data-roving="" onClick={(e) => { creation.onNewWindow(g.session, e.currentTarget); }}>
-                  New window
-                </Button>
-              )}
-            </Disclosure>
-          ))}
+          {shown.map((session) => {
+            const id = tabIdOf(session);
+            const isOpen = id !== null && open.has(id);
+            return (
+              <Row
+                key={session.id}
+                roving
+                icon="sessions"
+                label={session.name}
+                meta={
+                  <>
+                    <span>{windowCount(session.windows.length)}</span>
+                    {isOpen && <span class={styles.state}>{id === active ? "here" : "open"}</span>}
+                  </>
+                }
+                selected={isOpen}
+                onClick={() => { onOpen(listing, session); }}
+              />
+            );
+          })}
         </RovingList>
       );
   }

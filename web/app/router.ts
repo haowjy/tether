@@ -97,6 +97,17 @@ export class Router {
    * is pushed before the pop and the pop undoes it (§6.6). With no overlay open it runs at once.
    */
   closeOverlay(then?: () => void): void {
+    this.close(1, then);
+  }
+
+  /** Closes every overlay open on this destination at once: one history step, so none is left open (WebKit drops a second `back()` issued before the first pops). `then` as for {@link closeOverlay}. */
+  closeAllOverlays(then?: () => void): void {
+    let open = 0;
+    while (this.stack[this.stack.length - 1 - open]?.overlay) open++;
+    this.close(open, then);
+  }
+
+  private close(count: number, then?: () => void): void {
     if (this.entry.overlay === null) {
       then?.();
       return;
@@ -108,14 +119,7 @@ export class Router {
         then();
       });
     }
-    this.closeOverlays(1);
-  }
-
-  /** Closes every overlay open on this destination at once: one history step, so none is left open (WebKit drops a second `back()` issued before the first pops). */
-  closeAllOverlays(): void {
-    let open = 0;
-    while (this.stack[this.stack.length - 1 - open]?.overlay) open++;
-    this.closeOverlays(open);
+    this.closeOverlays(count);
   }
 
   private closeOverlays(count: number): void {

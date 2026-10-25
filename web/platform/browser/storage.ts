@@ -168,8 +168,16 @@ export function createBrowserStorage(): BrowserStorage {
       const handle = await dbReady;
       if (!handle) return null;
       try {
-        const ws = (await request(handle.transaction("workspace").objectStore("workspace").get(WORKSPACE_KEY))) as SavedWorkspace | undefined;
-        return ws?.version === 1 ? ws : null;
+        const ws = (await request(handle.transaction("workspace").objectStore("workspace").get(WORKSPACE_KEY))) as { version?: number } | undefined;
+        if (ws?.version === 1) {
+          // Tabs followed windows then. None of that workspace's tabs or drafts names a session, so all of it goes.
+          const tx = handle.transaction(["workspace", "drafts"], "readwrite");
+          tx.objectStore("workspace").clear();
+          tx.objectStore("drafts").clear();
+          await done(tx);
+          return null;
+        }
+        return ws?.version === 2 ? (ws as SavedWorkspace) : null;
       } catch {
         return null;
       }

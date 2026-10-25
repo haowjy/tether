@@ -50,7 +50,7 @@ describe("HostLink", () => {
     sock.open();
     expect(JSON.parse(sock.sent[0] ?? "")).toEqual({
       type: "hello",
-      data: { protocol: 1, client: { kind: "ios", build: "1" } },
+      data: { protocol: 2, client: { kind: "ios", build: "1" } },
     });
   });
 

@@ -40,9 +40,16 @@ These are the ones older documents contradict:
   paste's own tmux group, and the daemon confirms each paste.
 - A long-press on the terminal is the arrow pad when held and dragged, and selects a
   word when released; the key row has no arrow keys.
+- A tab is a tmux session, like `tmux attach`: it shows the session's current window
+  and follows it when any client changes it. Lists show sessions only. Input, paste
+  and inserted paths go to the window the tab was showing when they started, never the
+  one current when they arrive. `client-architecture.md` predates this and is corrected
+  only where its banner says.
 - The dock's tab chip opens the session switcher (open tabs, every session, search,
-  New session). The desktop terminal's `+` opens existing tmux windows only; creating
-  sessions and windows happens on Home. Closing a tether tab only detaches it.
+  New session, and the active session's windows). The desktop terminal's `+` opens
+  existing sessions only; the active tab's pill holds the windows menu, the desktop's
+  only way to create a window. New session is on Home and in the phone's switcher.
+  Closing a tether tab only detaches it.
 - A window takes the size of the client that acted on it last: "whoever has the last
   focus gets the focus and the size of the screen" (Jimmy). A watching phone no longer
   caps the window while the laptop is in use (`docs/design/daemon-core.md` §3.6).
@@ -55,8 +62,9 @@ controller still apply.
 
 ## What is built but unverified
 
-The web client, the dock, touch gestures, the native shell and its bridge are built and
-tested in browsers and the Simulator. None of these close from an agent shell
+The web client, the dock, touch gestures, session tabs and the window switcher, the
+native shell and its bridge are built and tested in browsers, against real tmux 3.4 and
+3.7b, and in the Simulator. None of these gates close from an agent shell
 ([probe-environments.md](probe-environments.md) says why):
 
 | Gate | What must hold |
@@ -65,6 +73,8 @@ tested in browsers and the Simulator. None of these close from an agent shell
 | Touch on device | Tap, scroll and long-press resolve before anything is sent, and selection and copy behave in iPhone Safari and WKWebView, not only in emulated touch. |
 | Deployment | The auth probe gates G1–G12 in `docs/design/auth.md`, on the Linux dev box behind real Tailscale Serve; a Mac host has its own gates, M0–M8, which don't stand in for G1–G12. |
 | tmux versions | The real-tmux Rust suite (`tests/tmux_real.rs`) and the real-daemon web suites (`pnpm --dir web run e2e:real`, with `TETHER_E2E_TMUX=3.4` or `3.7b`) pass on both versions. |
+| tmux for daily use | Jimmy picks the tmux the dev box runs before daily use. 3.4 and 3.7b both carry an upstream crash any control client exposes (`docs/design/daemon-core.md`, risk 4); the decision is [issue #2](https://github.com/haowjy/tether/issues/2). Nobody upgrades the installed tmux without him. |
+| Resource budget | The budget in `docs/design/plan.md` measured on the Linux dev box. A Docker run is a proxy only: in a Debian 12 container, the release daemon's idle RSS was about 6.3 MiB against the plan's approximate 5 MB, and memory stayed bounded under a 72 MiB cap. |
 
 The full verification matrix for touch and copy is in
 `docs/design/client/terminal-interaction-design.md`.

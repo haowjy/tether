@@ -1,51 +1,24 @@
-%begin 1792859617 287 0
-%end 1792859617 287 0
+%begin 1792950956 287 0
+%end 1792950956 287 0
 %session-changed $0 fixture
-%begin 1792859617 292 1
-3.7b	48542	1792859617	80	24
-%end 1792859617 292 1
-%begin 1792859617 293 1
-%end 1792859617 293 1
+%begin 1792950956 292 1
+3.7b	99803	1792950955	80	24	client-99820
+%end 1792950956 292 1
+%begin 1792950956 293 1
+%end 1792950956 293 1
 %layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
 %unlinked-window-add @1
 %sessions-changed
 %unlinked-window-renamed @1 tmux
-%window-add @2
-%window-renamed @2 tmux
-%window-add @3
-%window-renamed @3 tmux
-%extended-output %2 0 : Jimmys-MacBook-Air:tether-ps-daemon-verify-20261024 jimmyyao$ 
-%begin 1792859617 311 1
-%pause %2
-%end 1792859617 311 1
-%extended-output %3 0 : Jimmys-MacBook-Air:tether-ps-daemon-verify-20261024 jimmyyao$ 
-%begin 1792859617 312 1
-%pause %3
-%end 1792859617 312 1
-%begin 1792859617 313 1
-48542	1792859617	$0	@0	%0	80	24	fixture
-%end 1792859617 313 1
-%begin 1792859617 314 1
-48542	1792859617	$1	@1	%1	80	24	other
-%end 1792859617 314 1
-%unlinked-window-close @2
-%unlinked-window-add @3
-%session-window-changed $1 @3
-%unlinked-window-close @3
-%begin 1792859617 323 1
-48542	1792859617						
-%end 1792859617 323 1
-%begin 1792859617 324 1
-48542	1792859617	$1	@3	%3	80	24	other
-%end 1792859617 324 1
-%begin 1792859617 325 1
-48542	1792859617	$0
-%end 1792859617 325 1
+%begin 1792950956 301 1
+99803	1792950955	$0	@0	0	%0	80	24	80	24	fixture	bash
+%end 1792950956 301 1
+%begin 1792950956 302 1
+99803	1792950955	$1	@1	0	%1	80	24	80	24	other	tmux
+%end 1792950956 302 1
 %sessions-changed
 %unlinked-window-close @1
-%unlinked-window-close @3
-%window-renamed @0 bash
-%begin 1792859618 332 1
-48542	1792859617	
-%end 1792859618 332 1
+%begin 1792950956 307 1
+99803	1792950955										
+%end 1792950956 307 1
 %exit

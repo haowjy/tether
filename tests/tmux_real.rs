@@ -22,8 +22,8 @@ use bytes::Bytes;
 use tether::hub::INBOX;
 use tether::tmux::{
     ClientId, Created, Endpoint, Event, Found, Location, OneShotCmd, Op, PaneId, PumpMsg, Reply,
-    ServerInstance, Session, SessionId, SessionLocation, Size, Socket, Step, Tag, TmuxError,
-    TmuxVersion, WindowId, oneshot, pump,
+    ServerInstance, Session, SessionId, Size, Socket, Step, Tag, TmuxError, TmuxVersion, WindowId,
+    oneshot, pump,
 };
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::JoinHandle;
@@ -61,7 +61,7 @@ impl Client {
     fn spawn(endpoint: &Endpoint, session: SessionId) -> Self {
         let (out, inbox) = mpsc::channel(INBOX);
         let (lines, pump) = pump::spawn(endpoint, session, ClientId(7), out);
-        let (session, step) = Session::new();
+        let (session, step) = Session::new(session);
         let mut client = Self {
             session,
             lines: Some(lines),
@@ -1117,6 +1117,7 @@ async fn window_size_yields_to_the_last_acting_pty_client() {
         .run(Op::Vote {
             window: WindowId(0),
             size: vote,
+            take: false,
         })
         .await;
     wait_for_size(&server, "60x20").await;
@@ -1143,6 +1144,7 @@ async fn window_size_yields_to_the_last_acting_pty_client() {
         .run(Op::Vote {
             window: WindowId(0),
             size: vote,
+            take: false,
         })
         .await;
     wait_for_size(&server, "60x20").await;
@@ -1176,6 +1178,7 @@ async fn window_size_yields_to_the_last_acting_pty_client() {
         .run(Op::Vote {
             window: WindowId(0),
             size: vote,
+            take: false,
         })
         .await;
     let events_before_ignored = client.events.len();
@@ -1275,8 +1278,6 @@ async fn window_size_yields_to_the_last_acting_pty_client() {
     }
 }
 
-/// A client that has connected to the socket but has not sent IDENTIFY can have no
-/// client name on older tmux. Subscriptions must not expand client_name for it.
 #[tokio::test]
 async fn window_subscription_survives_an_unidentified_socket_client() {
     let Some((_serial, server)) = setup("unidentified-subscription-client").await else {
@@ -1316,7 +1317,7 @@ async fn window_subscription_survives_an_unidentified_socket_client() {
 }
 
 async fn locate_session(endpoint: &Endpoint, session: SessionId) -> Result<Reply, TmuxError> {
-    oneshot::run(endpoint, &OneShotCmd::LocateSession { session }).await
+    oneshot::run(endpoint, &OneShotCmd::Locate { session }).await
 }
 
 #[tokio::test]
@@ -1350,9 +1351,9 @@ async fn kill_session_ends_the_client_with_exit_and_the_session_is_gone() {
     assert!(client.session.exit_seen());
     assert_eq!(
         locate_session(&server.endpoint(), SessionId(0)).await,
-        Ok(Reply::SessionLocation(SessionLocation {
+        Ok(Reply::Location(Location {
             server: client.server(),
-            exists: false
+            found: None
         }))
     );
 }
@@ -1368,13 +1369,13 @@ async fn a_detached_client_ends_with_exit_and_its_session_lives() {
         .expect("detach-client");
     client.exit().await;
     assert!(client.session.exit_seen());
-    assert_eq!(
+    assert!(matches!(
         locate_session(&server.endpoint(), SessionId(0)).await,
-        Ok(Reply::SessionLocation(SessionLocation {
-            server: client.server(),
-            exists: true
-        }))
-    );
+        Ok(Reply::Location(Location {
+            server,
+            found: Some(Found { session: SessionId(0), .. })
+        })) if server == client.server()
+    ));
 }
 
 #[tokio::test]
@@ -1397,13 +1398,13 @@ async fn a_killed_control_client_ends_without_exit_and_its_session_lives() {
     assert!(killed.success());
     client.exit().await;
     assert!(!client.session.exit_seen(), "a crash has no %exit");
-    assert_eq!(
+    assert!(matches!(
         locate_session(&server.endpoint(), SessionId(0)).await,
-        Ok(Reply::SessionLocation(SessionLocation {
-            server: client.server(),
-            exists: true
-        }))
-    );
+        Ok(Reply::Location(Location {
+            server,
+            found: Some(Found { session: SessionId(0), .. })
+        })) if server == client.server()
+    ));
 }
 
 #[tokio::test]
@@ -1429,7 +1430,7 @@ async fn dropping_the_line_sender_closes_the_client_within_a_second() {
 }
 
 #[tokio::test]
-async fn a_moved_window_is_unlinked_and_found_in_its_new_session() {
+async fn locate_is_session_scoped() {
     let Some((_serial, server)) = setup("move").await else {
         return;
     };
@@ -1453,11 +1454,6 @@ async fn a_moved_window_is_unlinked_and_found_in_its_new_session() {
     server
         .run(&["move-window", "-s", &moved.to_string(), "-t", "other:"])
         .expect("move-window");
-    client
-        .wait_for("WindowUnlinked", |event| {
-            *event == Event::WindowUnlinked { window: moved }
-        })
-        .await;
     let found = |reply: Event| match reply {
         Event::Done {
             result:
@@ -1470,7 +1466,13 @@ async fn a_moved_window_is_unlinked_and_found_in_its_new_session() {
         other => panic!("{other:?}"),
     };
     assert_eq!(
-        found(client.run(Op::Locate { window: moved }).await),
+        found(
+            client
+                .run(Op::Locate {
+                    session: SessionId(1)
+                })
+                .await
+        ),
         SessionId(1)
     );
 
@@ -1494,12 +1496,18 @@ async fn a_moved_window_is_unlinked_and_found_in_its_new_session() {
     assert!(solo_client.session.exit_seen());
     assert_eq!(
         locate_session(&endpoint, SessionId(2)).await,
-        Ok(Reply::SessionLocation(SessionLocation {
+        Ok(Reply::Location(Location {
             server: client.server(),
-            exists: false
+            found: None
         }))
     );
-    let location = oneshot::run(&endpoint, &OneShotCmd::Locate { window: solo }).await;
+    let location = oneshot::run(
+        &endpoint,
+        &OneShotCmd::Locate {
+            session: SessionId(1),
+        },
+    )
+    .await;
     assert!(
         matches!(
             location,
@@ -1515,6 +1523,7 @@ async fn a_moved_window_is_unlinked_and_found_in_its_new_session() {
     );
     // The first client is untouched.
     assert!(client.exited.is_none());
+    let _ = (moved, solo);
 }
 
 #[tokio::test]
@@ -1547,7 +1556,7 @@ async fn with_no_server_neither_the_pump_nor_a_one_shot_starts_one() {
         );
         for cmd in [
             OneShotCmd::List,
-            OneShotCmd::LocateSession {
+            OneShotCmd::Locate {
                 session: SessionId(0),
             },
             OneShotCmd::NewSession {
@@ -1777,7 +1786,7 @@ async fn new_windows_and_sessions_take_names_and_directories_as_given() {
     let gone = oneshot::run(
         &endpoint,
         &OneShotCmd::Locate {
-            window: WindowId(99),
+            session: SessionId(99),
         },
     )
     .await;

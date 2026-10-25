@@ -60,7 +60,6 @@ for (const version of VERSIONS) {
     async function open(page: Page, session: string): Promise<Finger> {
       await page.goto(`${stack.url}/#/`);
       await page.getByRole("button", { name: new RegExp(`^${session}\\b`) }).click();
-      await page.getByRole("button", { name: /^0: / }).click();
       await page.waitForFunction(() => { const host = document.querySelector(".xterm")?.parentElement; return host !== null && host !== undefined && !host.hasAttribute("data-blank"); });
       await page.waitForTimeout(400); // the snapshot's size settles
       return new Finger(await page.context().newCDPSession(page), page);
@@ -307,25 +306,25 @@ for (const version of VERSIONS) {
 
     test("a coast and a held pad stop when the tab changes: the next tab's pane gets no arrows", async ({ page }) => {
       const s = newSession("sh -c \"printf '\\033[?1049h'; exec cat -vt\"");
-      stack.tmux("new-window", "-t", s, "-n", "second", "cat -vt");
+      const next = newSession("cat -vt");
       const finger = await open(page, s);
       const at = await mid(page, s);
       // A hard flick: the full-screen application's coast sends arrows for seconds.
       await finger.down(at.x, at.y);
       await finger.drag(at.x, at.y, at.x, at.y + 200, 5, 6);
       await finger.up();
-      await paneIncludes(`${s}:0`, "^[[A");
+      await paneIncludes(s, "^[[A");
       await page.getByRole("button", { name: /, 1 tab, open sessions$/ }).tap();
       const sheet = page.getByRole("dialog", { name: "Sessions" });
-      await sheet.getByRole("button", { name: "1: second" }).tap();
+      await sheet.getByRole("button", { name: new RegExp(`^${next} \\d+ window`) }).tap();
       await expect(sheet).toBeHidden();
-      const sent = count(`${s}:0`, "^[[A");
+      const sent = count(s, "^[[A");
       await page.waitForTimeout(2500);
-      expect(pane(`${s}:1`)).not.toContain("^[[");
-      // The coast ended with the switch: the first window's count has stopped growing too.
-      const settled = count(`${s}:0`, "^[[A");
+      expect(pane(next)).not.toContain("^[[");
+      // The coast ended with the switch: the first session's count has stopped growing too.
+      const settled = count(s, "^[[A");
       await page.waitForTimeout(500);
-      expect(count(`${s}:0`, "^[[A")).toBe(settled);
+      expect(count(s, "^[[A")).toBe(settled);
       expect(settled).toBeGreaterThanOrEqual(sent);
     });
 

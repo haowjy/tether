@@ -1,30 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ClientMsg, ServerMsg, TmuxListing, WindowRef } from "../proto/generated/messages";
+import type { ClientMsg, ServerMsg, SessionRef, TmuxListing } from "../proto/generated/messages";
 import type { ConnectionState } from "../tabs/connection";
 import { TabDriver, type TabOptions } from "../tabs/driver";
 import { makeHost } from "../platform/test/host";
 import { RequestError } from "./host";
 
 const server = "main:1-2";
-const winA: WindowRef = { server, window: 3 };
-const winB: WindowRef = { server, window: 4 };
+const sesA: SessionRef = { server, session: 3 };
+const sesB: SessionRef = { server, session: 4 };
 
 function setup() {
   const h = makeHost();
   const painted: string[] = [];
   const dec = new TextDecoder();
-  const tab = (name: string, window: WindowRef) => {
+  const tab = (name: string, session: SessionRef) => {
     const states: ConnectionState[] = [];
     const renderer: TabOptions["renderer"] = {
       output: (b) => painted.push(`${name}:o:${dec.decode(b)}`),
       snapshot: (s) => { painted.push(`${name}:s:${dec.decode(s.restore)}`); return Promise.resolve(); },
     };
-    const driver = new TabDriver({ window, renderer, host: h.host, size: () => ({ cols: 80, rows: 24 }), onState: (s) => states.push(s), onNotice: () => undefined, random: () => 0.5 });
+    const driver = new TabDriver({ session, renderer, host: h.host, size: () => ({ cols: 80, rows: 24 }), onState: (s) => states.push(s), onNotice: () => undefined, random: () => 0.5 });
     return { driver, state: (): ConnectionState => states[states.length - 1] as ConnectionState };
   };
-  const watching = (watch: number, window: WindowRef): ServerMsg => ({
+  const watching = (watch: number, session: SessionRef): ServerMsg => ({
     type: "watching",
-    data: { watch, window, session: { server, session: 1 }, pane: 1, cwd: null },
+    data: { watch, window: { id: 1, index: 0, name: "w", size: { cols: 80, rows: 24 } }, session, pane: 1, cwd: null },
   });
   return { ...h, tab, painted, watching };
 }
@@ -35,13 +35,13 @@ afterEach(() => { vi.useRealTimers(); });
 describe("one socket per host", () => {
   it("shares one link, gives each tab its own watch, and routes frames by watch id", () => {
     const t = setup();
-    const a = t.tab("a", winA);
-    const b = t.tab("b", winB);
+    const a = t.tab("a", sesA);
+    const b = t.tab("b", sesB);
     expect(t.links).toHaveLength(1);
     t.link().welcome();
-    expect(t.link().sent.map((m) => m.type === "watch" && [m.data.watch, m.data.window.window])).toEqual([[1, 3], [2, 4]]);
-    t.link().say(t.watching(1, winA));
-    t.link().say(t.watching(2, winB));
+    expect(t.link().sent.map((m) => m.type === "watch" && [m.data.watch, m.data.session.session])).toEqual([[1, 3], [2, 4]]);
+    t.link().say(t.watching(1, sesA));
+    t.link().say(t.watching(2, sesB));
     t.link().snapshot(1, "A");
     t.link().output(2, "B");
     expect(t.painted).toEqual(["a:s:A", "b:o:B"]);
@@ -51,23 +51,23 @@ describe("one socket per host", () => {
 
   it("ends a watch only for the tab that owns it", () => {
     const t = setup();
-    const a = t.tab("a", winA);
-    const b = t.tab("b", winB);
+    const a = t.tab("a", sesA);
+    const b = t.tab("b", sesB);
     t.link().welcome();
-    t.link().say(t.watching(1, winA));
-    t.link().say(t.watching(2, winB));
+    t.link().say(t.watching(1, sesA));
+    t.link().say(t.watching(2, sesB));
     t.link().say({ type: "watchEnded", data: { watch: 1, reason: "detached" } });
     expect(a.state()).toMatchObject({ kind: "reconnecting", halt: "detached" });
     expect(b.state().kind).toBe("live");
   });
 
-  it("closes one tab on its windowClosed and the socket with the last tab", () => {
+  it("closes one tab on its sessionClosed and the socket with the last tab", () => {
     const t = setup();
-    const a = t.tab("a", winA);
-    const b = t.tab("b", winB);
+    const a = t.tab("a", sesA);
+    const b = t.tab("b", sesB);
     t.link().welcome();
-    t.link().say(t.watching(2, winB));
-    t.link().say({ type: "windowClosed", data: { window: winA } });
+    t.link().say(t.watching(2, sesB));
+    t.link().say({ type: "sessionClosed", data: { session: sesA } });
     expect(a.state().kind).toBe("closed");
     expect(b.state().kind).toBe("live");
     expect(t.link().closed).toBe(false);
@@ -97,7 +97,7 @@ describe("requests", () => {
 
   it("answers each request by its id, a refusal included, and ignores answers nobody waits for", async () => {
     const t = setup();
-    t.tab("a", winA);
+    t.tab("a", sesA);
     t.link().welcome();
     const first = list(t);
     const second = list(t);
@@ -112,7 +112,7 @@ describe("requests", () => {
 
   it("fails on a dropped socket without sending again, on a halt, on background, and after a timeout", async () => {
     const t = setup();
-    t.tab("a", winA);
+    t.tab("a", sesA);
     t.link().welcome();
     const dropped = list(t);
     t.link().drop();
@@ -151,11 +151,11 @@ describe("requests", () => {
 describe("reconnect is per host", () => {
   it("backs off once for all tabs, then re-watches each on the new socket", () => {
     const t = setup();
-    const a = t.tab("a", winA);
-    const b = t.tab("b", winB);
+    const a = t.tab("a", sesA);
+    const b = t.tab("b", sesB);
     t.link().welcome();
-    t.link().say(t.watching(1, winA));
-    t.link().say(t.watching(2, winB));
+    t.link().say(t.watching(1, sesA));
+    t.link().say(t.watching(2, sesB));
     t.link().drop();
     expect(a.state()).toMatchObject({ kind: "reconnecting", retryInMs: 500 });
     expect(b.state()).toMatchObject({ kind: "reconnecting", retryInMs: 500 });
@@ -172,7 +172,7 @@ describe("reconnect is per host", () => {
 
   it("on 4401 tells native, stops retrying, and a tap tries again", () => {
     const t = setup();
-    const a = t.tab("a", winA);
+    const a = t.tab("a", sesA);
     t.link().drop(4401);
     expect(t.events).toEqual(["refused 4401"]);
     expect(a.state()).toMatchObject({ halt: "unauthorized", retryInMs: null });
@@ -186,7 +186,7 @@ describe("reconnect is per host", () => {
 describe("the socket cap", () => {
   it("reports a 4005 close as a host problem until a socket is welcomed, and keeps retrying", () => {
     const t = setup();
-    const a = t.tab("a", winA);
+    const a = t.tab("a", sesA);
     t.link().welcome();
     t.link().drop(4005);
     expect(t.events).toEqual(["capped"]);
@@ -202,7 +202,7 @@ describe("the socket cap", () => {
 
   it("is not reported once nothing is trying", () => {
     const t = setup();
-    t.tab("a", winA);
+    t.tab("a", sesA);
     t.link().welcome();
     t.link().drop(4005);
     t.host.background();
@@ -213,9 +213,9 @@ describe("the socket cap", () => {
 describe("lifecycle", () => {
   it("closes the socket on background without counting a loss, and reconnects at once on foreground", () => {
     const t = setup();
-    const a = t.tab("a", winA);
+    const a = t.tab("a", sesA);
     t.link().welcome();
-    t.link().say(t.watching(1, winA));
+    t.link().say(t.watching(1, sesA));
     t.host.background();
     expect(t.link().closed).toBe(true);
     expect(t.events).toEqual([]);
@@ -232,7 +232,7 @@ describe("lifecycle", () => {
 
   it("foreground resets a backoff that was running", () => {
     const t = setup();
-    t.tab("a", winA);
+    t.tab("a", sesA);
     t.link().drop();
     t.host.background();
     vi.advanceTimersByTime(60_000);
@@ -243,7 +243,7 @@ describe("lifecycle", () => {
 
   it("a network nudge reconnects a waiting host now, and leaves a live socket alone", () => {
     const t = setup();
-    t.tab("a", winA);
+    t.tab("a", sesA);
     t.link().welcome();
     t.host.nudge();
     expect(t.links).toHaveLength(1);
@@ -258,7 +258,7 @@ describe("lifecycle", () => {
 describe("connect timeout", () => {
   it("tries one new socket at once, then asks native to recreate the web view", () => {
     const t = setup();
-    const a = t.tab("a", winA);
+    const a = t.tab("a", sesA);
     t.link().drop(1006, "connectTimeout");
     expect(t.links).toHaveLength(2);
     expect(t.events).toEqual([]);
@@ -270,7 +270,7 @@ describe("connect timeout", () => {
 
   it("forgives one timeout once a socket gets through", () => {
     const t = setup();
-    t.tab("a", winA);
+    t.tab("a", sesA);
     t.link().drop(1006, "connectTimeout");
     t.link().welcome();
     t.link().drop();

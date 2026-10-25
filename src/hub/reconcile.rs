@@ -1,28 +1,21 @@
-//! Desired state (daemon-core.md §4.4): after every input, compare what tmux should be
-//! doing for the current watches with what the hub has sent, and send the difference
-//! as far as capacity allows. Releases, cleared votes and unsubscribes go first, then
-//! Locates and session checks, subscriptions, votes, and snapshots. Maintenance may
-//! fill a control client's in-flight cap; nothing goes to a client before it is ready.
+//! Reconcile the session views' desired tmux state within bounded capacity.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::state::{
-    ClientPhase, Inflight, OneShotWork, Phase, State, WatchKey, WinKey, Window, Work,
-};
+use super::state::{ClientPhase, OneShotWork, State, Work};
+use super::view::{Inflight, Take, ViewKey, ViewPhase, vote_plan};
 use super::{CAPTURE_RESERVATION, CAPTURE_SLOTS, LINGER};
-use crate::tmux::{
-    ClientId, MAX_IN_FLIGHT, OneShotCmd, Op, PaneId, SessionId, Size, Tag, WindowId,
-};
+use crate::tmux::{ClientId, MAX_IN_FLIGHT, OneShotCmd, Op, PaneId, Size, Tag, WindowId};
 
 impl State {
     pub(super) fn reconcile(&mut self) {
         self.update_lingers();
-        let ready: Vec<ClientId> = self
+        let ready = self
             .clients
             .iter()
             .filter(|(_, client)| matches!(client.phase, ClientPhase::Ready { .. }))
             .map(|(id, _)| *id)
-            .collect();
+            .collect::<Vec<_>>();
         for &client in &ready {
             self.withdraw(client);
         }
@@ -34,9 +27,12 @@ impl State {
         self.snapshots();
     }
 
-    /// A client that owns no watched window, and none is waiting for, lingers.
     fn update_lingers(&mut self) {
-        let used: BTreeSet<ClientId> = self.windows.values().filter_map(Window::client).collect();
+        let used = self
+            .views
+            .values()
+            .filter_map(|view| view.client())
+            .collect::<BTreeSet<_>>();
         let until = self.now + LINGER;
         for (id, client) in &mut self.clients {
             if used.contains(id) {
@@ -47,61 +43,79 @@ impl State {
         }
     }
 
-    /// Bound windows this client owns, regardless of whether a watch claims them.
-    fn owned_windows(&self, client: ClientId) -> BTreeMap<WindowId, PaneId> {
-        self.windows
-            .iter()
-            .filter_map(|(key, window)| match window.phase {
-                Phase::Bound { owner, pane, .. } if owner == client => Some((key.window, pane)),
+    fn owned_panes(&self, client: ClientId) -> BTreeSet<PaneId> {
+        self.views
+            .values()
+            .filter_map(|view| match view.phase {
+                ViewPhase::Bound { owner, pane } if owner == client => Some(pane),
                 _ => None,
             })
             .collect()
     }
 
-    /// The claimed windows this client votes for, using the claiming watch's latest size.
-    fn claimed_windows(&self, client: ClientId) -> BTreeMap<WindowId, Size> {
-        self.windows
-            .iter()
-            .filter_map(|(key, window)| {
-                let Phase::Bound { owner, .. } = window.phase else {
-                    return None;
-                };
-                if owner != client {
-                    return None;
-                }
-                let watch = window.claim?;
-                let watch = self.conns.get(&watch.conn)?.watches.get(&watch.watch)?;
-                Some((key.window, watch.size))
+    fn owned_windows(&self, client: ClientId) -> BTreeSet<WindowId> {
+        self.views
+            .values()
+            .filter(|view| view.client() == Some(client))
+            .flat_map(|view| {
+                view.shown
+                    .iter()
+                    .map(|shown| shown.id)
+                    .chain(view.next)
+                    .chain(view.target())
             })
             .collect()
     }
 
-    /// Releases panes, clears votes and unsubscribes windows the client no longer owns.
+    fn claimed_windows(&self, client: ClientId) -> BTreeMap<WindowId, (Size, Take, ViewKey)> {
+        self.views
+            .iter()
+            .filter(|(_, view)| view.client() == Some(client))
+            .filter_map(|(key, view)| {
+                let claim = view.claim.as_ref()?;
+                let window = view.target()?;
+                let size = self
+                    .conns
+                    .get(&claim.watch.conn)?
+                    .watches
+                    .get(&claim.watch.watch)?
+                    .size;
+                Some((window, (size, claim.take, *key)))
+            })
+            .collect()
+    }
+
     fn withdraw(&mut self, client: ClientId) {
-        let owned = self.owned_windows(client);
+        let owned_panes = self.owned_panes(client);
+        let owned_windows = self.owned_windows(client);
         let claimed = self.claimed_windows(client);
+        let has_view = self
+            .views
+            .values()
+            .any(|view| view.client() == Some(client));
         let Some(record) = self.clients.get(&client) else {
             return;
         };
-        let shown: BTreeSet<PaneId> = owned.values().copied().collect();
-        let releases: Vec<PaneId> = record
+        let releases = record
             .ready()
             .into_iter()
             .flat_map(|tmux| tmux.wanted())
-            .filter(|pane| !shown.contains(pane))
-            .collect();
-        let clears: Vec<WindowId> = record
+            .filter(|pane| !owned_panes.contains(pane))
+            .collect::<Vec<_>>();
+        let clears = record
             .votes
             .keys()
             .filter(|window| !claimed.contains_key(window))
             .copied()
-            .collect();
-        let unsubscribes: Vec<WindowId> = record
+            .collect::<Vec<_>>();
+        let unsubscribes = record
             .subscriptions
             .iter()
-            .filter(|window| !owned.contains_key(window))
+            .filter(|window| !owned_windows.contains(window))
             .copied()
-            .collect();
+            .collect::<Vec<_>>();
+        let unwatch_current = record.current_subscribed && !has_view;
+
         for pane in releases {
             if !self.room(client, MAX_IN_FLIGHT) {
                 return;
@@ -129,20 +143,26 @@ impl State {
             let tag = self.next_tag();
             self.request(client, tag, Op::Unsubscribe { window }, Work::Maintenance);
         }
+        if unwatch_current && self.room(client, MAX_IN_FLIGHT) {
+            if let Some(record) = self.clients.get_mut(&client) {
+                record.current_subscribed = false;
+            }
+            let tag = self.next_tag();
+            self.request(client, tag, Op::UnwatchCurrent, Work::Maintenance);
+        }
     }
 
-    /// Locates on the window's owner (or the client it is to bind to), else on any
-    /// ready client of its endpoint, else as the one-shot.
     fn locates(&mut self) {
-        let needed: Vec<(WinKey, Option<ClientId>)> = self
-            .windows
+        let needed = self
+            .views
             .iter()
-            .filter(|(_, window)| window.locate.needed && window.locate.in_flight.is_none())
-            .map(|(key, window)| (*key, window.client()))
-            .collect();
-        for (key, target) in needed {
-            let runner = match target {
-                Some(client) if self.room(client, MAX_IN_FLIGHT) => Some(client),
+            .filter(|(_, view)| view.locate.needed && view.locate.in_flight.is_none())
+            .map(|(key, view)| (*key, view.client()))
+            .collect::<Vec<_>>();
+        for (key, known_owner) in needed {
+            let owner = known_owner.or_else(|| self.client_for(key.endpoint, key.session));
+            let runner = match owner {
+                Some(owner) if self.room(owner, MAX_IN_FLIGHT) => Some(owner),
                 Some(_) => continue,
                 None => self.any_ready(key.endpoint),
             };
@@ -152,57 +172,76 @@ impl State {
             match runner {
                 Some(client) => {
                     let tag = self.next_tag();
-                    self.mark_locating(key, tag);
-                    let op = Op::Locate { window: key.window };
-                    self.request(client, tag, op, Work::Locate { window: key });
+                    self.mark_locating(key, tag, owner.filter(|owner| *owner == client));
+                    self.request(
+                        client,
+                        tag,
+                        Op::Locate {
+                            session: key.session,
+                        },
+                        Work::Locate { view: key },
+                    );
                 }
                 None => {
-                    let cmd = OneShotCmd::Locate { window: key.window };
-                    let work = OneShotWork::Locate { window: key };
-                    let tag = self.run_oneshot(key.endpoint, cmd, work);
-                    self.mark_locating(key, tag);
+                    let tag = self.run_oneshot(
+                        key.endpoint,
+                        OneShotCmd::Locate {
+                            session: key.session,
+                        },
+                        OneShotWork::Locate { view: key },
+                    );
+                    self.mark_locating(key, tag, None);
                 }
             }
         }
     }
 
-    fn mark_locating(&mut self, key: WinKey, tag: Tag) {
-        if let Some(window) = self.windows.get_mut(&key) {
-            window.locate.needed = false;
-            window.locate.in_flight = Some(tag);
+    fn mark_locating(&mut self, key: ViewKey, tag: Tag, owner: Option<ClientId>) {
+        if let Some(view) = self.views.get_mut(&key) {
+            view.locate.needed = false;
+            view.locate.in_flight = Some(tag);
+            if let Some(owner) = owner {
+                if !matches!(view.phase, ViewPhase::Bound { owner: current, .. } if current == owner)
+                {
+                    view.phase = ViewPhase::Locating { owner };
+                }
+            }
         }
     }
 
-    /// `LocateSession` for exited clients, the same way as Locates.
     fn session_checks(&mut self) {
-        let needed: Vec<(ClientId, usize, SessionId)> = self
+        let needed = self
             .exits
             .iter()
             .filter(|(_, check)| check.in_flight.is_none())
             .map(|(id, check)| (*id, check.exit.endpoint, check.exit.session))
-            .collect();
+            .collect::<Vec<_>>();
         for (exited, endpoint, session) in needed {
             match self.any_ready(endpoint) {
                 Some(client) => {
                     let tag = self.next_tag();
-                    self.mark_checking(exited, tag);
-                    let op = Op::LocateSession { session };
-                    self.request(client, tag, op, Work::SessionCheck { exited });
+                    if let Some(check) = self.exits.get_mut(&exited) {
+                        check.in_flight = Some(tag);
+                    }
+                    self.request(
+                        client,
+                        tag,
+                        Op::Locate { session },
+                        Work::SessionCheck { exited },
+                    );
                 }
                 None if self.oneshot.is_none() => {
-                    let cmd = OneShotCmd::LocateSession { session };
-                    let work = OneShotWork::SessionCheck { exited };
-                    let tag = self.run_oneshot(endpoint, cmd, work);
-                    self.mark_checking(exited, tag);
+                    let tag = self.run_oneshot(
+                        endpoint,
+                        OneShotCmd::Locate { session },
+                        OneShotWork::SessionCheck { exited },
+                    );
+                    if let Some(check) = self.exits.get_mut(&exited) {
+                        check.in_flight = Some(tag);
+                    }
                 }
                 None => {}
             }
-        }
-    }
-
-    fn mark_checking(&mut self, exited: ClientId, tag: Tag) {
-        if let Some(check) = self.exits.get_mut(&exited) {
-            check.in_flight = Some(tag);
         }
     }
 
@@ -213,15 +252,14 @@ impl State {
             .map(|(id, _)| *id)
     }
 
-    /// A window subscription on every owned window and a vote on each claimed one.
     fn subscribe_and_vote(&mut self, client: ClientId) {
-        let owned = self.owned_windows(client);
-        for &window in owned.keys() {
-            let subscribed = self
+        let windows = self.owned_windows(client);
+        for &window in &windows {
+            if self
                 .clients
                 .get(&client)
-                .is_some_and(|record| record.subscriptions.contains(&window));
-            if subscribed {
+                .is_some_and(|record| record.subscriptions.contains(&window))
+            {
                 continue;
             }
             if !self.room(client, MAX_IN_FLIGHT) {
@@ -233,43 +271,65 @@ impl State {
             let tag = self.next_tag();
             self.request(client, tag, Op::Subscribe { window }, Work::Maintenance);
         }
-        for (window, size) in self.claimed_windows(client) {
-            let applied = self
-                .clients
-                .get(&client)
-                .and_then(|record| record.votes.get(&window))
-                == Some(&size);
-            if applied {
-                continue;
-            }
+        let has_view = self
+            .views
+            .values()
+            .any(|view| view.client() == Some(client));
+        let subscribed = self
+            .clients
+            .get(&client)
+            .is_some_and(|record| record.current_subscribed);
+        if has_view && !subscribed {
             if !self.room(client, MAX_IN_FLIGHT) {
                 return;
             }
             if let Some(record) = self.clients.get_mut(&client) {
-                record.votes.insert(window, size);
+                record.current_subscribed = true;
             }
             let tag = self.next_tag();
-            self.request(client, tag, Op::Vote { window, size }, Work::Maintenance);
+            self.request(client, tag, Op::WatchCurrent, Work::Maintenance);
+        }
+
+        for (window, (size, requested_take, key)) in self.claimed_windows(client) {
+            let previous = self
+                .clients
+                .get(&client)
+                .and_then(|record| record.votes.get(&window));
+            let plan = vote_plan(previous, size, requested_take);
+            if let Some(take) = plan {
+                if !self.room(client, MAX_IN_FLIGHT) {
+                    return;
+                }
+                self.record_vote(client, window, size, take);
+            }
+            if requested_take != Take::None {
+                if let Some(claim) = self
+                    .views
+                    .get_mut(&key)
+                    .and_then(|view| view.claim.as_mut())
+                {
+                    claim.take = Take::None;
+                }
+            }
         }
     }
 
-    /// A snapshot for each bound stream with watches awaiting one, when a capture slot,
-    /// room on the owner and credit for at least one of those watches allow. Watches
-    /// whose connection can't reserve wait for a later one.
     fn snapshots(&mut self) {
         let mut slots = CAPTURE_SLOTS.saturating_sub(self.captures());
-        let candidates: Vec<(WinKey, ClientId, PaneId, Vec<WatchKey>)> = self
-            .windows
+        let candidates = self
+            .views
             .iter()
-            .filter(|(_, window)| window.stream.inflight.is_none())
-            .filter_map(|(key, window)| match window.phase {
-                Phase::Bound { owner, pane, .. } => {
-                    let watches = window.watches.iter().copied().collect();
-                    Some((*key, owner, pane, watches))
-                }
+            .filter(|(_, view)| view.stream.inflight.is_none())
+            .filter_map(|(key, view)| match view.phase {
+                ViewPhase::Bound { owner, pane } => Some((
+                    *key,
+                    owner,
+                    pane,
+                    view.watches.iter().copied().collect::<Vec<_>>(),
+                )),
                 _ => None,
             })
-            .collect();
+            .collect::<Vec<_>>();
         for (key, owner, pane, watches) in candidates {
             if slots == 0 {
                 return;
@@ -295,11 +355,15 @@ impl State {
                 continue;
             }
             let tag = self.next_tag();
-            if let Some(window) = self.windows.get_mut(&key) {
-                window.stream.inflight = Some(Inflight { tag, reserved });
+            if let Some(view) = self.views.get_mut(&key) {
+                view.stream.inflight = Some(Inflight { tag, reserved });
             }
-            let work = Work::Snapshot { window: key };
-            self.request(owner, tag, Op::Snapshot { pane }, work);
+            self.request(
+                owner,
+                tag,
+                Op::Snapshot { pane },
+                Work::Snapshot { view: key },
+            );
             slots -= 1;
         }
     }

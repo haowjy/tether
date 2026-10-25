@@ -4162,6 +4162,10 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   switched (second resolution, two clocks, and a rule nobody could predict).
 - **Accepted cost:** with only the phone attached, typing `exit` shows the next window
   at its old size, with the band, until the next keystroke claims it.
+- **Superseded in part** by "Claim targets and shown windows have different
+  lifetimes": a claim no longer stores a window, and a different `CurrentWindow`
+  during an unresolved selection waits for Locate instead of ending `selecting`. The
+  acted-last rule and the take after the select stand.
 
 ### Input, paste and inserted paths name the window the tab showed
 
@@ -4427,3 +4431,45 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Rejected:** discarding late answers (a request wasted for nothing); a second,
   browsing-only cache of the same listing (two copies to keep in step).
 
+
+### Claim targets and shown windows have different lifetimes
+
+- **Decided:** 2026-10-25, implementation review and runtime verification (p237,
+  p242, p243, p246; lead fixes).
+- **What:** a session view keeps the last coherent shown window/pane until its
+  owner's Locate answers. Its claim target is the pending selection, otherwise
+  the latest reported window once the view has bound, otherwise the shown window.
+  Before first binding, a claim waits for Locate. Claims hold a watch and take
+  intent, not another mutable copy of the window ID. The owner's tmux subscription
+  state owns each window's cwd; `watching` reads the shown window's path from it.
+- **Why:** independently assigning claim windows in watch, resize and notification
+  handlers left claims on windows the tab had already left. Updating only the
+  shown window ID exposed new IDs with old names, panes and working directories.
+  Two notifications before the first Locate also dropped the initial claim.
+- **Rejected:** patching each handler separately (the same invariant still had
+  multiple owners); making a view unbound during every switch (rejects input for
+  the Locate round trip and discards a still-useful stream); retaining a per-view
+  cwd (belongs to a window, not to the session).
+- **Supersedes in part** "A claim names a window and moves only by tether's own act":
+  its stored claim window, and `selecting` ending at the first `CurrentWindow`
+  whatever window it names. Its acted-last rule and the take after the select stand.
+
+### Report the first current-window subscription value
+
+- **Decided:** 2026-10-25, implementation review p246 and lead verification.
+- **What:** the first `c::#{window_id}` value emits `CurrentWindow`, just like later
+  changed values. The hub ignores an observation matching its shown window when
+  no transition is pending.
+- **Why:** silently accepting the first value could miss a `swap-window` between
+  the initial Locate and that value. Reporting it costs no extra request when it
+  merely confirms the shown window.
+- **Rejected:** a silent initial baseline (loses a real change); polling to repair
+  it (the subscription already reports the needed fact).
+
+### New session-follow checks are temporary verification
+
+- **Decided:** 2026-10-25, Jimmy: “Temporary verification only”.
+- **What:** exercise new claim races, session/bridge contracts and window-switch
+  behavior with disposable checks; retain the evidence, not new regression cases.
+  Existing tests are migrated to the changed behavior.
+- **Rejected:** retaining a new focused regression suite without Jimmy's approval.

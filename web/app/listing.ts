@@ -1,10 +1,10 @@
 // The one listing fetcher (client-architecture.md §6.3): the only code that sends
 // `listSessions`. It joins each host as a TabPort and reports each reply once, to whoever
 // subscribes: the controller turns it into the workspace's `listing` event (pruning) and
-// sessions/ renders it (Home and the picker), so both see the same listing.
+// sessions/ renders it (Home, the picker and the switcher), so all see the same listing.
 import { RequestError, type Host, type TabPort } from "../net/host";
 import { backoffMs } from "../tabs/connection";
-import type { ServerMsg, TmuxListing, WindowRef } from "../proto/generated/messages";
+import type { ServerMsg, TmuxListing } from "../proto/generated/messages";
 
 const RELIST_DELAY_MS = 300;
 /** The socket outlives the last reason for it by this long (Home or the picker closing, the last tab leaving). */
@@ -15,8 +15,7 @@ export type ListingEvent =
   | { type: "requested"; handle: string }
   | { type: "listed"; handle: string; listing: TmuxListing | null }
   /** Nothing decided: cached rows go stale and offer Retry. */
-  | { type: "failed"; handle: string; reason: RequestError["reason"] }
-  | { type: "renamed"; handle: string; window: WindowRef; name: string };
+  | { type: "failed"; handle: string; reason: RequestError["reason"] };
 
 interface HostState {
   host: Host;
@@ -83,8 +82,7 @@ export class ListingFetcher {
       paused: () => { clearTimeout(state.relist); },
       frame: () => undefined,
       message: (msg: ServerMsg) => {
-        if (msg.type === "windowRenamed") this.emit({ type: "renamed", handle, window: msg.data.window, name: msg.data.name });
-        else if (msg.type === "sessionsChanged" && this.opts.visible()) {
+        if (msg.type === "sessionsChanged" && this.opts.visible()) {
           clearTimeout(state.relist);
           state.relist = setTimeout(() => { this.fetch(handle, false); }, RELIST_DELAY_MS);
         }

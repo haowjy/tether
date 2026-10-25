@@ -1,11 +1,16 @@
 {
   "client": [
-    {"type":"watch","data":{"watch":3,"window":{"server":"main:42-7","window":1},"size":{"cols":60,"rows":40}}},
-    {"type":"watch","data":{"watch":4,"window":{"server":"main:42-7","window":1},"size":{"cols":60,"rows":40},"claim":false}},
-    {"type":"paste","data":{"req":17,"watch":3,"text":"printf hello"}},
-    {"type":"paste","data":{"req":18,"watch":3,"text":"printf hello","enter":true}}
+    {"type":"watch","data":{"watch":3,"session":{"server":"main:42-7","session":1},"size":{"cols":60,"rows":40}}},
+    {"type":"watch","data":{"watch":4,"session":{"server":"main:42-7","session":1},"size":{"cols":60,"rows":40},"claim":false}},
+    {"type":"input","data":{"watch":3,"window":1,"items":[{"text":"x"},{"key":"Enter"}]}},
+    {"type":"paste","data":{"req":17,"watch":3,"window":1,"text":"printf hello"}},
+    {"type":"paste","data":{"req":18,"watch":3,"window":1,"text":"printf hello","enter":true}},
+    {"type":"selectWindow","data":{"req":19,"watch":3,"window":2}},
+    {"type":"newWindow","data":{"req":20,"session":{"server":"main:42-7","session":1},"watch":3,"name":"scratch"}}
   ],
   "server": [
+    {"type":"watching","data":{"watch":3,"session":{"server":"main:42-7","session":1},"window":{"id":1,"index":0,"name":"shell","size":{"cols":80,"rows":24}},"pane":7,"cwd":"/tmp"}},
+    {"type":"historyChunk","data":{"req":21,"watch":3,"pane":7,"start":-2,"historySize":100,"lines":["eA=="],"wraps":"AA=="}},
     {"type":"pasted","data":{"req":17,"watch":3}},
     {"type":"error","data":{"req":18,"watch":3,"code":"busy","message":"tmux is busy"}},
     {"type":"error","data":{"req":19,"watch":3,"code":"tmux","message":"tmux stopped answering before confirming the paste; it may have been sent"}}

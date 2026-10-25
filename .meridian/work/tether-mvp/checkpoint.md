@@ -1,5 +1,26 @@
 # Client implementation checkpoint
 
+## Session-follow completion in progress (c235, 2026-10-25)
+
+Resume state is in [resume-plan.md](resume-plan.md); it supersedes the older in-flight
+paragraph below. Session-follow implementation is complete; Opus daemon p251 and client
+p253 reviews approve with accepted low notes. Final harness838, real browser150 (30
+CDP-only gesture skips), Swift7, web392, MSRV, and real Rust22/version pass. Real Files
+p260 verifies path insertion across window changes. Knowledge capture is integrated.
+The lead's final refusal-callback deletion preserves the existing notice text/sink.
+Clean-export preflight remains the local commit gate. No push or release authorized.
+Real iPhone and actual Linux dev-box resource acceptance remain open.
+
+**Daily-use risk:** p244 reproduced an upstream whole-server crash on tmux 3.4 and
+3.7b when window selection and session destruction occur in one command list with a
+control client attached. This predates session-follow and cannot be prevented against
+arbitrary other-client commands by tether alone. See
+[probe evidence](evidence/session-follow-tmux-risk.md). Installed tmux is unchanged;
+the version/mitigation decision remains with Jimmy. A second ordinary-use attach/detach
+crash on 3.4 is confirmed by p259 and fixed upstream in 3.7; that does not fix the
+distinct 3.7b crash. Both are tracked in issue #2; daily-use sign-off is blocked. Notification channels are disabled;
+the lead flagged this in chat.
+
 ## First real use on pop-os (2026-10-25) — read this first
 
 Setup and teardown shipped to main at 64b78c3 (earlier session c106). Jimmy then ran

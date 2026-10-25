@@ -1,7 +1,7 @@
 # hub
 
 `State` (state.rs with owners.rs, requests.rs, reconcile.rs, credit.rs, time.rs and
-names.rs, each an `impl State` part) is the hub as one pure value: no I/O, no clock,
+names.rs, each an `impl State` part, plus the per-session `View` in view.rs) is the hub as one pure value: no I/O, no clock,
 no shared state. Time comes in with each input, so a test can drive it with scripted
 inputs and a fake clock. `run.rs` is the only file that awaits or spawns: it executes
 `Effect`s and never waits on a pump or a connection (`try_send`).
@@ -16,9 +16,17 @@ Rules the code relies on, which are easy to break:
   abandoned by a stream break, the watch leaving, the client or connection ending.
   `Conn.reserved` is a counter because deriving it costs the output path too much;
   debug builds check it against the work in flight after every input.
-- A window binds only from a Locate its future owner answered (`on` in
-  `Phase::Locating`): replies and notifications are ordered per control client, not
-  across them.
+- A session view binds only from a Locate its future owner answered (`on` in
+  `ViewPhase::Locating`): replies and notifications are ordered per control client,
+  not across them. Once bound, it stays bound to its shown pane while a window-change
+  Locate runs; only the target changes until the answer coherently updates the shown
+  window and pane.
+- `View` (view.rs) is the one owner of a view's shown window, reported window,
+  selection and claim. The claim stores no window: its window is `View::target()`,
+  and every change to what `target()` returns goes through `retarget`, which drops a
+  claim whose target moved. Add a `View` method for a new transition; changing the
+  selection or a window from a handler in another file re-creates claims left on
+  windows the tab has left. Per-window cwd belongs to the owner's `tmux::Session`, not the view.
 - A tag stays in its client's `pending` until tmux answers it, even when the hub
   stopped caring: that is how capture slots are counted. A snapshot answer counts only
   if its window's stream still waits for that tag (`take_if`). A snapshot a Release

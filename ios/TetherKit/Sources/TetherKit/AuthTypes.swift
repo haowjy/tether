@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DaemonProtocol {
-    public static let version = 1
+    public static let version = 2
 }
 
 public struct AuthInfo: Codable, Equatable, Sendable {

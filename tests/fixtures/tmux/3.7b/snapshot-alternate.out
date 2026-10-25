@@ -1,102 +1,27 @@
-%begin 1792859600 287 0
-%end 1792859600 287 0
+%begin 1792950933 287 0
+%end 1792950933 287 0
 %session-changed $0 fixture
-%begin 1792859600 292 1
-3.7b	47516	1792859600	80	24
-%end 1792859600 292 1
-%begin 1792859600 293 1
-%end 1792859600 293 1
+%begin 1792950933 292 1
+3.7b	98602	1792950933	80	24	client-98621
+%end 1792950933 292 1
+%begin 1792950933 293 1
+%end 1792950933 293 1
 %layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
-%extended-output %0 0 : printf 
-%extended-output %0 0 : 'P
-%extended-output %0 0 : RI
-%extended-output %0 0 : MA
-%extended-output %0 0 : R
-%extended-output %0 0 : Y\134
-%extended-output %0 0 : n
-%extended-output %0 0 : \1340
-%extended-output %0 0 : 3
-%extended-output %0 0 : 3[
-%extended-output %0 0 : ?1
-%extended-output %0 0 : 04
-%extended-output %0 0 : 9h
-%extended-output %0 0 : \134
-%extended-output %0 0 : 0
-%extended-output %0 0 : 33
-%extended-output %0 0 : [
-%extended-output %0 0 : 2
-%extended-output %0 0 : ;
-%extended-output %0 0 : 3
-%extended-output %0 0 : H
-%extended-output %0 0 : A
-%extended-output %0 0 : L
-%extended-output %0 0 : T
-%extended-output %0 0 : \1340
-%extended-output %0 0 : 3
-%extended-output %0 0 : 3
-%extended-output %0 0 : [
-%extended-output %0 0 : ?
-%extended-output %0 0 : 1
-%extended-output %0 0 : h
-%extended-output %0 0 : \134
-%extended-output %0 0 : 0
-%extended-output %0 0 : 3
-%extended-output %0 0 : 3
-%extended-output %0 0 : =
-%extended-output %0 0 : \134
-%extended-output %0 0 : 0
-%extended-output %0 0 : 3
-%extended-output %0 0 : 3
-%extended-output %0 0 : [
-%extended-output %0 0 : 4
-%extended-output %0 0 : h
-%extended-output %0 0 : \134
-%extended-output %0 0 : 0
-%extended-output %0 0 : 3
-%extended-output %0 0 : 3
-%extended-output %0 0 : [
-%extended-output %0 0 : ?
-%extended-output %0 0 : 1
-%extended-output %0 0 : 0
-%extended-output %0 0 : 0
-%extended-output %0 0 : 0
-%extended-output %0 0 : h\1340
-%extended-output %0 0 : 3
-%extended-output %0 0 : 3[?1 \015006h\1340
-%extended-output %0 0 : 33
-%extended-output %0 0 : [
-%extended-output %0 0 : 3
-%extended-output %0 0 : ;2
-%extended-output %0 0 : 0r
-%extended-output %0 0 : \1340
-%extended-output %0 0 : 3
-%extended-output %0 0 : 3
-%extended-output %0 0 : [
-%extended-output %0 0 : 1
-%extended-output %0 0 : m
-%extended-output %0 0 : \134
-%extended-output %0 0 : 0
-%extended-output %0 0 : 3
-%extended-output %0 0 : 3
-%extended-output %0 0 : [
-%extended-output %0 0 : 3
-%extended-output %0 0 : '
-%extended-output %0 0 : ; 
-%extended-output %0 0 : s
-%extended-output %0 0 : l
-%extended-output %0 0 : eep 30
+%extended-output %0 0 : print
+%extended-output %0 2 : f 'PRIMARY\134n\134033[?1049h\134033[2;3HALT\134033[?1h\134033=\134033[4h\134033[?1000h\134033[?1 \015006h\134033[3;20r\134033[1m\134033[3'; sleep 30
 %extended-output %0 0 : \015\012
-%extended-output %0 0 : PRIMARY\015\012\033[?1049h\033[2;3HALT\033[?1h\033=\033[4h\033[?1000h\033[?1006h\033[3;20r\033[1m\033[3
-%begin 1792859600 300 1
+%extended-output %0 5 : PRIMARY\015\012\033[?1049h\033[2;3HALT\033[?1h\033=\033[4h\033[?1000h\033[?1006h\033[3;20r\033[1m\033[3
+%window-renamed @0 sleep
+%begin 1792950933 301 1
 %pause %0
-%end 1792859600 300 1
-%begin 1792859600 301 1
+%end 1792950933 301 1
+%begin 1792950933 302 1
 %continue %0
-%end 1792859600 301 1
-%begin 1792859600 302 1
+%end 1792950933 302 1
+%begin 1792950933 303 1
 %0	80	24	1	0	3	0	0	1	1	1	1	1	0	2	19	1	0	0	0	1	8,16,24,32,40,48,56,64,72
-%end 1792859600 302 1
-%begin 1792859600 303 1
+%end 1792950933 303 1
+%begin 1792950933 304 1
 
   ALT               
 
@@ -121,8 +46,8 @@
 
 
 
-%end 1792859600 303 1
-%begin 1792859600 304 1
+%end 1792950933 304 1
+%begin 1792950933 305 1
 
   ALT
 
@@ -147,8 +72,8 @@
 
 
 
-%end 1792859600 304 1
-%begin 1792859600 305 1
+%end 1792950933 305 1
+%begin 1792950933 306 1
 
   ALT
 
@@ -173,11 +98,11 @@
 
 
 
-%end 1792859600 305 1
-%begin 1792859600 306 1
+%end 1792950933 306 1
+%begin 1792950933 307 1
 \033[3
-%end 1792859600 306 1
-%begin 1792859600 307 1
+%end 1792950933 307 1
+%begin 1792950933 308 1
 $ printf 'PRIMARY\n\033[?1049h\033[2;3HALT\033[?1h\033=\033[4h\033[?1000h\033[?1
 006h\033[3;20r\033[1m\033[3'; sleep 30  
 PRIMARY             
@@ -202,12 +127,12 @@ PRIMARY
 
 
 
-%end 1792859600 307 1
-%begin 1792859600 308 1
+%end 1792950933 308 1
+%begin 1792950933 309 1
 %0	80	24	1	0	3	0	0	1	1	1	1	1	0	2	19	1	0	0	0	1	8,16,24,32,40,48,56,64,72
-%end 1792859600 308 1
-%begin 1792859600 309 1
+%end 1792950933 309 1
+%begin 1792950933 310 1
 %pause %0
-%end 1792859600 309 1
+%end 1792950933 310 1
 %window-renamed @0 bash
 %exit

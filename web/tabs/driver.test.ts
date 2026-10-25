@@ -5,14 +5,16 @@ import type { ConnectionState } from "./connection";
 import { makeHost, type FakeLink } from "../platform/test/host";
 import { TabDriver, type TabOptions } from "./driver";
 
-const window1 = { server: "main:1-2", window: 3 };
+const session1 = { server: "main:1-2", session: 1 };
+/** The window the session shows: 3, at the terminal's own size. */
+const shown = { id: 3, index: 0, name: "agent", size: { cols: 80, rows: 24 } };
 
 function setup() {
   const { host, links, link, events } = makeHost();
   const painted: string[] = [];
   const states: ConnectionState[] = [];
   const notices: string[] = [];
-  const larger: boolean[] = [];
+  const band: boolean[] = [];
   const dec = new TextDecoder();
   const renderer: TabOptions["renderer"] = {
     output: (b) => painted.push(`o:${dec.decode(b)}`),
@@ -20,24 +22,25 @@ function setup() {
   };
   let size = { cols: 80, rows: 24 };
   const tab = new TabDriver({
-    window: window1,
+    session: session1,
     renderer,
     host,
     size: () => size,
     onState: (s) => states.push(s),
-    onLarger: (l) => larger.push(l),
+    onSizedForOther: (b) => band.push(b),
     onNotice: (n) => notices.push(n),
     random: () => 0.5,
   });
-  const watching = (watch: number): ServerMsg => ({
+  /** `watching` for `watch`; `window` overrides the shown window (another id, name or size). */
+  const watching = (watch: number, window: Partial<typeof shown> = {}): ServerMsg => ({
     type: "watching",
-    data: { watch, window: window1, session: { server: window1.server, session: 1 }, pane: 1, cwd: null },
+    data: { watch, window: { ...shown, ...window }, session: session1, pane: 1, cwd: null },
   });
   /** Welcome and bind watch 1. */
   const bind = (): FakeLink => { link().welcome(); link().say(watching(1)); return link(); };
   const state = (): ConnectionState => states[states.length - 1] as ConnectionState;
   const resizeTo = (cols: number, rows: number): void => { size = { cols, rows }; };
-  return { tab, links, link, events, painted, notices, larger, watching, bind, state, resizeTo };
+  return { tab, host, links, link, events, painted, notices, band, watching, bind, state, resizeTo };
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
@@ -48,7 +51,7 @@ describe("watching", () => {
     const t = setup();
     expect(t.link().sent).toEqual([]);
     t.link().welcome();
-    expect(t.link().sent).toEqual([{ type: "watch", data: { watch: 1, window: window1, size: { cols: 80, rows: 24 } } }]);
+    expect(t.link().sent).toEqual([{ type: "watch", data: { watch: 1, session: session1, size: { cols: 80, rows: 24 } } }]);
     t.link().say(t.watching(1));
     expect(t.state().kind).toBe("live");
     t.link().snapshot(1, "S");
@@ -108,25 +111,27 @@ describe("ending a tab", () => {
   });
 });
 
-describe("claiming the window", () => {
+describe("claiming the window and the band", () => {
   const claimOf = (l: FakeLink, i: number): unknown => (l.sent[i] as { data: { claim?: boolean } }).data.claim;
+  const other = { size: { cols: 250, rows: 70 } };
 
   it("claims when the tab comes on screen, not when the client re-watches by itself", () => {
     const t = setup();
     const l = t.bind();
-    l.snapshot(1, "S", 250, 70); // a bigger terminal holds the window
-    expect(t.larger).toEqual([true]);
+    l.say(t.watching(1, other)); // a bigger terminal holds the window
+    vi.advanceTimersByTime(1000);
+    expect(t.band).toEqual([true]);
     t.tab.cover();
     t.tab.uncover();
     expect(claimOf(l, 2)).toBeUndefined(); // the user's act claims
-    l.say(t.watching(2));
-    l.snapshot(2, "S", 250, 70);
+    l.say(t.watching(2, other));
+    vi.advanceTimersByTime(1000);
     l.drop();
     vi.advanceTimersByTime(500);
     const l2 = t.link();
     l2.welcome();
-    expect(claimOf(l2, 0)).toBe(false); // a reconnect while larger leaves the window
-    l2.say(t.watching(3));
+    expect(claimOf(l2, 0)).toBe(false); // a reconnect while another terminal holds the window leaves it
+    l2.say(t.watching(3, other));
     expect(l2.types()).toEqual(["watch"]); // binding sends no resize
   });
 
@@ -134,21 +139,27 @@ describe("claiming the window", () => {
     const t = setup();
     t.link().welcome();
     t.link().say({ type: "watchEnded", data: { watch: 1, reason: "limit" } });
-    t.link().snapshot(1, "S", 250, 70);
     vi.advanceTimersByTime(500);
     expect(claimOf(t.link(), 1)).toBeUndefined();
   });
 
-  it("restarts the band when a claim goes out: Fit clears it until a later snapshot", () => {
+
+
+  it("restarts the wait when a claim goes out: Fit clears the band until the wait passes again", () => {
     const t = setup();
     const l = t.bind();
-    l.snapshot(1, "S", 250, 70);
+    l.say(t.watching(1, other));
+    vi.advanceTimersByTime(1000);
     t.tab.fit();
-    expect(t.larger).toEqual([true, false]);
+    expect(t.band).toEqual([true, false]);
     expect(l.sent.at(-1)).toMatchObject({ type: "resize" });
-    l.snapshot(1, "S", 250, 70);
-    expect(t.larger).toEqual([true, false, true]);
+    vi.advanceTimersByTime(999);
+    expect(t.band).toEqual([true, false]);
+    vi.advanceTimersByTime(1);
+    expect(t.band).toEqual([true, false, true]);
   });
+
+
 });
 
 describe("resizing", () => {
@@ -234,17 +245,17 @@ describe("losing the watch or the link", () => {
     expect(t.links).toHaveLength(2);
   });
 
-  it("closes on windowClosed for its own window only, and on serverExited", () => {
+  it("closes on sessionClosed for its own session only, and on serverExited", () => {
     const t = setup();
     const l = t.bind();
-    l.say({ type: "windowClosed", data: { window: { ...window1, window: 4 } } });
+    l.say({ type: "sessionClosed", data: { session: { ...session1, session: 4 } } });
     expect(t.state().kind).toBe("live");
-    l.say({ type: "windowClosed", data: { window: window1 } });
-    expect(t.state()).toEqual({ kind: "closed", reason: "windowClosed" });
+    l.say({ type: "sessionClosed", data: { session: session1 } });
+    expect(t.state()).toEqual({ kind: "closed", reason: "sessionClosed" });
     expect(l.closed).toBe(true);
 
     const u = setup();
-    u.bind().say({ type: "serverExited", data: { server: window1.server } });
+    u.bind().say({ type: "serverExited", data: { server: session1.server } });
     expect(u.state()).toEqual({ kind: "closed", reason: "serverExited" });
   });
 });
@@ -256,22 +267,23 @@ describe("history", () => {
     const b64 = (s: string): string => btoa(s);
     const rows = t.tab.history(-400, -1);
     expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 1, watch: 1, start: -400, end: -1 } });
-    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [], wraps: b64("") } });
+    l.say({ type: "historyChunk", data: { req: 1, watch: 1, pane: 1, start: -4, lines: [], wraps: b64("") } });
     await Promise.resolve();
     expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 2, watch: 1, start: -4, end: -1 } });
-    l.say({ type: "historyChunk", data: { req: 2, watch: 1, start: -4, lines: [b64("a"), b64("b")], wraps: b64("\x02") } });
+    l.say({ type: "historyChunk", data: { req: 2, watch: 1, pane: 1, start: -4, lines: [b64("a"), b64("b")], wraps: b64("\x02") } });
     await Promise.resolve();
     expect(l.sent.at(-1)).toEqual({ type: "history", data: { req: 3, watch: 1, start: -2, end: -1 } });
-    l.say({ type: "historyChunk", data: { req: 3, watch: 1, start: -2, lines: [b64("c"), b64("d")], wraps: b64("") } });
+    l.say({ type: "historyChunk", data: { req: 3, watch: 1, pane: 1, start: -2, lines: [b64("c"), b64("d")], wraps: b64("") } });
     expect((await rows).map((r) => [new TextDecoder().decode(r.bytes), r.continues])).toEqual([["a", false], ["b", true], ["c", false], ["d", false]]);
   });
+
 
   it("rejects when the watch ends, without asking for the rest", async () => {
     const t = setup();
     const l = t.bind();
     const rows = t.tab.history(-4, -1);
     l.say({ type: "watchEnded", data: { watch: 1, reason: "error" } });
-    l.say({ type: "historyChunk", data: { req: 1, watch: 1, start: -4, lines: [btoa("a")], wraps: btoa("") } });
+    l.say({ type: "historyChunk", data: { req: 1, watch: 1, pane: 1, start: -4, lines: [btoa("a")], wraps: btoa("") } });
     await expect(rows).rejects.toThrow("watch ended");
     expect(l.types().filter((type) => type === "history")).toHaveLength(1);
   });
@@ -284,11 +296,14 @@ describe("input", () => {
     const l = t.bind();
     expect(t.tab.input([{ text: "ls" }, { key: "Enter" }, { paste: "big" }, { key: "Up" }])).toBe(true);
     expect(l.sent.slice(1)).toEqual([
-      { type: "input", data: { watch: 1, items: [{ text: "ls" }, { key: "Enter" }] } },
-      { type: "paste", data: { req: 1, watch: 1, text: "big" } },
-      { type: "input", data: { watch: 1, items: [{ key: "Up" }] } },
+      { type: "input", data: { watch: 1, window: 3, items: [{ text: "ls" }, { key: "Enter" }] } },
+      { type: "paste", data: { req: 1, watch: 1, window: 3, text: "big" } },
+      { type: "input", data: { watch: 1, window: 3, items: [{ key: "Up" }] } },
     ]);
   });
+
+
+
 
   it("splits text over the 4 KiB limit", () => {
     const t = setup();
@@ -307,15 +322,16 @@ describe("upload insertion", () => {
     t.link().welcome();
     expect(t.link().types()).toEqual(["watch"]);
     t.link().say(t.watching(1));
-    expect(t.link().sent.at(-1)).toEqual({ type: "input", data: { watch: 1, items: [{ text: "'/up/my photo.jpg'" }] } });
+    expect(t.link().sent.at(-1)).toEqual({ type: "input", data: { watch: 1, window: 3, items: [{ text: "'/up/my photo.jpg'" }] } });
     t.tab.insertPath("/up/b.png");
-    expect(t.link().sent.at(-1)).toEqual({ type: "input", data: { watch: 1, items: [{ text: "/up/b.png" }] } });
+    expect(t.link().sent.at(-1)).toEqual({ type: "input", data: { watch: 1, window: 3, items: [{ text: "/up/b.png" }] } });
   });
+
 
   it("is dropped with a notice naming the file when the tab closes first", () => {
     const t = setup();
     t.tab.insertPath("/up/a.jpg");
-    t.link().say({ type: "windowClosed", data: { window: window1 } });
+    t.link().say({ type: "sessionClosed", data: { session: session1 } });
     expect(t.notices).toEqual(["Could not insert a.jpg: the tab closed."]);
     expect(t.tab.insertPath("/up/b.jpg")).toBe("refused");
     expect(t.notices).toHaveLength(1);

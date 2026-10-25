@@ -1,12 +1,10 @@
 // Persist now (client-architecture.md §5.5): the one owner of "hand everything pending to
 // storage at once". The saved workspace is assembled, not owned: each owner (the workspace
-// reducer, FileBrowser, sessions/) supplies its part when this saves and receives its part
-// back at boot. Draft writes are debounced by drafts/, which registers a flusher.
+// reducer, FileBrowser) supplies its part when this saves and receives its part back at boot. Draft writes are debounced by drafts/, which registers a flusher.
 import type { PlatformStorage, SavedWorkspace } from "../platform/types";
 
 export class Persist {
   private files: () => SavedWorkspace["files"] = () => null;
-  private expanded: () => SavedWorkspace["expanded"] = () => ({});
   private hostName: () => string | null = () => null;
   private readonly flushers = new Set<() => void>();
 
@@ -18,11 +16,6 @@ export class Persist {
   /** FileBrowser says where the Files place is. */
   provideFiles(getter: () => SavedWorkspace["files"]): void {
     this.files = getter;
-  }
-
-  /** sessions/ says which sessions are expanded. */
-  provideExpanded(getter: () => SavedWorkspace["expanded"]): void {
-    this.expanded = getter;
   }
 
   /** The controller says the page's host name, once `/auth/info` has told it. */
@@ -40,10 +33,9 @@ export class Persist {
   save(): void {
     const hostName = this.hostName();
     this.storage.saveWorkspace({
-      version: 1,
+      version: 2,
       ...this.tabs(),
       files: this.files(),
-      expanded: this.expanded(),
       ...(hostName !== null && { hostName }),
     });
   }

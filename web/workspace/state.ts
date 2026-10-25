@@ -2,17 +2,16 @@
 // nothing else. Events in; state and effects out. No Preact, no window, no document.
 import { tabId } from "../platform/tabKey";
 import type { TabKey, SavedWorkspace } from "../platform/types";
-import type { TmuxListing, WindowRef } from "../proto/generated/messages";
+import type { TmuxListing } from "../proto/generated/messages";
 
 
 export interface Tab {
   id: string;
   key: TabKey;
+  /** The session's name. */
   session: string;
-  /** The window's name. */
+  /** The name of the window the tab shows: from its `watching`, else the listing's current window, else the saved one. */
   window: string;
-  /** The tmux window index; null for a tab restored before any listing. */
-  index: number | null;
   /** Restored from a saved workspace and not yet proved by a `watching` reply or a listing. */
   restoring: boolean;
 }
@@ -30,17 +29,17 @@ export type WorkspaceEvent =
   | { type: "restored"; saved: SavedWorkspace | null }
   /** The hosts whose `hostId` is known. `complete` once every host's id is known: saved tabs of any other host are discarded. */
   | { type: "hostsKnown"; ids: string[]; complete: boolean }
-  | { type: "opened"; key: TabKey; session: string; window: string; index: number | null }
+  | { type: "opened"; key: TabKey; session: string; window: string }
   | { type: "closed"; id: string }
   | { type: "activated"; id: string }
   /** A host's authoritative reply to `listSessions`. */
   | { type: "listing"; hostId: string; listing: TmuxListing | null }
-  | { type: "windowClosed"; id: string }
+  /** The daemon says the tab's session is gone. */
+  | { type: "sessionClosed"; id: string }
   | { type: "serverExited"; hostId: string; server: string }
-  | { type: "renamed"; hostId: string; window: WindowRef; name: string }
   | { type: "navigated"; onTerminal: boolean }
-  /** The daemon found the window: the tab is live. */
-  | { type: "watching"; id: string };
+  /** The daemon found the session and says which window it shows now: the tab is live, and its label follows. */
+  | { type: "watching"; id: string; window: string };
 
 export type WorkspaceEffect =
   | { type: "save" }
@@ -90,7 +89,7 @@ function step(state: WorkspaceState, event: WorkspaceEvent): { state: WorkspaceS
     case "restored": {
       const saved = event.saved;
       if (!saved) return none;
-      const tabs = saved.tabs.map(({ key, session, window }): Tab => ({ id: tabId(key), key, session, window, index: null, restoring: true }));
+      const tabs = saved.tabs.map(({ key, session, window }): Tab => ({ id: tabId(key), key, session, window, restoring: true }));
       const active = tabs.some((t) => t.id === saved.active) ? saved.active : (tabs[0]?.id ?? null);
       return { state: { ...state, tabs, active }, notices: [] };
     }
@@ -103,9 +102,9 @@ function step(state: WorkspaceState, event: WorkspaceEvent): { state: WorkspaceS
     case "opened": {
       const id = tabId(event.key);
       const open = state.tabs.find((t) => t.id === id);
-      // Opening a window that already has a tab activates that tab.
+      // Opening a session that already has a tab activates that tab.
       if (open) return { state: { ...state, active: id }, notices: [], ...showActive(state) };
-      const tab: Tab = { id, key: event.key, session: event.session, window: event.window, index: event.index, restoring: false };
+      const tab: Tab = { id, key: event.key, session: event.session, window: event.window, restoring: false };
       return { state: { ...state, tabs: [...state.tabs, tab], active: id }, notices: [], ...showActive(state) };
     }
     case "activated":
@@ -118,22 +117,16 @@ function step(state: WorkspaceState, event: WorkspaceEvent): { state: WorkspaceS
       if (next.tabs.length > 0) return { state: next, notices: [] };
       return { state: next, notices: [], ...(state.onTerminal && { navigate: "home" as const }), focus: "homeSearch" as const };
     }
-    case "windowClosed":
+    case "sessionClosed":
       return state.tabs.some((t) => t.id === event.id) ? { state: without(state, new Set([event.id])), notices: [] } : none;
     case "serverExited": {
-      const gone = new Set(state.tabs.filter((t) => t.key.host === event.hostId && t.key.window.server === event.server).map((t) => t.id));
+      const gone = new Set(state.tabs.filter((t) => t.key.host === event.hostId && t.key.session.server === event.server).map((t) => t.id));
       return gone.size ? { state: without(state, gone), notices: [] } : none;
     }
     case "watching": {
       const tab = state.tabs.find((t) => t.id === event.id);
-      if (!tab?.restoring) return none;
-      return { state: { ...state, tabs: state.tabs.map((t) => (t.id === event.id ? { ...t, restoring: false } : t)) }, notices: [] };
-    }
-    case "renamed": {
-      const id = tabId({ host: event.hostId, window: event.window });
-      const tab = state.tabs.find((t) => t.id === id);
-      if (!tab || tab.window === event.name) return none;
-      return { state: { ...state, tabs: state.tabs.map((t) => (t === tab ? { ...t, window: event.name } : t)) }, notices: [] };
+      if (!tab || (!tab.restoring && tab.window === event.window)) return none;
+      return { state: { ...state, tabs: state.tabs.map((t) => (t === tab ? { ...t, window: event.window, restoring: false } : t)) }, notices: [] };
     }
     case "navigated":
       if (state.onTerminal === event.onTerminal) return none;
@@ -143,25 +136,27 @@ function step(state: WorkspaceState, event: WorkspaceEvent): { state: WorkspaceS
       // A null listing (no tmux server) names no server, so it decides nothing.
       const { listing } = event;
       if (!listing) return none;
-      const windows = new Map<number, { session: string; name: string; index: number }>();
-      for (const s of listing.sessions) for (const w of s.windows) windows.set(w.id, { session: s.name, name: w.name, index: w.index });
+      const sessions = new Map(listing.sessions.map((s) => [s.id, s]));
       const endpoint = endpointOf(listing.server);
+      const shown = shownTab(state);
       const gone = new Set<string>();
       const tabs = state.tabs.map((tab) => {
-        if (tab.key.host !== event.hostId || endpointOf(tab.key.window.server) !== endpoint) return tab;
-        // The same tmux run decides by window id; another run of the same endpoint has none of its windows.
-        const found = tab.key.window.server === listing.server ? windows.get(tab.key.window.window) : undefined;
+        if (tab.key.host !== event.hostId || endpointOf(tab.key.session.server) !== endpoint) return tab;
+        // The same tmux run decides by session id; another run of the same endpoint has none of its sessions.
+        const found = tab.key.session.server === listing.server ? sessions.get(tab.key.session.session) : undefined;
         if (!found) {
           gone.add(tab.id);
           return tab;
         }
-        if (tab.session === found.session && tab.window === found.name && tab.index === found.index && !tab.restoring) return tab;
-        return { ...tab, session: found.session, window: found.name, index: found.index, restoring: false };
+        // The tab on screen takes its window from `watching`, which is newer than a listing; the others have no watch.
+        const window = tab.id === shown ? tab.window : (found.windows.find((w) => w.active)?.name ?? tab.window);
+        if (tab.session === found.name && tab.window === window && !tab.restoring) return tab;
+        return { ...tab, session: found.name, window, restoring: false };
       });
       // A listing that changes nothing keeps the state, so nothing saves or re-renders.
       if (gone.size === 0 && tabs.every((t, i) => t === state.tabs[i])) return none;
       const next = without({ ...state, tabs }, gone);
-      const notices = gone.size ? [`${plural(gone.size)} closed: their windows are gone`] : [];
+      const notices = gone.size ? [`${plural(gone.size)} closed: their sessions are gone`] : [];
       return { state: next, notices };
     }
   }
@@ -193,7 +188,7 @@ export function savedTabs(state: WorkspaceState): Pick<SavedWorkspace, "tabs" | 
   };
 }
 
-/** Whether the saved form differs: `restoring` and `index` are not saved, so changing only them writes nothing. */
+/** Whether the saved form differs: `restoring` is not saved, so changing only it writes nothing. */
 function savedChanged(a: WorkspaceState, b: WorkspaceState): boolean {
   if (a.active !== b.active || a.tabs.length !== b.tabs.length) return true;
   return a.tabs.some((t, i) => {

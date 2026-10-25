@@ -7,8 +7,7 @@ use std::path::Path;
 
 use super::history::STATE_FORMAT as HISTORY_STATE_FORMAT;
 use super::reply::{
-    CREATED_FORMAT, LISTING_SERVER_FORMAT, LISTING_WINDOW_FORMAT, LOCATE_FORMAT,
-    LOCATE_SESSION_FORMAT, STARTUP_FORMAT,
+    CREATED_FORMAT, LISTING_SERVER_FORMAT, LISTING_WINDOW_FORMAT, LOCATE_FORMAT, STARTUP_FORMAT,
 };
 use super::snapshot::STATE_FORMAT;
 use super::{
@@ -83,16 +82,18 @@ pub fn snapshot(pane: PaneId) -> Group {
 
 /// The line for a hub op. `tag` names the paste buffer, so concurrent pastes on
 /// different control clients can't collide.
-pub fn op(op: &Op, tag: Tag) -> Result<Group, TmuxError> {
+pub fn op(op: &Op, tag: Tag, session: SessionId, client_name: &str) -> Result<Group, TmuxError> {
     Ok(match op {
-        Op::Locate { window } => locate(*window),
-        Op::LocateSession { session } => locate_session(*session),
+        Op::Locate { session } => locate(*session),
         Op::Snapshot { pane } => snapshot(*pane),
         Op::Release { pane } => pause(*pane),
-        Op::Vote { window, size } => Group::one(format!(
-            "refresh-client -C '{window}:{}x{}'",
-            size.cols, size.rows
-        )),
+        Op::Vote { window, size, take } => {
+            if *take {
+                take_vote(session, client_name, *window, *size)?
+            } else {
+                vote(*window, *size)
+            }
+        }
         Op::ClearVote { window } => Group::one(format!("refresh-client -C '{window}:'")),
         Op::Subscribe { window } => Group::one(format!(
             "refresh-client -B '{}:{window}:{WINDOW_SUBSCRIPTION_FORMAT}'",
@@ -102,6 +103,8 @@ pub fn op(op: &Op, tag: Tag) -> Result<Group, TmuxError> {
             "refresh-client -B '{}'",
             subscription_name(*window)
         )),
+        Op::WatchCurrent => Group::one("refresh-client -B 'c::#{window_id}'".to_owned()),
+        Op::UnwatchCurrent => Group::one("refresh-client -B 'c'".to_owned()),
         Op::History { pane, start, end } => history(*pane, *start, *end)?,
         Op::Input { window, items } => input(*window, items)?,
         Op::Paste {
@@ -130,7 +133,39 @@ pub fn op(op: &Op, tag: Tag) -> Result<Group, TmuxError> {
             }
             Group::of(&commands)
         }
+        Op::SelectWindow {
+            session,
+            window,
+            vote: size,
+        } => {
+            let client_name = quote(client_name)?;
+            Group::of(&[
+                format!("select-window -t '{session}:{window}'"),
+                format!("switch-client -c {client_name} -t '{session}'"),
+                vote(*window, *size).line,
+            ])
+        }
     })
+}
+
+pub fn vote(window: WindowId, size: Size) -> Group {
+    Group::one(format!(
+        "refresh-client -C '{window}:{}x{}'",
+        size.cols, size.rows
+    ))
+}
+
+pub fn take_vote(
+    session: SessionId,
+    client_name: &str,
+    window: WindowId,
+    size: Size,
+) -> Result<Group, TmuxError> {
+    let client_name = quote(client_name)?;
+    Ok(Group::of(&[
+        format!("switch-client -c {client_name} -t '{session}'"),
+        vote(window, size).line,
+    ]))
 }
 
 /// Brackets a history capture with the values that define tmux's line-number range.
@@ -172,13 +207,9 @@ pub fn subscription_name(window: WindowId) -> String {
 /// this for a socket client before IDENTIFY, when the name is still null.
 const WINDOW_SUBSCRIPTION_FORMAT: &str = "#{L:#{?client_height,#{?client_control_mode,,#{?#{m:*#,#{client_name}#,*,#,#{window_active_clients_list}#,},#{client_name}.#{client_activity}.#{client_width}x#{client_height}.#{client_flags};,}},}}|#{pane_current_path}";
 
-fn locate(window: WindowId) -> Group {
-    Group::one(format!("display-message -p -t {window} '{LOCATE_FORMAT}'"))
-}
-
-fn locate_session(session: SessionId) -> Group {
+fn locate(session: SessionId) -> Group {
     Group::one(format!(
-        "display-message -p -t '{session}' '{LOCATE_SESSION_FORMAT}'"
+        "display-message -p -t '{session}' '{LOCATE_FORMAT}'"
     ))
 }
 
@@ -211,19 +242,12 @@ pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
             "-F",
             LISTING_WINDOW_FORMAT,
         ]),
-        OneShotCmd::Locate { window } => owned(&[
-            "display-message",
-            "-p",
-            "-t",
-            &window.to_string(),
-            LOCATE_FORMAT,
-        ]),
-        OneShotCmd::LocateSession { session } => owned(&[
+        OneShotCmd::Locate { session } => owned(&[
             "display-message",
             "-p",
             "-t",
             &session.to_string(),
-            LOCATE_SESSION_FORMAT,
+            LOCATE_FORMAT,
         ]),
         OneShotCmd::NewWindow {
             server,
@@ -232,7 +256,7 @@ pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
             dir,
         } => {
             let mut args = only_on(*server);
-            args.extend(owned(&["new-window", "-d", "-t", &session.to_string()]));
+            args.extend(owned(&["new-window", "-t", &session.to_string()]));
             named(&mut args, "-n", name.as_deref())?;
             named(&mut args, "-c", dir.as_deref().map(path).transpose()?)?;
             args.extend(owned(&["-P", "-F", CREATED_FORMAT]));

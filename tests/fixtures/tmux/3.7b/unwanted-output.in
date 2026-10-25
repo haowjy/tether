@@ -1,4 +1,4 @@
-display-message -p '#{version}	#{pid}	#{start_time}	#{window_width}	#{window_height}'
+display-message -p '#{version}	#{pid}	#{start_time}	#{window_width}	#{window_height}	#{client_name}'
 refresh-client -C 80x24
 refresh-client -A '%0:pause'
 refresh-client -A '%1:pause'
