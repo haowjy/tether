@@ -104,7 +104,7 @@ export interface TestPlatform extends Platform {
 
 export function defaultDaemon(): FakeDaemon {
   return {
-    info: { hostId: "h-pop", name: "pop-os", protocol: { min: 1, max: 2 }, browserOrigin: PAGE_ORIGIN, browserRefused: null },
+    info: { hostId: "h-pop", name: "pop-os", protocol: { min: 1, max: 1 }, browserOrigin: PAGE_ORIGIN, browserRefused: null },
     node: "enrolled",
     nodeName: "laptop",
     refusedReason: "routes",
@@ -229,7 +229,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
           }
           const id = daemon.info.hostId;
           link.ready = true;
-          handlers.welcome({ protocol: 2, daemon: { version: "0", completion: false }, host: { id, name: daemon.info.name } });
+          handlers.welcome({ protocol: 1, daemon: { version: "0", completion: false }, host: { id, name: daemon.info.name } });
         });
         const send = link.send.bind(link);
         link.send = (msg: ClientMsg) => {

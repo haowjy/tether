@@ -46,7 +46,7 @@ test.describe("admission problems", () => {
   test("an unreachable host keeps the app and offers Retry", async ({ page }) => {
     await openFixture(page, "unreachable", desktop);
     await expect(page.getByText("Can't reach the server")).toBeVisible();
-    await page.evaluate(() => { if (window.__harness) window.__harness.platform.daemon.info = { hostId: "h-pop", name: "pop-os", protocol: { min: 1, max: 2 }, browserOrigin: "https://pop-os.tail.ts.net", browserRefused: null }; });
+    await page.evaluate(() => { if (window.__harness) window.__harness.platform.daemon.info = { hostId: "h-pop", name: "pop-os", protocol: { min: 1, max: 1 }, browserOrigin: "https://pop-os.tail.ts.net", browserRefused: null }; });
     await page.getByRole("button", { name: "Retry" }).click();
     await expect(page.getByText("Can't reach")).toBeHidden();
   });

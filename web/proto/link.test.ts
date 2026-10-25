@@ -21,7 +21,7 @@ class FakeSocket {
 
 const welcome: ServerMsg = {
   type: "welcome",
-  data: { protocol: 2, daemon: { version: "0.1", completion: true }, host: { id: "h", name: "devbox" } },
+  data: { protocol: 1, daemon: { version: "0.1", completion: true }, host: { id: "h", name: "devbox" } },
 };
 
 function setup(token: string | null = "tok", kind: "ios" | "web" = "ios") {
@@ -50,7 +50,7 @@ describe("HostLink", () => {
     sock.open();
     expect(JSON.parse(sock.sent[0] ?? "")).toEqual({
       type: "hello",
-      data: { protocol: 2, client: { kind: "ios", build: "1" } },
+      data: { protocol: 1, client: { kind: "ios", build: "1" } },
     });
   });
 

@@ -81,7 +81,7 @@ pub(super) const LISTING_SERVER_FORMAT: &str = "#{version}\t#{pid}\t#{start_time
 pub(super) const LISTING_WINDOW_FORMAT: &str = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{window_name}";
 
 /// The server line, then a line per window, sessions in order (`command::oneshot`). A
-/// line that fits neither shape comes from a window name with a line break in it, and
+/// line that isn't a window line comes from a window name with a line break in it, and
 /// is skipped.
 pub(super) fn listing(stdout: &[u8]) -> Option<Listing> {
     let text = String::from_utf8_lossy(stdout);

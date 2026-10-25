@@ -4029,9 +4029,15 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 - **Decided:** 2026-10-25, Jimmy.
 - **What:** Remove `attachedElsewhere` / `attached_elsewhere` from session listings and
-  stop querying tmux clients just to compute that value. Bump the wire protocol version.
+  stop querying tmux clients just to compute that value. Do not bump the wire protocol:
+  protocol 1 never shipped (v0.0.1 has no web, iOS or protocol code), and a v1 web peer
+  reads the missing field as false, so it only omits the note.
 - **Why:** Jimmy said the note is not useful; acted-last sizing makes a switch between
   his laptop terminal and tether's resize harmless, and removing the value saves one
-  field per listed session.
-- **Rejected:** keeping the field for a possible future use; it would retain listing and
-  wire cost without a current reader.
+  field per listed session and the tmux query that computed it.
+- **Rejected:** keeping the field for a possible future use (listing and wire cost with
+  no current reader); bumping to 2 while keeping minimum 1 (the daemon would claim a
+  range it does not shape messages for, the incompatible fixture stopped being
+  incompatible, and the Swift app version was left behind); setting minimum 2 (locks
+  out dev builds over a note); sending the field to v1 peers (per-version message
+  shaping for a misleading `false`).

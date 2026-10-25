@@ -18,7 +18,9 @@ Swift mirrors them, and `ErrorBody`, by hand.
 includes `memory_backed` for tmpfs/ramfs upload refusal. All three are generated to
 TypeScript from the Rust protocol types.
 
-Changing a field's meaning, or removing or renaming a field or message, needs a
-`PROTOCOL_VERSION` bump; optional fields and new message types don't. The binary frames
-are checked against `tests/fixtures/proto/frames.json`, which `web/proto/frames.ts`
-can test against too.
+Bump `PROTOCOL_VERSION` when an older peer would act wrongly on the new shape. A changed
+meaning, or removed or renamed field or message, needs a bump if an older peer would
+misread it; a removed field whose absence an older peer reads as its harmless default
+does not. Optional fields and new message types need no bump: both sides ignore unknown
+ones. The binary frames are checked against `tests/fixtures/proto/frames.json`, which
+`web/proto/frames.ts` can test against too.

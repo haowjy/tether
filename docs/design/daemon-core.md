@@ -607,7 +607,7 @@ child dropped at the timeout is killed.
   The server line comes first, then windows in session order. The window name is last
   and split with `splitn`: tmux 3.4 allows raw tabs and line breaks in a name set with
   `-n`, so a window name with a line break garbles only window lines, and a line that
-  fits neither shape is skipped. A session name can't hold either (tmux escapes it).
+  isn't a window line is skipped. A session name can't hold either (tmux escapes it).
 - `Locate`, `LocateSession`: the ops' commands (§3.4) with `-t` set to the id, when the
   endpoint has no `Ready` control client. They answer `Reply::Location` and
   `Reply::SessionLocation`.
@@ -1249,15 +1249,18 @@ credential and retries with the usual backoff
 ([auth.md](auth.md#carrying-the-token)).
 
 - **The client speaks one version; the daemon holds a range,**
-  `MIN_PROTOCOL..=PROTOCOL_VERSION` (1 through 2 now). `hello { protocol, client: { kind:
+  `MIN_PROTOCOL..=PROTOCOL_VERSION` (both 1 now). `hello { protocol, client: { kind:
   "ios" | "web", build } }`. In range: `welcome { protocol, daemon: { version }, host:
   { id, name } }`; `daemon.completion` says whether this tier offers suggestions. Out
   of range: `incompatible { min, max, daemonVersion }`, close
   4001; the app marks that host "update the app" (below `min`) or "update tether on
   <host>" (above `max`). `GET /auth/info` reports the same range.
-- **Bump** for any change an older peer would misread (removed or renamed field or
-  message, changed meaning). Optional fields and new message types need no bump: both
-  sides ignore unknown ones, with a log. The version covers the HTTP routes too.
+- **Bump** when an older peer would act wrongly on the new shape. A removed or renamed
+  field or message, or changed meaning, needs a bump if an older peer would misread it;
+  a removed field whose absence an older peer reads as its harmless default needs no
+  bump (for example, the removed attachment note was effectively false). Optional
+  fields and new message types need no bump: both sides ignore unknown ones, with a log.
+  The version covers the HTTP routes too.
   `ClientMsg::decode` reports an unknown message type as `Decoded::Unknown { kind }`
   for the connection to log and ignore; serde's catch-all variant can't do it alone,
   since it matches only a message without a `data` field. A known type with bad data,

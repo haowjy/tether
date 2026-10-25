@@ -6,7 +6,7 @@
   "hostId": "a234567bcdefghjk",
   "name": "pop-os",
   "protocol": {
-    "max": 2,
+    "max": 1,
     "min": 1
   }
 }

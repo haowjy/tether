@@ -15,7 +15,7 @@ export class FakeLink implements Link {
   types(): string[] { return this.sent.map((m) => m.type); }
   welcome(): void {
     this.ready = true;
-    this.handlers.welcome({ protocol: 2, daemon: { version: "0", completion: true }, host: { id: "h", name: "n" } });
+    this.handlers.welcome({ protocol: 1, daemon: { version: "0", completion: true }, host: { id: "h", name: "n" } });
   }
   say(msg: ServerMsg): void { this.handlers.message(msg); }
   frame(frame: Frame): void { this.handlers.frame(frame); }

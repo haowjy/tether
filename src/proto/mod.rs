@@ -15,7 +15,7 @@ pub use error::{ErrorBody, ErrorNode, HttpError};
 pub use messages::*;
 
 /// The protocol this daemon speaks; the newest a client may speak.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 1;
 /// The oldest protocol a client may speak.
 pub const MIN_PROTOCOL: u32 = 1;
 

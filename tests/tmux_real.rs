@@ -1578,6 +1578,7 @@ async fn the_listing_names_sessions_and_windows() {
         return;
     };
     let endpoint = server.endpoint();
+    let client = Client::attach(&server, SessionId(0)).await;
     let version = TmuxVersion::parse(
         server
             .run(&["display-message", "-p", "#{version}"])
@@ -1602,6 +1603,7 @@ async fn the_listing_names_sessions_and_windows() {
     let Ok(Reply::Listing(listing)) = reply else {
         panic!("{reply:?}");
     };
+    assert_eq!(listing.server, client.server());
     assert!(listing.version.is_supported());
     let sessions: Vec<_> = listing
         .sessions
