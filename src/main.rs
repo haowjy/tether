@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
@@ -10,26 +10,12 @@ use tether::auth::identity;
 #[cfg(not(target_os = "macos"))]
 use tether::auth::identity::ServeTarget;
 use tether::auth::localapi::LocalApi;
-#[cfg(target_os = "macos")]
-use tether::auth::publish;
-use tether::auth::{Auth, DeviceKind, Store};
-use tether::blocking::{BLOCKING_THREADS, Lanes};
-use tether::complete::{self, Environment};
+use tether::auth::{DeviceKind, Store};
+use tether::blocking::BLOCKING_THREADS;
 use tether::config::{self, Config, ConfigError, ConfigFile};
-use tether::fs;
-use tether::http::{self, App, Front, Listener};
-use tether::hub::{self, Endpoints};
-use tether::proto::HostInfo;
-use tokio::signal::unix::{SignalKind, signal};
-use tracing::{info, warn};
-use tracing_subscriber::filter::{LevelFilter, Targets};
-use tracing_subscriber::layer::SubscriberExt as _;
-use tracing_subscriber::util::SubscriberInitExt as _;
+use tether::daemon;
 
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
-
-/// How long shutdown waits for the hub to close its control clients.
-const HUB_WAIT: Duration = Duration::from_secs(2);
 
 /// Phone-first client for tmux sessions on a dev server.
 #[derive(Parser)]
@@ -91,7 +77,7 @@ fn main() -> ExitCode {
                 Command::Serve {
                     allow_login,
                     publish,
-                } => serve(config, file, allow_login, publish),
+                } => daemon::serve(config, file, allow_login, publish),
                 Command::Enroll { ttl } => enroll(&config, ttl),
                 Command::Device(command) => device(command),
                 Command::Setup | Command::Teardown => unreachable!("handled above"),
@@ -131,199 +117,6 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
         .max_blocking_threads(BLOCKING_THREADS)
         .build()?;
     Ok(runtime)
-}
-
-fn serve(config: Config, file: ConfigFile, allow_login: Vec<String>, publish: bool) -> Result<()> {
-    if publish && !cfg!(target_os = "macos") {
-        return Err(ConfigError::PublishOnLinux.into());
-    }
-    init_tracing();
-    // An error reaches stderr, and so the journal, through `main`.
-    runtime()?.block_on(daemon(config, file, allow_login, publish))
-}
-
-async fn daemon(
-    config: Config,
-    file: ConfigFile,
-    allow_login: Vec<String>,
-    publish: bool,
-) -> Result<()> {
-    let tier = tether::budget::resolve(config.memory_budget_mib)?;
-    let runtime_dir = config::runtime_dir()?;
-    let runtime = open_runtime(runtime_dir, publish).await?;
-    let local_path = runtime.local_path.clone();
-    let paste_dir = runtime.paste_dir.clone();
-    let local_listener = runtime.local;
-
-    let mut serve = assemble_serve_front(runtime.serve)?;
-    let serve_target = serve.target.take();
-    let publication = serve.publication.take();
-    let mut fronts = serve.fronts;
-    fronts.push((Listener::Unix(local_listener), Front::Local));
-
-    let store = Store::open(config::state_dir()?)?;
-    let home = config::home()?;
-    let host_id = store.host_id()?;
-    let mut shutdown = signal(SignalKind::terminate())?;
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let lanes = Lanes::default();
-    start_file_api(&config, &home, &lanes).await;
-
-    let name = config.name.clone().unwrap_or_else(|| "tether".to_owned());
-    let endpoint = config.endpoint();
-    let (hub, mut hub_task) = hub::spawn(
-        Endpoints {
-            main: endpoint.clone(),
-        },
-        tier.caps.control_clients,
-        name.clone(),
-    );
-    let hub_stop = hub.clone();
-    let api = LocalApi::system();
-    let app = App {
-        auth: Auth::with_local_api(
-            store,
-            allow_login,
-            lanes.auth.clone(),
-            api,
-            serve_target,
-            publication,
-        ),
-        hub,
-        host: HostInfo { id: host_id, name },
-        paste_dir,
-        config: file,
-        complete: complete::Settings::new(&config.complete, Environment::current(&home)),
-        caps: tier.caps,
-        home,
-        lanes,
-    };
-    let signalled = async move {
-        tokio::select! {
-            _ = shutdown.recv() => {}
-            _ = interrupt.recv() => {}
-        }
-        info!("shutting down");
-        let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
-    };
-    let mut server = std::pin::pin!(http::serve(fronts, app, signalled,));
-    let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
-    info!(
-        serve_front = %serve.description,
-        local_socket = %local_path.display(),
-        tmux = ?endpoint,
-        version = env!("CARGO_PKG_VERSION"),
-        "listening on private fronts"
-    );
-
-    tokio::select! {
-        served = &mut server => served?,
-        // The hub ends only once stopped or every handle is gone: it panicked.
-        joined = &mut hub_task => return Err(format!("the hub ended: {joined:?}").into()),
-    }
-    // A request still stuck at shutdown holds a handle: stop the hub regardless, so it
-    // closes its control clients' stdin and ends.
-    let _ = hub_stop.stop().await;
-    drop(hub_stop);
-    match tokio::time::timeout(HUB_WAIT, hub_task).await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(cause)) => Err(format!("the hub ended: {cause}").into()),
-        Err(_) => Err("the hub didn't end within 2 s".into()),
-    }
-}
-
-struct ServeAssembly {
-    fronts: Vec<(Listener, Front)>,
-    target: Option<tether::auth::identity::ServeTarget>,
-    publication: Option<tether::auth::publish::Publication>,
-    description: String,
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn open_runtime(dir: PathBuf, publish: bool) -> Result<tether::runtime::Runtime> {
-    Ok(tether::runtime::Runtime::open(dir, publish)?)
-}
-
-#[cfg(target_os = "macos")]
-async fn open_runtime(dir: PathBuf, publish_requested: bool) -> Result<tether::runtime::Runtime> {
-    match tether::runtime::Runtime::open(dir, publish_requested) {
-        Ok(runtime) => Ok(runtime),
-        Err(error @ tether::runtime::RuntimeError::MacFrontNotBound) => {
-            publish::withdraw_unbound(&LocalApi::system()).await;
-            Err(Box::new(error))
-        }
-        Err(error) => Err(Box::new(error)),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn assemble_serve_front(front: tether::runtime::ServeFront) -> Result<ServeAssembly> {
-    let target = ServeTarget::unix(&front.path)?;
-    Ok(ServeAssembly {
-        fronts: vec![(Listener::Unix(front.listener), Front::UnixServe)],
-        target: Some(target),
-        publication: None,
-        description: format!("unix:{}", front.path.display()),
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn assemble_serve_front(front: tether::runtime::ServeFront) -> Result<ServeAssembly> {
-    let Some(listener) = front.listener else {
-        return Ok(ServeAssembly {
-            fronts: Vec::new(),
-            target: None,
-            publication: None,
-            description: "local only".to_owned(),
-        });
-    };
-    let port = listener.local_addr()?.port();
-    let mac_front = tether::auth::MacFront::generate(port)?;
-    let (target, publication, gate) = mac_front.into_parts();
-    Ok(ServeAssembly {
-        fronts: vec![(Listener::Tcp(listener), gate)],
-        target: Some(target),
-        publication: Some(publication),
-        description: format!("127.0.0.1:{port}"),
-    })
-}
-
-/// Deletes the part files of uploads a daemon that died left, and warns of roots that
-/// fs ignores. Runtime::open holds the single-instance lock before this can run.
-async fn start_file_api(config: &Config, home: &Path, lanes: &Lanes) {
-    for entry in config.roots.iter().chain([&config.uploads_dir]) {
-        if fs::expand(entry, home).is_none() {
-            warn!(%entry, "a root in config.toml isn't absolute or ~/: ignored");
-        }
-    }
-    let Some(uploads) = fs::expand(&config.uploads_dir, home) else {
-        return;
-    };
-    let dir = uploads.clone();
-    match lanes.fs.run(move || fs::upload::sweep(&dir)).await {
-        Ok(Ok(0)) => {}
-        Ok(Ok(removed)) => info!(removed, dir = %uploads.display(), "deleted unfinished uploads"),
-        Ok(Err(cause)) => warn!(%cause, dir = %uploads.display(), "can't sweep the uploads folder"),
-        Err(cause) => warn!(%cause, dir = %uploads.display(), "the uploads sweep got no thread"),
-    }
-}
-
-/// Logs to stderr, which systemd puts in the journal (with its own timestamps).
-/// `RUST_LOG` takes targets, as `info` or `tether=debug`.
-fn init_tracing() {
-    let filter = std::env::var("RUST_LOG")
-        .ok()
-        .and_then(|spec| spec.parse::<Targets>().ok())
-        .unwrap_or_else(|| Targets::new().with_default(LevelFilter::INFO));
-    let layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_target(false);
-    let logs = tracing_subscriber::registry().with(filter);
-    if std::env::var_os("JOURNAL_STREAM").is_some() {
-        logs.with(layer.without_time()).init();
-    } else {
-        logs.with(layer).init();
-    }
 }
 
 fn enroll(config: &Config, ttl: Duration) -> Result<()> {

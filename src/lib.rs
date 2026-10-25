@@ -5,6 +5,7 @@ pub mod blocking;
 pub mod budget;
 pub mod complete;
 pub mod config;
+pub mod daemon;
 pub mod files;
 pub mod fs;
 pub mod http;

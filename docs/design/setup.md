@@ -338,7 +338,8 @@ src/auth/identity.rs  ServeTarget's proxy URL and matcher; read_auth_info on bot
 src/auth/localapi.rs  Status's Version, BackendState and CertDomains; prefs();
                       SetServeConfigError's Denied (403) and NotLocalAdmin (401)
 src/proto/auth.rs     AuthInfo's browserPending (Swift mirrors AuthInfo by hand)
-src/main.rs           the Setup and Teardown subcommands
+src/main.rs           CLI dispatch for the Setup and Teardown subcommands
+src/daemon.rs         daemon assembly and serving, including the post-bind hook setup uses
 ```
 
 `launch_agent.rs` is named apart from `src/launchd.rs`, the daemon's socket-activation
