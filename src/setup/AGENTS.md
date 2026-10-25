@@ -11,11 +11,11 @@ plans produce only that executor's actions. `mod.rs` shares the success-report t
 
 Foreground Linux setup checks that `config::runtime_dir()` is exactly
 `/run/user/<uid>/tether`, then opens the daemon before making the operator grant. The
-daemon open owns the budget, runtime directory, flock and binds; `Opened::run` calls the
-publication hook before registering SIGINT/SIGTERM and serving. The hook publishes Serve,
-refreshes the daemon's tailnet-state cache, issues the code and prints before daemon logs
-start. Background setup and teardown probe that same runtime flock to detect terminal
-runs; do not add another single-instance mechanism.
+daemon open owns the budget, runtime directory, flock, binds, state store and auth. Setup
+then grants the operator, publishes Serve, refreshes the daemon's tailnet-state cache,
+issues the code and prints; `Opened::run` registers SIGINT/SIGTERM and starts serving
+only after that sequence succeeds. Background setup and teardown probe that same runtime
+flock to detect terminal runs; do not add another single-instance mechanism.
 
 Setup must not mutate a unit, plist, Tailscale Serve config, or grants until every
 check has run and no error finding remains. Foreground setup never installs a service

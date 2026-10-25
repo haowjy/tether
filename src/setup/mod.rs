@@ -30,6 +30,7 @@ use crate::auth::publish::{self, PlanError};
 use crate::config::{self, Config, ConfigError, ConfigFile};
 #[cfg(target_os = "linux")]
 use crate::daemon;
+use crate::runtime;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(400);
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -84,19 +85,29 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
         ConfigFile::resolve(None)?.load()?
     };
     let host = platform::inspect()?;
-    if platform::terminal_run_holds_lock(&host)? {
+    if terminal_run(host.service_state.loaded, &host.runtime_dir)? {
         return Err(Box::new(SetupError::new(
             "tether is running in a terminal; Ctrl-C it, then rerun `tether setup --background`.",
         )));
     }
-    let mut facts = make_facts(&host, &config, config_path.is_some())?;
     let api = LocalApi::system();
-    facts.tailscale = tailnet_facts(&api, host.platform.kind()).await;
+    let tailscale = tailnet_facts(&api).await;
+    #[cfg(target_os = "linux")]
+    let platform_facts = platform::facts(&host, operator_user(&api, &tailscale).await);
+    #[cfg(target_os = "macos")]
+    let platform_facts = platform::facts(&host);
+    let facts = make_facts(
+        &host,
+        &config,
+        config_path.is_some(),
+        tailscale,
+        platform_facts,
+    )?;
     let mut warnings = Vec::new();
     let tailnet = checked_tailnet(checks::evaluate(&facts, &mut warnings), &warnings)?;
 
     let mut changes = Vec::new();
-    platform::grant_setup(&host, true, tailnet.operator_needed, &mut changes)?;
+    platform::grant_setup(&host, tailnet.operator_needed, &mut changes)?;
     let old_inode = socket_inode(&host.runtime_dir.join("local.sock"));
     let previous_version = read_daemon_version(&host.runtime_dir.join("local.sock"), &api).await;
     let file_was_missing = host.file_state == install::FileState::Missing;
@@ -106,8 +117,7 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
     }
     let mut notes = Vec::new();
     platform::after_install(&host, &mut notes);
-    let serve_changed = platform::publish_background(&host, &api, &tailnet, &mut changes).await?;
-    platform::after_publish(&host, serve_changed)?;
+    platform::publish_background(&host, &api, &tailnet, &mut changes).await?;
 
     let origin = format!(
         "https://{}",
@@ -115,13 +125,14 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
     );
     verify_new_daemon(&host, &api, old_inode, &origin).await?;
     notes.extend(no_tmux_server_note(&config));
+    let store = Store::open(config::state_dir()?)?;
     finish(
         report::Mode::Service(platform::KIND),
         previous_version.as_deref(),
         changes,
         notes,
         origin,
-        config::state_dir()?,
+        &store,
     )
 }
 
@@ -131,9 +142,8 @@ fn finish(
     changes: Vec<String>,
     notes: Vec<String>,
     origin: String,
-    state_dir: PathBuf,
+    store: &Store,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let store = Store::open(state_dir)?;
     let code = store.set_pending(Duration::from_secs(600), SystemTime::now())?;
     report::print_success(&report::Success {
         version: env!("CARGO_PKG_VERSION"),
@@ -180,7 +190,8 @@ async fn setup_foreground_async(
     let setup_path = std::env::var_os("PATH").unwrap_or_default();
     let tmux_on_setup_path = resolve_program(program, &setup_path);
     let api = LocalApi::system();
-    let tailscale = tailnet_facts(&api, checks::PlatformKind::Linux).await;
+    let tailscale = tailnet_facts(&api).await;
+    let operator_user = operator_user(&api, &tailscale).await;
     let runtime_dir = config::runtime_dir().ok();
     let uid = effective_uid();
     let foreground_facts = checks::ForegroundFacts {
@@ -191,6 +202,7 @@ async fn setup_foreground_async(
         runtime_dir: runtime_dir.as_deref(),
         uid,
         tailscale: &tailscale,
+        operator_user: &operator_user,
     };
     let mut warnings = Vec::new();
     let tailnet = checked_tailnet(
@@ -213,45 +225,13 @@ async fn setup_foreground_async(
         Err(daemon::OpenError::Other(error)) => return Err(error),
     };
 
-    let state_dir = config::state_dir()?;
     systemd::grant_foreground(&user, tailnet.operator_needed, &mut changes)?;
-    let version = tailnet.version.clone();
-    let dns_name = tailnet.dns_name.clone();
-    let api_for_hook = api.clone();
-    opened
-        .run(move |ready| async move {
-            foreground_report(
-                ready,
-                api_for_hook,
-                dns_name,
-                version,
-                state_dir,
-                changes,
-                notes,
-            )
-            .await?;
-            daemon::init_tracing();
-            Ok(())
-        })
+    let (_, plan) = publish::publish_target(&api, &tailnet.dns_name, opened.serve_target())
         .await
-}
-
-#[cfg(target_os = "linux")]
-async fn foreground_report(
-    ready: daemon::Ready,
-    api: LocalApi,
-    dns_name: String,
-    version: String,
-    state_dir: PathBuf,
-    mut changes: Vec<String>,
-    notes: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let (_, plan) = publish::publish_target(&api, &dns_name, &ready.serve_target)
-        .await
-        .map_err(|error| write_error(&error, &version, WriteOperation::ForegroundSetup))?;
+        .map_err(|error| write_error(&error, &tailnet.version, WriteOperation::ForegroundSetup))?;
     changes.extend(removed_handler_changes(&plan));
-    let refreshed = ready.auth.refresh_after_serve_write().await?;
-    let origin = identity::origin(Some(&ready.serve_target), &refreshed.serve)
+    let refreshed = opened.auth().refresh_after_serve_write().await?;
+    let origin = identity::origin(Some(opened.serve_target()), &refreshed.serve)
         .map_err(|refusal| SetupError::new(refusal.message))?
         .origin;
     finish(
@@ -260,8 +240,10 @@ async fn foreground_report(
         changes,
         notes,
         origin,
-        state_dir,
-    )
+        opened.auth().store(),
+    )?;
+    daemon::init_tracing();
+    opened.run().await
 }
 
 fn checked_tailnet(
@@ -294,6 +276,7 @@ async fn teardown_async() -> Result<(), Box<dyn std::error::Error>> {
         )));
     }
     let host = platform::inspect_teardown()?;
+    let terminal_running = terminal_run(host.loaded, &host.runtime_dir)?;
     let api = LocalApi::system();
     platform::before_teardown(&host, &api).await?;
     platform::stop_teardown(&host)?;
@@ -325,7 +308,13 @@ async fn teardown_async() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", platform::STOPPED);
         }
     }
-    for note in platform::teardown_notes(&host) {
+    let mut notes = Vec::new();
+    if terminal_running {
+        notes.push("A tether still runs in a terminal; Ctrl-C it.".to_owned());
+    }
+    #[cfg(target_os = "linux")]
+    notes.extend(systemd::teardown_notes(&host));
+    for note in notes {
         println!("{note}");
     }
     if let Some(failure) = failure {
@@ -334,10 +323,19 @@ async fn teardown_async() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn terminal_run(loaded: bool, runtime_dir: &Path) -> Result<bool, SetupError> {
+    if loaded {
+        return Ok(false);
+    }
+    runtime::lock_held(runtime_dir).map_err(|error| SetupError::new(error.to_string()))
+}
+
 fn make_facts(
     host: &Host,
     config: &Config,
     has_custom_config: bool,
+    tailscale: checks::TailnetFacts,
+    platform: checks::PlatformFacts,
 ) -> Result<checks::Facts, Box<dyn std::error::Error>> {
     let current = std::env::current_exe()
         .and_then(|path| path.canonicalize())
@@ -380,15 +378,12 @@ fn make_facts(
         tmux_tmpdir_without_socket,
         tmux_on_service_path,
         tmux_on_setup_path,
-        tailscale: checks::TailnetFacts::Unreachable {
-            failure: checks::LocalApiFailure::Other,
-            detail: "not checked".to_owned(),
-        },
-        platform: host.platform.clone(),
+        tailscale,
+        platform,
     })
 }
 
-async fn tailnet_facts(api: &LocalApi, platform: checks::PlatformKind) -> checks::TailnetFacts {
+async fn tailnet_facts(api: &LocalApi) -> checks::TailnetFacts {
     let deadline = tokio::time::Instant::now() + STARTING_TIMEOUT;
     loop {
         match api.status().await {
@@ -398,22 +393,11 @@ async fn tailnet_facts(api: &LocalApi, platform: checks::PlatformKind) -> checks
                 tokio::time::sleep(POLL_INTERVAL).await;
             }
             Ok(status) => {
-                let operator_user = if platform == checks::PlatformKind::Linux {
-                    Some(
-                        api.prefs()
-                            .await
-                            .map(|prefs| prefs.operator_user)
-                            .map_err(|error| error.to_string()),
-                    )
-                } else {
-                    None
-                };
                 return checks::TailnetFacts::Status {
                     version: status.version,
                     backend_state: status.backend_state,
                     dns_name: status.this.map(|node| node.dns_name),
                     cert_domains: status.cert_domains,
-                    operator_user,
                 };
             }
             Err(error) => {
@@ -428,6 +412,18 @@ async fn tailnet_facts(api: &LocalApi, platform: checks::PlatformKind) -> checks
                 };
             }
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn operator_user(api: &LocalApi, tailscale: &checks::TailnetFacts) -> Result<String, String> {
+    match tailscale {
+        checks::TailnetFacts::Status { .. } => api
+            .prefs()
+            .await
+            .map(|prefs| prefs.operator_user)
+            .map_err(|error| error.to_string()),
+        checks::TailnetFacts::Unreachable { detail, .. } => Err(detail.clone()),
     }
 }
 
@@ -538,18 +534,7 @@ impl WriteOperation {
     }
 
     fn is_setup(self) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            matches!(self, Self::BackgroundSetup | Self::ForegroundSetup)
-        }
-        #[cfg(all(test, target_os = "macos"))]
-        {
-            matches!(self, Self::BackgroundSetup)
-        }
-        #[cfg(not(any(target_os = "linux", all(test, target_os = "macos"))))]
-        {
-            false
-        }
+        !matches!(self, Self::Teardown)
     }
 }
 

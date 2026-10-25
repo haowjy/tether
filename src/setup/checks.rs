@@ -65,7 +65,6 @@ pub(crate) enum TailnetFacts {
         backend_state: String,
         dns_name: Option<String>,
         cert_domains: Vec<String>,
-        operator_user: Option<Result<String, String>>,
     },
 }
 
@@ -85,6 +84,7 @@ pub(crate) enum PlatformFacts {
         user_manager_present: bool,
         systemd_version: Option<Result<u32, String>>,
         missing_controllers: Vec<String>,
+        operator_user: Result<String, String>,
     },
     #[cfg(any(target_os = "macos", test))]
     Mac {
@@ -93,12 +93,6 @@ pub(crate) enum PlatformFacts {
         installed_port: Result<Option<u16>, String>,
         port_available: bool,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PlatformKind {
-    Linux,
-    Mac,
 }
 
 const BACKGROUND_SETUP: &str = "tether setup --background";
@@ -111,12 +105,25 @@ pub(crate) struct Tailnet {
 }
 
 impl PlatformFacts {
-    pub(crate) fn kind(&self) -> PlatformKind {
+    fn is_mac(&self) -> bool {
+        #[cfg(test)]
+        {
+            matches!(self, Self::Mac { .. })
+        }
+        #[cfg(not(test))]
+        {
+            cfg!(target_os = "macos")
+        }
+    }
+
+    fn operator_needed(&self) -> bool {
         match self {
             #[cfg(any(target_os = "linux", test))]
-            Self::Linux { .. } => PlatformKind::Linux,
+            Self::Linux { operator_user, .. } => operator_user
+                .as_ref()
+                .is_ok_and(|operator| operator.is_empty()),
             #[cfg(any(target_os = "macos", test))]
-            Self::Mac { .. } => PlatformKind::Mac,
+            Self::Mac { .. } => false,
         }
     }
 }
@@ -256,7 +263,7 @@ pub(crate) fn evaluate(
         }
     }
     check_tailscale(
-        facts.platform.kind(),
+        facts.platform.is_mac(),
         &facts.tailscale,
         BACKGROUND_SETUP,
         &mut findings,
@@ -269,6 +276,7 @@ pub(crate) fn evaluate(
             user_manager_present,
             systemd_version,
             missing_controllers,
+            operator_user,
         } => {
             if !systemd_present {
                 error(
@@ -311,16 +319,8 @@ pub(crate) fn evaluate(
                     ),
                 );
             }
-            if let TailnetFacts::Status { operator_user, .. } = &facts.tailscale {
-                match operator_user {
-                    Some(operator) => {
-                        check_operator(operator, username, BACKGROUND_SETUP, &mut findings)
-                    }
-                    None => error(
-                        &mut findings,
-                        "Can't read Tailscale's Serve operator: no operator fact was gathered.",
-                    ),
-                }
+            if matches!(facts.tailscale, TailnetFacts::Status { .. }) {
+                check_operator(operator_user, username, BACKGROUND_SETUP, &mut findings);
             }
         }
         #[cfg(any(target_os = "macos", test))]
@@ -367,7 +367,7 @@ pub(crate) fn evaluate(
     }
     finish(
         facts.tailscale.clone(),
-        facts.platform.kind(),
+        facts.platform.operator_needed(),
         findings,
         warnings,
     )
@@ -375,7 +375,7 @@ pub(crate) fn evaluate(
 
 fn finish(
     tailscale: TailnetFacts,
-    platform: PlatformKind,
+    operator_needed: bool,
     findings: Vec<Finding>,
     warnings: &mut Vec<Finding>,
 ) -> Result<Tailnet, Vec<Finding>> {
@@ -392,7 +392,7 @@ fn finish(
     if !errors.is_empty() {
         return Err(errors);
     }
-    validated_tailnet(&tailscale, platform).ok_or_else(|| {
+    validated_tailnet(&tailscale, operator_needed).ok_or_else(|| {
         vec![Finding {
             level: Level::Error,
             message: "Tailscale didn't provide a usable tailnet status.".to_owned(),
@@ -400,12 +400,11 @@ fn finish(
     })
 }
 
-fn validated_tailnet(tailscale: &TailnetFacts, platform: PlatformKind) -> Option<Tailnet> {
+fn validated_tailnet(tailscale: &TailnetFacts, operator_needed: bool) -> Option<Tailnet> {
     let TailnetFacts::Status {
         version,
         backend_state,
         dns_name,
-        operator_user,
         ..
     } = tailscale
     else {
@@ -419,11 +418,6 @@ fn validated_tailnet(tailscale: &TailnetFacts, platform: PlatformKind) -> Option
         return None;
     }
     let (major, minor) = parse_major_minor(version)?;
-    let operator_needed = platform == PlatformKind::Linux
-        && operator_user
-            .as_ref()?
-            .as_ref()
-            .is_ok_and(|operator| operator.is_empty());
     Some(Tailnet {
         dns_name: dns_name.to_owned(),
         version: format!("{major}.{minor}"),
@@ -440,24 +434,8 @@ pub(crate) struct ForegroundFacts<'a> {
     pub runtime_dir: Option<&'a Path>,
     pub uid: u32,
     pub tailscale: &'a TailnetFacts,
+    pub operator_user: &'a Result<String, String>,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg(any(target_os = "linux", test))]
-enum ForegroundCheck {
-    NotRoot,
-    RuntimeDirectory,
-    TmuxProgram,
-    Tailnet,
-}
-
-#[cfg(any(target_os = "linux", test))]
-const FOREGROUND_CHECKS: &[ForegroundCheck] = &[
-    ForegroundCheck::NotRoot,
-    ForegroundCheck::RuntimeDirectory,
-    ForegroundCheck::TmuxProgram,
-    ForegroundCheck::Tailnet,
-];
 
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn evaluate_foreground(
@@ -466,73 +444,57 @@ pub(crate) fn evaluate_foreground(
 ) -> Result<Tailnet, Vec<Finding>> {
     let mut findings = Vec::new();
     let expected_runtime_dir = PathBuf::from(format!("/run/user/{}/tether", facts.uid));
-    for check in FOREGROUND_CHECKS {
-        match check {
-            ForegroundCheck::NotRoot if facts.is_root => error(
-                &mut findings,
-                "Run tether setup as the user whose tmux tether serves, not as root.",
-            ),
-            ForegroundCheck::RuntimeDirectory
-                if facts.runtime_dir.map(Path::as_os_str)
-                    != Some(expected_runtime_dir.as_os_str()) =>
-            {
-                let expected = format!("/run/user/{}", facts.uid);
-                let actual = facts.runtime_dir.map_or_else(
-                    || "unset or invalid".to_owned(),
-                    |path| path.display().to_string(),
-                );
-                error(
-                    &mut findings,
-                    format!(
-                        "Plain tether setup requires XDG_RUNTIME_DIR={expected} (so config::runtime_dir() is {expected}/tether); got {actual}."
-                    ),
-                );
-            }
-            ForegroundCheck::TmuxProgram if facts.tmux_on_setup_path.is_none() => error(
-                &mut findings,
-                format!(
-                    "tmux isn't available at {} on this shell's PATH. Install tmux or set `[tmux] program` to its executable path.",
-                    facts.program.display()
-                ),
-            ),
-            ForegroundCheck::Tailnet => {
-                check_tailscale(
-                    PlatformKind::Linux,
-                    facts.tailscale,
-                    "tether setup",
-                    &mut findings,
-                );
-                if let TailnetFacts::Status {
-                    operator_user: Some(operator),
-                    ..
-                } = facts.tailscale
-                {
-                    check_operator(operator, facts.username, "tether setup", &mut findings);
-                } else if matches!(facts.tailscale, TailnetFacts::Status { .. }) {
-                    error(
-                        &mut findings,
-                        "Can't read Tailscale's Serve operator: no operator fact was gathered.",
-                    );
-                }
-            }
-            _ => {}
-        }
+    if facts.is_root {
+        error(
+            &mut findings,
+            "Run tether setup as the user whose tmux tether serves, not as root.",
+        );
     }
-    finish(
-        facts.tailscale.clone(),
-        PlatformKind::Linux,
-        findings,
-        warnings,
-    )
+    if facts.runtime_dir.map(Path::as_os_str) != Some(expected_runtime_dir.as_os_str()) {
+        let expected = format!("/run/user/{}", facts.uid);
+        let actual = facts.runtime_dir.map_or_else(
+            || "unset or invalid".to_owned(),
+            |path| path.display().to_string(),
+        );
+        error(
+            &mut findings,
+            format!(
+                "Plain tether setup requires config::runtime_dir()={expected}/tether (XDG_RUNTIME_DIR={expected}); got config::runtime_dir()={actual}."
+            ),
+        );
+    }
+    if facts.tmux_on_setup_path.is_none() {
+        error(
+            &mut findings,
+            format!(
+                "tmux isn't available at {} on this shell's PATH. Install tmux or set `[tmux] program` to its executable path.",
+                facts.program.display()
+            ),
+        );
+    }
+    check_tailscale(false, facts.tailscale, "tether setup", &mut findings);
+    if matches!(facts.tailscale, TailnetFacts::Status { .. }) {
+        check_operator(
+            facts.operator_user,
+            facts.username,
+            "tether setup",
+            &mut findings,
+        );
+    }
+    let operator_needed = facts
+        .operator_user
+        .as_ref()
+        .is_ok_and(|operator| operator.is_empty());
+    finish(facts.tailscale.clone(), operator_needed, findings, warnings)
 }
 
 fn check_tailscale(
-    platform: PlatformKind,
+    is_mac: bool,
     tailscale: &TailnetFacts,
     setup_command: &str,
     findings: &mut Vec<Finding>,
 ) {
-    if platform == PlatformKind::Mac {
+    if is_mac {
         if let TailnetFacts::Unreachable { failure, .. } = tailscale {
             match failure {
                 LocalApiFailure::MacAdmin => error(
@@ -546,7 +508,7 @@ fn check_tailscale(
             }
             return;
         }
-        check_status(platform, tailscale, setup_command, findings);
+        check_status(is_mac, tailscale, setup_command, findings);
         return;
     }
     match tailscale {
@@ -560,12 +522,12 @@ fn check_tailscale(
                 format!("Can't reach Tailscale LocalAPI: {detail}."),
             ),
         },
-        TailnetFacts::Status { .. } => check_status(platform, tailscale, setup_command, findings),
+        TailnetFacts::Status { .. } => check_status(is_mac, tailscale, setup_command, findings),
     }
 }
 
 fn check_status(
-    platform: PlatformKind,
+    is_mac: bool,
     tailscale: &TailnetFacts,
     setup_command: &str,
     findings: &mut Vec<Finding>,
@@ -582,17 +544,17 @@ fn check_status(
     };
     let running = backend_state == "Running" && dns_name.is_some();
     if !running {
-        match (platform, backend_state.as_str()) {
-            (PlatformKind::Linux, "NeedsLogin") => error(
+        match (is_mac, backend_state.as_str()) {
+            (false, "NeedsLogin") => error(
                 findings,
                 "Tailscale isn't logged in: run `sudo tailscale login`.",
             ),
-            (PlatformKind::Linux, "Stopped") => error(
+            (false, "Stopped") => error(
                 findings,
                 "Tailscale is stopped: run `sudo tailscale up` (if it asks you to repeat your settings, add the flags it names).",
             ),
-            (PlatformKind::Mac, "NeedsLogin") => error(findings, "Sign in from the Tailscale app."),
-            (PlatformKind::Mac, "Stopped") => error(findings, "Connect from the Tailscale app."),
+            (true, "NeedsLogin") => error(findings, "Sign in from the Tailscale app."),
+            (true, "Stopped") => error(findings, "Connect from the Tailscale app."),
             _ => error(
                 findings,
                 format!("Tailscale isn't ready (backend state: {backend_state})."),
@@ -602,20 +564,20 @@ fn check_status(
     match parse_major_minor(version) {
         Some((major, minor)) => {
             let version_string = format!("{major}.{minor}");
-            match platform {
-                PlatformKind::Linux if (major, minor) < (1, 94) => error(
-                    findings,
-                    format!(
-                        "Tailscale {version_string} can't proxy to a Unix socket; upgrade to 1.94 or later."
-                    ),
-                ),
-                PlatformKind::Mac if (major, minor) < (1, 104) => error(
+            if is_mac && (major, minor) < (1, 104) {
+                error(
                     findings,
                     format!(
                         "The Tailscale app {version_string} is older than 1.104, the oldest tether is tested with; update it."
                     ),
-                ),
-                _ => {}
+                );
+            } else if !is_mac && (major, minor) < (1, 94) {
+                error(
+                    findings,
+                    format!(
+                        "Tailscale {version_string} can't proxy to a Unix socket; upgrade to 1.94 or later."
+                    ),
+                );
             }
         }
         None => error(
@@ -700,17 +662,8 @@ fn warning(findings: &mut Vec<Finding>, message: impl Into<String>) {
 mod tests {
     use super::*;
 
-    #[cfg(any(target_os = "linux", test))]
     #[test]
-    fn foreground_check_table_is_limited_and_checks_runtime_path_exactly() {
-        let foreground_rows = [
-            ForegroundCheck::NotRoot,
-            ForegroundCheck::RuntimeDirectory,
-            ForegroundCheck::TmuxProgram,
-            ForegroundCheck::Tailnet,
-        ];
-        assert_eq!(FOREGROUND_CHECKS, foreground_rows);
-
+    fn foreground_runtime_directory_requires_exact_path() {
         let expected = PathBuf::from("/run/user/1000/tether");
         let alternate = PathBuf::from("/tmp/tether");
         let noncanonical = PathBuf::from("/run/user/1000/./tether");
@@ -719,8 +672,8 @@ mod tests {
             backend_state: "Running".to_owned(),
             dns_name: Some("host.tailnet.ts.net".to_owned()),
             cert_domains: vec!["host.tailnet.ts.net".to_owned()],
-            operator_user: Some(Ok("jimmy".to_owned())),
         };
+        let operator_user = Ok("jimmy".to_owned());
         let program = PathBuf::from("tmux");
         for (runtime_dir, should_pass) in [
             (Some(expected.as_path()), true),
@@ -736,6 +689,7 @@ mod tests {
                 runtime_dir,
                 uid: 1000,
                 tailscale: &tailscale,
+                operator_user: &operator_user,
             };
             let mut warnings = Vec::new();
             let result = evaluate_foreground(&facts, &mut warnings);
@@ -769,7 +723,6 @@ mod tests {
                 backend_state: "Running".to_owned(),
                 dns_name: Some("host.tailnet.ts.net".to_owned()),
                 cert_domains: vec!["host.tailnet.ts.net".to_owned()],
-                operator_user: Some(Ok("jimmy".to_owned())),
             },
             platform,
         }
@@ -845,6 +798,7 @@ mod tests {
             user_manager_present: true,
             systemd_version: Some(Ok(255)),
             missing_controllers: Vec::new(),
+            operator_user: Ok("jimmy".to_owned()),
         };
         let mac = || PlatformFacts::Mac {
             other_account: None,
@@ -925,7 +879,6 @@ mod tests {
             backend_state: "NeedsLogin".to_owned(),
             dns_name: None,
             cert_domains: Vec::new(),
-            operator_user: None,
         };
         cases.push((
             facts,
@@ -937,7 +890,6 @@ mod tests {
             backend_state: "Running".to_owned(),
             dns_name: Some("host.tailnet.ts.net".to_owned()),
             cert_domains: Vec::new(),
-            operator_user: Some(Ok("someone".to_owned())),
         };
         cases.push((
             facts,
@@ -949,8 +901,10 @@ mod tests {
             backend_state: "Running".to_owned(),
             dns_name: Some("host.tailnet.ts.net".to_owned()),
             cert_domains: Vec::new(),
-            operator_user: Some(Ok("someone".to_owned())),
         };
+        if let PlatformFacts::Linux { operator_user, .. } = &mut facts.platform {
+            *operator_user = Ok("someone".to_owned());
+        }
         cases.push((
             facts,
             "Tailscale's operator is someone. tether setup won't replace it; run `sudo tailscale set --operator=$USER` if you mean to, then rerun `tether setup --background`.",
@@ -984,7 +938,6 @@ mod tests {
             backend_state: "Running".to_owned(),
             dns_name: Some("host.tailnet.ts.net".to_owned()),
             cert_domains: Vec::new(),
-            operator_user: None,
         };
         if let PlatformFacts::Mac {
             other_account,
@@ -1008,7 +961,6 @@ mod tests {
             backend_state: "Running".to_owned(),
             dns_name: Some("host.tailnet.ts.net".to_owned()),
             cert_domains: Vec::new(),
-            operator_user: None,
         };
         cases.push((
             facts,
@@ -1058,7 +1010,6 @@ mod tests {
             backend_state: "Stopped".to_owned(),
             dns_name: None,
             cert_domains: Vec::new(),
-            operator_user: Some(Ok("jimmy".to_owned())),
         };
         cases.push((
             facts,
@@ -1070,7 +1021,6 @@ mod tests {
             backend_state: "NeedsLogin".to_owned(),
             dns_name: None,
             cert_domains: Vec::new(),
-            operator_user: None,
         };
         cases.push((facts, "Sign in from the Tailscale app."));
         let mut facts = valid_facts(mac());
@@ -1079,7 +1029,6 @@ mod tests {
             backend_state: "Stopped".to_owned(),
             dns_name: None,
             cert_domains: Vec::new(),
-            operator_user: None,
         };
         cases.push((facts, "Connect from the Tailscale app."));
         let mut facts = valid_facts(linux());
@@ -1088,7 +1037,6 @@ mod tests {
             backend_state: "Running".to_owned(),
             dns_name: Some("host.ts.net".to_owned()),
             cert_domains: vec!["host.ts.net".to_owned()],
-            operator_user: Some(Ok("jimmy".to_owned())),
         };
         cases.push((
             facts,
@@ -1100,7 +1048,6 @@ mod tests {
             backend_state: "Running".to_owned(),
             dns_name: Some(String::new()),
             cert_domains: Vec::new(),
-            operator_user: Some(Ok("jimmy".to_owned())),
         };
         cases.push((
             facts,
@@ -1112,8 +1059,10 @@ mod tests {
             backend_state: "Running".to_owned(),
             dns_name: Some("host.ts.net".to_owned()),
             cert_domains: vec!["host.ts.net".to_owned()],
-            operator_user: Some(Err("prefs unavailable".to_owned())),
         };
+        if let PlatformFacts::Linux { operator_user, .. } = &mut facts.platform {
+            *operator_user = Err("prefs unavailable".to_owned());
+        }
         cases.push((
             facts,
             "Can't read Tailscale's Serve operator: prefs unavailable.",
@@ -1220,6 +1169,7 @@ mod tests {
             user_manager_present: true,
             systemd_version: Some(Ok(253)),
             missing_controllers: vec!["cpu".to_owned()],
+            operator_user: Ok("jimmy".to_owned()),
         });
         let mut warnings = Vec::new();
         let _ = evaluate(&facts, &mut warnings).expect("warning-only facts pass");

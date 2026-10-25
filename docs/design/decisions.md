@@ -3965,18 +3965,23 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 ### Setup probes the daemon lock before changing host state
 
-- **Decided:** 2026-10-25, lead (setup review round 2).
+- **Decided:** 2026-10-25, lead (setup review round 3).
 - **What:** the non-blocking probe uses the daemon's existing runtime flock. Background
   setup refuses before grants or installation when that lock belongs to a terminal run;
   an active service may be restarted. Teardown reports a terminal run that remains
   active. Foreground setup requires `config::runtime_dir()` to equal
-  `/run/user/<uid>/tether` and opens the daemon before any operator grant. `daemon::open`
-  owns budget, runtime directory, flock and binds; `Opened::run` invokes the hook before
-  installing signal handlers. Exit 78 is mapped only for `tether serve`, and teardown
-  mentions linger only when `loginctl` reports `Linger=yes`.
+  `/run/user/<uid>/tether`. `daemon::open` owns the budget, runtime directory, flock,
+  binds, state store and auth before setup grants the operator. Setup publishes Serve,
+  refreshes the daemon's cache, issues the code and prints; `Opened::run` then registers
+  signals and serves. Exit 78 is mapped only for `tether serve`, and teardown mentions
+  linger only when `loginctl` reports `Linger=yes`.
 - **Why:** setup must refuse before a change if another process owns tether's daemon
-  slot; one flock keeps setup and serving on the same instance rule. The exact runtime
-  path keeps the published Unix target and teardown matcher aligned.
+  slot; one flock keeps setup and serving on the same instance rule. Opening state and
+  auth before the grant keeps filesystem refusals on the no-mutation side of the setup
+  boundary. Keeping publication in the foreground sequence removes a split assembly
+  hook, while registering signals only in `run` preserves default signal exit during
+  grants and setup writes. The exact runtime path keeps the published Unix target and
+  teardown matcher aligned.
 - **Rejected:** a setup-only lock or PID check; granting the operator before daemon
-  startup checks complete; mapping daemon configuration failures to exit 78 for setup;
-  unconditional linger advice.
+  startup checks complete; a post-bind publication hook; mapping daemon configuration
+  failures to exit 78 for setup; unconditional linger advice.

@@ -32,11 +32,12 @@ The diagram is the background-service path. Before its grants or install, backgr
 setup probes the runtime flock and refuses if a terminal run holds it; an active
 background service is allowed through so setup can restart it. The foreground path skips
 service installation and linger: it checks the host, opens the daemon (budget, runtime
-directory, flock and bound sockets), grants the operator if needed, publishes the Unix
-target, refreshes the daemon's tailnet-state cache, issues the code and prints the report,
-then serves until signalled. The report goes to stdout; daemon logs start on stderr after
-the report. SIGINT and SIGTERM handlers are installed after the publication hook, so a
-signal during a grant or LocalAPI write exits the process without starting the daemon.
+directory, flock, bound sockets, state store and auth), grants the operator if needed,
+publishes the Unix target, refreshes the daemon's tailnet-state cache, issues the code and
+prints the report, then initializes logging and serves until signalled. The report goes
+to stdout; daemon logs start on stderr after the report. SIGINT and SIGTERM handlers are
+installed when serving starts, so a signal during a grant or LocalAPI write exits the
+process without starting the daemon.
 The link comes from the daemon's own canonical-origin calculation, not a separately
 constructed URL or a `local.sock` poll.
 
@@ -199,9 +200,10 @@ enroll` prints a fresh code without touching a running daemon.
 ### Linux: setup writes the entry
 
 For `--background`, setup publishes after the new daemon starts and `serve.sock` exists.
-For foreground setup, the daemon binds `serve.sock` first, then setup publishes before
-it starts accepting requests. Both use the same plan, judge and compare-and-swap as the
-Mac daemon, over `ServeTarget::Unix`:
+For foreground setup, the daemon opens `serve.sock` and initializes its state store and
+auth before setup grants the operator. Setup then publishes before the daemon starts
+accepting requests. Both use the same plan, judge and compare-and-swap as the Mac daemon,
+over `ServeTarget::Unix`:
 
 1. `GET /localapi/v0/serve-config` and its `Etag`.
 2. `plan_publish(config, name, &target)` removes tether's handlers from every Web
@@ -387,9 +389,9 @@ only if the Serve read and withdrawal succeeded.
 
 `0` when the success report is printed (a foreground daemon later stops normally on
 SIGINT or SIGTERM), or everything removed (teardown); `1` for any failed check or step;
-SIGINT or SIGTERM during the foreground pre-serve hook uses the process's default signal
-exit and does not start serving; clap's `2` is for usage. Setup doesn't use `78`, which
-belongs to the daemon's unit.
+SIGINT or SIGTERM during foreground setup before serving uses the process's default
+signal exit and does not start the daemon; clap's `2` is for usage. Setup doesn't use
+`78`, which belongs to `tether serve`.
 
 ## Code structure
 
@@ -416,8 +418,8 @@ src/auth/localapi.rs  Status's Version, BackendState and CertDomains; prefs();
                       SetServeConfigError's Denied (403) and NotLocalAdmin (401)
 src/proto/auth.rs     AuthInfo's browserPending (Swift mirrors AuthInfo by hand)
 src/main.rs           CLI dispatch for the Setup and Teardown subcommands
-src/daemon.rs         open() acquires the budget, runtime, flock and fronts; Opened::run()
-                      runs the post-bind hook, registers signals, then serves
+src/daemon.rs         open() acquires the budget, runtime, flock and fronts, and
+                      initializes Store/Auth; Opened::run() registers signals and serves
 src/blocking.rs       the shared current-thread tokio runtime, capped at the daemon's
                       blocking-thread budget
 ```
@@ -433,9 +435,9 @@ The pure cores carry the policy logic:
 
 - `checks`: background setup's table tests cover each row of [Checks](#checks) from a
   `Facts` value, including the version parse (`1.94.0-t…`, `1.104.2-tc…`), resolved
-  directories and messages. A foreground table test asserts that its check set omits
-  service-only rows and includes the runtime-directory row; the runtime-dir refusal is
-  also exercised by the evaluator. Remaining foreground host checks are covered by S12.
+  directories and messages. A foreground test exercises the exact runtime-directory
+  requirement, including alternate, noncanonical and unset paths. Remaining foreground
+  host checks are covered by S12.
 - `install`: absent, identical, differing, loaded, unloaded and disabled combinations
   to their actions; the plist with a `PATH` holding `&`, `<` and spaces is valid XML
   (`plutil -lint` on macOS CI).

@@ -6,12 +6,10 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::auth::identity::ServeTargetMatcher;
-use crate::runtime;
-
 use super::checks::PlatformFacts;
 use super::install::{self, FileState, LaunchAgentAction, ServiceState};
 use super::{PlanError, SetupError};
+use crate::auth::identity::ServeTargetMatcher;
 
 const LABEL: &str = "com.jimmyyao.tether";
 const UNLOAD_TIMEOUT: Duration = Duration::from_secs(5);
@@ -22,7 +20,6 @@ pub(super) const KIND: super::report::ServiceKind = super::report::ServiceKind {
 pub(super) const STOPPED: &str = "Stopped tether's LaunchAgent.";
 
 pub(super) struct Host {
-    pub platform: PlatformFacts,
     pub home: PathBuf,
     pub service_env: HashMap<String, std::ffi::OsString>,
     pub service_path: std::ffi::OsString,
@@ -31,15 +28,19 @@ pub(super) struct Host {
     pub expected_file: Vec<u8>,
     pub service_state: ServiceState,
     pub runtime_dir: PathBuf,
+    other_account: Option<String>,
+    gui_session: bool,
+    installed_port: Result<Option<u16>, String>,
+    port_available: bool,
     domain: String,
 }
 
 pub(super) struct TeardownHost {
     pub service_file: PathBuf,
     pub loaded: bool,
-    terminal_running: bool,
     domain: String,
     port: u16,
+    pub runtime_dir: PathBuf,
 }
 
 pub(super) fn inspect() -> Result<Host, SetupError> {
@@ -81,12 +82,6 @@ pub(super) fn inspect() -> Result<Host, SetupError> {
     };
     let file_state = install::file_state(previous_file, &expected_file);
     Ok(Host {
-        platform: PlatformFacts::Mac {
-            other_account,
-            gui_session,
-            installed_port,
-            port_available,
-        },
         home,
         service_env: HashMap::new(),
         service_path: path,
@@ -95,6 +90,10 @@ pub(super) fn inspect() -> Result<Host, SetupError> {
         expected_file,
         service_state: ServiceState { loaded, disabled },
         runtime_dir,
+        other_account,
+        gui_session,
+        installed_port,
+        port_available,
         domain,
     })
 }
@@ -108,14 +107,12 @@ pub(super) fn inspect_teardown() -> Result<TeardownHost, SetupError> {
     let port = read_port(&service_file).ok().flatten().unwrap_or(7851);
     let runtime_root = super::command_text("getconf", &["DARWIN_USER_TEMP_DIR"])?;
     let runtime_dir = PathBuf::from(runtime_root).join("tether");
-    let terminal_running = !loaded
-        && runtime::lock_held(&runtime_dir).map_err(|error| SetupError::new(error.to_string()))?;
     Ok(TeardownHost {
         service_file,
         loaded,
-        terminal_running,
         domain,
         port,
+        runtime_dir,
     })
 }
 
@@ -194,8 +191,8 @@ pub(super) async fn publish_background(
     _api: &crate::auth::localapi::LocalApi,
     _tailnet: &super::checks::Tailnet,
     _changes: &mut Vec<String>,
-) -> Result<bool, SetupError> {
-    Ok(false)
+) -> Result<(), SetupError> {
+    Ok(())
 }
 
 fn wait_until_unloaded(domain: &str) -> Result<(), SetupError> {
@@ -232,24 +229,17 @@ pub(super) fn remove_teardown(host: &TeardownHost) -> Result<(), SetupError> {
     Ok(())
 }
 
-pub(super) fn teardown_notes(_host: &TeardownHost) -> Vec<String> {
-    if _host.terminal_running {
-        vec!["A tether still runs in a terminal; Ctrl-C it.".to_owned()]
-    } else {
-        Vec::new()
+pub(super) fn facts(host: &Host) -> PlatformFacts {
+    PlatformFacts::Mac {
+        other_account: host.other_account.clone(),
+        gui_session: host.gui_session,
+        installed_port: host.installed_port.clone(),
+        port_available: host.port_available,
     }
-}
-
-pub(super) fn terminal_run_holds_lock(host: &Host) -> Result<bool, SetupError> {
-    if host.service_state.loaded {
-        return Ok(false);
-    }
-    runtime::lock_held(&host.runtime_dir).map_err(|error| SetupError::new(error.to_string()))
 }
 
 pub(super) fn grant_setup(
     _host: &Host,
-    _background: bool,
     _operator_needed: bool,
     _changes: &mut Vec<String>,
 ) -> Result<(), SetupError> {
@@ -257,10 +247,6 @@ pub(super) fn grant_setup(
 }
 
 pub(super) fn after_install(_host: &Host, _notes: &mut Vec<String>) {}
-
-pub(super) fn after_publish(_host: &Host, _changed: bool) -> Result<(), SetupError> {
-    Ok(())
-}
 
 pub(super) fn matcher(host: &TeardownHost) -> ServeTargetMatcher {
     ServeTargetMatcher::loopback_port(host.port)

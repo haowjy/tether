@@ -6,12 +6,10 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::Duration;
 
-use crate::auth::identity::ServeTargetMatcher;
-use crate::runtime;
-
 use super::checks::PlatformFacts;
 use super::install::{self, FileState, ServiceState, SystemdAction};
 use super::{SetupError, command_text};
+use crate::auth::identity::ServeTargetMatcher;
 
 pub(super) const KIND: super::report::ServiceKind = super::report::ServiceKind {
     name: "systemd user service",
@@ -20,7 +18,6 @@ pub(super) const KIND: super::report::ServiceKind = super::report::ServiceKind {
 pub(super) const STOPPED: &str = "Stopped the running tether service.";
 
 pub(super) struct Host {
-    pub platform: PlatformFacts,
     pub home: PathBuf,
     pub service_env: HashMap<String, OsString>,
     pub service_path: OsString,
@@ -31,6 +28,10 @@ pub(super) struct Host {
     pub runtime_dir: PathBuf,
     user: String,
     uid: u32,
+    systemd_present: bool,
+    user_manager_present: bool,
+    systemd_version: Option<Result<u32, String>>,
+    missing_controllers: Vec<String>,
     linger: bool,
     dropins: Vec<PathBuf>,
 }
@@ -41,7 +42,6 @@ pub(super) struct TeardownHost {
     pub runtime_dir: PathBuf,
     uid: u32,
     linger: bool,
-    terminal_running: bool,
 }
 
 const DEFAULT_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -99,13 +99,6 @@ pub(super) fn inspect() -> Result<Host, SetupError> {
         })
         .map(str::to_owned)
         .collect();
-    let platform = PlatformFacts::Linux {
-        username: user.clone(),
-        systemd_present,
-        user_manager_present,
-        systemd_version,
-        missing_controllers,
-    };
     let service_file = home.join(".config/systemd/user/tether.service");
     let previous_file = match std::fs::read(&service_file) {
         Ok(contents) => Some(contents),
@@ -130,7 +123,6 @@ pub(super) fn inspect() -> Result<Host, SetupError> {
         .map(|entry| entry.path())
         .collect();
     Ok(Host {
-        platform,
         home: home.clone(),
         service_env,
         service_path,
@@ -144,6 +136,10 @@ pub(super) fn inspect() -> Result<Host, SetupError> {
         runtime_dir: manager_dir.join("tether"),
         user,
         uid,
+        systemd_present,
+        user_manager_present,
+        systemd_version,
+        missing_controllers,
         linger,
         dropins,
     })
@@ -158,18 +154,19 @@ pub(super) fn service_active() -> bool {
     manager_command_for_uid(uid, "is-active", &["tether"]).is_ok()
 }
 
-pub(super) fn terminal_run_holds_lock(host: &Host) -> Result<bool, SetupError> {
-    if host.service_state.loaded {
-        return Ok(false);
+pub(super) fn facts(host: &Host, operator_user: Result<String, String>) -> PlatformFacts {
+    PlatformFacts::Linux {
+        username: host.user.clone(),
+        systemd_present: host.systemd_present,
+        user_manager_present: host.user_manager_present,
+        systemd_version: host.systemd_version.clone(),
+        missing_controllers: host.missing_controllers.clone(),
+        operator_user,
     }
-    runtime::lock_held(&host.runtime_dir).map_err(|error| SetupError::new(error.to_string()))
 }
 
 pub(super) fn teardown_notes(host: &TeardownHost) -> Vec<String> {
     let mut notes = Vec::new();
-    if host.terminal_running {
-        notes.push("A tether still runs in a terminal; Ctrl-C it.".to_owned());
-    }
     if host.linger {
         notes.push("Linger remains enabled; undo it with `sudo loginctl disable-linger $USER` (this also stops other user units while logged out).".to_owned());
     }
@@ -191,15 +188,12 @@ pub(super) fn inspect_teardown() -> Result<TeardownHost, SetupError> {
         .ok()
         .is_some_and(|value| value.trim() == "Linger=yes");
     let runtime_dir = manager_dir.join("tether");
-    let terminal_running = !loaded
-        && runtime::lock_held(&runtime_dir).map_err(|error| SetupError::new(error.to_string()))?;
     Ok(TeardownHost {
         service_file,
         loaded,
         uid,
         runtime_dir,
         linger,
-        terminal_running,
     })
 }
 
@@ -245,33 +239,36 @@ pub(super) fn grant_foreground(
     changes: &mut Vec<String>,
 ) -> Result<(), SetupError> {
     super::require_terminal_for_grants(false, operator_needed, user, "tether setup")?;
-    if operator_needed {
-        grant_operator(user)?;
-        changes.push(format!("Set Tailscale's operator to {user}"));
-    }
-    Ok(())
+    grant_operator_if_needed(user, operator_needed, changes)
 }
 
 pub(super) fn grant_setup(
     host: &Host,
-    background: bool,
     operator_needed: bool,
     changes: &mut Vec<String>,
 ) -> Result<(), SetupError> {
-    let needs_linger = background && !host.linger;
-    let command = if background {
-        "tether setup --background"
-    } else {
-        "tether setup"
-    };
-    super::require_terminal_for_grants(needs_linger, operator_needed, &host.user, command)?;
+    let needs_linger = !host.linger;
+    super::require_terminal_for_grants(
+        needs_linger,
+        operator_needed,
+        &host.user,
+        "tether setup --background",
+    )?;
     if needs_linger {
         grant_linger(host)?;
         changes.push("Enabled linger".to_owned());
     }
+    grant_operator_if_needed(&host.user, operator_needed, changes)
+}
+
+fn grant_operator_if_needed(
+    user: &str,
+    operator_needed: bool,
+    changes: &mut Vec<String>,
+) -> Result<(), SetupError> {
     if operator_needed {
-        grant_operator(&host.user)?;
-        changes.push(format!("Set Tailscale's operator to {}", host.user));
+        grant_operator(user)?;
+        changes.push(format!("Set Tailscale's operator to {user}"));
     }
     Ok(())
 }
@@ -282,13 +279,6 @@ pub(super) fn after_install(host: &Host, notes: &mut Vec<String>) {
             .iter()
             .map(|path| format!("Left systemd drop-in in place: {}", path.display())),
     );
-}
-
-pub(super) fn after_publish(host: &Host, changed: bool) -> Result<(), SetupError> {
-    if changed {
-        run_manager(host.uid, "restart", &["tether"]).map_err(|error| with_journal(error, host))?;
-    }
-    Ok(())
 }
 
 pub(super) async fn before_teardown(
@@ -341,7 +331,7 @@ pub(super) async fn publish_background(
     api: &crate::auth::localapi::LocalApi,
     tailnet: &super::checks::Tailnet,
     changes: &mut Vec<String>,
-) -> Result<bool, SetupError> {
+) -> Result<(), SetupError> {
     super::wait_for_socket(
         &host.runtime_dir.join("serve.sock"),
         Duration::from_secs(10),
@@ -364,7 +354,10 @@ pub(super) async fn publish_background(
             )
         })?;
     changes.extend(super::removed_handler_changes(&plan));
-    Ok(plan.changed)
+    if plan.changed {
+        run_manager(host.uid, "restart", &["tether"]).map_err(|error| with_journal(error, host))?;
+    }
+    Ok(())
 }
 
 pub(super) fn stop_teardown(host: &TeardownHost) -> Result<(), SetupError> {

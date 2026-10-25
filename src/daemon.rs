@@ -1,7 +1,6 @@
 //! Daemon assembly and serving, shared by the CLI and foreground setup.
 
 use std::error::Error;
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -40,16 +39,6 @@ pub(crate) enum OpenError {
 /// How long shutdown waits for the hub to close its control clients.
 const HUB_WAIT: Duration = Duration::from_secs(2);
 
-/// Inputs available to a caller after the daemon has bound its sockets.
-#[cfg(not(target_os = "macos"))]
-pub(crate) struct Ready {
-    pub(crate) auth: Auth,
-    pub(crate) serve_target: ServeTarget,
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) struct Ready;
-
 /// Run the daemon behind its configured fronts.
 pub fn serve(
     config: Config,
@@ -69,7 +58,7 @@ pub fn serve(
             }
             Err(OpenError::Other(error)) => return Err(error),
         };
-        opened.run(|_| async { Ok(()) }).await
+        opened.run().await
     })
 }
 
@@ -91,85 +80,91 @@ pub(crate) async fn open(
         })?;
     let parts = runtime.into_parts();
     let serve = assemble_serve_front(parts.serve).map_err(OpenError::Other)?;
+    let state_dir = config::state_dir().map_err(|error| OpenError::Other(Box::new(error)))?;
+    let store = Store::open(state_dir).map_err(|error| OpenError::Other(Box::new(error)))?;
+    let home = config::home().map_err(|error| OpenError::Other(Box::new(error)))?;
+    let host_id = store
+        .host_id()
+        .map_err(|error| OpenError::Other(Box::new(error)))?;
+    let lanes = Lanes::default();
+    let api = LocalApi::system();
+    #[cfg(target_os = "macos")]
+    let auth_target = serve.target.clone();
+    #[cfg(not(target_os = "macos"))]
+    let auth_target = Some(serve.target.clone());
+    let auth = Auth::with_local_api(
+        store,
+        allow_login,
+        lanes.auth.clone(),
+        api,
+        auth_target,
+        serve.publication.clone(),
+    );
 
     Ok(Opened {
         config,
         file,
-        allow_login,
         tier,
         _lock: parts._lock,
         local: parts.local,
         local_path: parts.local_path,
         paste_dir: parts.paste_dir,
         serve,
+        auth,
+        host_id,
+        home,
+        lanes,
     })
 }
 
-/// The daemon has its budget, instance lock, and listeners before the caller's hook.
+/// The daemon has its budget, instance lock, listeners, and auth state before serving.
 pub(crate) struct Opened {
     config: Config,
     file: ConfigFile,
-    allow_login: Vec<String>,
     tier: &'static crate::budget::Tier,
     _lock: std::fs::File,
     local: tokio::net::UnixListener,
     local_path: PathBuf,
     paste_dir: PathBuf,
     serve: ServeAssembly,
+    auth: Auth,
+    host_id: String,
+    home: PathBuf,
+    lanes: Lanes,
 }
 
 impl Opened {
-    /// Run setup's publication hook before accepting requests, then serve until shutdown.
-    pub(crate) async fn run<F, Fut>(self, hook: F) -> Result<()>
-    where
-        F: FnOnce(Ready) -> Fut,
-        Fut: Future<Output = Result<()>>,
-    {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn auth(&self) -> &Auth {
+        &self.auth
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn serve_target(&self) -> &ServeTarget {
+        &self.serve.target
+    }
+
+    /// Serve until shutdown.
+    pub(crate) async fn run(self) -> Result<()> {
         let Opened {
             config,
             file,
-            allow_login,
             tier,
             _lock,
             local,
             local_path,
             paste_dir,
             serve,
+            auth,
+            host_id,
+            home,
+            lanes,
         } = self;
         let mut fronts = serve.fronts;
         fronts.push((Listener::Unix(local), Front::Local));
 
-        let store = Store::open(config::state_dir()?)?;
-        let home = config::home()?;
-        let host_id = store.host_id()?;
-        let lanes = Lanes::default();
-
         let name = config.name.clone().unwrap_or_else(|| "tether".to_owned());
         let endpoint = config.endpoint();
-        let api = LocalApi::system();
-        #[cfg(target_os = "macos")]
-        let auth_target = serve.target.clone();
-        #[cfg(not(target_os = "macos"))]
-        let auth_target = Some(serve.target.clone());
-        let auth = Auth::with_local_api(
-            store,
-            allow_login,
-            lanes.auth.clone(),
-            api,
-            auth_target,
-            serve.publication,
-        );
-        #[cfg(not(target_os = "macos"))]
-        let ready = Ready {
-            auth: auth.clone(),
-            serve_target: serve.target,
-        };
-        #[cfg(target_os = "macos")]
-        let ready = Ready;
-        hook(ready).await?;
-
-        // Install handlers only after the hook, so signals during publication keep their
-        // default process behavior instead of queuing shutdown until serving begins.
         let mut shutdown = signal(SignalKind::terminate())?;
         let mut interrupt = signal(SignalKind::interrupt())?;
 

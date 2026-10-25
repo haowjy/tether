@@ -113,6 +113,7 @@ pub(crate) struct StatusUser {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(target_os = "linux")]
 pub(crate) struct Prefs {
     #[serde(rename = "OperatorUser", default)]
     pub(crate) operator_user: String,
@@ -205,6 +206,7 @@ impl LocalApi {
         self.cell.get_json("/localapi/v0/status?peers=false").await
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) async fn prefs(&self) -> Result<Prefs, LocalApiError> {
         self.cell.get_json("/localapi/v0/prefs").await
     }
