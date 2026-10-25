@@ -5,6 +5,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
 use crate::auth::identity;
 #[cfg(not(target_os = "macos"))]
 use crate::auth::identity::ServeTarget;
@@ -28,14 +29,26 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum OpenError {
+    #[error("tether is already running")]
+    AlreadyRunning,
+    #[error(transparent)]
+    Other(#[from] Box<dyn Error>),
+}
+
 /// How long shutdown waits for the hub to close its control clients.
 const HUB_WAIT: Duration = Duration::from_secs(2);
 
 /// Inputs available to a caller after the daemon has bound its sockets.
-pub struct Ready {
-    pub auth: Auth,
-    pub serve_target: Option<identity::ServeTarget>,
+#[cfg(not(target_os = "macos"))]
+pub(crate) struct Ready {
+    pub(crate) auth: Auth,
+    pub(crate) serve_target: ServeTarget,
 }
+
+#[cfg(target_os = "macos")]
+pub(crate) struct Ready;
 
 /// Run the daemon behind its configured fronts.
 pub fn serve(
@@ -48,160 +61,205 @@ pub fn serve(
         return Err(config::ConfigError::PublishOnLinux.into());
     }
     init_tracing();
-    crate::blocking::runtime()?.block_on(daemon(config, file, allow_login, publish, |_| async {
-        Ok(())
-    }))
-}
-
-/// Run the daemon after a caller has acted on its bound fronts.
-///
-/// Setup uses this to publish against the inode-bound Unix listener, refresh the
-/// daemon's shared tailnet state, and print the same origin before log output starts.
-pub async fn serve_with_hook<F, Fut>(
-    config: Config,
-    file: ConfigFile,
-    allow_login: Vec<String>,
-    publish: bool,
-    hook: F,
-) -> Result<()>
-where
-    F: FnOnce(Ready) -> Fut,
-    Fut: Future<Output = Result<()>>,
-{
-    if publish && !cfg!(target_os = "macos") {
-        return Err(config::ConfigError::PublishOnLinux.into());
-    }
-    daemon(config, file, allow_login, publish, |ready| async move {
-        hook(ready).await?;
-        init_tracing();
-        Ok(())
+    crate::blocking::runtime()?.block_on(async move {
+        let opened = match open(config, file, allow_login, publish).await {
+            Ok(opened) => opened,
+            Err(OpenError::AlreadyRunning) => {
+                return Err(Box::new(crate::runtime::RuntimeError::AlreadyRunning).into());
+            }
+            Err(OpenError::Other(error)) => return Err(error),
+        };
+        opened.run(|_| async { Ok(()) }).await
     })
-    .await
 }
 
-async fn daemon<F, Fut>(
+/// Resolve the budget, secure the runtime directory, lock the instance, and bind fronts.
+pub(crate) async fn open(
     config: Config,
     file: ConfigFile,
     allow_login: Vec<String>,
     publish: bool,
-    on_ready: F,
-) -> Result<()>
-where
-    F: FnOnce(Ready) -> Fut,
-    Fut: Future<Output = Result<()>>,
-{
-    let tier = crate::budget::resolve(config.memory_budget_mib)?;
-    let runtime_dir = config::runtime_dir()?;
-    let runtime = open_runtime(runtime_dir, publish).await?;
-    let local_path = runtime.local_path.clone();
-    let paste_dir = runtime.paste_dir.clone();
-    let local_listener = runtime.local;
+) -> std::result::Result<Opened, OpenError> {
+    let tier = crate::budget::resolve(config.memory_budget_mib)
+        .map_err(|error| OpenError::Other(Box::new(error)))?;
+    let runtime_dir = config::runtime_dir().map_err(|error| OpenError::Other(Box::new(error)))?;
+    let runtime = open_runtime(runtime_dir, publish)
+        .await
+        .map_err(|error| match error {
+            crate::runtime::RuntimeError::AlreadyRunning => OpenError::AlreadyRunning,
+            error => OpenError::Other(Box::new(error)),
+        })?;
+    let parts = runtime.into_parts();
+    let serve = assemble_serve_front(parts.serve).map_err(OpenError::Other)?;
 
-    let mut serve = assemble_serve_front(runtime.serve)?;
-    let serve_target = serve.target.take();
-    let publication = serve.publication.take();
-    let mut fronts = serve.fronts;
-    fronts.push((Listener::Unix(local_listener), Front::Local));
-
-    let store = Store::open(config::state_dir()?)?;
-    let home = config::home()?;
-    let host_id = store.host_id()?;
-    let mut shutdown = signal(SignalKind::terminate())?;
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let lanes = Lanes::default();
-
-    let name = config.name.clone().unwrap_or_else(|| "tether".to_owned());
-    let endpoint = config.endpoint();
-    let api = LocalApi::system();
-    let auth = Auth::with_local_api(
-        store,
+    Ok(Opened {
+        config,
+        file,
         allow_login,
-        lanes.auth.clone(),
-        api,
-        serve_target.clone(),
-        publication,
-    );
-    on_ready(Ready {
-        auth: auth.clone(),
-        serve_target,
+        tier,
+        _lock: parts._lock,
+        local: parts.local,
+        local_path: parts.local_path,
+        paste_dir: parts.paste_dir,
+        serve,
     })
-    .await?;
+}
 
-    start_file_api(&config, &home, &lanes).await;
-    let (hub, mut hub_task) = hub::spawn(
-        Endpoints {
-            main: endpoint.clone(),
-        },
-        tier.caps.control_clients,
-        name.clone(),
-    );
-    let hub_stop = hub.clone();
-    let app = App {
-        auth,
-        hub,
-        host: HostInfo { id: host_id, name },
-        paste_dir,
-        config: file,
-        complete: complete::Settings::new(&config.complete, Environment::current(&home)),
-        caps: tier.caps,
-        home,
-        lanes,
-    };
-    let signalled = async move {
+/// The daemon has its budget, instance lock, and listeners before the caller's hook.
+pub(crate) struct Opened {
+    config: Config,
+    file: ConfigFile,
+    allow_login: Vec<String>,
+    tier: &'static crate::budget::Tier,
+    _lock: std::fs::File,
+    local: tokio::net::UnixListener,
+    local_path: PathBuf,
+    paste_dir: PathBuf,
+    serve: ServeAssembly,
+}
+
+impl Opened {
+    /// Run setup's publication hook before accepting requests, then serve until shutdown.
+    pub(crate) async fn run<F, Fut>(self, hook: F) -> Result<()>
+    where
+        F: FnOnce(Ready) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        let Opened {
+            config,
+            file,
+            allow_login,
+            tier,
+            _lock,
+            local,
+            local_path,
+            paste_dir,
+            serve,
+        } = self;
+        let mut fronts = serve.fronts;
+        fronts.push((Listener::Unix(local), Front::Local));
+
+        let store = Store::open(config::state_dir()?)?;
+        let home = config::home()?;
+        let host_id = store.host_id()?;
+        let lanes = Lanes::default();
+
+        let name = config.name.clone().unwrap_or_else(|| "tether".to_owned());
+        let endpoint = config.endpoint();
+        let api = LocalApi::system();
+        #[cfg(target_os = "macos")]
+        let auth_target = serve.target.clone();
+        #[cfg(not(target_os = "macos"))]
+        let auth_target = Some(serve.target.clone());
+        let auth = Auth::with_local_api(
+            store,
+            allow_login,
+            lanes.auth.clone(),
+            api,
+            auth_target,
+            serve.publication,
+        );
+        #[cfg(not(target_os = "macos"))]
+        let ready = Ready {
+            auth: auth.clone(),
+            serve_target: serve.target,
+        };
+        #[cfg(target_os = "macos")]
+        let ready = Ready;
+        hook(ready).await?;
+
+        // Install handlers only after the hook, so signals during publication keep their
+        // default process behavior instead of queuing shutdown until serving begins.
+        let mut shutdown = signal(SignalKind::terminate())?;
+        let mut interrupt = signal(SignalKind::interrupt())?;
+
+        start_file_api(&config, &home, &lanes).await;
+        let (hub, mut hub_task) = hub::spawn(
+            Endpoints {
+                main: endpoint.clone(),
+            },
+            tier.caps.control_clients,
+            name.clone(),
+        );
+        let hub_stop = hub.clone();
+        let app = App {
+            auth,
+            hub,
+            host: HostInfo { id: host_id, name },
+            paste_dir,
+            config: file,
+            complete: complete::Settings::new(&config.complete, Environment::current(&home)),
+            caps: tier.caps,
+            home,
+            lanes,
+        };
+        let signalled = async move {
+            tokio::select! {
+                _ = shutdown.recv() => {}
+                _ = interrupt.recv() => {}
+            }
+            info!("shutting down");
+            let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
+        };
+        let mut server = std::pin::pin!(http::serve(fronts, app, signalled,));
+        let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
+        info!(
+            serve_front = %serve.description,
+            local_socket = %local_path.display(),
+            tmux = ?endpoint,
+            version = env!("CARGO_PKG_VERSION"),
+            "listening on private fronts"
+        );
+
         tokio::select! {
-            _ = shutdown.recv() => {}
-            _ = interrupt.recv() => {}
+            served = &mut server => served?,
+            // The hub ends only once stopped or every handle is gone: it panicked.
+            joined = &mut hub_task => return Err(format!("the hub ended: {joined:?}").into()),
         }
-        info!("shutting down");
-        let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
-    };
-    let mut server = std::pin::pin!(http::serve(fronts, app, signalled,));
-    let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
-    info!(
-        serve_front = %serve.description,
-        local_socket = %local_path.display(),
-        tmux = ?endpoint,
-        version = env!("CARGO_PKG_VERSION"),
-        "listening on private fronts"
-    );
-
-    tokio::select! {
-        served = &mut server => served?,
-        // The hub ends only once stopped or every handle is gone: it panicked.
-        joined = &mut hub_task => return Err(format!("the hub ended: {joined:?}").into()),
-    }
-    // A request still stuck at shutdown holds a handle: stop the hub regardless, so it
-    // closes its control clients' stdin and ends.
-    let _ = hub_stop.stop().await;
-    drop(hub_stop);
-    match tokio::time::timeout(HUB_WAIT, hub_task).await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(cause)) => Err(format!("the hub ended: {cause}").into()),
-        Err(_) => Err("the hub didn't end within 2 s".into()),
+        // A request still stuck at shutdown holds a handle: stop the hub regardless, so it
+        // closes its control clients' stdin and ends.
+        let _ = hub_stop.stop().await;
+        drop(hub_stop);
+        match tokio::time::timeout(HUB_WAIT, hub_task).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(cause)) => Err(format!("the hub ended: {cause}").into()),
+            Err(_) => Err("the hub didn't end within 2 s".into()),
+        }
     }
 }
 
 struct ServeAssembly {
     fronts: Vec<(Listener, Front)>,
-    target: Option<identity::ServeTarget>,
+    target: ServeTargetState,
     publication: Option<crate::auth::publish::Publication>,
     description: String,
 }
 
+#[cfg(target_os = "macos")]
+type ServeTargetState = Option<identity::ServeTarget>;
 #[cfg(not(target_os = "macos"))]
-async fn open_runtime(dir: PathBuf, publish: bool) -> Result<Runtime> {
-    Ok(Runtime::open(dir, publish)?)
+type ServeTargetState = ServeTarget;
+
+#[cfg(not(target_os = "macos"))]
+async fn open_runtime(
+    dir: PathBuf,
+    publish: bool,
+) -> std::result::Result<Runtime, crate::runtime::RuntimeError> {
+    Runtime::open(dir, publish)
 }
 
 #[cfg(target_os = "macos")]
-async fn open_runtime(dir: PathBuf, publish_requested: bool) -> Result<Runtime> {
+async fn open_runtime(
+    dir: PathBuf,
+    publish_requested: bool,
+) -> std::result::Result<Runtime, crate::runtime::RuntimeError> {
     match Runtime::open(dir, publish_requested) {
         Ok(runtime) => Ok(runtime),
         Err(error @ crate::runtime::RuntimeError::MacFrontNotBound) => {
             publish::withdraw_unbound(&LocalApi::system()).await;
-            Err(Box::new(error))
+            Err(error)
         }
-        Err(error) => Err(Box::new(error)),
+        Err(error) => Err(error),
     }
 }
 
@@ -210,7 +268,7 @@ fn assemble_serve_front(front: crate::runtime::ServeFront) -> Result<ServeAssemb
     let target = ServeTarget::unix(&front.path)?;
     Ok(ServeAssembly {
         fronts: vec![(Listener::Unix(front.listener), Front::UnixServe)],
-        target: Some(target),
+        target,
         publication: None,
         description: format!("unix:{}", front.path.display()),
     })
@@ -259,7 +317,7 @@ async fn start_file_api(config: &Config, home: &Path, lanes: &Lanes) {
 
 /// Logs to stderr, which systemd puts in the journal (with its own timestamps).
 /// `RUST_LOG` takes targets, as `info` or `tether=debug`.
-fn init_tracing() {
+pub(crate) fn init_tracing() {
     let filter = std::env::var("RUST_LOG")
         .ok()
         .and_then(|spec| spec.parse::<Targets>().ok())

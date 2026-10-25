@@ -23,7 +23,7 @@ use thiserror::Error;
 
 use crate::auth::Store;
 use crate::auth::identity;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(test)]
 use crate::auth::identity::ServeTarget;
 use crate::auth::localapi::{LocalApi, LocalApiError};
 use crate::auth::publish::{self, PlanError};
@@ -41,6 +41,12 @@ struct SetupError {
     message: String,
 }
 
+impl From<ConfigError> for SetupError {
+    fn from(error: ConfigError) -> Self {
+        Self::new(error.to_string())
+    }
+}
+
 impl SetupError {
     fn new(message: impl Into<String>) -> Self {
         Self {
@@ -49,28 +55,18 @@ impl SetupError {
     }
 }
 
-impl From<ConfigError> for SetupError {
-    fn from(error: ConfigError) -> Self {
-        Self::new(error.to_string())
-    }
-}
-
 type Host = platform::Host;
 
 /// Installs the background service, publishes it, and prints a new enrolment code.
 pub fn setup(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
-    crate::blocking::runtime()
-        .map_err(|error| SetupError::new(format!("can't create setup runtime: {error}")))?
-        .block_on(setup_async(config_path))
+    crate::blocking::runtime()?.block_on(setup_async(config_path))
 }
 
 /// Runs tether in this terminal on Linux; macOS requires its LaunchAgent front.
 pub fn setup_foreground(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     {
-        crate::blocking::runtime()
-            .map_err(|error| SetupError::new(format!("can't create setup runtime: {error}")))?
-            .block_on(setup_foreground_async(config_path))
+        crate::blocking::runtime()?.block_on(setup_foreground_async(config_path))
     }
     #[cfg(target_os = "macos")]
     {
@@ -88,6 +84,11 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
         ConfigFile::resolve(None)?.load()?
     };
     let host = platform::inspect()?;
+    if platform::terminal_run_holds_lock(&host)? {
+        return Err(Box::new(SetupError::new(
+            "tether is running in a terminal; Ctrl-C it, then rerun `tether setup --background`.",
+        )));
+    }
     let mut facts = make_facts(&host, &config, config_path.is_some())?;
     let api = LocalApi::system();
     facts.tailscale = tailnet_facts(&api, host.platform.kind()).await;
@@ -180,11 +181,15 @@ async fn setup_foreground_async(
     let tmux_on_setup_path = resolve_program(program, &setup_path);
     let api = LocalApi::system();
     let tailscale = tailnet_facts(&api, checks::PlatformKind::Linux).await;
+    let runtime_dir = config::runtime_dir().ok();
+    let uid = effective_uid();
     let foreground_facts = checks::ForegroundFacts {
-        is_root: effective_uid() == 0,
+        is_root: uid == 0,
         username: &user,
         program,
         tmux_on_setup_path: tmux_on_setup_path.as_deref(),
+        runtime_dir: runtime_dir.as_deref(),
+        uid,
         tailscale: &tailscale,
     };
     let mut warnings = Vec::new();
@@ -193,42 +198,42 @@ async fn setup_foreground_async(
         &warnings,
     )?;
 
-    let state_dir = config::state_dir()?;
     let notes = no_tmux_server_note(&config).into_iter().collect();
     let mut changes = Vec::new();
-    systemd::grant_foreground(&user, tailnet.operator_needed, &mut changes)?;
-    let version = tailnet.version.clone();
-    let dns_name = tailnet.dns_name.clone();
-    let api_for_hook = api.clone();
-    let serve = daemon::serve_with_hook(config, file, Vec::new(), false, move |ready| {
-        foreground_report(
-            ready,
-            api_for_hook,
-            dns_name,
-            version,
-            state_dir,
-            changes,
-            notes,
-        )
-    })
-    .await;
-    match serve {
-        Err(error)
-            if error
-                .downcast_ref::<crate::runtime::RuntimeError>()
-                .is_some_and(|error| {
-                    matches!(error, crate::runtime::RuntimeError::AlreadyRunning)
-                }) =>
-        {
+    let opened = match daemon::open(config, file, Vec::new(), false).await {
+        Ok(opened) => opened,
+        Err(daemon::OpenError::AlreadyRunning) => {
             let message = if systemd::service_active() {
                 "tether is already running as your service. `tether setup --background` restarts it and prints a new code; `systemctl --user stop tether` frees this terminal's run."
             } else {
                 "Another tether is already running; stop it first."
             };
-            Err(Box::new(SetupError::new(message)))
+            return Err(Box::new(SetupError::new(message)));
         }
-        result => result,
-    }
+        Err(daemon::OpenError::Other(error)) => return Err(error),
+    };
+
+    let state_dir = config::state_dir()?;
+    systemd::grant_foreground(&user, tailnet.operator_needed, &mut changes)?;
+    let version = tailnet.version.clone();
+    let dns_name = tailnet.dns_name.clone();
+    let api_for_hook = api.clone();
+    opened
+        .run(move |ready| async move {
+            foreground_report(
+                ready,
+                api_for_hook,
+                dns_name,
+                version,
+                state_dir,
+                changes,
+                notes,
+            )
+            .await?;
+            daemon::init_tracing();
+            Ok(())
+        })
+        .await
 }
 
 #[cfg(target_os = "linux")]
@@ -241,17 +246,14 @@ async fn foreground_report(
     mut changes: Vec<String>,
     notes: Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let target = ready
-        .serve_target
-        .as_ref()
-        .ok_or_else(|| SetupError::new("the foreground daemon didn't bind a Serve front"))?;
-    let (_, plan) = publish::publish_target(&api, &dns_name, target)
+    let (_, plan) = publish::publish_target(&api, &dns_name, &ready.serve_target)
         .await
         .map_err(|error| write_error(&error, &version, WriteOperation::ForegroundSetup))?;
     changes.extend(removed_handler_changes(&plan));
-    ready.auth.refresh_after_serve_write().await?;
-    let (origin, _) = ready.auth.browser_origin().await?;
-    let origin = origin.map_err(SetupError::new)?.origin;
+    let refreshed = ready.auth.refresh_after_serve_write().await?;
+    let origin = identity::origin(Some(&ready.serve_target), &refreshed.serve)
+        .map_err(|refusal| SetupError::new(refusal.message))?
+        .origin;
     finish(
         report::Mode::Foreground,
         None,
@@ -282,9 +284,7 @@ fn checked_tailnet(
 
 /// Stops and removes tether's service and only its own Serve handlers.
 pub fn teardown() -> Result<(), Box<dyn std::error::Error>> {
-    crate::blocking::runtime()
-        .map_err(|error| SetupError::new(format!("can't create setup runtime: {error}")))?
-        .block_on(teardown_async())
+    crate::blocking::runtime()?.block_on(teardown_async())
 }
 
 async fn teardown_async() -> Result<(), Box<dyn std::error::Error>> {
@@ -338,11 +338,14 @@ fn make_facts(
     host: &Host,
     config: &Config,
     has_custom_config: bool,
-) -> Result<checks::Facts, SetupError> {
+) -> Result<checks::Facts, Box<dyn std::error::Error>> {
     let current = std::env::current_exe()
-        .map_err(|error| SetupError::new(format!("can't resolve current executable: {error}")))?
-        .canonicalize()
-        .map_err(|error| SetupError::new(format!("can't resolve current executable: {error}")))?;
+        .and_then(|path| path.canonicalize())
+        .map_err(|error| {
+            Box::new(SetupError::new(format!(
+                "can't resolve current executable: {error}"
+            ))) as Box<dyn std::error::Error>
+        })?;
     let installed_path = host.home.join(".cargo/bin/tether");
     let installed_canonical = installed_path.canonicalize().ok();
     let cargo_home_other = std::env::var_os("CARGO_HOME")
@@ -364,8 +367,7 @@ fn make_facts(
         config_home: host.service_env.get("XDG_CONFIG_HOME").cloned(),
         state_home: host.service_env.get("XDG_STATE_HOME").cloned(),
     };
-    let directories = checks::directory_mismatches(&setup_directories, &service_directories)
-        .map_err(SetupError::from)?;
+    let directories = checks::directory_mismatches(&setup_directories, &service_directories)?;
     Ok(checks::Facts {
         is_root: effective_uid() == 0,
         default_config: !has_custom_config,

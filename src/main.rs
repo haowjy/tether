@@ -70,53 +70,72 @@ enum DeviceCommand {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let config_path = cli.config;
-    let result = match cli.command {
-        Command::Setup { background } => {
+    let (result, error_exit) = match cli.command {
+        Command::Setup { background } => (
             if background {
                 tether::setup::setup(config_path)
             } else {
                 tether::setup::setup_foreground(config_path)
-            }
+            },
+            ExitCode::FAILURE,
+        ),
+        Command::Teardown => (tether::setup::teardown(), ExitCode::FAILURE),
+        Command::Serve {
+            allow_login,
+            publish,
+        } => {
+            let result = load_config(config_path.as_deref())
+                .and_then(|(config, file)| daemon::serve(config, file, allow_login, publish));
+            let error_exit = result
+                .as_ref()
+                .err()
+                .map_or(ExitCode::FAILURE, |cause| serve_error_exit(&**cause));
+            (result, error_exit)
         }
-        Command::Teardown => tether::setup::teardown(),
-        command => ConfigFile::resolve(config_path.as_deref())
-            .and_then(|file| Ok((file.load()?, file)))
-            .map_err(Into::into)
-            .and_then(|(config, file)| match command {
-                Command::Serve {
-                    allow_login,
-                    publish,
-                } => daemon::serve(config, file, allow_login, publish),
-                Command::Enroll { ttl } => enroll(&config, ttl),
-                Command::Device(command) => device(command),
-                Command::Setup { .. } | Command::Teardown => unreachable!("handled above"),
-            }),
+        Command::Enroll { ttl } => (
+            load_config(config_path.as_deref()).and_then(|(config, _file)| enroll(&config, ttl)),
+            ExitCode::FAILURE,
+        ),
+        Command::Device(command) => (
+            load_config(config_path.as_deref()).and_then(|_| device(command)),
+            ExitCode::FAILURE,
+        ),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(cause) => {
             eprintln!("tether: {cause}");
-            if cause.downcast_ref::<ConfigError>().is_some()
-                || cause.downcast_ref::<config::RuntimeDirError>().is_some()
-                || cause
-                    .downcast_ref::<tether::budget::BelowMinimum>()
-                    .is_some()
-                || cause
-                    .downcast_ref::<tether::runtime::RuntimeError>()
-                    .is_some_and(|error| {
-                        matches!(
-                            error,
-                            tether::runtime::RuntimeError::Directory(_)
-                                | tether::runtime::RuntimeError::NoLaunchdSocket
-                                | tether::runtime::RuntimeError::MacFrontNotBound
-                        )
-                    })
-            {
-                ExitCode::from(78)
-            } else {
-                ExitCode::FAILURE
-            }
+            error_exit
         }
+    }
+}
+
+fn load_config(path: Option<&std::path::Path>) -> Result<(Config, ConfigFile)> {
+    let file = ConfigFile::resolve(path)?;
+    let config = file.load()?;
+    Ok((config, file))
+}
+
+fn serve_error_exit(cause: &(dyn Error + 'static)) -> ExitCode {
+    if cause.downcast_ref::<ConfigError>().is_some()
+        || cause.downcast_ref::<config::RuntimeDirError>().is_some()
+        || cause
+            .downcast_ref::<tether::budget::BelowMinimum>()
+            .is_some()
+        || cause
+            .downcast_ref::<tether::runtime::RuntimeError>()
+            .is_some_and(|error| {
+                matches!(
+                    error,
+                    tether::runtime::RuntimeError::Directory(_)
+                        | tether::runtime::RuntimeError::NoLaunchdSocket
+                        | tether::runtime::RuntimeError::MacFrontNotBound
+                )
+            })
+    {
+        ExitCode::from(78)
+    } else {
+        ExitCode::FAILURE
     }
 }
 

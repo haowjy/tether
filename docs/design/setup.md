@@ -28,11 +28,15 @@ flowchart LR
   V --> O["Print link, QR, code"]
 ```
 
-The diagram is the background-service path. The foreground path skips service
-installation and linger: it checks the host, grants
-the operator if needed, binds the daemon's sockets, publishes the Unix target, refreshes
-the daemon's tailnet-state cache, issues the code and prints the report, then serves
-until signalled. The report goes to stdout; daemon logs start on stderr after the report.
+The diagram is the background-service path. Before its grants or install, background
+setup probes the runtime flock and refuses if a terminal run holds it; an active
+background service is allowed through so setup can restart it. The foreground path skips
+service installation and linger: it checks the host, opens the daemon (budget, runtime
+directory, flock and bound sockets), grants the operator if needed, publishes the Unix
+target, refreshes the daemon's tailnet-state cache, issues the code and prints the report,
+then serves until signalled. The report goes to stdout; daemon logs start on stderr after
+the report. SIGINT and SIGTERM handlers are installed after the publication hook, so a
+signal during a grant or LocalAPI write exits the process without starting the daemon.
 The link comes from the daemon's own canonical-origin calculation, not a separately
 constructed URL or a `local.sock` poll.
 
@@ -54,12 +58,12 @@ every failed check in one run. Any failed check stops setup before it changes
 anything. Warnings print and setup carries on.
 
 These rows describe `tether setup --background`. Plain Linux `tether setup` keeps only
-the checks for non-root, a usable configured tmux program on setup's own `PATH`, and
-Tailscale reachability, login, version, MagicDNS, certificates and operator. Its
-`TMUX_TMPDIR` is inherited by the daemon, and it can use `--config`, so neither the
-service-environment comparison nor the warning applies. It does not check the binary
-path, systemd, the user manager, systemd version or cgroup controllers. On a Mac, plain
-setup refuses before it reads config or changes anything.
+the checks for non-root, the runtime directory, a usable configured tmux program on
+setup's own `PATH`, and Tailscale reachability, login, version, MagicDNS, certificates
+and operator. Its `TMUX_TMPDIR` is inherited by the daemon, and it can use `--config`, so
+neither the service-environment comparison nor the warning applies. It does not check
+the binary path, systemd, the user manager, systemd version or cgroup controllers. On a
+Mac, plain setup refuses before it reads config or changes anything.
 
 | Check | How | Message when it fails |
 |---|---|---|
@@ -70,6 +74,7 @@ setup refuses before it reads config or changes anything.
 | `TMUX_TMPDIR` | set in setup's environment, and `[tmux]` has no socket key | Warning: "Your shell sets TMUX_TMPDIR; the service won't see it. Set `[tmux] socket_path` in config.toml." |
 | tmux | `[tmux] program` from `config.toml`, found on the service's `PATH` (Linux: the user manager's; Mac: setup's own `PATH`, which goes into the plist) | Not found anywhere: "tmux isn't installed (no `tmux` on the service's PATH)." Found only on setup's `PATH`: "tmux is at <path>, which the service's PATH doesn't reach. Set `[tmux] program = "<path>"` in config.toml." |
 | Linux foreground: tmux | `[tmux] program` from `config.toml`, executable on setup's own `PATH` | "tmux isn't available at <program> on this shell's PATH. Install tmux or set `[tmux] program` to its executable path." |
+| Linux foreground: runtime directory | `config::runtime_dir()` equals `/run/user/<uid>/tether` exactly | "Plain tether setup requires XDG_RUNTIME_DIR=/run/user/<uid> (so config::runtime_dir() is /run/user/<uid>/tether); got <path>." If unset or invalid, the message says so instead of `<path>`. |
 | tailscaled reachable | LocalAPI `/status` answers | Linux: "tailscaled isn't running: no LocalAPI socket at /var/run/tailscale/tailscaled.sock. Install Tailscale (https://tailscale.com/download/linux), then `sudo systemctl enable --now tailscaled`." Mac: "Can't reach the Tailscale app. Install the standalone app from tailscale.com (1.104 or later), open it and sign in." Mac, token unreadable: "Your account must be an admin: tether reads Tailscale's LocalAPI token from /Library/Tailscale." |
 | Logged in | `BackendState` is `Running` and `Self` is present; `Starting` is polled for up to 10 s | Linux `NeedsLogin`: "Tailscale isn't logged in: run `sudo tailscale login`." Linux `Stopped`: "Tailscale is stopped: run `sudo tailscale up` (if it asks you to repeat your settings, add the flags it names)." Mac: "Sign in from the Tailscale app" or "Connect from the Tailscale app." |
 | Version | `Version` from `/status`, major.minor | Linux below 1.94: "Tailscale <v> can't proxy to a Unix socket; upgrade to 1.94 or later." Mac below 1.104: "The Tailscale app <v> is older than 1.104, the oldest tether is tested with; update it." |
@@ -90,6 +95,10 @@ other failures before setup changes anything. Other Tailscale diagnostics includ
 unrecognized version: <version>.", Linux's "Can't reach Tailscale LocalAPI: <cause>.",
 and "Can't read Tailscale's Serve operator: <cause>." when prefs fail.
 
+Foreground setup also requires the resolved runtime path to be exactly
+`/run/user/<uid>/tether`. That is the path the Linux Serve matcher and teardown recognize;
+an alternate `XDG_RUNTIME_DIR` would publish a handler teardown could not remove.
+
 If the shell leaves an XDG directory variable unset while the user manager has a
 different value, the check says "Your shell leaves <VAR> unset" and shows both
 resolved paths. On Linux it offers `systemctl --user unset-environment <VAR>`; the
@@ -101,15 +110,19 @@ not a change. Serve conflicts, such as another app at `/` of the
 MagicDNS name, Funnel, or a TCP forward on 443, aren't checks either: the
 canonical-origin rule judges them at publication ([Publication](#publication)).
 
-## Already running (Linux foreground)
+## Already running (Linux setup)
 
-Foreground setup starts only after `Runtime::open` acquires the daemon-wide flock. If
-the lock is held, setup refuses before publishing. When the systemd user service is
-active, it says: "tether is already running as your service. `tether setup
+Foreground setup opens the daemon before any operator grant. Opening resolves the
+budget and runtime directory, then acquires the daemon-wide flock and binds sockets. If
+the lock is held, setup refuses before a grant or publication. When the systemd user
+service is active, it says: "tether is already running as your service. `tether setup
 --background` restarts it and prints a new code; `systemctl --user stop tether` frees
 this terminal's run." Otherwise it says: "Another tether is already running; stop it
-first." The service-state query only chooses the message; the flock remains the single
-instance mechanism.
+first." Background setup uses a non-blocking probe of that same lock before grants and
+install. If it is held and the service is not active, it refuses with "tether is running
+in a terminal; Ctrl-C it, then rerun `tether setup --background`." An active service is
+allowed because background setup restarts it. The service-state query only distinguishes
+the service from a terminal run; the flock remains the single-instance mechanism.
 
 ## One-time grants (Linux)
 
@@ -317,7 +330,8 @@ terminal allows it)." It can't tell whether the copy landed.
 
 `tether teardown` checks only that it isn't run as root. It first reads what is
 installed and running (the unit or plist, whether the service is active or the job
-loaded, and on a Mac the port the plist names, 7851 when it is missing or unreadable),
+loaded, the runtime lock, and on Linux whether `loginctl show-user -p Linger` says
+`Linger=yes`; on a Mac the port the plist names, 7851 when it is missing or unreadable),
 then does only the steps that state needs, so a rerun, or a teardown after turning
 tether off under Login Items, finishes what is left:
 
@@ -356,19 +370,25 @@ rerun tether teardown once Tailscale answers", and exits 1. That window, from th
 `bootout` until the entry is gone, is the one [auth.md's threat
 model](auth.md#threat-model) accepts for a one-account Mac.
 
+If the runtime lock is held by a terminal run while no service is active, teardown still
+removes the service/publication state it owns but prints: "A tether still runs in a
+terminal; Ctrl-C it." The lock probe never creates a directory or lock file.
+
 Teardown keeps `state_dir()` (enrolled devices and `host_id`, so a later setup brings
 the phone's existing host back), `config.toml`, the binary, any drop-ins in
-`tether.service.d/`, linger and the operator grant. It prints how to drop the last
-two: `sudo loginctl disable-linger $USER`, which also stops Jimmy's other user units
-running while he is logged out, and `sudo tailscale set --operator=`. With nothing
-installed and no handler of tether's in Serve, teardown reports "Nothing to remove."
+`tether.service.d/`, linger and the operator grant. It prints the linger instruction only
+when `loginctl` reports `Linger=yes`; it always prints how to drop the operator grant:
+`sudo tailscale set --operator=`. The linger command is `sudo loginctl disable-linger
+$USER`, which also stops Jimmy's other user units while he is logged out. With nothing
+installed and no handler of tether's in Serve, teardown reports "Nothing to remove"
 only if the Serve read and withdrawal succeeded.
 
 ## Exit status
 
-`0` when published and the link printed (setup, including Ctrl-C from a foreground
-run), or everything removed (teardown);
-`1` for any failed check or step; clap's `2` for usage. Setup doesn't use `78`, which
+`0` when the success report is printed (a foreground daemon later stops normally on
+SIGINT or SIGTERM), or everything removed (teardown); `1` for any failed check or step;
+SIGINT or SIGTERM during the foreground pre-serve hook uses the process's default signal
+exit and does not start serving; clap's `2` is for usage. Setup doesn't use `78`, which
 belongs to the daemon's unit.
 
 ## Code structure
@@ -396,7 +416,8 @@ src/auth/localapi.rs  Status's Version, BackendState and CertDomains; prefs();
                       SetServeConfigError's Denied (403) and NotLocalAdmin (401)
 src/proto/auth.rs     AuthInfo's browserPending (Swift mirrors AuthInfo by hand)
 src/main.rs           CLI dispatch for the Setup and Teardown subcommands
-src/daemon.rs         daemon assembly and serving, including the post-bind hook setup uses
+src/daemon.rs         open() acquires the budget, runtime, flock and fronts; Opened::run()
+                      runs the post-bind hook, registers signals, then serves
 src/blocking.rs       the shared current-thread tokio runtime, capped at the daemon's
                       blocking-thread budget
 ```
@@ -412,8 +433,9 @@ The pure cores carry the policy logic:
 
 - `checks`: background setup's table tests cover each row of [Checks](#checks) from a
   `Facts` value, including the version parse (`1.94.0-t…`, `1.104.2-tc…`), resolved
-  directories and messages. The reduced foreground check path is covered by S12 on
-  pop-os.
+  directories and messages. A foreground table test asserts that its check set omits
+  service-only rows and includes the runtime-directory row; the runtime-dir refusal is
+  also exercised by the evaluator. Remaining foreground host checks are covered by S12.
 - `install`: absent, identical, differing, loaded, unloaded and disabled combinations
   to their actions; the plist with a `PATH` holding `&`, `<` and spaces is valid XML
   (`plutil -lint` on macOS CI).
@@ -443,7 +465,7 @@ findings are also covered by S12 on the target host.
 | S9 | the Mac | Fresh `tether setup --background`: plist written and bootstrapped, the notification shows, published, phone works. Rerun kickstarts with a new secret, and verification waits for the new process. Port 7851 held, a hand install on another port, a second macOS account and an SSH session with no screen login each refuse before installing. Turned off under Login Items, then setup: `launchctl enable` brings it back, or the message says how. A `PATH` holding `&` installs. Teardown removes the plist and the entry, and a second teardown says "Nothing to remove"; with Tailscale quit, teardown stops before the `bootout`; turned off under Login Items, then teardown, removes the entry. A LocalAPI error during publication keeps verification polling (`browserPending`) until the daemon publishes |
 | S10 | iPhone | The QR scans from a dark and a light terminal theme, in Termius and in tether's own terminal (xterm.js line height can open gaps between half blocks) |
 | S11 | a Linux container | `tether setup --background` on a distribution without systemd, a logged-out tailscaled, Tailscale 1.92, and a test tailnet with HTTPS certificates off: each gets its message and changes nothing |
-| S12 | pop-os | Plain `tether setup` in a terminal publishes and the phone enrols; Ctrl-C exits 0 and the phone shows 502, then reconnects on a rerun. With the service running, foreground setup refuses. `cargo run -- setup` works |
+| S12 | pop-os | Plain `tether setup` in a terminal publishes and the phone enrols; Ctrl-C exits 0 and the phone shows 502, then reconnects on a rerun. With the service running, foreground setup refuses before a grant. While a terminal run holds the flock, `tether setup --background` refuses before grants or install with its Ctrl-C instruction; teardown prints its terminal-run note. A nonmatching `XDG_RUNTIME_DIR` is refused before a grant. `cargo run -- setup` works |
 | S13 | the Mac | Plain `tether setup` refuses with the `--background` message and changes nothing |
 
 S11 needs a Tailscale auth key for a test tailnet, which is Jimmy's to give. Without

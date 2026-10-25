@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::auth::identity::ServeTargetMatcher;
+use crate::runtime;
 
 use super::checks::PlatformFacts;
 use super::install::{self, FileState, LaunchAgentAction, ServiceState};
@@ -36,6 +37,7 @@ pub(super) struct Host {
 pub(super) struct TeardownHost {
     pub service_file: PathBuf,
     pub loaded: bool,
+    terminal_running: bool,
     domain: String,
     port: u16,
 }
@@ -104,9 +106,14 @@ pub(super) fn inspect_teardown() -> Result<TeardownHost, SetupError> {
     let loaded = launchctl(&["print", &format!("{domain}/{LABEL}")]).is_ok();
     let service_file = home.join("Library/LaunchAgents/com.jimmyyao.tether.plist");
     let port = read_port(&service_file).ok().flatten().unwrap_or(7851);
+    let runtime_root = super::command_text("getconf", &["DARWIN_USER_TEMP_DIR"])?;
+    let runtime_dir = PathBuf::from(runtime_root).join("tether");
+    let terminal_running = !loaded
+        && runtime::lock_held(&runtime_dir).map_err(|error| SetupError::new(error.to_string()))?;
     Ok(TeardownHost {
         service_file,
         loaded,
+        terminal_running,
         domain,
         port,
     })
@@ -226,7 +233,18 @@ pub(super) fn remove_teardown(host: &TeardownHost) -> Result<(), SetupError> {
 }
 
 pub(super) fn teardown_notes(_host: &TeardownHost) -> Vec<String> {
-    Vec::new()
+    if _host.terminal_running {
+        vec!["A tether still runs in a terminal; Ctrl-C it.".to_owned()]
+    } else {
+        Vec::new()
+    }
+}
+
+pub(super) fn terminal_run_holds_lock(host: &Host) -> Result<bool, SetupError> {
+    if host.service_state.loaded {
+        return Ok(false);
+    }
+    runtime::lock_held(&host.runtime_dir).map_err(|error| SetupError::new(error.to_string()))
 }
 
 pub(super) fn grant_setup(

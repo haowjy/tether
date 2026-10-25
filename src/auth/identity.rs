@@ -776,7 +776,7 @@ impl OriginRefusalReason {
 
 /// Resolves the browser origin for a configured Serve target, including no-target
 /// daemons so callers share one refusal rule.
-pub(super) fn origin(
+pub(crate) fn origin(
     target: Option<&ServeTarget>,
     serve: &ServeConfig,
 ) -> Result<CanonicalOrigin, OriginRefusal> {

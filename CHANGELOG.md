@@ -13,6 +13,9 @@ version section on release.
   the handler only.
 - Background setup reruns leave unchanged Serve config alone, need no terminal after
   Linux grants exist, and recover disabled Mac LaunchAgents.
+- Setup refuses conflicting terminal runs before grants or installation, foreground
+  setup checks its runtime directory and opens the daemon before granting the Tailscale
+  operator, and teardown reports an active terminal run and only mentions enabled linger.
 - tether can host on a Mac with the Tailscale app (`tether serve --publish`, from a LaunchAgent).
   When it can't publish, it names the conflict (Funnel, a TCP forward, or another app's handler).
 - Serve refusals on Linux name the actual conflict too.

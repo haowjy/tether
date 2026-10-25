@@ -17,15 +17,16 @@ The automated checks of the Mac front passed (`evidence/mac-gates/README.md`). T
 only reaches it while you're logged in to the Mac. To stop it, see `docs/running.md`, "Host on a Mac".
 
 **Or pop-os.** First, on the Mac, run `ssh pop-os` once and accept the host key; after that
-I can do the build and setup. To do it all yourself, on pop-os:
+an agent can build and set it up over SSH. That path must use the background service so
+tether outlives the SSH session:
 
 ```bash
 cd ~/gitrepos/tether && git pull && pnpm --dir web install && cargo install --path .
-tether setup                 # keeps tether in this terminal until Ctrl-C
+tether setup --background
 ```
 
-Use `tether setup --background` instead if pop-os should keep tether running after
-this terminal closes; it installs the systemd service.
+The foreground is for Jimmy in his own pop-os terminal: `tether setup` stays attached
+there until Ctrl-C.
 
 `tmux -V` on pop-os decides which tmux the fix in 8db5622 protects. Tell me the version.
 

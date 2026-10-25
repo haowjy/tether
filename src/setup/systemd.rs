@@ -4,8 +4,10 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::time::Duration;
 
 use crate::auth::identity::ServeTargetMatcher;
+use crate::runtime;
 
 use super::checks::PlatformFacts;
 use super::install::{self, FileState, ServiceState, SystemdAction};
@@ -38,6 +40,8 @@ pub(super) struct TeardownHost {
     pub loaded: bool,
     pub runtime_dir: PathBuf,
     uid: u32,
+    linger: bool,
+    terminal_running: bool,
 }
 
 const DEFAULT_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -154,11 +158,26 @@ pub(super) fn service_active() -> bool {
     manager_command_for_uid(uid, "is-active", &["tether"]).is_ok()
 }
 
-pub(super) fn teardown_notes(_host: &TeardownHost) -> Vec<String> {
-    vec![
-        "Linger remains enabled; undo it with `sudo loginctl disable-linger $USER` (this also stops other user units while logged out).".to_owned(),
-        "Tailscale's operator grant remains; undo it with `sudo tailscale set --operator=`.".to_owned(),
-    ]
+pub(super) fn terminal_run_holds_lock(host: &Host) -> Result<bool, SetupError> {
+    if host.service_state.loaded {
+        return Ok(false);
+    }
+    runtime::lock_held(&host.runtime_dir).map_err(|error| SetupError::new(error.to_string()))
+}
+
+pub(super) fn teardown_notes(host: &TeardownHost) -> Vec<String> {
+    let mut notes = Vec::new();
+    if host.terminal_running {
+        notes.push("A tether still runs in a terminal; Ctrl-C it.".to_owned());
+    }
+    if host.linger {
+        notes.push("Linger remains enabled; undo it with `sudo loginctl disable-linger $USER` (this also stops other user units while logged out).".to_owned());
+    }
+    notes.push(
+        "Tailscale's operator grant remains; undo it with `sudo tailscale set --operator=`."
+            .to_owned(),
+    );
+    notes
 }
 
 pub(super) fn inspect_teardown() -> Result<TeardownHost, SetupError> {
@@ -167,11 +186,20 @@ pub(super) fn inspect_teardown() -> Result<TeardownHost, SetupError> {
     let service_file = home.join(".config/systemd/user/tether.service");
     let manager_dir = PathBuf::from(format!("/run/user/{uid}"));
     let loaded = manager_command_for_uid(uid, "is-active", &["tether"]).is_ok();
+    let user = username()?;
+    let linger = command_text("loginctl", &["show-user", &user, "-p", "Linger"])
+        .ok()
+        .is_some_and(|value| value.trim() == "Linger=yes");
+    let runtime_dir = manager_dir.join("tether");
+    let terminal_running = !loaded
+        && runtime::lock_held(&runtime_dir).map_err(|error| SetupError::new(error.to_string()))?;
     Ok(TeardownHost {
         service_file,
         loaded,
         uid,
-        runtime_dir: manager_dir.join("tether"),
+        runtime_dir,
+        linger,
+        terminal_running,
     })
 }
 
@@ -258,7 +286,7 @@ pub(super) fn after_install(host: &Host, notes: &mut Vec<String>) {
 
 pub(super) fn after_publish(host: &Host, changed: bool) -> Result<(), SetupError> {
     if changed {
-        restart(host)?;
+        run_manager(host.uid, "restart", &["tether"]).map_err(|error| with_journal(error, host))?;
     }
     Ok(())
 }
@@ -299,11 +327,10 @@ pub(super) fn apply(host: &Host) -> Result<Vec<String>, SetupError> {
                     backup.display()
                 ));
             }
-            SystemdAction::DaemonReload => run_manager(host, "daemon-reload", &[])?,
-            SystemdAction::Enable => run_manager(host, "enable", &["tether"])?,
-            SystemdAction::Restart => {
-                run_manager(host, "restart", &["tether"]).map_err(with_journal)?
-            }
+            SystemdAction::DaemonReload => run_manager(host.uid, "daemon-reload", &[])?,
+            SystemdAction::Enable => run_manager(host.uid, "enable", &["tether"])?,
+            SystemdAction::Restart => run_manager(host.uid, "restart", &["tether"])
+                .map_err(|error| with_journal(error, host))?,
         }
     }
     Ok(changes)
@@ -402,7 +429,7 @@ fn parse_environment(text: &str) -> HashMap<String, OsString> {
         .collect()
 }
 
-fn with_journal(error: SetupError) -> SetupError {
-    let logs = logs();
+fn with_journal(error: SetupError, host: &Host) -> SetupError {
+    let logs = logs(host);
     SetupError::new(format!("{error}\nLast 20 tether journal lines:\n{logs}"))
 }

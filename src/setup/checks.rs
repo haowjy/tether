@@ -1,7 +1,7 @@
 //! Pure setup checks: gathered machine facts in, complete user-facing findings out.
 
 use std::ffi::OsString;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -431,42 +431,63 @@ fn validated_tailnet(tailscale: &TailnetFacts, platform: PlatformKind) -> Option
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(crate) struct ForegroundFacts<'a> {
     pub is_root: bool,
     pub username: &'a str,
     pub program: &'a Path,
     pub tmux_on_setup_path: Option<&'a Path>,
+    pub runtime_dir: Option<&'a Path>,
+    pub uid: u32,
     pub tailscale: &'a TailnetFacts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 enum ForegroundCheck {
     NotRoot,
+    RuntimeDirectory,
     TmuxProgram,
     Tailnet,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 const FOREGROUND_CHECKS: &[ForegroundCheck] = &[
     ForegroundCheck::NotRoot,
+    ForegroundCheck::RuntimeDirectory,
     ForegroundCheck::TmuxProgram,
     ForegroundCheck::Tailnet,
 ];
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn evaluate_foreground(
     facts: &ForegroundFacts<'_>,
     warnings: &mut Vec<Finding>,
 ) -> Result<Tailnet, Vec<Finding>> {
     let mut findings = Vec::new();
+    let expected_runtime_dir = PathBuf::from(format!("/run/user/{}/tether", facts.uid));
     for check in FOREGROUND_CHECKS {
         match check {
             ForegroundCheck::NotRoot if facts.is_root => error(
                 &mut findings,
                 "Run tether setup as the user whose tmux tether serves, not as root.",
             ),
+            ForegroundCheck::RuntimeDirectory
+                if facts.runtime_dir.map(Path::as_os_str)
+                    != Some(expected_runtime_dir.as_os_str()) =>
+            {
+                let expected = format!("/run/user/{}", facts.uid);
+                let actual = facts.runtime_dir.map_or_else(
+                    || "unset or invalid".to_owned(),
+                    |path| path.display().to_string(),
+                );
+                error(
+                    &mut findings,
+                    format!(
+                        "Plain tether setup requires XDG_RUNTIME_DIR={expected} (so config::runtime_dir() is {expected}/tether); got {actual}."
+                    ),
+                );
+            }
             ForegroundCheck::TmuxProgram if facts.tmux_on_setup_path.is_none() => error(
                 &mut findings,
                 format!(
@@ -678,6 +699,57 @@ fn warning(findings: &mut Vec<Finding>, message: impl Into<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", test))]
+    #[test]
+    fn foreground_check_table_is_limited_and_checks_runtime_path_exactly() {
+        let foreground_rows = [
+            ForegroundCheck::NotRoot,
+            ForegroundCheck::RuntimeDirectory,
+            ForegroundCheck::TmuxProgram,
+            ForegroundCheck::Tailnet,
+        ];
+        assert_eq!(FOREGROUND_CHECKS, foreground_rows);
+
+        let expected = PathBuf::from("/run/user/1000/tether");
+        let alternate = PathBuf::from("/tmp/tether");
+        let noncanonical = PathBuf::from("/run/user/1000/./tether");
+        let tailscale = TailnetFacts::Status {
+            version: "1.104.2-tc123".to_owned(),
+            backend_state: "Running".to_owned(),
+            dns_name: Some("host.tailnet.ts.net".to_owned()),
+            cert_domains: vec!["host.tailnet.ts.net".to_owned()],
+            operator_user: Some(Ok("jimmy".to_owned())),
+        };
+        let program = PathBuf::from("tmux");
+        for (runtime_dir, should_pass) in [
+            (Some(expected.as_path()), true),
+            (Some(alternate.as_path()), false),
+            (Some(noncanonical.as_path()), false),
+            (None, false),
+        ] {
+            let facts = ForegroundFacts {
+                is_root: false,
+                username: "jimmy",
+                program: &program,
+                tmux_on_setup_path: Some(Path::new("/usr/bin/tmux")),
+                runtime_dir,
+                uid: 1000,
+                tailscale: &tailscale,
+            };
+            let mut warnings = Vec::new();
+            let result = evaluate_foreground(&facts, &mut warnings);
+            assert_eq!(result.is_ok(), should_pass, "runtime dir: {runtime_dir:?}");
+            if !should_pass {
+                let messages = result.unwrap_err();
+                assert!(
+                    messages
+                        .iter()
+                        .any(|finding| { finding.message.contains("XDG_RUNTIME_DIR") })
+                );
+            }
+        }
+    }
 
     fn valid_facts(platform: PlatformFacts) -> Facts {
         Facts {

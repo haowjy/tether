@@ -36,6 +36,34 @@ pub struct Runtime {
     pub paste_dir: PathBuf,
 }
 
+/// Whether another daemon currently holds this runtime directory's instance lock.
+/// This probe never creates the directory or lock file.
+pub(crate) fn lock_held(dir: &Path) -> Result<bool, RuntimeError> {
+    let lock_path = dir.join("lock");
+    let lock = match rustix::fs::open(
+        &lock_path,
+        OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+        Mode::empty(),
+    ) {
+        Ok(file) => File::from(file),
+        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(source) => return Err(io_at(&lock_path, source)),
+    };
+    match rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => Ok(false),
+        Err(rustix::io::Errno::AGAIN) => Ok(true),
+        Err(source) => Err(io_at(&lock_path, source)),
+    }
+}
+
+pub(crate) struct RuntimeParts {
+    pub(crate) _lock: File,
+    pub(crate) serve: ServeFront,
+    pub(crate) local: UnixListener,
+    pub(crate) local_path: PathBuf,
+    pub(crate) paste_dir: PathBuf,
+}
+
 #[cfg(not(target_os = "macos"))]
 pub struct ServeFront {
     pub listener: UnixListener,
@@ -99,6 +127,16 @@ impl Runtime {
             local_path,
             paste_dir,
         })
+    }
+
+    pub(crate) fn into_parts(self) -> RuntimeParts {
+        RuntimeParts {
+            _lock: self._lock,
+            serve: self.serve,
+            local: self.local,
+            local_path: self.local_path,
+            paste_dir: self.paste_dir,
+        }
     }
 }
 

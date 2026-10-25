@@ -42,7 +42,9 @@ All supported setup paths check that you are not root. Linux paths also check th
 Tailscale is reachable, logged in, recent enough (1.94 or later), and has MagicDNS and
 HTTPS certificates on. Mac background setup checks the standalone app (1.104 or later),
 MagicDNS and HTTPS certificates. Foreground setup also checks that the configured tmux
-program is executable on setup's own `PATH`. It can use `--config`; `TMUX_TMPDIR` is inherited
+program is executable on setup's own `PATH` and that `config::runtime_dir()` is exactly
+`/run/user/<uid>/tether` (so the Serve handler matches the path teardown recognizes). It
+can use `--config`; `TMUX_TMPDIR` is inherited
 by the daemon. It does not check the binary path, service environment, systemd, the
 user manager, systemd version, or cgroup controllers. Background setup requires the
 default config path, the installed `~/.cargo/bin/tether`, and tmux on the service's
@@ -87,7 +89,9 @@ doesn't restart tether; rerun `tether setup --background` to pick up the new bin
 shipped unit and any `config.toml` change. For a foreground run, stop the old process
 with Ctrl-C and rerun `tether setup`. If the background service is active, plain setup
 refuses because the runtime lock is held; `--background` restarts it and prints a new
-code. The phone reconnects by itself.
+code. If a terminal run holds the lock, background setup refuses before grants or
+installation. Ctrl-C that run, then rerun `tether setup --background`. The phone
+reconnects by itself.
 
 If Serve already has something tether won't share, such as another app at `/` of the
 MagicDNS name, Funnel, or a TCP forward on port 443, setup writes nothing to Serve and
@@ -99,8 +103,9 @@ stopped. Rerun setup once the conflict is gone.
 removes its Serve handler and nothing else from Serve, and removes the unit or plist.
 With no unit installed, teardown just withdraws the Serve entry. It keeps your enrolled
 devices, `host_id`, `config.toml` and any drop-ins, so a later setup brings the phone's
-host back as it was. It also leaves linger and the operator grant, and
-prints the commands that undo them.
+host back as it was. It leaves the operator grant and prints how to undo it. It prints
+the linger instruction only when `loginctl` reports `Linger=yes`. If a terminal run is
+still active, teardown also says: "A tether still runs in a terminal; Ctrl-C it."
 
 **Logs:** `journalctl --user -u tether -f` for the Linux service,
 `~/Library/Logs/tether.log` for the Mac LaunchAgent. Foreground daemon logs follow the
