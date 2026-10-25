@@ -59,6 +59,10 @@ enum Command {
         #[arg(long, default_value = "10m", value_parser = humantime::parse_duration)]
         ttl: Duration,
     },
+    /// Install tether as a background service and publish it on your tailnet.
+    Setup,
+    /// Stop tether and remove its service and Serve handler.
+    Teardown,
     /// List, add or remove enrolled devices.
     #[command(subcommand)]
     Device(DeviceCommand),
@@ -76,17 +80,23 @@ enum DeviceCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let result = ConfigFile::resolve(cli.config.as_deref())
-        .and_then(|file| Ok((file.load()?, file)))
-        .map_err(Into::into)
-        .and_then(|(config, file)| match cli.command {
-            Command::Serve {
-                allow_login,
-                publish,
-            } => serve(config, file, allow_login, publish),
-            Command::Enroll { ttl } => enroll(&config, ttl),
-            Command::Device(command) => device(command),
-        });
+    let config_path = cli.config;
+    let result = match cli.command {
+        Command::Setup => tether::setup::setup(config_path),
+        Command::Teardown => tether::setup::teardown(),
+        command => ConfigFile::resolve(config_path.as_deref())
+            .and_then(|file| Ok((file.load()?, file)))
+            .map_err(Into::into)
+            .and_then(|(config, file)| match command {
+                Command::Serve {
+                    allow_login,
+                    publish,
+                } => serve(config, file, allow_login, publish),
+                Command::Enroll { ttl } => enroll(&config, ttl),
+                Command::Device(command) => device(command),
+                Command::Setup | Command::Teardown => unreachable!("handled above"),
+            }),
+    };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(cause) => {

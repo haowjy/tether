@@ -5,6 +5,11 @@ version section on release.
 
 ## [Unreleased]
 
+- `tether setup` installs and publishes a per-user systemd service or Mac LaunchAgent,
+  then prints a QR link and enrolment code; `tether teardown` removes the service and
+  only tether's Serve handler while preserving enrolled devices and configuration.
+- Setup reruns leave unchanged Serve config alone, need no terminal after Linux grants
+  exist, and recover disabled Mac LaunchAgents.
 - tether can host on a Mac with the Tailscale app (`tether serve --publish`, from a LaunchAgent).
   When it can't publish, it names the conflict (Funnel, a TCP forward, or another app's handler).
 - Serve refusals on Linux name the actual conflict too.

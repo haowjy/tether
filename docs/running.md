@@ -48,6 +48,10 @@ and runs it, so `sudo` or polkit may ask for your password:
   tailscale`: once Serve has a Unix target, tailscaled lets only root, or an operator
   who may run `sudo tailscale`, change Serve at all, for any app.
 
+Each grant is skipped once it is in place. A setup rerun then needs no terminal; if
+a grant is still missing and stdin is not a terminal, setup prints only the commands
+needed and asks you to rerun `tether setup` in a terminal or run those commands first.
+
 Setup installs `~/.config/systemd/user/tether.service` (Linux) or
 `~/Library/LaunchAgents/com.jimmyyao.tether.plist` (Mac) from `contrib/`, restarts
 tether, publishes it, and waits for the new daemon to report the published link
@@ -420,7 +424,7 @@ points at a free port that any process could take.
 |---|---|
 | `GET /auth/info` has no `browserOrigin`, or browser says to publish tether | Serve is missing, has another handler/publication, or Funnel is on; fix what `browserRefused` names, leave Funnel off, and rerun `tether setup` |
 | `tether setup` says Tailscale refused the write (`403`) | your account isn't Tailscale's operator; run `sudo tailscale set --operator=$USER` and rerun |
-| `tether setup` says your account may not run `sudo tailscale` (`401`) | on Tailscale 1.100+, an operator may change a Serve config that serves any Unix socket or path only if they may run `sudo tailscale`; allow it in sudoers, or publish once as root with the command setup prints |
+| `tether setup` says your account may not run `sudo tailscale` (`401`) | on Tailscale 1.100+, an operator may change a Serve config that serves any Unix socket or path only if they may run `sudo tailscale`; allow this account to run `sudo tailscale`, then rerun setup |
 | `403 forbidden` | missing/invalid Tailscale login or Funnel marker; confirm the request goes through Serve and the login is allowed |
 | `403 bad_origin` | browser Origin/forwarded host/fetch metadata did not match the canonical Serve origin, or a Serve handler was added beside tether |
 | `403 node_refused` | the node is tagged, shared, a subnet router, the box itself, or has a login mismatch; use another node |

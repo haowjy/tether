@@ -13,4 +13,5 @@ pub mod hub;
 pub mod launchd;
 pub mod proto;
 pub mod runtime;
+pub mod setup;
 pub mod tmux;

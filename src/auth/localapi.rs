@@ -82,6 +82,12 @@ pub struct UserProfile {
 /// Parsed LocalAPI `/status` answer fields used to assemble the auth identity view.
 #[derive(Debug, Deserialize)]
 pub(crate) struct Status {
+    #[serde(rename = "Version", default)]
+    pub(crate) version: String,
+    #[serde(rename = "BackendState", default)]
+    pub(crate) backend_state: String,
+    #[serde(rename = "CertDomains", default)]
+    pub(crate) cert_domains: Vec<String>,
     #[serde(rename = "Self")]
     pub(crate) this: Option<StatusNode>,
     #[serde(rename = "User", default)]
@@ -104,6 +110,12 @@ pub(crate) struct StatusNode {
 pub(crate) struct StatusUser {
     #[serde(rename = "LoginName", default)]
     pub(crate) login_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Prefs {
+    #[serde(rename = "OperatorUser", default)]
+    pub(crate) operator_user: String,
 }
 
 pub struct LocalApiResponse {
@@ -191,6 +203,10 @@ impl LocalApi {
     /// Parsed status answer; identity owns its interpretation and assembly.
     pub(crate) async fn status(&self) -> Result<Status, LocalApiError> {
         self.cell.get_json("/localapi/v0/status?peers=false").await
+    }
+
+    pub(crate) async fn prefs(&self) -> Result<Prefs, LocalApiError> {
+        self.cell.get_json("/localapi/v0/prefs").await
     }
 
     /// Reads the raw JSON view; identity owns the null/default interpretation.

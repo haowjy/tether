@@ -2568,8 +2568,11 @@ the p61 review. The product calls behind it are Jimmy's
   paths.
 - **Costs:** an enrolled node is trusted whole, including every browser, app and OS
   account on it. On Tailscale 1.100 and later, changing Serve after publishing a Unix
-  target needs root; root publishes each Unix user's tether. The operator remains
-  trusted and can replace the publication.
+  target requires the operator to be allowed to run `sudo tailscale`. The operator
+  remains trusted and can replace the publication.
+- **Changed:** by "Linux setup publishes as the operator" (2026-10-25): setup writes
+  Serve through LocalAPI with Jimmy's operator grant; the earlier root-publishes-each-
+  Unix-user cost is superseded.
 - **Rejected:**
   - A replayable browser cookie: any HTTPS service on the same hostname could replay it.
   - A token in browser storage: injected script could read it, and media requests cannot
@@ -3839,10 +3842,77 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
     publish write, and a deadline, for no account that needs it.
   - `tether unpublish [--port]` as the stop's second step: duplicates `tailscale serve
     --https=443 off` for an entry that is tether's alone.
-- **Changed:** by "Teardown removes tether's Serve handlers" (2026-10-24): the daemon
+- **Changed:** by "Teardown removes tether's Serve handlers" (2026-10-25): the daemon
   still never removes its entry, and `tether teardown` does the whole stop.
 
 ## tether setup
+
+### Linux setup publishes as the operator
+
+- **Decided:** 2026-10-25, lead (setup review findings).
+- **What:** Linux `tether setup` writes Serve through LocalAPI as Jimmy, the Tailscale
+  operator, after the first-run grant.
+- **Why:** reruns and teardown need no root command when the account has the operator
+  grant, and LocalAPI's compare-and-swap preserves concurrent changes from other apps.
+- **Rejected:** running `sudo tailscale serve` by hand each time.
+
+### The Linux daemon never writes Serve
+
+- **Decided:** 2026-10-25, lead (setup review findings).
+- **What:** on Linux only setup publishes Serve; the daemon never writes it.
+- **Why:** the daemon may start at boot before setup has granted the operator, and
+  setup and the daemon would otherwise race as two publication owners.
+- **Rejected:** having the Linux daemon publish like the Mac daemon.
+
+### Every setup run restarts tether
+
+- **Decided:** 2026-10-25, lead (setup review findings).
+- **What:** every successful setup run restarts tether, even when its installed file
+  is identical.
+- **Why:** rerunning setup is how Jimmy applies a config change, upgrade or fix.
+- **Rejected:** restarting only when the service file changes.
+
+### Automatic setup uses only `~/.cargo/bin/tether`
+
+- **Decided:** 2026-10-25, lead (setup review findings).
+- **What:** setup installs a service that runs only `~/.cargo/bin/tether`.
+- **Why:** both embedded service definitions use that fixed path and setup can verify
+  the invoked binary against it.
+- **Rejected:** templating Linux `ExecStart`; deferred under "Not in setup".
+
+### systemd is the only automatic Linux service manager
+
+- **Decided:** 2026-10-25, lead (setup review findings).
+- **What:** automatic Linux setup supports systemd only.
+- **Why:** no target host uses another service manager.
+- **Rejected:** adding OpenRC and runit support.
+
+### Mac setup refuses a second login account
+
+- **Decided:** 2026-10-25, lead (setup review findings).
+- **What:** setup refuses to install on a Mac with another login account.
+- **Why:** the loopback front's local-process defences assume Jimmy is the Mac's only
+  user account.
+- **Rejected:** warning and proceeding with the second account present.
+
+### `/auth/info` reports `browserPending`
+
+- **Decided:** 2026-10-25, lead (setup review findings).
+- **What:** `/auth/info` has an explicit `browserPending` field while Mac publication
+  waits or retries; it is false on Linux.
+- **Why:** setup must distinguish a retrying publication from a final refusal while
+  `browserRefused` retains the latest error.
+- **Rejected:** inferring pending state from the error text.
+
+### Teardown removes tether's Serve handlers
+
+- **Decided:** 2026-10-25, lead (setup review findings).
+- **What:** `tether teardown` stops the service, withdraws only matcher-recognized
+  tether handlers, and removes the service file. The daemon still never unpublishes
+  on exit.
+- **Why:** teardown reverses setup while preserving other Serve entries and handlers.
+- **Rejected:** removing the publication on every daemon shutdown, or asking Jimmy to
+  clear the whole HTTPS entry by hand.
 
 ### Setup's prompts, clipboard and QR
 

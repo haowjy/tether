@@ -23,6 +23,7 @@ http-body-util = "0.1"
 humantime = "2"
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
+qrcode = { version = "0.14", default-features = false }
 rustix = { version = "1", features = ["fs", "net", "process"] }
 sd-notify = "0.5"
 serde = { version = "1", features = ["derive"] }

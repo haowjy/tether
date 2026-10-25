@@ -54,7 +54,7 @@ anything. Warnings print and setup carries on.
 | MagicDNS and HTTPS certificates | `Self.DNSName`, its trailing dot stripped, is set and in `CertDomains` | No DNS name: "MagicDNS is off for your tailnet; turn it on at https://login.tailscale.com/admin/dns." Not in `CertDomains` while logged in: "HTTPS certificates are off for your tailnet. Turn them on under HTTPS Certificates at https://login.tailscale.com/admin/dns, then rerun tether setup." |
 | Linux: systemd | `/run/systemd/system` exists | "This Linux doesn't run systemd; tether setup supports systemd only. Follow Manual setup in docs/running.md." |
 | Linux: user manager | `/run/user/<uid>/systemd/private` exists. Setup runs every `systemctl --user` with `XDG_RUNTIME_DIR=/run/user/<uid>` when its own environment lacks it, as under `su -` | "No systemd user manager is running for <user>. Log in as <user> directly (SSH or a console, not su or sudo), then rerun." |
-| Linux: systemd version | `systemctl --version` | Warning below 254: "systemd <v> ignores the unit's restart backoff; tether restarts every 2 s instead, which still works." |
+| Linux: systemd version | `systemctl --version`, only when `/run/systemd/system` exists | Warning below 254: "systemd <v> ignores the unit's restart backoff; tether restarts every 2 s instead, which still works." |
 | Linux: cgroup controllers | the user manager's `cgroup.controllers` lists `cpu` and `memory` | Warning, also when the file is missing (cgroup v1 or hybrid): "The user manager hasn't been delegated the <controller> controller, so the unit's CPUQuota and MemoryMax aren't enforced." |
 | Linux: operator | `/localapi/v0/prefs` `OperatorUser`, which needs only read access | Empty or Jimmy: passes (empty becomes a grant, below). Another user: "Tailscale's operator is <other>. tether setup won't replace it; run `sudo tailscale set --operator=$USER` if you mean to, then rerun." |
 | Mac: one account | `dscl . -list /Users UniqueID`, accounts with UID 501 or above | "This Mac has another login account (<name>). tether's Mac defences assume yours is the only one, so setup won't install it here." |
@@ -62,18 +62,32 @@ anything. Warnings print and setup carries on.
 | Mac: a hand install | the installed plist, if any, names port 7851 | "tether was installed by hand on port <n>. Keep that install (Manual setup), or run `tether teardown` and then tether setup, which uses 7851." |
 | Mac: the front's port | when no loaded job of tether's holds it, bind `127.0.0.1:7851` and close it | "Another process holds 127.0.0.1:7851 (`lsof -nP -iTCP:7851`). Stop it, or install by hand with another port (Manual setup in docs/running.md)." |
 
+An unreadable installed plist socket port is a setup check error, so it joins any
+other failures before setup changes anything. Other Tailscale diagnostics include
+"Tailscale isn't ready (backend state: <state>).", "Tailscale returned an
+unrecognized version: <version>.", Linux's "Can't reach Tailscale LocalAPI: <cause>.",
+and "Can't read Tailscale's Serve operator: <cause>." when prefs fail.
+
+If the shell leaves an XDG directory variable unset while the user manager has a
+different value, the check says "Your shell leaves <VAR> unset" and shows both
+resolved paths. On Linux it offers `systemctl --user unset-environment <VAR>`; the
+same comparison uses each process's home directory when the XDG variable is unset.
+
 A missing tmux server isn't a failure: tether attaches when one starts. After
 verification setup adds "No tmux server yet on <socket>; start tmux as you usually
-do." Serve conflicts, such as another app at `/` of the MagicDNS name, Funnel, or a
-TCP forward on 443, aren't checks either: the canonical-origin rule judges them at
-publication ([Publication](#publication)).
+do." as a note, not a change. Serve conflicts, such as another app at `/` of the
+MagicDNS name, Funnel, or a TCP forward on 443, aren't checks either: the
+canonical-origin rule judges them at publication ([Publication](#publication)).
 
 ## One-time grants (Linux)
 
 After the checks pass, setup makes the two system changes Linux needs. Each is
 skipped when it's already in place. Setup prints each command before running it, and
 runs it attached to the terminal, so `sudo` or polkit asks for the password there.
-Without a terminal on stdin, setup prints the commands and exits 1.
+Without a terminal on stdin, setup prints only the grant commands still needed (not
+as commands it is running) and exits 1 with "Linux grants need a terminal. Rerun
+`tether setup` in a terminal, or run the printed commands first." If no grant is
+needed, a rerun works without a terminal.
 
 1. **Linger**, so the service starts at boot and outlives logout. If `loginctl
    show-user $USER -p Linger` says `no`, setup runs `loginctl enable-linger`. polkit
@@ -81,9 +95,8 @@ Without a terminal on stdin, setup prints the commands and exits 1.
    through `pkttyagent`. Any non-zero exit is retried once as `sudo loginctl
    enable-linger $USER`.
 2. **Operator**, so Jimmy's account can write Tailscale's Serve config through
-   LocalAPI. If `OperatorUser` is empty, setup prints "Tailscale must let your account
-   change its Serve config. Running: sudo tailscale set --operator=<user>", then runs
-   it.
+   LocalAPI. If `OperatorUser` is empty, setup prints
+   `sudo tailscale set --operator=<user>`, then runs it.
 
 These are the only privileged commands tether runs.
 
@@ -97,8 +110,8 @@ The installed file belongs to setup. When it differs from what setup would write
 setup copies the old file to `state_dir()/setup-backup/<file name>.<UTC timestamp>`,
 replaces it, and says so: "Replaced tether.service, which differed from this
 tether's; the old copy is <path>." On Linux, Jimmy's own settings live in drop-ins
-(`systemctl --user edit tether`), which setup never touches and lists when it finds
-them. A Mac has no drop-ins; a hand-edited plist is replaced like any other
+(`systemctl --user edit tether`), which setup never touches and lists as notes when it
+finds them. A Mac has no drop-ins; a hand-edited plist is replaced like any other
 difference.
 
 Before restarting, setup reads the running daemon's `daemonVersion` from `GET
@@ -112,11 +125,15 @@ returns once the new daemon has bound its sockets, or fails; on failure setup pr
 the last 20 lines of `journalctl --user -u tether` and exits 1.
 
 **Mac restart:** if the job is disabled (`launchctl print-disabled gui/<uid>` lists
-it, as after turning it off under Login Items), setup first runs `launchctl enable
-gui/<uid>/com.jimmyyao.tether`. Then: if the job isn't loaded, `launchctl bootstrap
-gui/<uid> <plist>`; if it's loaded and the plist changed, `bootout` and then
-`bootstrap`, since launchd rereads a plist only at bootstrap; if it's loaded and
-unchanged, `launchctl kickstart -k gui/<uid>/com.jimmyyao.tether`. If `bootstrap`
+`"com.jimmyyao.tether" => disabled` or the older `=> true`), setup first runs
+`launchctl enable gui/<uid>/com.jimmyyao.tether`. Then: if the job isn't loaded,
+`launchctl bootstrap gui/<uid> <plist>`; if it's loaded and the plist changed,
+`bootout` and then `bootstrap`, since launchd rereads a plist only at bootstrap.
+Setup polls `launchctl print gui/<uid>/com.jimmyyao.tether` for up to 5 s after
+`bootout` before bootstrapping; if the job still appears loaded, setup stops with an
+error. If it's loaded and unchanged, setup runs `launchctl kickstart -k
+gui/<uid>/com.jimmyyao.tether`. The success report lists "Enabled tether in Login
+Items" as a change when it first runs `enable`. If `bootstrap`
 fails, setup prints launchctl's error and "If tether is off under System Settings →
 General → Login Items, turn it on and rerun." On macOS 13 and later the first
 bootstrap shows a "Background Items Added" notification.
@@ -136,10 +153,13 @@ same plan, judge and compare-and-swap the Mac daemon uses, over `ServeTarget::Un
 2. `plan_publish(config, name, &target)` removes tether's handlers from every Web
    entry, then drops entries left without handlers and `TCP` entries left unused
    whose only field is `HTTPS: true`. It adds `{"Proxy":
-   "unix:/run/user/<uid>/tether/serve.sock"}`, the service's runtime directory, at `/` of `Web["<MagicDNS name>:443"]` (the name's trailing dot
-   stripped), sets that entry's `HTTPS`, and adds `TCP["443"] = {HTTPS: true}` if
-   missing. Every other field and handler is kept. Each handler it removes is printed
-   ("Removed tether's old handler at <entry> <mount>").
+   "unix:/run/user/<uid>/tether/serve.sock"}`, the service's runtime directory, at `/` of
+   `Web["<MagicDNS name>:443"]` (the name's trailing dot stripped), and adds
+   `TCP["443"] = {HTTPS: true}` if that port has no entry. `Web` entries store only
+   handlers; HTTPS is represented by `TCP[port].HTTPS`. Every other field and handler
+   is kept. A handler re-added unchanged at its existing entry and mount is not
+   reported as removed; each other removed handler is printed ("Removed tether's old
+   handler at <entry> <mount>").
 3. The planned config is parsed and judged with `canonical_origin(&target)`. A refused
    plan writes nothing, and setup prints the refusal, which names the conflict and its
    fix: Funnel, a TCP forward on 443, another handler in the entry. A plan equal to the
@@ -167,7 +187,7 @@ Each failed POST gets its own message, from typed `SetServeConfigError` variants
 | Answer | Cause | Setup prints |
 |---|---|---|
 | `403`, body `serve config denied` | Jimmy isn't the operator | "Tailscale refused the write: your account isn't its operator. Run `sudo tailscale set --operator=$USER`, then rerun tether setup." |
-| `401` | On Tailscale 1.100 and later, a non-root operator may write a config that serves any Unix socket or path only if tailscaled, as root, can run `sudo --other-user=<user> --list tailscale`. The check covers the whole config, other apps' handlers included | "Tailscale <v> lets an operator write a Serve config that serves a Unix socket or a path only if the operator may run `sudo tailscale`, and your account may not. Allow it in sudoers, or publish as root once: `sudo tailscale serve --bg --https=443 unix:<path>`." |
+| `401` | On Tailscale 1.100 and later, a non-root operator may write a config that serves any Unix socket or path only if tailscaled, as root, can run `sudo --other-user=<user> --list tailscale`. The check covers the whole config, other apps' handlers included | "Tailscale <v> requires an operator who may run `sudo tailscale` to change a config that serves a Unix socket or a path. Allow this account to run `sudo tailscale`, then rerun tether setup." |
 | `412` three times | another writer kept changing Serve | "Tailscale's Serve config kept changing while tether wrote it; rerun tether setup." |
 | other | LocalAPI's own error | "Tailscale refused the Serve write: <status and body>." |
 
@@ -191,10 +211,13 @@ Setup looks for `local.sock` in the service's runtime directory, not its own: on
 session may lack `TMPDIR`. It ignores answers from a socket whose inode is the one it
 read before the restart, and keeps polling through connection errors and non-2xx
 answers, for up to 30 s, until the new daemon reports `browserOrigin` (published) or a
-`browserRefused` with `browserPending` false. `browserPending` is a field `/auth/info`
+`browserRefused` with `browserPending` false, and the origin must equal the expected
+`https://<MagicDNS name>`. A different non-empty origin keeps setup polling and is
+included in the final timeout diagnostic. `browserPending` is a field `/auth/info`
 gains for this: true while a Mac publication is still waiting or retrying, when
-`browserRefused` carries its last error; always false on Linux. A final refusal is
-printed and setup exits 1. At the timeout setup prints "tether didn't report a publication within
+`browserRefused` carries its last error; that last error is included in the timeout
+diagnostic. It is always false on Linux. A final refusal is printed and setup exits
+1. At the timeout setup prints "tether didn't report a publication within
 30 s" and the last 20 lines of its log (`journalctl --user -u tether` on Linux,
 `~/Library/Logs/tether.log` on a Mac), plus, on a Mac, the last exit status from
 `launchctl print`.
@@ -224,8 +247,9 @@ Enrolment code: 7KQ4-XM2P, for one device, valid for 10 minutes.
 On a Mac the first line reads "running as your LaunchAgent, started when you log
 in". "(was …)" appears when a daemon answered before the restart. Below that line
 setup lists what it changed ("Enabled linger", "Replaced tether.service…",
-"Removed tether's old handler…"), or "Nothing else to change." The link is on a line
-of its own, for copying. A failed run prints no code.
+"Removed tether's old handler…"), or "Nothing else to change." That line depends
+only on changes; drop-in notices and "No tmux server yet…" appear separately under
+"Notes:". The link is on a line of its own, for copying. A failed run prints no code.
 
 **The QR code** uses the `qrcode` crate (0.14, MIT or Apache-2.0, MSRV 1.67) with
 `default-features = false`. Without its `image` feature it pulls in no other crate
@@ -244,30 +268,36 @@ terminal allows it)." It can't tell whether the copy landed.
 
 `tether teardown` checks only that it isn't run as root. It first reads what is
 installed and running (the unit or plist, whether the service is active or the job
-loaded, and on a Mac the port the plist names, 7851 without one), then does only the
-steps that state needs, so a rerun, or a teardown after turning tether off under
-Login Items, finishes what is left:
+loaded, and on a Mac the port the plist names, 7851 when it is missing or unreadable),
+then does only the steps that state needs, so a rerun, or a teardown after turning
+tether off under Login Items, finishes what is left:
 
 1. **Mac, job loaded: check Tailscale first.** Read the serve config through
    LocalAPI. If it can't, teardown stops before touching the service, so tether keeps
    holding its port while Serve still points at it: "Can't reach Tailscale to remove
    tether's Serve entry; open the Tailscale app and rerun."
 2. **Stop and disable the service**, if it's installed: Linux `systemctl --user
-   disable --now tether`; Mac `launchctl bootout gui/<uid>/com.jimmyyao.tether` when
-   the job is loaded. If a running service fails to stop, teardown stops and prints
-   the error: it doesn't remove a unit or plist under a running daemon.
+disable --now tether`; Mac `launchctl bootout gui/<uid>/com.jimmyyao.tether` when
+the job is loaded. If the Linux unit file is missing but the service is still
+active, teardown runs `systemctl --user stop tether`. If a running service fails to
+stop, teardown stops and prints the error: it doesn't remove a unit or plist under a
+running daemon.
 3. **Withdraw tether's handlers** from every Web entry, with tether's matcher
    ([Publication](#linux-setup-writes-the-entry)) and, on a Mac, that port, through
    `plan_withdraw`, `If-Match` and the three-try re-plan. Entries left without
    handlers and unused `TCP` entries whose only field is `HTTPS: true` are dropped;
-   every other entry, handler and field stays. A `403` gets setup's message. A `401`
-   gets "Tailscale <v> requires an operator who may run `sudo tailscale` to change a
-   config that serves a Unix socket or a path. Remove tether's entry as root: `sudo
-   tailscale serve --https=443 off`."
+   every other entry, handler and field stays. A `403` says to make the account the
+   Tailscale operator and rerun `tether teardown`; a repeated `412` likewise says to
+   rerun teardown. A `401` gets "Tailscale <v> requires an operator who may run
+   `sudo tailscale` to change a config that serves a Unix socket or a path. Remove
+   tether's entry as root: `sudo tailscale serve --https=443 off`, or grant this
+   account access and rerun tether teardown."
 4. **Remove the file**: the unit, then `daemon-reload`; or the plist.
 
 If the withdrawal fails on Linux, teardown still removes the unit: Serve then points
-at a socket in a private directory, and answers `502`. On a Mac it keeps the plist,
+at a socket in a private directory, and answers `502`. It reports any service or
+handler removals it knows succeeded, but does not claim "Nothing to remove" when the
+withdrawal failed. On a Mac it keeps the plist,
 so a rerun knows the port, and prints first "Serve still points at 127.0.0.1:<port>,
 which any process can now bind. Remove it now: `tailscale serve --https=443 off`, or
 rerun tether teardown once Tailscale answers", and exits 1. That window, from the
@@ -280,6 +310,7 @@ the phone's existing host back), `config.toml`, the binary, any drop-ins in
 two: `sudo loginctl disable-linger $USER`, which also stops Jimmy's other user units
 running while he is logged out, and `sudo tailscale set --operator=`. With nothing
 installed and no handler of tether's in Serve, teardown reports "Nothing to remove."
+only if the Serve read and withdrawal succeeded.
 
 ## Exit status
 

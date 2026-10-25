@@ -265,9 +265,25 @@ pub enum RuntimeDirError {
 /// An XDG base directory: the variable if it holds an absolute path (the spec ignores
 /// relative ones), else `$HOME/<fallback>`.
 fn xdg(var: &'static str, fallback: &str) -> Result<PathBuf, ConfigError> {
-    match env::var_os(var).map(PathBuf::from) {
+    xdg_from(
+        var,
+        env::var_os(var).as_deref(),
+        env::var_os("HOME").as_deref(),
+        fallback,
+    )
+}
+
+/// Resolves an XDG directory from a process environment snapshot. Setup compares the
+/// invoking shell with the service manager, whose environment is read separately.
+pub(crate) fn xdg_from(
+    var: &'static str,
+    value: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+    fallback: &str,
+) -> Result<PathBuf, ConfigError> {
+    match value.map(PathBuf::from) {
         Some(dir) if dir.is_absolute() => Ok(dir),
-        _ => env::var_os("HOME")
+        _ => home
             .map(|home| PathBuf::from(home).join(fallback))
             .ok_or(ConfigError::NoHome(var)),
     }

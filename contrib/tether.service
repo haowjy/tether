@@ -1,5 +1,4 @@
-# tether, as a systemd user unit (plan.md "Resource budget"). Install and run it as
-# docs/running.md says; it isn't installed for you.
+# tether, as a systemd user unit, installed by `tether setup` (plan.md "Resource budget").
 #
 # tether attaches to your tmux server and never starts it: a tmux server started from
 # this unit would live in its cgroup and die with it.
