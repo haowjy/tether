@@ -11,7 +11,6 @@ use tether::auth::identity;
 use tether::auth::identity::ServeTarget;
 use tether::auth::localapi::LocalApi;
 use tether::auth::{DeviceKind, Store};
-use tether::blocking::BLOCKING_THREADS;
 use tether::config::{self, Config, ConfigError, ConfigFile};
 use tether::daemon;
 
@@ -121,14 +120,6 @@ fn main() -> ExitCode {
     }
 }
 
-fn runtime() -> Result<tokio::runtime::Runtime> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .max_blocking_threads(BLOCKING_THREADS)
-        .build()?;
-    Ok(runtime)
-}
-
 fn enroll(config: &Config, ttl: Duration) -> Result<()> {
     let store = Store::open(config::state_dir()?)?;
     store.host_id()?;
@@ -148,7 +139,7 @@ fn enroll(config: &Config, ttl: Duration) -> Result<()> {
 #[cfg(not(target_os = "macos"))]
 fn enroll_on_linux(config: &Config) -> Result<()> {
     let api = LocalApi::system();
-    let publication = runtime()?.block_on(identity::tailnet_state(&api));
+    let publication = tether::blocking::runtime()?.block_on(identity::tailnet_state(&api));
     match publication {
         Ok(state) => {
             let path = config::runtime_dir()?.join("serve.sock");
@@ -189,7 +180,7 @@ fn enroll_on_linux(config: &Config) -> Result<()> {
 fn enroll_on_mac(config: &Config) -> Result<()> {
     let api = LocalApi::system();
     let socket = config::runtime_dir()?.join("local.sock");
-    let info = runtime()?.block_on(identity::read_auth_info(&socket, &api));
+    let info = tether::blocking::runtime()?.block_on(identity::read_auth_info(&socket, &api));
     match info {
         Ok(info) => {
             let name = config

@@ -5,10 +5,23 @@ use std::io::{self, IsTerminal, Write};
 use base64::Engine as _;
 use qrcode::render::unicode::Dense1x2;
 
+#[derive(Clone, Copy)]
+pub(crate) struct ServiceKind {
+    pub name: &'static str,
+    pub startup: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Mode {
+    #[cfg(target_os = "linux")]
+    Foreground,
+    Service(ServiceKind),
+}
+
 pub(crate) struct Success<'a> {
     pub version: &'a str,
     pub previous_version: Option<&'a str>,
-    pub platform: Option<&'a str>,
+    pub mode: Mode,
     pub changes: &'a [String],
     pub notes: &'a [String],
     pub origin: &'a str,
@@ -19,18 +32,13 @@ pub(crate) fn render_success(
     report: &Success<'_>,
     terminal: bool,
 ) -> Result<String, qrcode::types::QrError> {
-    let mut output = match report.platform {
-        Some(platform) => format!(
+    let mut output = match report.mode {
+        Mode::Service(service) => format!(
             "tether {} is running as your {}, {}",
-            report.version,
-            platform,
-            if platform == "systemd user service" {
-                "started at boot"
-            } else {
-                "started when you log in"
-            }
+            report.version, service.name, service.startup
         ),
-        None => format!(
+        #[cfg(target_os = "linux")]
+        Mode::Foreground => format!(
             "tether {} is running in this terminal; Ctrl-C stops it",
             report.version
         ),
@@ -65,7 +73,7 @@ pub(crate) fn render_success(
         output.push_str(&code.render::<Dense1x2>().build());
         output.push('\n');
     }
-    let cleanup = if report.platform.is_some() {
+    let cleanup = if matches!(report.mode, Mode::Service(_)) {
         "`tether enroll` prints a new code. `tether teardown` removes all of this."
     } else {
         "`tether enroll` prints a new code. The Serve entry stays when you stop tether; `tether teardown` removes it."

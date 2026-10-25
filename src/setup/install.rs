@@ -1,23 +1,15 @@
 //! Pure decisions for installing the embedded service file and applying it.
 
-#![cfg_attr(target_os = "linux", allow(dead_code))]
-
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg(target_os = "linux")]
 pub(crate) const SYSTEMD_UNIT: &str = include_str!("../../contrib/tether.service");
+#[cfg(any(target_os = "macos", test))]
 pub(crate) const LAUNCH_AGENT: &str = include_str!("../../contrib/com.jimmyyao.tether.plist");
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(target_os = "macos", allow(dead_code))]
-pub(crate) enum Platform {
-    Systemd,
-    LaunchAgent,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FileState {
     Missing,
     Identical,
-    Different,
+    Different(Vec<u8>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,53 +18,77 @@ pub(crate) struct ServiceState {
     pub disabled: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Action {
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(any(target_os = "linux", test))]
+pub(crate) enum SystemdAction {
     Install,
-    BackupReplace,
+    BackupReplace(Vec<u8>),
     DaemonReload,
     Enable,
     Restart,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(any(target_os = "macos", test))]
+pub(crate) enum LaunchAgentAction {
+    Install,
+    BackupReplace(Vec<u8>),
     EnableJob,
     Bootout,
     Bootstrap,
     Kickstart,
 }
 
-pub(crate) fn plan(platform: Platform, file: FileState, service: ServiceState) -> Vec<Action> {
-    let changed = file != FileState::Identical;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn plan_systemd(file: &FileState) -> Vec<SystemdAction> {
     let mut actions = Vec::new();
     match file {
-        FileState::Missing => actions.push(Action::Install),
-        FileState::Different => actions.push(Action::BackupReplace),
+        FileState::Missing => actions.push(SystemdAction::Install),
+        FileState::Different(contents) => {
+            actions.push(SystemdAction::BackupReplace(contents.clone()))
+        }
         FileState::Identical => {}
     }
-    match platform {
-        Platform::Systemd => {
-            actions.extend([Action::DaemonReload, Action::Enable, Action::Restart]);
+    actions.extend([
+        SystemdAction::DaemonReload,
+        SystemdAction::Enable,
+        SystemdAction::Restart,
+    ]);
+    actions
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn plan_launch_agent(file: &FileState, service: ServiceState) -> Vec<LaunchAgentAction> {
+    let changed = !matches!(file, FileState::Identical);
+    let mut actions = Vec::new();
+    match file {
+        FileState::Missing => actions.push(LaunchAgentAction::Install),
+        FileState::Different(contents) => {
+            actions.push(LaunchAgentAction::BackupReplace(contents.clone()))
         }
-        Platform::LaunchAgent => {
-            if service.disabled {
-                actions.push(Action::EnableJob);
-            }
-            if !service.loaded {
-                actions.push(Action::Bootstrap);
-            } else if changed {
-                actions.extend([Action::Bootout, Action::Bootstrap]);
-            } else {
-                actions.push(Action::Kickstart);
-            }
-        }
+        FileState::Identical => {}
+    }
+    if service.disabled {
+        actions.push(LaunchAgentAction::EnableJob);
+    }
+    if !service.loaded {
+        actions.push(LaunchAgentAction::Bootstrap);
+    } else if changed {
+        actions.extend([LaunchAgentAction::Bootout, LaunchAgentAction::Bootstrap]);
+    } else {
+        actions.push(LaunchAgentAction::Kickstart);
     }
     actions
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn launch_agent(home: &str, path: &str) -> String {
     LAUNCH_AGENT
         .replace("@HOME@", &xml_escape(home))
         .replace("@PATH@", &xml_escape(path))
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -80,16 +96,12 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
-pub(crate) fn file_state(
-    current: Option<Vec<u8>>,
-    expected: &[u8],
-) -> (FileState, Option<Vec<u8>>) {
-    let state = match current.as_deref() {
+pub(crate) fn file_state(current: Option<Vec<u8>>, expected: &[u8]) -> FileState {
+    match current {
         None => FileState::Missing,
         Some(contents) if contents == expected => FileState::Identical,
-        Some(_) => FileState::Different,
-    };
-    (state, current)
+        Some(contents) => FileState::Different(contents),
+    }
 }
 
 #[cfg(test)]
@@ -98,65 +110,56 @@ mod tests {
 
     #[test]
     fn install_actions_follow_file_and_service_state() {
-        let linux = |file| {
-            plan(
-                Platform::Systemd,
-                file,
-                ServiceState {
-                    loaded: true,
-                    disabled: false,
-                },
-            )
-        };
+        use SystemdAction as Sys;
+        let linux = |file| plan_systemd(&file);
         assert_eq!(
             linux(FileState::Missing),
-            [
-                Action::Install,
-                Action::DaemonReload,
-                Action::Enable,
-                Action::Restart
-            ]
+            [Sys::Install, Sys::DaemonReload, Sys::Enable, Sys::Restart]
         );
         assert_eq!(
             linux(FileState::Identical),
-            [Action::DaemonReload, Action::Enable, Action::Restart]
+            [Sys::DaemonReload, Sys::Enable, Sys::Restart]
         );
         assert_eq!(
-            linux(FileState::Different),
+            linux(FileState::Different(b"old".to_vec())),
             [
-                Action::BackupReplace,
-                Action::DaemonReload,
-                Action::Enable,
-                Action::Restart
+                Sys::BackupReplace(b"old".to_vec()),
+                Sys::DaemonReload,
+                Sys::Enable,
+                Sys::Restart
             ]
         );
 
-        let mac = |file, loaded, disabled| {
-            plan(
-                Platform::LaunchAgent,
-                file,
-                ServiceState { loaded, disabled },
-            )
-        };
+        use LaunchAgentAction as Mac;
+        let mac =
+            |file, loaded, disabled| plan_launch_agent(&file, ServiceState { loaded, disabled });
         assert_eq!(
             mac(FileState::Missing, false, false),
-            [Action::Install, Action::Bootstrap]
+            [Mac::Install, Mac::Bootstrap]
         );
         assert_eq!(
             mac(FileState::Identical, true, true),
-            [Action::EnableJob, Action::Kickstart]
+            [Mac::EnableJob, Mac::Kickstart]
         );
         assert_eq!(
-            mac(FileState::Different, true, false),
-            [Action::BackupReplace, Action::Bootout, Action::Bootstrap]
+            mac(FileState::Different(b"old".to_vec()), true, false),
+            [
+                Mac::BackupReplace(b"old".to_vec()),
+                Mac::Bootout,
+                Mac::Bootstrap
+            ]
         );
         assert_eq!(
             mac(FileState::Identical, false, true),
-            [Action::EnableJob, Action::Bootstrap]
+            [Mac::EnableJob, Mac::Bootstrap]
         );
         assert_eq!(
-            mac(FileState::Different, false, true),
-            [Action::BackupReplace, Action::EnableJob, Action::Bootstrap]
+            mac(FileState::Different(b"old".to_vec()), false, true),
+            [
+                Mac::BackupReplace(b"old".to_vec()),
+                Mac::EnableJob,
+                Mac::Bootstrap
+            ]
         );
     }
 

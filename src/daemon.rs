@@ -12,7 +12,7 @@ use crate::auth::localapi::LocalApi;
 #[cfg(target_os = "macos")]
 use crate::auth::publish;
 use crate::auth::{Auth, Store};
-use crate::blocking::{BLOCKING_THREADS, Lanes};
+use crate::blocking::Lanes;
 use crate::complete::{self, Environment};
 use crate::config::{self, Config, ConfigFile};
 use crate::fs;
@@ -48,7 +48,7 @@ pub fn serve(
         return Err(config::ConfigError::PublishOnLinux.into());
     }
     init_tracing();
-    runtime()?.block_on(daemon(config, file, allow_login, publish, |_| async {
+    crate::blocking::runtime()?.block_on(daemon(config, file, allow_login, publish, |_| async {
         Ok(())
     }))
 }
@@ -273,12 +273,4 @@ fn init_tracing() {
     } else {
         logs.with(layer).init();
     }
-}
-
-fn runtime() -> Result<tokio::runtime::Runtime> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .max_blocking_threads(BLOCKING_THREADS)
-        .build()?;
-    Ok(runtime)
 }

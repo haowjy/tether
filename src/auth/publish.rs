@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::http::StatusCode;
 use serde_json::{Map, Value, json};
 use thiserror::Error;
 use tokio::sync::watch;
@@ -47,8 +48,12 @@ pub enum PlanError {
     Refused(#[from] PublishRefusal),
     #[error(transparent)]
     LocalApi(#[from] LocalApiError),
-    #[error(transparent)]
-    Write(#[from] SetServeConfigError),
+    #[error("tailscaled's LocalAPI: /localapi/v0/serve-config: 403 Forbidden")]
+    Denied,
+    #[error("tailscaled's LocalAPI: /localapi/v0/serve-config: 401 Unauthorized")]
+    NotLocalAdmin,
+    #[error("tailscaled's LocalAPI: /localapi/v0/serve-config: {status}")]
+    Rejected { status: StatusCode, body: String },
     #[error("Tailscale's Serve config kept changing during three write attempts")]
     ConflictsExhausted,
 }
@@ -146,9 +151,6 @@ pub async fn run(
                     return Ok(());
                 }
                 Err(PlanError::LocalApi(error)) => return Err(PlanError::LocalApi(error)),
-                Err(PlanError::Write(SetServeConfigError::LocalApi(error))) => {
-                    return Err(PlanError::LocalApi(error));
-                }
                 Err(error) => return Err(error),
             };
             let refreshed = cell.refresh_after_write().await?;
@@ -252,7 +254,16 @@ async fn apply_plan(
                     return Err(PlanError::ConflictsExhausted);
                 }
             }
-            Err(error) => return Err(error.into()),
+            Err(SetServeConfigError::Denied { .. }) => return Err(PlanError::Denied),
+            Err(SetServeConfigError::NotLocalAdmin { .. }) => {
+                return Err(PlanError::NotLocalAdmin);
+            }
+            Err(SetServeConfigError::Rejected { status, body }) => {
+                return Err(PlanError::Rejected { status, body });
+            }
+            Err(SetServeConfigError::LocalApi(error)) => {
+                return Err(PlanError::LocalApi(error));
+            }
         }
     }
 }
@@ -275,14 +286,6 @@ pub async fn withdraw_unbound(api: &LocalApi) {
 
 /// Plans publication without discarding unknown Serve fields, then judges the result
 /// with the same canonical-origin rule that admits requests.
-pub fn plan_publish(
-    config: Value,
-    name: &str,
-    target: &ServeTarget,
-) -> Result<Value, PublishRefusal> {
-    plan_publish_detailed(config, name, target).map(|plan| plan.config)
-}
-
 fn plan_publish_detailed(
     mut config: Value,
     name: &str,
@@ -386,14 +389,6 @@ fn plan_publish_detailed(
 
 /// Removes tether-shaped handlers wherever they appear and drops only empty entries
 /// and now-unused TCP entries whose only field is `HTTPS: true`.
-pub fn plan_withdraw(
-    config: Value,
-    target: &ServeTargetMatcher,
-) -> Result<Option<Value>, PublishRefusal> {
-    plan_withdraw_detailed(config, target, RemovalScope::AllEntries)
-        .map(|plan| plan.map(|plan| plan.config))
-}
-
 fn plan_withdraw_detailed(
     config: Value,
     target: &ServeTargetMatcher,
@@ -534,7 +529,7 @@ fn host_port(value: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{plan_publish, plan_publish_detailed, plan_withdraw};
+    use super::{RemovalScope, plan_publish_detailed, plan_withdraw_detailed};
     use crate::auth::identity::{ServeTarget, ServeTargetMatcher};
     use crate::auth::mac_front::MacFront;
     use serde_json::json;
@@ -563,7 +558,9 @@ mod tests {
             "TCP": { "443": { "HTTPS": true }, "8443": { "HTTPS": true } },
             "AllowFunnel": { "new.ts.net:443": false }
         });
-        let planned = plan_publish(config, "new.ts.net", &mac_target(7851)).expect("plan");
+        let planned = plan_publish_detailed(config, "new.ts.net", &mac_target(7851))
+            .expect("plan")
+            .config;
         assert_eq!(planned["unknownRoot"]["kept"], true);
         assert!(planned["Web"]["old.ts.net:443"].is_null());
         assert_eq!(
@@ -582,8 +579,9 @@ mod tests {
     #[test]
     fn publish_from_null_is_idempotent_in_tailscaled_stored_shape() {
         let target = mac_target(7851);
-        let planned = plan_publish(serde_json::Value::Null, "new.ts.net", &target)
-            .expect("plan from an unconfigured profile");
+        let planned = plan_publish_detailed(serde_json::Value::Null, "new.ts.net", &target)
+            .expect("plan from an unconfigured profile")
+            .config;
         assert_eq!(
             planned["Web"]["new.ts.net:443"],
             json!({ "Handlers": { "/": { "Proxy": format!("http://127.0.0.1:7851/{SECRET}") } } })
@@ -610,7 +608,9 @@ mod tests {
                 "keep.ts.net:8443": { "Handlers": { "/": { "Proxy": "http://127.0.0.1:7850" } } }
             }
         });
-        let planned = plan_publish(config, "new.ts.net", &target).expect("valid plan");
+        let planned = plan_publish_detailed(config, "new.ts.net", &target)
+            .expect("valid plan")
+            .config;
         assert!(planned["Web"]["old.ts.net:443"].is_null());
         assert!(planned["Web"]["prior.ts.net:443"].is_null());
         assert_eq!(
@@ -633,7 +633,7 @@ mod tests {
             json!({ "Web": { "new.ts.net:443": { "Handlers": { "/": { "Proxy": "http://127.0.0.1:3000" } } } } }),
         ];
         for config in cases {
-            assert!(plan_publish(config, "new.ts.net", &mac_target(7851)).is_err());
+            assert!(plan_publish_detailed(config, "new.ts.net", &mac_target(7851)).is_err());
         }
     }
 
@@ -651,9 +651,10 @@ mod tests {
             },
             "TCP": { "443": { "HTTPS": true }, "8443": { "HTTPS": true }, "9443": { "HTTPS": true, "opaque": true } }
         });
-        let planned = plan_withdraw(config, &mac_matcher(7851))
+        let planned = plan_withdraw_detailed(config, &mac_matcher(7851), RemovalScope::AllEntries)
             .expect("valid")
-            .expect("changed");
+            .expect("changed")
+            .config;
         assert_eq!(
             planned["Web"]["devbox.ts.net:443"]["Handlers"]["/keep"]["Proxy"],
             "http://127.0.0.1:3000"
@@ -674,9 +675,14 @@ mod tests {
             },
             "TCP": { "443": { "HTTPS": true } }
         });
-        let planned = plan_withdraw(config, &ServeTargetMatcher::unix(path))
-            .expect("valid")
-            .expect("changed");
+        let planned = plan_withdraw_detailed(
+            config,
+            &ServeTargetMatcher::unix(path),
+            RemovalScope::AllEntries,
+        )
+        .expect("valid")
+        .expect("changed")
+        .config;
         assert!(planned["Web"]["old.ts.net:443"].is_null());
         assert!(planned["Web"]["other.ts.net:8443"].is_object());
         assert!(planned["TCP"]["443"].is_null());
@@ -685,9 +691,10 @@ mod tests {
     #[test]
     fn withdraw_is_noop_without_its_tether_handler() {
         let config = json!({ "Web": { "devbox.ts.net:443": { "Handlers": { "/": { "Proxy": "http://127.0.0.1:3000" } } } } });
-        assert_eq!(
-            plan_withdraw(config, &mac_matcher(7851)).expect("valid"),
-            None
+        assert!(
+            plan_withdraw_detailed(config, &mac_matcher(7851), RemovalScope::AllEntries)
+                .expect("valid")
+                .is_none()
         );
     }
 }

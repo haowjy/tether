@@ -377,12 +377,15 @@ belongs to the daemon's unit.
 src/setup/
   AGENTS.md
   mod.rs           background/foreground setup() and teardown(): step sequence,
-                   report, exit status
-  checks.rs        sans-IO: Facts -> Vec<Finding { level, message }>
+                   shared success tail and exit status
+  checks.rs        sans-IO: gathered Facts -> validated Tailnet, or check findings;
+                   platform-specific warning findings are returned separately
   install.rs       sans-IO: the embedded unit and plist, the plist substitution, and
-                   (file setup would write, installed file, service state) -> actions
-  systemd.rs       Linux: gather facts (systemctl, loginctl, cgroup files), run actions
-  launch_agent.rs  macOS: gather facts (launchctl, dscl, getconf, bind), run actions
+                   per-platform service plans and the previous bytes of a differing file
+  systemd.rs       Linux: owns its Host and TeardownHost, gathers host facts and runs
+                   systemd actions; aliased as `platform` in mod.rs
+  launch_agent.rs  macOS: owns its Host and TeardownHost, gathers host facts and runs
+                   LaunchAgent actions; aliased as `platform` in mod.rs
   report.rs        the success text and the QR code
 src/auth/publish.rs   plan_publish and plan_withdraw over ServeTarget and tether's
                       matcher; the compare-and-swap loop shared by the Mac task, setup
@@ -394,14 +397,16 @@ src/auth/localapi.rs  Status's Version, BackendState and CertDomains; prefs();
 src/proto/auth.rs     AuthInfo's browserPending (Swift mirrors AuthInfo by hand)
 src/main.rs           CLI dispatch for the Setup and Teardown subcommands
 src/daemon.rs         daemon assembly and serving, including the post-bind hook setup uses
+src/blocking.rs       the shared current-thread tokio runtime, capped at the daemon's
+                      blocking-thread budget
 ```
 
 `launch_agent.rs` is named apart from `src/launchd.rs`, the daemon's socket-activation
 module and the one place `unsafe` is allowed; setup needs no `unsafe`. Setup runs on
-the current-thread runtime capped at the daemon's eight blocking threads. Background
-setup uses LocalAPI and `local.sock`; foreground setup calls the daemon's `Auth` in
-process. Platform modules are `cfg`-gated like the daemon's fronts; the pure modules
-build on both.
+the shared current-thread runtime capped at the daemon's eight blocking threads.
+Background setup uses LocalAPI and `local.sock`; foreground setup calls the daemon's
+`Auth` in process. Each platform module owns its own host and teardown state behind the
+`platform` alias; the pure policy modules build on both platforms.
 
 The pure cores carry the policy logic:
 
@@ -419,7 +424,7 @@ The pure cores carry the policy logic:
 - LocalAPI write errors: the fake-LocalAPI integration tests (`LocalApi::at`) answer
   `403`, `401` and `412`, and each maps to its message.
 
-The executors in `systemd.rs` and `launch_agent.rs` only run commands and read files,
+The platform executors in `systemd.rs` and `launch_agent.rs` only run commands and read files,
 with no seam for faking them: the probe gates cover them. Foreground Linux's reduced
 findings are also covered by S12 on the target host.
 

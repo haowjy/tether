@@ -3949,3 +3949,16 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   - A `[y/N]` before `sudo`.
   - Shelling out to `pbcopy`, `wl-copy` or `xclip`: over SSH they copy on the server.
   - A code in the QR.
+
+### Setup keeps platform policy behind one boundary
+
+- **Decided:** 2026-10-25, lead (setup review round 2).
+- **What:** `systemd.rs` and `launch_agent.rs` each own their setup and teardown host
+  state and expose one shared surface through the `platform` alias. Checks return a
+  validated tailnet value, and both setup modes share one success-report tail. Install
+  planning uses a distinct action type per platform, with the previous bytes carried by
+  a differing-file state.
+- **Why:** the setup sequence should express the shared workflow, not repeat it behind
+  paired `cfg` branches or recover validated facts by matching their raw form again.
+- **Rejected:** one cross-platform action enum with impossible variants and
+  `unreachable!` executor arms; separate report tails; wrappers used only by tests.

@@ -1,14 +1,18 @@
 # setup
 
 `mod.rs` owns the foreground/background setup and teardown sequences and exit behavior.
+The `platform` alias selects `systemd.rs` or `launch_agent.rs`; each owns its `Host` and
+`TeardownHost`, platform commands and file discovery. Keep OS-specific branches inside
+those modules, not in the shared setup sequence. Neither executor may bypass the
+preflight checks in `mod.rs`. `checks.rs` and `install.rs` are pure policy: gathered
+facts produce either a validated tailnet and warnings or check failures; per-platform
+plans produce only that executor's actions. `mod.rs` shares the success-report tail.
+`report.rs` owns success rendering, QR output, and OSC 52.
+
 Foreground Linux setup runs the daemon in this process; after its sockets bind, its hook
 publishes Serve, refreshes the daemon's tailnet-state cache, issues the code and prints
 before daemon logs start. `daemon.rs` owns daemon assembly; keep the single-instance
-flock there rather than adding a setup-specific lock. `checks.rs` and `install.rs` are
-pure policy: gather external facts in the platform executors, then make findings/actions
-from those values. `systemd.rs` and `launch_agent.rs` own all platform commands and file
-discovery; neither may bypass the preflight checks in `mod.rs`. `report.rs` owns success
-rendering, QR output, and OSC 52.
+flock there rather than adding a setup-specific lock.
 
 Setup must not mutate a unit, plist, Tailscale Serve config, or grants until every
 check has run and no error finding remains. Foreground setup never installs a service

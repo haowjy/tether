@@ -16,6 +16,13 @@ use tracing::error;
 /// tokio's blocking pool. `TasksMax` counts these threads with tmux's.
 pub const BLOCKING_THREADS: usize = 8;
 
+pub fn runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(BLOCKING_THREADS)
+        .build()
+}
+
 /// One lane: its threads, how long a caller waits for one before `Busy`, and how many
 /// callers may wait at once (`None`: as many as come).
 #[derive(Debug)]

@@ -77,9 +77,8 @@ pub(crate) enum LocalApiFailure {
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub(crate) enum PlatformFacts {
+    #[cfg(any(target_os = "linux", test))]
     Linux {
         username: String,
         systemd_present: bool,
@@ -87,6 +86,7 @@ pub(crate) enum PlatformFacts {
         systemd_version: Option<Result<u32, String>>,
         missing_controllers: Vec<String>,
     },
+    #[cfg(any(target_os = "macos", test))]
     Mac {
         other_account: Option<String>,
         gui_session: bool,
@@ -103,10 +103,19 @@ pub(crate) enum PlatformKind {
 
 const BACKGROUND_SETUP: &str = "tether setup --background";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Tailnet {
+    pub dns_name: String,
+    pub version: String,
+    pub operator_needed: bool,
+}
+
 impl PlatformFacts {
     pub(crate) fn kind(&self) -> PlatformKind {
         match self {
+            #[cfg(any(target_os = "linux", test))]
             Self::Linux { .. } => PlatformKind::Linux,
+            #[cfg(any(target_os = "macos", test))]
             Self::Mac { .. } => PlatformKind::Mac,
         }
     }
@@ -158,7 +167,10 @@ pub(crate) fn directory_mismatches(
     Ok(mismatches)
 }
 
-pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
+pub(crate) fn evaluate(
+    facts: &Facts,
+    warnings: &mut Vec<Finding>,
+) -> Result<Tailnet, Vec<Finding>> {
     let mut findings = Vec::new();
     if facts.is_root {
         error(
@@ -197,14 +209,17 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
             None => format!("Your shell leaves {} unset, so", mismatch.variable),
         };
         let fix = match (&facts.platform, mismatch.value.as_deref()) {
+            #[cfg(any(target_os = "linux", test))]
             (PlatformFacts::Linux { .. }, Some(value)) => format!(
                 "Unset it, or give the user manager the same value with `systemctl --user set-environment {}={value}`.",
                 mismatch.variable
             ),
+            #[cfg(any(target_os = "linux", test))]
             (PlatformFacts::Linux { .. }, None) => format!(
                 "Unset it in the user manager with `systemctl --user unset-environment {}`.",
                 mismatch.variable
             ),
+            #[cfg(any(target_os = "macos", test))]
             (PlatformFacts::Mac { .. }, _) => {
                 "Unset it before running tether setup --background.".to_owned()
             }
@@ -247,6 +262,7 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
         &mut findings,
     );
     match &facts.platform {
+        #[cfg(any(target_os = "linux", test))]
         PlatformFacts::Linux {
             username,
             systemd_present,
@@ -295,14 +311,19 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
                     ),
                 );
             }
-            if let TailnetFacts::Status {
-                operator_user: Some(operator),
-                ..
-            } = &facts.tailscale
-            {
-                check_operator(operator, username, BACKGROUND_SETUP, &mut findings);
+            if let TailnetFacts::Status { operator_user, .. } = &facts.tailscale {
+                match operator_user {
+                    Some(operator) => {
+                        check_operator(operator, username, BACKGROUND_SETUP, &mut findings)
+                    }
+                    None => error(
+                        &mut findings,
+                        "Can't read Tailscale's Serve operator: no operator fact was gathered.",
+                    ),
+                }
             }
         }
+        #[cfg(any(target_os = "macos", test))]
         PlatformFacts::Mac {
             other_account,
             gui_session,
@@ -344,47 +365,144 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
             }
         }
     }
-    findings
+    finish(
+        facts.tailscale.clone(),
+        facts.platform.kind(),
+        findings,
+        warnings,
+    )
+}
+
+fn finish(
+    tailscale: TailnetFacts,
+    platform: PlatformKind,
+    findings: Vec<Finding>,
+    warnings: &mut Vec<Finding>,
+) -> Result<Tailnet, Vec<Finding>> {
+    warnings.extend(
+        findings
+            .iter()
+            .filter(|finding| finding.level == Level::Warning)
+            .cloned(),
+    );
+    let errors = findings
+        .into_iter()
+        .filter(|finding| finding.level == Level::Error)
+        .collect::<Vec<_>>();
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    validated_tailnet(&tailscale, platform).ok_or_else(|| {
+        vec![Finding {
+            level: Level::Error,
+            message: "Tailscale didn't provide a usable tailnet status.".to_owned(),
+        }]
+    })
+}
+
+fn validated_tailnet(tailscale: &TailnetFacts, platform: PlatformKind) -> Option<Tailnet> {
+    let TailnetFacts::Status {
+        version,
+        backend_state,
+        dns_name,
+        operator_user,
+        ..
+    } = tailscale
+    else {
+        return None;
+    };
+    if backend_state != "Running" {
+        return None;
+    }
+    let dns_name = dns_name.as_ref()?.trim_end_matches('.');
+    if dns_name.is_empty() {
+        return None;
+    }
+    let (major, minor) = parse_major_minor(version)?;
+    let operator_needed = platform == PlatformKind::Linux
+        && operator_user
+            .as_ref()?
+            .as_ref()
+            .is_ok_and(|operator| operator.is_empty());
+    Some(Tailnet {
+        dns_name: dns_name.to_owned(),
+        version: format!("{major}.{minor}"),
+        operator_needed,
+    })
 }
 
 #[cfg(target_os = "linux")]
+pub(crate) struct ForegroundFacts<'a> {
+    pub is_root: bool,
+    pub username: &'a str,
+    pub program: &'a Path,
+    pub tmux_on_setup_path: Option<&'a Path>,
+    pub tailscale: &'a TailnetFacts,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(target_os = "linux")]
+enum ForegroundCheck {
+    NotRoot,
+    TmuxProgram,
+    Tailnet,
+}
+
+#[cfg(target_os = "linux")]
+const FOREGROUND_CHECKS: &[ForegroundCheck] = &[
+    ForegroundCheck::NotRoot,
+    ForegroundCheck::TmuxProgram,
+    ForegroundCheck::Tailnet,
+];
+
+#[cfg(target_os = "linux")]
 pub(crate) fn evaluate_foreground(
-    is_root: bool,
-    username: &str,
-    program: &Path,
-    tmux_on_setup_path: Option<&Path>,
-    tailscale: &TailnetFacts,
-) -> Vec<Finding> {
+    facts: &ForegroundFacts<'_>,
+    warnings: &mut Vec<Finding>,
+) -> Result<Tailnet, Vec<Finding>> {
     let mut findings = Vec::new();
-    if is_root {
-        error(
-            &mut findings,
-            "Run tether setup as the user whose tmux tether serves, not as root.",
-        );
-    }
-    if tmux_on_setup_path.is_none() {
-        error(
-            &mut findings,
-            format!(
-                "tmux isn't available at {} on this shell's PATH. Install tmux or set `[tmux] program` to its executable path.",
-                program.display()
+    for check in FOREGROUND_CHECKS {
+        match check {
+            ForegroundCheck::NotRoot if facts.is_root => error(
+                &mut findings,
+                "Run tether setup as the user whose tmux tether serves, not as root.",
             ),
-        );
+            ForegroundCheck::TmuxProgram if facts.tmux_on_setup_path.is_none() => error(
+                &mut findings,
+                format!(
+                    "tmux isn't available at {} on this shell's PATH. Install tmux or set `[tmux] program` to its executable path.",
+                    facts.program.display()
+                ),
+            ),
+            ForegroundCheck::Tailnet => {
+                check_tailscale(
+                    PlatformKind::Linux,
+                    facts.tailscale,
+                    "tether setup",
+                    &mut findings,
+                );
+                if let TailnetFacts::Status {
+                    operator_user: Some(operator),
+                    ..
+                } = facts.tailscale
+                {
+                    check_operator(operator, facts.username, "tether setup", &mut findings);
+                } else if matches!(facts.tailscale, TailnetFacts::Status { .. }) {
+                    error(
+                        &mut findings,
+                        "Can't read Tailscale's Serve operator: no operator fact was gathered.",
+                    );
+                }
+            }
+            _ => {}
+        }
     }
-    check_tailscale(
+    finish(
+        facts.tailscale.clone(),
         PlatformKind::Linux,
-        tailscale,
-        "tether setup",
-        &mut findings,
-    );
-    if let TailnetFacts::Status {
-        operator_user: Some(operator),
-        ..
-    } = tailscale
-    {
-        check_operator(operator, username, "tether setup", &mut findings);
-    }
-    findings
+        findings,
+        warnings,
+    )
 }
 
 fn check_tailscale(
@@ -508,6 +626,7 @@ fn check_status(
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn check_operator(
     operator: &Result<String, String>,
     username: &str,
@@ -529,7 +648,7 @@ fn check_operator(
     }
 }
 
-fn parse_major_minor(version: &str) -> Option<(u32, u32)> {
+pub(crate) fn parse_major_minor(version: &str) -> Option<(u32, u32)> {
     let mut parts = version.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts
@@ -581,6 +700,17 @@ mod tests {
                 operator_user: Some(Ok("jimmy".to_owned())),
             },
             platform,
+        }
+    }
+
+    fn findings(facts: &Facts) -> Vec<Finding> {
+        let mut warnings = Vec::new();
+        match evaluate(facts, &mut warnings) {
+            Ok(_) => warnings,
+            Err(mut errors) => {
+                errors.extend(warnings);
+                errors
+            }
         }
     }
 
@@ -767,7 +897,7 @@ mod tests {
             *systemd_version = Some(Err("systemctl not found".to_owned()));
             *missing_controllers = vec!["cpu".to_owned()];
         }
-        assert!(!evaluate(&facts).iter().any(|finding| {
+        assert!(!findings(&facts).iter().any(|finding| {
             finding
                 .message
                 .starts_with("Can't read the systemd version:")
@@ -1002,7 +1132,7 @@ mod tests {
 
         for (facts, expected) in cases {
             assert!(
-                evaluate(&facts)
+                findings(&facts)
                     .iter()
                     .any(|finding| finding.message == expected),
                 "missing finding {expected:?}"
@@ -1012,13 +1142,15 @@ mod tests {
         assert_eq!(parse_major_minor("1.104.2-tc123"), Some((1, 104)));
         assert_eq!(parse_major_minor("invalid"), None);
 
-        let warnings = evaluate(&valid_facts(PlatformFacts::Linux {
+        let facts = valid_facts(PlatformFacts::Linux {
             username: "jimmy".to_owned(),
             systemd_present: true,
             user_manager_present: true,
             systemd_version: Some(Ok(253)),
             missing_controllers: vec!["cpu".to_owned()],
-        }));
+        });
+        let mut warnings = Vec::new();
+        let _ = evaluate(&facts, &mut warnings).expect("warning-only facts pass");
         assert_eq!(
             warnings
                 .iter()

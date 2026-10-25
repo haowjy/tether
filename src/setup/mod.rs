@@ -8,8 +8,11 @@ mod report;
 #[cfg(target_os = "linux")]
 mod systemd;
 
-use std::collections::HashMap;
-use std::ffi::OsString;
+#[cfg(target_os = "macos")]
+use self::launch_agent as platform;
+#[cfg(target_os = "linux")]
+use self::systemd as platform;
+
 #[cfg(target_os = "linux")]
 use std::io::IsTerminal as _;
 use std::path::{Path, PathBuf};
@@ -19,12 +22,11 @@ use std::time::{Duration, SystemTime};
 use thiserror::Error;
 
 use crate::auth::Store;
+use crate::auth::identity;
 #[cfg(any(target_os = "linux", test))]
 use crate::auth::identity::ServeTarget;
-use crate::auth::identity::{self, ServeTargetMatcher};
 use crate::auth::localapi::{LocalApi, LocalApiError};
 use crate::auth::publish::{self, PlanError};
-use crate::blocking::BLOCKING_THREADS;
 use crate::config::{self, Config, ConfigError, ConfigFile};
 #[cfg(target_os = "linux")]
 use crate::daemon;
@@ -53,79 +55,22 @@ impl From<ConfigError> for SetupError {
     }
 }
 
-struct Host {
-    platform: checks::PlatformFacts,
-    #[cfg(target_os = "linux")]
-    user: String,
-    #[cfg(target_os = "linux")]
-    uid: u32,
-    home: PathBuf,
-    service_env: HashMap<String, OsString>,
-    service_path: OsString,
-    service_file: PathBuf,
-    file_state: install::FileState,
-    previous_file: Option<Vec<u8>>,
-    expected_file: Vec<u8>,
-    service_state: install::ServiceState,
-    runtime_dir: PathBuf,
-    #[cfg(target_os = "linux")]
-    serve_socket: PathBuf,
-    #[cfg(target_os = "linux")]
-    linger: bool,
-    #[cfg(target_os = "linux")]
-    dropins: Vec<PathBuf>,
-    #[cfg(target_os = "macos")]
-    domain: String,
-}
-
-impl Host {
-    fn backup_path(&self) -> Result<PathBuf, SetupError> {
-        let directory = config::state_dir()?.join("setup-backup");
-        let file_name = self
-            .service_file
-            .file_name()
-            .ok_or_else(|| SetupError::new("service file has no name"))?;
-        let stamp = utc_stamp(SystemTime::now());
-        Ok(directory.join(format!("{}.{}", file_name.to_string_lossy(), stamp)))
-    }
-}
-
-struct TeardownHost {
-    service_file: PathBuf,
-    loaded: bool,
-    #[cfg(target_os = "linux")]
-    uid: u32,
-    #[cfg(target_os = "linux")]
-    serve_socket: PathBuf,
-    #[cfg(target_os = "macos")]
-    domain: String,
-    #[cfg(target_os = "macos")]
-    port: u16,
-}
-
-impl TeardownHost {
-    fn matcher(&self) -> ServeTargetMatcher {
-        #[cfg(target_os = "linux")]
-        {
-            ServeTargetMatcher::unix(self.serve_socket.clone())
-        }
-        #[cfg(target_os = "macos")]
-        {
-            ServeTargetMatcher::loopback_port(self.port)
-        }
-    }
-}
+type Host = platform::Host;
 
 /// Installs the background service, publishes it, and prints a new enrolment code.
 pub fn setup(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
-    tokio_runtime()?.block_on(setup_async(config_path))
+    crate::blocking::runtime()
+        .map_err(|error| SetupError::new(format!("can't create setup runtime: {error}")))?
+        .block_on(setup_async(config_path))
 }
 
 /// Runs tether in this terminal on Linux; macOS requires its LaunchAgent front.
 pub fn setup_foreground(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     {
-        tokio_runtime()?.block_on(setup_foreground_async(config_path))
+        crate::blocking::runtime()
+            .map_err(|error| SetupError::new(format!("can't create setup runtime: {error}")))?
+            .block_on(setup_foreground_async(config_path))
     }
     #[cfg(target_os = "macos")]
     {
@@ -140,117 +85,59 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
     let config = if config_path.is_some() {
         Config::default()
     } else {
-        ConfigFile::resolve(None)
-            .map_err(|error| SetupError::new(error.to_string()))?
-            .load()
-            .map_err(|error| SetupError::new(error.to_string()))?
+        ConfigFile::resolve(None)?.load()?
     };
-    let host = inspect_host()?;
+    let host = platform::inspect()?;
     let mut facts = make_facts(&host, &config, config_path.is_some())?;
-    facts.tailscale = tailnet_facts(&LocalApi::system(), host.platform.kind()).await;
-    let findings = checks::evaluate(&facts);
-    fail_on_findings(&findings)?;
-
     let api = LocalApi::system();
+    facts.tailscale = tailnet_facts(&api, host.platform.kind()).await;
+    let mut warnings = Vec::new();
+    let tailnet = checked_tailnet(checks::evaluate(&facts, &mut warnings), &warnings)?;
+
     let mut changes = Vec::new();
-    let mut notes = Vec::new();
-    #[cfg(target_os = "linux")]
-    {
-        let operator_needed = matches!(
-            &facts.tailscale,
-            checks::TailnetFacts::Status { operator_user: Some(Ok(operator)), .. } if operator.is_empty()
-        );
-        require_terminal_for_grants(
-            !host.linger,
-            operator_needed,
-            &host.user,
-            "tether setup --background",
-        )?;
-        if !host.linger {
-            systemd::grant_linger(&host)?;
-            changes.push("Enabled linger".to_owned());
-        }
-        if operator_needed {
-            systemd::grant_operator(&host.user)?;
-            changes.push(format!("Set Tailscale's operator to {}", host.user));
-        }
-    }
+    platform::grant_setup(&host, true, tailnet.operator_needed, &mut changes)?;
     let old_inode = socket_inode(&host.runtime_dir.join("local.sock"));
     let previous_version = read_daemon_version(&host.runtime_dir.join("local.sock"), &api).await;
     let file_was_missing = host.file_state == install::FileState::Missing;
-    #[cfg(target_os = "linux")]
-    changes.extend(systemd::apply(&host)?);
-    #[cfg(target_os = "macos")]
-    changes.extend(launch_agent::apply(&host)?);
+    changes.extend(platform::apply(&host)?);
     if file_was_missing {
         changes.insert(0, format!("Installed {}", display_name(&host.service_file)));
     }
-    #[cfg(target_os = "linux")]
-    notes.extend(
-        systemd::dropins(&host)
-            .iter()
-            .map(|path| format!("Left systemd drop-in in place: {}", path.display())),
-    );
-
-    let dns_name = match &facts.tailscale {
-        checks::TailnetFacts::Status {
-            dns_name: Some(name),
-            ..
-        } => name.clone(),
-        _ => {
-            return Err(Box::new(SetupError::new(
-                "Tailscale's MagicDNS name disappeared",
-            )));
-        }
-    };
-    #[cfg(target_os = "linux")]
-    {
-        wait_for_socket(&host.serve_socket, Duration::from_secs(10)).await?;
-        let target = ServeTarget::unix(host.serve_socket.clone()).map_err(|error| {
-            SetupError::new(format!("{}: {error}", host.serve_socket.display()))
-        })?;
-        let version = match &facts.tailscale {
-            checks::TailnetFacts::Status { version, .. } => short_version(version),
-            _ => "unknown version".to_owned(),
-        };
-        let (_, plan) = publish::publish_target(&api, &dns_name, &target)
-            .await
-            .map_err(|error| write_error(&error, &version, WriteOperation::BackgroundSetup))?;
-        changes.extend(plan.removed_handlers.iter().map(|handler| {
-            format!(
-                "Removed tether's old handler at {} {}",
-                handler.entry, handler.mount
-            )
-        }));
-        if plan.changed {
-            systemd::restart(&host)?;
-        }
-    }
+    let mut notes = Vec::new();
+    platform::after_install(&host, &mut notes);
+    let serve_changed = platform::publish_background(&host, &api, &tailnet, &mut changes).await?;
+    platform::after_publish(&host, serve_changed)?;
 
     let origin = format!(
         "https://{}",
-        dns_name.trim_end_matches('.').to_ascii_lowercase()
+        tailnet.dns_name.trim_end_matches('.').to_ascii_lowercase()
     );
     verify_new_daemon(&host, &api, old_inode, &origin).await?;
-    let socket = tmux_socket(&config);
-    if !tmux_server_exists(&config) {
-        notes.push(format!(
-            "No tmux server yet on {}; start tmux as you usually do.",
-            socket.display()
-        ));
-    }
-    let state_dir = config::state_dir().map_err(SetupError::from)?;
+    notes.extend(no_tmux_server_note(&config));
+    finish(
+        report::Mode::Service(platform::KIND),
+        previous_version.as_deref(),
+        changes,
+        notes,
+        origin,
+        config::state_dir()?,
+    )
+}
+
+fn finish(
+    mode: report::Mode,
+    previous_version: Option<&str>,
+    changes: Vec<String>,
+    notes: Vec<String>,
+    origin: String,
+    state_dir: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
     let store = Store::open(state_dir)?;
     let code = store.set_pending(Duration::from_secs(600), SystemTime::now())?;
-    let platform = if cfg!(target_os = "linux") {
-        "systemd user service"
-    } else {
-        "LaunchAgent"
-    };
     report::print_success(&report::Success {
         version: env!("CARGO_PKG_VERSION"),
-        previous_version: previous_version.as_deref(),
-        platform: Some(platform),
+        previous_version,
+        mode,
         changes: &changes,
         notes: &notes,
         origin: &origin,
@@ -260,69 +147,69 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
 }
 
 #[cfg(target_os = "linux")]
+fn removed_handler_changes(plan: &publish::PlanResult) -> Vec<String> {
+    plan.removed_handlers
+        .iter()
+        .map(|handler| {
+            format!(
+                "Removed tether's old handler at {} {}",
+                handler.entry, handler.mount
+            )
+        })
+        .collect()
+}
+
+fn no_tmux_server_note(config: &Config) -> Option<String> {
+    (!tmux_server_exists(config)).then(|| {
+        format!(
+            "No tmux server yet on {}; start tmux as you usually do.",
+            tmux_socket(config).display()
+        )
+    })
+}
+
+#[cfg(target_os = "linux")]
 async fn setup_foreground_async(
     config_path: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let file = ConfigFile::resolve(config_path.as_deref())
-        .map_err(|error| SetupError::new(error.to_string()))?;
-    let config = file
-        .load()
-        .map_err(|error| SetupError::new(error.to_string()))?;
+    let file = ConfigFile::resolve(config_path.as_deref())?;
+    let config = file.load()?;
     let user = systemd::username()?;
     let program = config.tmux.program.as_path();
     let setup_path = std::env::var_os("PATH").unwrap_or_default();
     let tmux_on_setup_path = resolve_program(program, &setup_path);
     let api = LocalApi::system();
     let tailscale = tailnet_facts(&api, checks::PlatformKind::Linux).await;
-    let findings = checks::evaluate_foreground(
-        effective_uid() == 0,
-        &user,
+    let foreground_facts = checks::ForegroundFacts {
+        is_root: effective_uid() == 0,
+        username: &user,
         program,
-        tmux_on_setup_path.as_deref(),
-        &tailscale,
-    );
-    fail_on_findings(&findings)?;
+        tmux_on_setup_path: tmux_on_setup_path.as_deref(),
+        tailscale: &tailscale,
+    };
+    let mut warnings = Vec::new();
+    let tailnet = checked_tailnet(
+        checks::evaluate_foreground(&foreground_facts, &mut warnings),
+        &warnings,
+    )?;
 
-    let state_dir = config::state_dir().map_err(SetupError::from)?;
-    config::runtime_dir()?;
-    let operator_needed = matches!(
-        &tailscale,
-        checks::TailnetFacts::Status {
-            operator_user: Some(Ok(operator)),
-            ..
-        } if operator.is_empty()
-    );
-    require_terminal_for_grants(false, operator_needed, &user, "tether setup")?;
+    let state_dir = config::state_dir()?;
+    let notes = no_tmux_server_note(&config).into_iter().collect();
     let mut changes = Vec::new();
-    if operator_needed {
-        systemd::grant_operator(&user)?;
-        changes.push(format!("Set Tailscale's operator to {user}"));
-    }
-
-    let dns_name = match &tailscale {
-        checks::TailnetFacts::Status {
-            dns_name: Some(name),
-            ..
-        } => name.clone(),
-        _ => {
-            return Err(Box::new(SetupError::new(
-                "Tailscale's MagicDNS name disappeared",
-            )));
-        }
-    };
-    let version = match &tailscale {
-        checks::TailnetFacts::Status { version, .. } => short_version(version),
-        _ => "unknown version".to_owned(),
-    };
-    let mut notes = Vec::new();
-    if !tmux_server_exists(&config) {
-        notes.push(format!(
-            "No tmux server yet on {}; start tmux as you usually do.",
-            tmux_socket(&config).display()
-        ));
-    }
+    systemd::grant_foreground(&user, tailnet.operator_needed, &mut changes)?;
+    let version = tailnet.version.clone();
+    let dns_name = tailnet.dns_name.clone();
+    let api_for_hook = api.clone();
     let serve = daemon::serve_with_hook(config, file, Vec::new(), false, move |ready| {
-        foreground_report(ready, api, dns_name, version, state_dir, changes, notes)
+        foreground_report(
+            ready,
+            api_for_hook,
+            dns_name,
+            version,
+            state_dir,
+            changes,
+            notes,
+        )
     })
     .await;
     match serve {
@@ -361,61 +248,43 @@ async fn foreground_report(
     let (_, plan) = publish::publish_target(&api, &dns_name, target)
         .await
         .map_err(|error| write_error(&error, &version, WriteOperation::ForegroundSetup))?;
-    changes.extend(plan.removed_handlers.iter().map(|handler| {
-        format!(
-            "Removed tether's old handler at {} {}",
-            handler.entry, handler.mount
-        )
-    }));
+    changes.extend(removed_handler_changes(&plan));
     ready.auth.refresh_after_serve_write().await?;
-    let (origin, pending) = ready.auth.browser_origin().await?;
-    if pending {
-        return Err(Box::new(SetupError::new(
-            "the daemon's Serve publication is still pending",
-        )));
-    }
+    let (origin, _) = ready.auth.browser_origin().await?;
     let origin = origin.map_err(SetupError::new)?.origin;
-    let store = Store::open(state_dir)?;
-    let code = store.set_pending(Duration::from_secs(600), SystemTime::now())?;
-    report::print_success(&report::Success {
-        version: env!("CARGO_PKG_VERSION"),
-        previous_version: None,
-        platform: None,
-        changes: &changes,
-        notes: &notes,
-        origin: &origin,
-        code: &code,
-    })?;
-    Ok(())
+    finish(
+        report::Mode::Foreground,
+        None,
+        changes,
+        notes,
+        origin,
+        state_dir,
+    )
 }
 
-fn fail_on_findings(findings: &[checks::Finding]) -> Result<(), SetupError> {
-    for finding in findings
-        .iter()
-        .filter(|finding| finding.level == checks::Level::Warning)
-    {
+fn checked_tailnet(
+    result: Result<checks::Tailnet, Vec<checks::Finding>>,
+    warnings: &[checks::Finding],
+) -> Result<checks::Tailnet, SetupError> {
+    for finding in warnings {
         eprintln!("warning: {}", finding.message);
     }
-    let errors: Vec<_> = findings
-        .iter()
-        .filter(|finding| finding.level == checks::Level::Error)
-        .collect();
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(SetupError::new(
+    result.map_err(|errors| {
+        SetupError::new(
             errors
                 .iter()
                 .map(|finding| finding.message.as_str())
                 .collect::<Vec<_>>()
                 .join("\n"),
-        ))
-    }
+        )
+    })
 }
 
 /// Stops and removes tether's service and only its own Serve handlers.
 pub fn teardown() -> Result<(), Box<dyn std::error::Error>> {
-    tokio_runtime()?.block_on(teardown_async())
+    crate::blocking::runtime()
+        .map_err(|error| SetupError::new(format!("can't create setup runtime: {error}")))?
+        .block_on(teardown_async())
 }
 
 async fn teardown_async() -> Result<(), Box<dyn std::error::Error>> {
@@ -424,50 +293,24 @@ async fn teardown_async() -> Result<(), Box<dyn std::error::Error>> {
             "Run tether teardown as the user whose service tether installed, not as root.",
         )));
     }
-    let host = inspect_teardown_host()?;
+    let host = platform::inspect_teardown()?;
     let api = LocalApi::system();
-    #[cfg(target_os = "macos")]
-    if host.loaded {
-        api.serve_config_raw().await.map_err(|error| {
-            SetupError::new(format!(
-                "Can't reach Tailscale to remove tether's Serve entry; open the Tailscale app and rerun. ({error})"
-            ))
-        })?;
-    }
-
-    #[cfg(target_os = "linux")]
-    let stop_result = systemd::stop_teardown(&host);
-    #[cfg(target_os = "macos")]
-    let stop_result = launch_agent::stop_teardown(&host);
-    stop_result?;
+    platform::before_teardown(&host, &api).await?;
+    platform::stop_teardown(&host)?;
 
     let installed = host.service_file.exists();
-    let withdrawal = publish::withdraw_target(&api, &host.matcher()).await;
-    #[cfg(target_os = "macos")]
-    if let Err(error) = &withdrawal {
-        eprintln!(
-            "Serve still points at 127.0.0.1:{}, which any process can now bind. Remove it now: `tailscale serve --https=443 off`, or rerun tether teardown once Tailscale answers",
-            host.port
-        );
+    let withdrawal = publish::withdraw_target(&api, &platform::matcher(&host)).await;
+    let failure = if let Err(error) = &withdrawal {
         let version = localapi_version(&api).await;
-        return Err(Box::new(SetupError::new(format!(
-            "{}\n{error}",
-            write_error(error, &version, WriteOperation::Teardown)
-        ))));
-    }
-    #[cfg(target_os = "linux")]
-    let failure = match &withdrawal {
-        Err(error) => {
-            let version = localapi_version(&api).await;
-            Some(write_error(error, &version, WriteOperation::Teardown).to_string())
+        if let Some(failure) = platform::teardown_withdraw_failed(&host, error, &version) {
+            return Err(Box::new(failure));
         }
-        Ok(_) => None,
+        Some(write_error(error, &version, WriteOperation::Teardown).to_string())
+    } else {
+        None
     };
 
-    #[cfg(target_os = "linux")]
-    systemd::remove_teardown(&host)?;
-    #[cfg(target_os = "macos")]
-    launch_agent::remove_teardown(&host)?;
+    platform::remove_teardown(&host)?;
 
     let removed = withdrawal.as_ref().is_ok_and(|plan| plan.changed);
     if withdrawal.is_ok() && !installed && !host.loaded && !removed {
@@ -479,48 +322,16 @@ async fn teardown_async() -> Result<(), Box<dyn std::error::Error>> {
         if installed {
             println!("Removed {}.", display_name(&host.service_file));
         } else if host.loaded {
-            #[cfg(target_os = "linux")]
-            println!("Stopped the running tether service.");
-            #[cfg(target_os = "macos")]
-            println!("Stopped tether's LaunchAgent.");
+            println!("{}", platform::STOPPED);
         }
     }
-    #[cfg(target_os = "linux")]
-    {
-        println!(
-            "Linger remains enabled; undo it with `sudo loginctl disable-linger $USER` (this also stops other user units while logged out)."
-        );
-        println!(
-            "Tailscale's operator grant remains; undo it with `sudo tailscale set --operator=`."
-        );
+    for note in platform::teardown_notes(&host) {
+        println!("{note}");
     }
-    #[cfg(target_os = "linux")]
     if let Some(failure) = failure {
         return Err(Box::new(SetupError::new(failure)));
     }
     Ok(())
-}
-
-fn inspect_teardown_host() -> Result<TeardownHost, SetupError> {
-    #[cfg(target_os = "linux")]
-    {
-        systemd::inspect_teardown()
-    }
-    #[cfg(target_os = "macos")]
-    {
-        launch_agent::inspect_teardown()
-    }
-}
-
-fn inspect_host() -> Result<Host, SetupError> {
-    #[cfg(target_os = "linux")]
-    {
-        systemd::inspect()
-    }
-    #[cfg(target_os = "macos")]
-    {
-        launch_agent::inspect()
-    }
 }
 
 fn make_facts(
@@ -692,9 +503,13 @@ async fn verify_new_daemon(
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
-    let logs = platform_logs(host);
-    #[cfg(target_os = "macos")]
-    let logs = format!("{logs}\n{}", launch_agent::last_exit(host));
+    let logs = platform::logs(host);
+    let exit = platform::last_exit(host);
+    let logs = if exit.is_empty() {
+        logs
+    } else {
+        format!("{logs}\n{exit}")
+    };
     Err(SetupError::new(format!(
         "tether didn't report a publication within 30 s. Last answer: {last}.\nLast 20 tether log lines:\n{logs}"
     )))
@@ -702,9 +517,9 @@ async fn verify_new_daemon(
 
 #[derive(Clone, Copy)]
 enum WriteOperation {
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[cfg(any(target_os = "linux", test))]
     BackgroundSetup,
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[cfg(target_os = "linux")]
     ForegroundSetup,
     Teardown,
 }
@@ -712,26 +527,39 @@ enum WriteOperation {
 impl WriteOperation {
     fn command(self) -> &'static str {
         match self {
+            #[cfg(any(target_os = "linux", test))]
             Self::BackgroundSetup => "tether setup --background",
+            #[cfg(target_os = "linux")]
             Self::ForegroundSetup => "tether setup",
             Self::Teardown => "tether teardown",
         }
     }
 
     fn is_setup(self) -> bool {
-        matches!(self, Self::BackgroundSetup | Self::ForegroundSetup)
+        #[cfg(target_os = "linux")]
+        {
+            matches!(self, Self::BackgroundSetup | Self::ForegroundSetup)
+        }
+        #[cfg(all(test, target_os = "macos"))]
+        {
+            matches!(self, Self::BackgroundSetup)
+        }
+        #[cfg(not(any(target_os = "linux", all(test, target_os = "macos"))))]
+        {
+            false
+        }
     }
 }
 
 fn write_error(error: &PlanError, version: &str, operation: WriteOperation) -> SetupError {
     let rerun = operation.command();
     let message = match error {
-        PlanError::Write(crate::auth::localapi::SetServeConfigError::Denied { .. }) => {
+        PlanError::Denied => {
             format!(
                 "Tailscale refused the write: your account isn't its operator. Run `sudo tailscale set --operator=$USER`, then rerun {rerun}."
             )
         }
-        PlanError::Write(crate::auth::localapi::SetServeConfigError::NotLocalAdmin { .. }) => {
+        PlanError::NotLocalAdmin => {
             if operation.is_setup() {
                 format!(
                     "Tailscale {version} requires an operator who may run `sudo tailscale` to change a config that serves a Unix socket or a path. Allow this account to run `sudo tailscale`, then rerun {rerun}."
@@ -742,16 +570,14 @@ fn write_error(error: &PlanError, version: &str, operation: WriteOperation) -> S
                 )
             }
         }
-        PlanError::ConflictsExhausted
-        | PlanError::Write(crate::auth::localapi::SetServeConfigError::Conflict) => {
+        PlanError::ConflictsExhausted => {
             format!("Tailscale's Serve config kept changing while tether wrote it; rerun {rerun}.")
         }
         PlanError::Refused(refusal) => refusal.to_string(),
-        PlanError::Write(crate::auth::localapi::SetServeConfigError::Rejected { status, body }) => {
+        PlanError::Rejected { status, body } => {
             format!("Tailscale refused the Serve write: {status} {body}.")
         }
-        PlanError::Write(crate::auth::localapi::SetServeConfigError::LocalApi(error))
-        | PlanError::LocalApi(error) => {
+        PlanError::LocalApi(error) => {
             if operation.is_setup() {
                 format!("Can't reach Tailscale's LocalAPI: {error}")
             } else {
@@ -766,22 +592,11 @@ async fn localapi_version(api: &LocalApi) -> String {
     api.status()
         .await
         .ok()
-        .map(|status| short_version(&status.version))
+        .map(|status| match checks::parse_major_minor(&status.version) {
+            Some((major, minor)) => format!("{major}.{minor}"),
+            None => status.version,
+        })
         .unwrap_or_else(|| "unknown version".to_owned())
-}
-
-fn short_version(version: &str) -> String {
-    let mut split = version.split('.');
-    match (split.next(), split.next()) {
-        (Some(major), Some(minor)) => format!(
-            "{major}.{}",
-            minor
-                .chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-        ),
-        _ => version.to_owned(),
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -852,17 +667,6 @@ fn socket_inode(path: &Path) -> Option<(u64, u64)> {
         .map(|metadata| (metadata.dev(), metadata.ino()))
 }
 
-fn platform_logs(_host: &Host) -> String {
-    #[cfg(target_os = "linux")]
-    {
-        systemd::logs()
-    }
-    #[cfg(target_os = "macos")]
-    {
-        launch_agent::logs(_host)
-    }
-}
-
 fn tmux_socket(config: &Config) -> PathBuf {
     let endpoint = config.endpoint();
     match &endpoint.socket {
@@ -908,14 +712,6 @@ fn display_name(path: &Path) -> String {
         .into_owned()
 }
 
-fn tokio_runtime() -> Result<tokio::runtime::Runtime, SetupError> {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .max_blocking_threads(BLOCKING_THREADS)
-        .build()
-        .map_err(|error| SetupError::new(format!("can't create setup runtime: {error}")))
-}
-
 fn utc_stamp(time: SystemTime) -> String {
     let duration = time
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -943,18 +739,23 @@ fn utc_stamp(time: SystemTime) -> String {
     )
 }
 
-fn backup_file(host: &Host) -> Result<PathBuf, SetupError> {
-    let content = host
-        .previous_file
-        .as_ref()
-        .ok_or_else(|| SetupError::new("changed service file has no previous contents"))?;
-    let path = host.backup_path()?;
-    let directory = path.parent().expect("backup path has parent");
-    std::fs::create_dir_all(directory)
-        .map_err(|error| SetupError::new(format!("{}: {error}", directory.display())))?;
+fn backup_file(host: &Host, content: &[u8]) -> Result<PathBuf, SetupError> {
+    let directory = config::state_dir()?.join("setup-backup");
+    let file_name = host
+        .service_file
+        .file_name()
+        .ok_or_else(|| SetupError::new("service file has no name"))?;
+    let path = directory.join(format!(
+        "{}.{}",
+        file_name.to_string_lossy(),
+        utc_stamp(SystemTime::now())
+    ));
+    let parent = path.parent().expect("backup path has parent");
+    std::fs::create_dir_all(parent)
+        .map_err(|error| SetupError::new(format!("{}: {error}", parent.display())))?;
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))
-        .map_err(|error| SetupError::new(format!("{}: {error}", directory.display())))?;
+    std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| SetupError::new(format!("{}: {error}", parent.display())))?;
     std::fs::write(&path, content)
         .map_err(|error| SetupError::new(format!("{}: {error}", path.display())))?;
     Ok(path)

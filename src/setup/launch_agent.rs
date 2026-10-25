@@ -6,12 +6,39 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::auth::identity::ServeTargetMatcher;
+
 use super::checks::PlatformFacts;
-use super::install::{self, Action, Platform, ServiceState};
-use super::{Host, SetupError};
+use super::install::{self, FileState, LaunchAgentAction, ServiceState};
+use super::{PlanError, SetupError};
 
 const LABEL: &str = "com.jimmyyao.tether";
 const UNLOAD_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const KIND: super::report::ServiceKind = super::report::ServiceKind {
+    name: "LaunchAgent",
+    startup: "started when you log in",
+};
+pub(super) const STOPPED: &str = "Stopped tether's LaunchAgent.";
+
+pub(super) struct Host {
+    pub platform: PlatformFacts,
+    pub home: PathBuf,
+    pub service_env: HashMap<String, std::ffi::OsString>,
+    pub service_path: std::ffi::OsString,
+    pub service_file: PathBuf,
+    pub file_state: FileState,
+    pub expected_file: Vec<u8>,
+    pub service_state: ServiceState,
+    pub runtime_dir: PathBuf,
+    domain: String,
+}
+
+pub(super) struct TeardownHost {
+    pub service_file: PathBuf,
+    pub loaded: bool,
+    domain: String,
+    port: u16,
+}
 
 pub(super) fn inspect() -> Result<Host, SetupError> {
     let user = super::command_text("/usr/bin/id", &["-un"])?;
@@ -50,7 +77,7 @@ pub(super) fn inspect() -> Result<Host, SetupError> {
             )));
         }
     };
-    let (file_state, previous_file) = install::file_state(previous_file, &expected_file);
+    let file_state = install::file_state(previous_file, &expected_file);
     Ok(Host {
         platform: PlatformFacts::Mac {
             other_account,
@@ -63,7 +90,6 @@ pub(super) fn inspect() -> Result<Host, SetupError> {
         service_path: path,
         service_file,
         file_state,
-        previous_file,
         expected_file,
         service_state: ServiceState { loaded, disabled },
         runtime_dir,
@@ -71,14 +97,14 @@ pub(super) fn inspect() -> Result<Host, SetupError> {
     })
 }
 
-pub(super) fn inspect_teardown() -> Result<super::TeardownHost, SetupError> {
+pub(super) fn inspect_teardown() -> Result<TeardownHost, SetupError> {
     let uid = rustix::process::geteuid().as_raw();
     let home = super::config::home()?;
     let domain = format!("gui/{uid}");
     let loaded = launchctl(&["print", &format!("{domain}/{LABEL}")]).is_ok();
     let service_file = home.join("Library/LaunchAgents/com.jimmyyao.tether.plist");
     let port = read_port(&service_file).ok().flatten().unwrap_or(7851);
-    Ok(super::TeardownHost {
+    Ok(TeardownHost {
         service_file,
         loaded,
         domain,
@@ -118,13 +144,12 @@ fn read_port(service_file: &std::path::Path) -> Result<Option<u16>, String> {
 }
 
 pub(super) fn apply(host: &Host) -> Result<Vec<String>, SetupError> {
-    let actions = install::plan(Platform::LaunchAgent, host.file_state, host.service_state);
     let mut changes = Vec::new();
-    for action in actions {
+    for action in install::plan_launch_agent(&host.file_state, host.service_state) {
         match action {
-            Action::Install => super::write_file(host)?,
-            Action::BackupReplace => {
-                let backup = super::backup_file(host)?;
+            LaunchAgentAction::Install => super::write_file(host)?,
+            LaunchAgentAction::BackupReplace(contents) => {
+                let backup = super::backup_file(host, &contents)?;
                 super::write_file(host)?;
                 changes.push(format!(
                     "Replaced {}, which differed from this tether's; the old copy is {}.",
@@ -135,27 +160,35 @@ pub(super) fn apply(host: &Host) -> Result<Vec<String>, SetupError> {
                     backup.display()
                 ));
             }
-            Action::EnableJob => {
+            LaunchAgentAction::EnableJob => {
                 run("enable", &[&format!("{}/{LABEL}", host.domain)])?;
                 changes.push("Enabled tether in Login Items".to_owned());
             }
-            Action::Bootout => {
+            LaunchAgentAction::Bootout => {
                 run("bootout", &[&format!("{}/{LABEL}", host.domain)])?;
                 wait_until_unloaded(&host.domain)?;
             }
-            Action::Bootstrap => {
+            LaunchAgentAction::Bootstrap => {
                 run(
                     "bootstrap",
                     &[&host.domain, &host.service_file.display().to_string()],
                 )?;
             }
-            Action::Kickstart => run("kickstart", &["-k", &format!("{}/{LABEL}", host.domain)])?,
-            Action::DaemonReload | Action::Enable | Action::Restart => {
-                unreachable!("systemd action on Mac")
+            LaunchAgentAction::Kickstart => {
+                run("kickstart", &["-k", &format!("{}/{LABEL}", host.domain)])?
             }
         }
     }
     Ok(changes)
+}
+
+pub(super) async fn publish_background(
+    _host: &Host,
+    _api: &crate::auth::localapi::LocalApi,
+    _tailnet: &super::checks::Tailnet,
+    _changes: &mut Vec<String>,
+) -> Result<bool, SetupError> {
+    Ok(false)
 }
 
 fn wait_until_unloaded(domain: &str) -> Result<(), SetupError> {
@@ -176,20 +209,72 @@ fn wait_until_unloaded(domain: &str) -> Result<(), SetupError> {
     }
 }
 
-pub(super) fn stop_teardown(host: &super::TeardownHost) -> Result<(), SetupError> {
+pub(super) fn stop_teardown(host: &TeardownHost) -> Result<(), SetupError> {
     if host.loaded {
         run("bootout", &[&format!("{}/{LABEL}", host.domain)])?;
     }
     Ok(())
 }
 
-pub(super) fn remove_teardown(host: &super::TeardownHost) -> Result<(), SetupError> {
+pub(super) fn remove_teardown(host: &TeardownHost) -> Result<(), SetupError> {
     if host.service_file.exists() {
         std::fs::remove_file(&host.service_file).map_err(|error| {
             SetupError::new(format!("{}: {error}", host.service_file.display()))
         })?;
     }
     Ok(())
+}
+
+pub(super) fn teardown_notes(_host: &TeardownHost) -> Vec<String> {
+    Vec::new()
+}
+
+pub(super) fn grant_setup(
+    _host: &Host,
+    _background: bool,
+    _operator_needed: bool,
+    _changes: &mut Vec<String>,
+) -> Result<(), SetupError> {
+    Ok(())
+}
+
+pub(super) fn after_install(_host: &Host, _notes: &mut Vec<String>) {}
+
+pub(super) fn after_publish(_host: &Host, _changed: bool) -> Result<(), SetupError> {
+    Ok(())
+}
+
+pub(super) fn matcher(host: &TeardownHost) -> ServeTargetMatcher {
+    ServeTargetMatcher::loopback_port(host.port)
+}
+
+pub(super) async fn before_teardown(
+    host: &TeardownHost,
+    api: &crate::auth::localapi::LocalApi,
+) -> Result<(), SetupError> {
+    if host.loaded {
+        api.serve_config_raw().await.map_err(|error| {
+            SetupError::new(format!(
+                "Can't reach Tailscale to remove tether's Serve entry; open the Tailscale app and rerun. ({error})"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+pub(super) fn teardown_withdraw_failed(
+    host: &TeardownHost,
+    error: &PlanError,
+    version: &str,
+) -> Option<SetupError> {
+    eprintln!(
+        "Serve still points at 127.0.0.1:{}, which any process can now bind. Remove it now: `tailscale serve --https=443 off`, or rerun tether teardown once Tailscale answers",
+        host.port
+    );
+    Some(SetupError::new(format!(
+        "{}\n{error}",
+        super::write_error(error, version, super::WriteOperation::Teardown)
+    )))
 }
 
 pub(super) fn logs(host: &Host) -> String {
