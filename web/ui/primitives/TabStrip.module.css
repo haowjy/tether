@@ -13,6 +13,8 @@
 .strip[data-end] { mask-image: linear-gradient(to left, transparent, black var(--space-5)); }
 .strip[data-start][data-end] { mask-image: linear-gradient(to right, transparent, black var(--space-5), black calc(100% - var(--space-5)), transparent); }
 
+/* The strip scrolls, so it clips on both axes: rings sit inside the pill. */
+.pill :focus-visible { outline-offset: -2px; }
 .pill {
   display: flex;
   flex: none;

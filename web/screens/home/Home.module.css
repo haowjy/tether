@@ -11,7 +11,7 @@
 .host { font-size: var(--text-small); color: var(--color-status-live); }
 .host[data-tone="reconnecting"] { color: var(--color-status-reconnecting); }
 .host[data-tone="error"] { color: var(--color-status-error); }
-.body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-gutter); }
+.body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-gutter); scroll-padding: var(--space-1); }
 /* A centred column, `min(720px, 100% - 2 * gutter)`: still no sidebar. */
 .column {
   display: flex;

@@ -38,6 +38,8 @@
   color: var(--color-text);
   tab-size: 4;
 }
+/* A focusable scroller as wide as its viewer: the ring sits inside. */
+.code:focus-visible { outline-offset: -2px; }
 .code :global(.line) { display: block; min-height: 1.55em; white-space: pre; }
 .wrap :global(.line) { white-space: pre-wrap; overflow-wrap: anywhere; }
 

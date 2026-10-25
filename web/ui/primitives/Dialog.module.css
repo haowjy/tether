@@ -24,7 +24,8 @@
 }
 .title { flex: 1; font-size: var(--text-heading); font-weight: var(--weight-bold); }
 .actions { display: flex; align-items: center; gap: var(--space-2); }
-.body { flex: 1; overflow-y: auto; padding: 0 var(--space-4) var(--space-4); min-height: 0; }
+/* The top padding is the focus ring's room (2px outline + 2px offset): a scrolling body clips what is drawn outside it. */
+.body { flex: 1; overflow-y: auto; padding: var(--space-1) var(--space-4) var(--space-4); min-height: 0; scroll-padding: var(--space-1); }
 
 /* The phone picker: a tall bottom sheet, safe-area padded, in the theme's raised surface. */
 .sheet {

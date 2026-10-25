@@ -8,6 +8,8 @@
   background: var(--color-bg-raised);
   overflow: hidden;
 }
+/* The list clips its rounded corners, and the rows are flush with its edges: rings sit inside. */
+.list :focus-visible { outline-offset: -2px; }
 .list .item {
   border: 0;
   border-radius: 0;

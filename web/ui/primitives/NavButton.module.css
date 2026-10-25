@@ -11,4 +11,5 @@
   color: var(--color-text-muted);
   font-size: var(--text-meta);
 }
+.item:focus-visible { outline-offset: -2px; } /* flush with the screen edge: an outer ring would be off-screen */
 .item[aria-current="page"] { color: var(--color-text); font-weight: var(--weight-bold); }
