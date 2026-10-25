@@ -8,7 +8,8 @@ p253 reviews approve with accepted low notes. Final harness838, real browser150 
 CDP-only gesture skips), Swift7, web392, MSRV, and real Rust22/version pass. Real Files
 p260 verifies path insertion across window changes. Knowledge capture is integrated.
 The lead's final refusal-callback deletion preserves the existing notice text/sink.
-Clean-export preflight remains the local commit gate. No push or release authorized.
+Implementation is committed locally at `73c5102`; clean-export full preflight passed.
+See [final gate](evidence/session-follow-final-gate.md). No push or release authorized.
 Real iPhone and actual Linux dev-box resource acceptance remain open.
 
 **Daily-use risk:** p244 reproduced an upstream whole-server crash on tmux 3.4 and

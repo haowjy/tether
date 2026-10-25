@@ -87,3 +87,8 @@ All review/probe spawns drained. p253 approves client; p259 confirms ordinary-us
 Final small source cleanup: removed TabDriver.onRefused callback; its sole caller fed the same app.notify sink as onNotice. Driver now supplies the identical `Not sent:` wording through onNotice. Lead checked all callsites; unrelated Host authentication onRefused remains. No new state or policy. L3 doc corrections and L4 deterministic existing test are fixed; L1 late duplicate notice explicitly accepted. Export/status-shape nits are not defects and no future refactor is promised.
 
 Local implementation commit3372ba8 clean-export preflight caught a stale wildcard in the existing fake hub after the unused fake SelectWindow variant was removed: clippy -D warnings correctly reports an unreachable arm. Deleted that dead arm; the match is now exhaustive, so future enum variants require an explicit choice. No production behavior change. Re-running exact-commit export gate after amending.
+
+Implementation committed locally as73c5102; exact clean-export full preflight PASS.
+Final verification/dispositions/gaps recorded in evidence/session-follow-final-gate.md.
+No push/release. Work remains open only for explicit deployment/device/resource gates;
+do not repeat completed implementation or treat upstream baseline decision as resolved.
