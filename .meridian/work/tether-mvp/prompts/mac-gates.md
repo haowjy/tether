@@ -20,3 +20,6 @@ Run the probe gates in `docs/design/auth.md` (the table under "Probe gates", row
 - Bugs found, with a repro.
 - Write the evidence to `.meridian/work/tether-mvp/evidence/mac-gates/README.md`, as excerpts, not raw dumps.
 - Edit no source.
+
+## Rerun (after the status ID fix)
+The first run (p188) failed at M0 because tether read `Self.StableID` from status; Tailscale names that field `ID`. This was fixed in the commit "Read the host's stable node ID from status's ID field". Rerun every gate, reinstalling first with `cargo install --path .`. The p188 evidence is in `.meridian/work/tether-mvp/evidence/mac-gates/README.md`; update that file in place.
