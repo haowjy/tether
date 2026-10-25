@@ -13,6 +13,7 @@ pub struct AuthInfo {
     pub protocol: ProtocolRange,
     pub browser_origin: Option<String>,
     pub browser_refused: Option<String>,
+    pub browser_pending: bool,
 }
 
 /// The protocol versions the daemon accepts, as in `hello`'s check.
@@ -57,6 +58,7 @@ mod fixtures {
                     protocol: ProtocolRange { min: 1, max: 1 },
                     browser_origin: None,
                     browser_refused: None,
+                    browser_pending: false,
                 })
                 .expect("AuthInfo serializes"),
             ),

@@ -81,29 +81,29 @@ pub struct UserProfile {
 
 /// Parsed LocalAPI `/status` answer fields used to assemble the auth identity view.
 #[derive(Debug, Deserialize)]
-pub(super) struct Status {
+pub(crate) struct Status {
     #[serde(rename = "Self")]
-    pub(super) this: Option<StatusNode>,
+    pub(crate) this: Option<StatusNode>,
     #[serde(rename = "User", default)]
-    pub(super) users: HashMap<String, StatusUser>,
+    pub(crate) users: HashMap<String, StatusUser>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct StatusNode {
+pub(crate) struct StatusNode {
     // Status reports the stable node ID as `ID` (ipnstate.PeerStatus); only whois's
     // tailcfg.Node calls it `StableID`.
     #[serde(rename = "ID", default)]
-    pub(super) stable_id: String,
+    pub(crate) stable_id: String,
     #[serde(rename = "UserID", default)]
-    pub(super) user_id: u64,
+    pub(crate) user_id: u64,
     #[serde(rename = "DNSName", default)]
-    pub(super) dns_name: String,
+    pub(crate) dns_name: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct StatusUser {
+pub(crate) struct StatusUser {
     #[serde(rename = "LoginName", default)]
-    pub(super) login_name: String,
+    pub(crate) login_name: String,
 }
 
 pub struct LocalApiResponse {
@@ -189,7 +189,7 @@ impl LocalApi {
     }
 
     /// Parsed status answer; identity owns its interpretation and assembly.
-    pub(super) async fn status(&self) -> Result<Status, LocalApiError> {
+    pub(crate) async fn status(&self) -> Result<Status, LocalApiError> {
         self.cell.get_json("/localapi/v0/status?peers=false").await
     }
 
@@ -246,12 +246,18 @@ impl LocalApi {
         if response.status == StatusCode::PRECONDITION_FAILED {
             return Err(SetServeConfigError::Conflict);
         }
+        let body = String::from_utf8_lossy(&response.body).trim().to_owned();
+        if response.status == StatusCode::FORBIDDEN && body == "serve config denied" {
+            return Err(SetServeConfigError::Denied { body });
+        }
+        if response.status == StatusCode::UNAUTHORIZED {
+            return Err(SetServeConfigError::NotLocalAdmin { body });
+        }
         if !response.status.is_success() {
-            return Err(LocalApiError::Http(format!(
-                "/localapi/v0/serve-config: {}",
-                response.status
-            ))
-            .into());
+            return Err(SetServeConfigError::Rejected {
+                status: response.status,
+                body,
+            });
         }
         Ok(())
     }
@@ -519,6 +525,12 @@ fn basic_authorization(token: &str) -> HeaderValue {
 pub enum SetServeConfigError {
     #[error("tailscaled's Serve config changed while tether was publishing")]
     Conflict,
+    #[error("tailscaled's LocalAPI: /localapi/v0/serve-config: 403 Forbidden")]
+    Denied { body: String },
+    #[error("tailscaled's LocalAPI: /localapi/v0/serve-config: 401 Unauthorized")]
+    NotLocalAdmin { body: String },
+    #[error("tailscaled's LocalAPI: /localapi/v0/serve-config: {status}")]
+    Rejected { status: StatusCode, body: String },
     #[error(transparent)]
     LocalApi(#[from] LocalApiError),
 }

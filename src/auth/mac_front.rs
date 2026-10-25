@@ -45,29 +45,29 @@ impl MacFront {
 
     /// Matches a previous tether proxy without parsing URL syntax. The path format is
     /// deliberately exact because Serve config is untrusted input at this boundary.
-    pub fn is_tether_shaped(proxy: &str, port: Option<u16>) -> bool {
-        let Some(target) = proxy.strip_prefix("http://127.0.0.1:") else {
-            return false;
-        };
-        let Some((port_text, secret)) = target.split_once('/') else {
-            return false;
-        };
+    pub fn is_tether_shaped(proxy: &str, port: u16) -> bool {
+        Self::tether_port(proxy) == Some(port)
+    }
+
+    pub fn is_any_tether_shaped(proxy: &str) -> bool {
+        Self::tether_port(proxy).is_some()
+    }
+
+    fn tether_port(proxy: &str) -> Option<u16> {
+        let target = proxy.strip_prefix("http://127.0.0.1:")?;
+        let (port_text, secret) = target.split_once('/')?;
         let Ok(found_port) = port_text.parse::<u16>() else {
-            return false;
+            return None;
         };
-        if found_port == 0
-            || port.is_some_and(|wanted| wanted != found_port)
-            || port_text != found_port.to_string()
-        {
-            return false;
+        if found_port == 0 || port_text != found_port.to_string() {
+            return None;
         }
-        let Some(secret) = secret.strip_prefix("tether-") else {
-            return false;
-        };
-        secret.len() == 43
+        let secret = secret.strip_prefix("tether-")?;
+        (secret.len() == 43
             && secret
                 .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')))
+        .then_some(found_port)
     }
 
     pub(super) fn references_port(&self, proxy: &str) -> bool {

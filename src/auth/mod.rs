@@ -203,17 +203,22 @@ impl Auth {
             .unwrap_or_else(|| fallback.to_owned())
     }
 
-    pub async fn browser_origin(&self) -> Result<Result<CanonicalOrigin, String>, AuthError> {
+    pub async fn browser_origin(
+        &self,
+    ) -> Result<(Result<CanonicalOrigin, String>, bool), AuthError> {
         if let Some(publication) = &self.publication {
             match &*publication.state().borrow() {
                 publish::PublicationState::Waiting { last_error } => {
-                    return Ok(Err(last_error
-                        .as_deref()
-                        .unwrap_or("waiting for tether's Serve publication")
-                        .to_owned()));
+                    return Ok((
+                        Err(last_error
+                            .as_deref()
+                            .unwrap_or("waiting for tether's Serve publication")
+                            .to_owned()),
+                        true,
+                    ));
                 }
                 publish::PublicationState::Refused(message) => {
-                    return Ok(Err(message.clone()));
+                    return Ok((Err(message.clone()), false));
                 }
                 publish::PublicationState::Published(_) => {}
             }
@@ -221,7 +226,7 @@ impl Auth {
         let state = self.tailnet_state().await?;
         let origin = identity::origin(self.serve_target.as_ref(), &state.serve);
         log_origin(&self.logged_origin, origin.clone());
-        Ok(origin.map_err(|refusal| refusal.message))
+        Ok((origin.map_err(|refusal| refusal.message), false))
     }
 
     /// Whether this daemon sits behind Tailscale serve, so the browser's origin is knowable.

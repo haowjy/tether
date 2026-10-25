@@ -1,5 +1,6 @@
 {
   "browserOrigin": null,
+  "browserPending": false,
   "browserRefused": null,
   "daemonVersion": "0.0.1",
   "hostId": "a234567bcdefghjk",

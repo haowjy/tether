@@ -11,11 +11,23 @@ public struct AuthInfo: Codable, Equatable, Sendable {
     public var protocolRange: ProtocolRange
     public var browserOrigin: String?
     public var browserRefused: String?
+    public var browserPending: Bool
 
     enum CodingKeys: String, CodingKey {
         case hostId, name, daemonVersion
         case protocolRange = "protocol"
-        case browserOrigin, browserRefused
+        case browserOrigin, browserRefused, browserPending
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hostId = try container.decode(String.self, forKey: .hostId)
+        name = try container.decode(String.self, forKey: .name)
+        daemonVersion = try container.decode(String.self, forKey: .daemonVersion)
+        protocolRange = try container.decode(ProtocolRange.self, forKey: .protocolRange)
+        browserOrigin = try container.decodeIfPresent(String.self, forKey: .browserOrigin)
+        browserRefused = try container.decodeIfPresent(String.self, forKey: .browserRefused)
+        browserPending = try container.decodeIfPresent(Bool.self, forKey: .browserPending) ?? false
     }
 
     public static func validHostID(_ value: String) -> Bool {
@@ -34,6 +46,7 @@ public struct AuthInfo: Codable, Equatable, Sendable {
         else { try container.encodeNil(forKey: .browserOrigin) }
         if let browserRefused { try container.encode(browserRefused, forKey: .browserRefused) }
         else { try container.encodeNil(forKey: .browserRefused) }
+        try container.encode(browserPending, forKey: .browserPending)
     }
 }
 

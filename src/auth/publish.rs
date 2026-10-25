@@ -1,4 +1,4 @@
-//! Sans-IO plans for replacing and withdrawing tether's own Tailscale Serve handler.
+//! Sans-IO plans and shared compare-and-swap writes for tether's Tailscale Serve handler.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -9,9 +9,11 @@ use thiserror::Error;
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
-use super::identity::{self, ServeConfig, ServeTarget, TailnetStateCell};
+use super::identity::{self, ServeConfig, ServeTarget, ServeTargetMatcher, TailnetStateCell};
 use super::localapi::{LocalApi, LocalApiError, SetServeConfigError};
 use super::mac_front::MacFront;
+
+const WRITE_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[error("{message}")]
@@ -28,10 +30,51 @@ impl PublishRefusal {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PublicationState {
-    Waiting { last_error: Option<String> },
-    Published(Arc<str>),
-    Refused(String),
+pub struct RemovedHandler {
+    pub entry: String,
+    pub mount: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlanResult {
+    pub changed: bool,
+    pub removed_handlers: Vec<RemovedHandler>,
+}
+
+#[derive(Debug, Error)]
+pub enum PlanError {
+    #[error("{0}")]
+    Refused(#[from] PublishRefusal),
+    #[error(transparent)]
+    LocalApi(#[from] LocalApiError),
+    #[error(transparent)]
+    Write(#[from] SetServeConfigError),
+    #[error("Tailscale's Serve config kept changing during three write attempts")]
+    ConflictsExhausted,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct PlannedConfig {
+    config: Value,
+    removed_handlers: Vec<RemovedHandler>,
+}
+
+#[derive(Clone, Copy)]
+enum ConflictRetry {
+    UpTo(usize),
+    UntilOuterDeadline,
+}
+
+#[derive(Clone, Copy)]
+enum RemovalScope<'a> {
+    AllEntries,
+    Entry(&'a str),
+}
+
+#[derive(Clone, Copy)]
+enum RemovalMode {
+    Managed,
+    Publish,
 }
 
 /// The one publication task's immutable Mac front and shared state.
@@ -40,6 +83,13 @@ pub struct Publication {
     front: MacFront,
     state: watch::Sender<PublicationState>,
     observed: watch::Receiver<PublicationState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublicationState {
+    Waiting { last_error: Option<String> },
+    Published(Arc<str>),
+    Refused(String),
 }
 
 impl Publication {
@@ -85,15 +135,21 @@ pub async fn run(
     let mut delay = identity::RETRY_INITIAL;
     let mut warned = HashSet::new();
     loop {
-        let result: Result<(), LocalApiError> = async {
+        let result: Result<(), PlanError> = async {
             let state = cell.get().await?;
-            let authority = match publish_config(&api, &state.dns_name, &publication.front).await? {
-                Ok(authority) => authority,
-                Err(refusal) => {
+            let target = ServeTarget::loopback(publication.front.clone());
+            let authority = match publish_target(&api, &state.dns_name, &target).await {
+                Ok((authority, _)) => authority,
+                Err(PlanError::Refused(refusal)) => {
                     warn!(message = %refusal.message, "refused to publish tether");
                     publication.refuse(refusal.message);
                     return Ok(());
                 }
+                Err(PlanError::LocalApi(error)) => return Err(PlanError::LocalApi(error)),
+                Err(PlanError::Write(SetServeConfigError::LocalApi(error))) => {
+                    return Err(PlanError::LocalApi(error));
+                }
+                Err(error) => return Err(error),
             };
             let refreshed = cell.refresh_after_write().await?;
             on_published(&refreshed);
@@ -102,13 +158,16 @@ pub async fn run(
         }
         .await;
         match result {
-            Ok(()) => {
-                return;
-            }
+            Ok(()) => return,
             Err(error) => {
-                let message = error.to_string();
-                match error {
-                    LocalApiError::Io(_) | LocalApiError::Timeout => {
+                let message = match &error {
+                    PlanError::ConflictsExhausted => {
+                        "Serve config changed during three publication attempts".to_owned()
+                    }
+                    _ => error.to_string(),
+                };
+                match &error {
+                    PlanError::LocalApi(LocalApiError::Io(_) | LocalApiError::Timeout) => {
                         debug!(message = %message, "Serve publication unavailable; retrying");
                     }
                     _ => {
@@ -125,77 +184,117 @@ pub async fn run(
     }
 }
 
-async fn publish_config(
+/// Publish a target using the same plan and If-Match loop used by teardown.
+pub async fn publish_target(
     api: &LocalApi,
     dns_name: &str,
-    front: &MacFront,
-) -> Result<Result<String, PublishRefusal>, LocalApiError> {
+    target: &ServeTarget,
+) -> Result<(String, PlanResult), PlanError> {
     let name = dns_name.trim_end_matches('.');
     if name.is_empty()
         || !name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
     {
-        return Ok(Err(PublishRefusal::new(
+        return Err(PublishRefusal::new(
             "Tailscale didn't report a usable MagicDNS name; tether can't publish",
-        )));
+        )
+        .into());
     }
     let authority = format!("{name}:443");
-    for _ in 0..3 {
-        let (config, etag) = api.serve_config_raw().await?;
-        let original = config.clone();
-        let planned = match plan_publish(config, name, front) {
-            Ok(config) => config,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        if planned == original {
-            return Ok(Ok(authority));
-        }
-        match api.set_serve_config(&planned, etag).await {
-            Ok(()) => return Ok(Ok(authority)),
-            Err(SetServeConfigError::Conflict) => continue,
-            Err(SetServeConfigError::LocalApi(error)) => return Err(error),
-        }
-    }
-    Err(LocalApiError::Http(
-        "Serve config changed during three publication attempts".to_owned(),
-    ))
+    let result = apply_plan(
+        api,
+        |config| plan_publish_detailed(config, name, target).map(Some),
+        ConflictRetry::UpTo(WRITE_ATTEMPTS),
+    )
+    .await?;
+    Ok((authority, result))
 }
 
-/// Best-effort withdrawal used only when launchd gave tether an unbound socket.
+/// Withdraw every handler owned by this target using the shared If-Match loop.
+pub async fn withdraw_target(
+    api: &LocalApi,
+    target: &ServeTargetMatcher,
+) -> Result<PlanResult, PlanError> {
+    apply_plan(
+        api,
+        |config| plan_withdraw_detailed(config, target, RemovalScope::AllEntries),
+        ConflictRetry::UpTo(WRITE_ATTEMPTS),
+    )
+    .await
+}
+
+async fn apply_plan(
+    api: &LocalApi,
+    mut plan: impl FnMut(Value) -> Result<Option<PlannedConfig>, PublishRefusal>,
+    conflict_retry: ConflictRetry,
+) -> Result<PlanResult, PlanError> {
+    let mut attempts = 0;
+    loop {
+        let (current, etag) = api.serve_config_raw().await?;
+        let planned = plan(current.clone())?;
+        let Some(planned) = planned else {
+            return Ok(PlanResult::default());
+        };
+        if planned.config == current {
+            return Ok(PlanResult::default());
+        }
+        match api.set_serve_config(&planned.config, etag).await {
+            Ok(()) => {
+                return Ok(PlanResult {
+                    changed: true,
+                    removed_handlers: planned.removed_handlers,
+                });
+            }
+            Err(SetServeConfigError::Conflict) => {
+                attempts += 1;
+                if matches!(conflict_retry, ConflictRetry::UpTo(limit) if attempts >= limit) {
+                    return Err(PlanError::ConflictsExhausted);
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+/// Best-effort withdrawal when launchd could not bind the configured Mac port.
 pub async fn withdraw_unbound(api: &LocalApi) {
+    let target = ServeTargetMatcher::loopback_any_port();
     let _ = tokio::time::timeout(Duration::from_secs(2), async {
         let state = identity::tailnet_state(api).await?;
-        let name = state.dns_name.trim_end_matches('.');
-        loop {
-            let (config, etag) = api.serve_config_raw().await?;
-            let Some(planned) = plan_withdraw(config, name) else {
-                return Ok::<_, LocalApiError>(());
-            };
-            match api.set_serve_config(&planned, etag).await {
-                Ok(()) => return Ok(()),
-                Err(SetServeConfigError::Conflict) => continue,
-                Err(SetServeConfigError::LocalApi(error)) => return Err(error),
-            }
-        }
+        let entry = format!("{}:443", state.dns_name.trim_end_matches('.'));
+        apply_plan(
+            api,
+            |config| plan_withdraw_detailed(config, &target, RemovalScope::Entry(&entry)),
+            ConflictRetry::UntilOuterDeadline,
+        )
+        .await
     })
     .await;
 }
 
-/// Plans the next Mac publication without discarding unknown fields, then judges it
+/// Plans publication without discarding unknown Serve fields, then judges the result
 /// with the same canonical-origin rule that admits requests.
 pub fn plan_publish(
+    config: Value,
+    name: &str,
+    target: &ServeTarget,
+) -> Result<Value, PublishRefusal> {
+    plan_publish_detailed(config, name, target).map(|plan| plan.config)
+}
+
+fn plan_publish_detailed(
     mut config: Value,
     name: &str,
-    front: &MacFront,
-) -> Result<Value, PublishRefusal> {
+    target: &ServeTarget,
+) -> Result<PlannedConfig, PublishRefusal> {
     let _ = ServeConfig::parse(&mut config).map_err(|_| {
         PublishRefusal::new(
             "Tailscale's Serve config has an unsupported shape; reset Serve before starting tether",
         )
     })?;
-    let port = front.port();
-    let proxy_url = front.proxy_url();
+    let proxy_url = target.proxy_url();
+    let matcher = target.matcher();
 
     let root = config.as_object_mut().ok_or_else(|| {
         PublishRefusal::new(
@@ -206,32 +305,17 @@ pub fn plan_publish(
     ensure_object_member(root, "TCP")?;
     let key = format!("{name}:443");
 
-    let removed_ports = {
+    let (mut removed_handlers, removed_ports) = {
         let web = root
             .get_mut("Web")
             .and_then(Value::as_object_mut)
             .expect("validated Web object");
-        let mut empty_entries = Vec::new();
-        for (name, entry) in web.iter_mut() {
-            let Some(handlers) = entry
-                .as_object_mut()
-                .and_then(|server| server.get_mut("Handlers"))
-                .and_then(Value::as_object_mut)
-            else {
-                continue;
-            };
-            if remove_tether_handlers(handlers, Some(port)) && handlers.is_empty() {
-                empty_entries.push(name.clone());
-            }
-        }
-        let mut ports = Vec::new();
-        for name in empty_entries {
-            web.remove(&name);
-            if let Some(port) = host_port(&name) {
-                ports.push(port);
-            }
-        }
-        ports
+        remove_handlers(
+            web,
+            &matcher,
+            RemovalScope::AllEntries,
+            RemovalMode::Publish,
+        )
     };
     let used_ports = root
         .get("Web")
@@ -253,7 +337,6 @@ pub fn plan_publish(
             "Tailscale Serve entry {key} has an unsupported shape; reset it before starting tether"
         ))
     })?;
-    server.insert("HTTPS".to_owned(), Value::Bool(true));
     let handlers = server
         .entry("Handlers")
         .or_insert_with(|| Value::Object(Map::new()))
@@ -276,50 +359,129 @@ pub fn plan_publish(
         tcp.insert("443".to_owned(), json!({ "HTTPS": true }));
     }
 
+    removed_handlers.retain(|handler| {
+        config
+            .get("Web")
+            .and_then(|web| web.get(&handler.entry))
+            .and_then(|entry| entry.get("Handlers"))
+            .and_then(|handlers| handlers.get(&handler.mount))
+            .and_then(|handler| handler.get("Proxy"))
+            .and_then(Value::as_str)
+            != Some(proxy_url.as_str())
+    });
+
     let typed = ServeConfig::parse(&mut config).map_err(|_| {
         PublishRefusal::new(
             "Tailscale's planned Serve config has an unsupported shape; reset Serve before starting tether",
         )
     })?;
-    let target = ServeTarget::loopback(front.clone());
     typed
-        .canonical_origin(&target)
+        .canonical_origin(target)
         .map_err(|refusal| PublishRefusal::new(refusal.message))?;
-    Ok(config)
+    Ok(PlannedConfig {
+        config,
+        removed_handlers,
+    })
 }
 
-/// Removes tether-shaped handlers at one Serve name, for the launchd-bind failure path.
-pub fn plan_withdraw(mut config: Value, name: &str) -> Option<Value> {
-    let root = config.as_object_mut()?;
-    let key = format!("{name}:443");
-    let web = root.get_mut("Web")?.as_object_mut()?;
-    let handlers = web
-        .get_mut(&key)
-        .and_then(Value::as_object_mut)?
-        .get_mut("Handlers")
-        .and_then(Value::as_object_mut)?;
-    if !remove_tether_handlers(handlers, None) {
-        return None;
+/// Removes tether-shaped handlers wherever they appear and drops only empty entries
+/// and now-unused TCP entries whose only field is `HTTPS: true`.
+pub fn plan_withdraw(
+    config: Value,
+    target: &ServeTargetMatcher,
+) -> Result<Option<Value>, PublishRefusal> {
+    plan_withdraw_detailed(config, target, RemovalScope::AllEntries)
+        .map(|plan| plan.map(|plan| plan.config))
+}
+
+fn plan_withdraw_detailed(
+    config: Value,
+    target: &ServeTargetMatcher,
+    scope: RemovalScope<'_>,
+) -> Result<Option<PlannedConfig>, PublishRefusal> {
+    let mut config = config;
+    let _ = ServeConfig::parse(&mut config).map_err(|_| {
+        PublishRefusal::new(
+            "Tailscale's Serve config has an unsupported shape; reset Serve before withdrawing tether",
+        )
+    })?;
+    let root = config.as_object_mut().ok_or_else(|| {
+        PublishRefusal::new(
+            "Tailscale's Serve config isn't an object; reset Serve before withdrawing tether",
+        )
+    })?;
+    let Some(web) = root.get_mut("Web").and_then(Value::as_object_mut) else {
+        return Ok(None);
+    };
+    let (removed_handlers, removed_ports) =
+        remove_handlers(web, target, scope, RemovalMode::Managed);
+    if removed_handlers.is_empty() {
+        return Ok(None);
     }
-    let remove_entry = handlers.is_empty();
-    if remove_entry {
-        web.remove(&key);
+    let used_ports = root
+        .get("Web")
+        .and_then(Value::as_object)
+        .map(web_ports_in_use)
+        .unwrap_or_default();
+    if let Some(tcp) = root.get_mut("TCP").and_then(Value::as_object_mut) {
+        clean_unused_https_ports(tcp, &removed_ports, &used_ports);
     }
-    if remove_entry {
-        let used_ports = root
-            .get("Web")
-            .and_then(Value::as_object)
-            .map(web_ports_in_use)
-            .unwrap_or_default();
-        if !used_ports.contains(&443) {
-            if let Some(tcp) = root.get_mut("TCP").and_then(Value::as_object_mut) {
-                if tcp.get("443").is_some_and(is_https_only) {
-                    tcp.remove("443");
-                }
+    Ok(Some(PlannedConfig {
+        config,
+        removed_handlers,
+    }))
+}
+
+fn remove_handlers(
+    web: &mut Map<String, Value>,
+    target: &ServeTargetMatcher,
+    scope: RemovalScope<'_>,
+    mode: RemovalMode,
+) -> (Vec<RemovedHandler>, Vec<u16>) {
+    let mut removed = Vec::new();
+    let mut empty_entries = Vec::new();
+    for (entry_name, entry) in web.iter_mut() {
+        if matches!(scope, RemovalScope::Entry(only) if only != entry_name) {
+            continue;
+        }
+        let Some(handlers) = entry
+            .as_object_mut()
+            .and_then(|server| server.get_mut("Handlers"))
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        let before = handlers.len();
+        handlers.retain(|mount, handler| {
+            let proxy = handler.get("Proxy").and_then(Value::as_str);
+            let managed = proxy.is_some_and(|proxy| target.matches(proxy));
+            let legacy = matches!(mode, RemovalMode::Publish)
+                && matches!(target, ServeTargetMatcher::Unix(_))
+                && mount == "/"
+                && host_port(entry_name) == Some(443)
+                && proxy == Some("http://127.0.0.1:7850");
+            if managed || legacy {
+                removed.push(RemovedHandler {
+                    entry: entry_name.clone(),
+                    mount: mount.clone(),
+                });
+                false
+            } else {
+                true
             }
+        });
+        if handlers.len() != before && handlers.is_empty() {
+            empty_entries.push(entry_name.clone());
         }
     }
-    Some(config)
+    let mut ports = Vec::new();
+    for entry in empty_entries {
+        web.remove(&entry);
+        if let Some(port) = host_port(&entry) {
+            ports.push(port);
+        }
+    }
+    (removed, ports)
 }
 
 fn ensure_object_member(root: &mut Map<String, Value>, name: &str) -> Result<(), PublishRefusal> {
@@ -333,17 +495,6 @@ fn ensure_object_member(root: &mut Map<String, Value>, name: &str) -> Result<(),
     } else {
         Ok(())
     }
-}
-
-fn remove_tether_handlers(handlers: &mut Map<String, Value>, port: Option<u16>) -> bool {
-    let before = handlers.len();
-    handlers.retain(|_, handler| {
-        !handler
-            .get("Proxy")
-            .and_then(Value::as_str)
-            .is_some_and(|proxy| MacFront::is_tether_shaped(proxy, port))
-    });
-    handlers.len() != before
 }
 
 fn clean_unused_https_ports(
@@ -383,35 +534,36 @@ fn host_port(value: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{plan_publish, plan_withdraw};
+    use super::{plan_publish, plan_publish_detailed, plan_withdraw};
+    use crate::auth::identity::{ServeTarget, ServeTargetMatcher};
     use crate::auth::mac_front::MacFront;
     use serde_json::json;
 
     const SECRET: &str = "tether-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-    fn target(port: u16) -> String {
-        format!("http://127.0.0.1:{port}/{SECRET}")
+    fn mac_target(port: u16) -> ServeTarget {
+        ServeTarget::loopback(MacFront::new(port, SECRET))
     }
 
-    fn target_front(port: u16) -> MacFront {
-        MacFront::new(port, SECRET)
+    fn mac_matcher(port: u16) -> ServeTargetMatcher {
+        mac_target(port).matcher()
     }
 
     #[test]
     fn publish_replaces_only_its_port_and_preserves_unknown_fields() {
-        let old = target(7851);
-        let other = target(9000);
+        let old = format!("http://127.0.0.1:7851/{SECRET}");
+        let other = format!("http://127.0.0.1:9000/{SECRET}");
         let config = json!({
             "unknownRoot": { "kept": true },
             "Web": {
-                "old.ts.net:443": { "HTTPS": true, "Handlers": { "/": { "Proxy": old } }, "unknown": 7 },
-                "other.ts.net:443": { "HTTPS": true, "Handlers": { "/": { "Proxy": other } } },
+                "old.ts.net:443": { "Handlers": { "/": { "Proxy": old } }, "unknown": 7 },
+                "other.ts.net:443": { "Handlers": { "/": { "Proxy": other } } },
                 "empty.ts.net:443": { "Handlers": {} }
             },
             "TCP": { "443": { "HTTPS": true }, "8443": { "HTTPS": true } },
             "AllowFunnel": { "new.ts.net:443": false }
         });
-        let planned = plan_publish(config, "new.ts.net", &target_front(7851)).expect("plan");
+        let planned = plan_publish(config, "new.ts.net", &mac_target(7851)).expect("plan");
         assert_eq!(planned["unknownRoot"]["kept"], true);
         assert!(planned["Web"]["old.ts.net:443"].is_null());
         assert_eq!(
@@ -421,10 +573,56 @@ mod tests {
         assert_eq!(planned["Web"]["empty.ts.net:443"]["Handlers"], json!({}));
         assert_eq!(
             planned["Web"]["new.ts.net:443"]["Handlers"]["/"]["Proxy"],
-            target(7851)
+            "http://127.0.0.1:7851/".to_owned() + SECRET
         );
         assert_eq!(planned["TCP"]["443"]["HTTPS"], true);
         assert_eq!(planned["TCP"]["8443"]["HTTPS"], true);
+    }
+
+    #[test]
+    fn publish_from_null_is_idempotent_in_tailscaled_stored_shape() {
+        let target = mac_target(7851);
+        let planned = plan_publish(serde_json::Value::Null, "new.ts.net", &target)
+            .expect("plan from an unconfigured profile");
+        assert_eq!(
+            planned["Web"]["new.ts.net:443"],
+            json!({ "Handlers": { "/": { "Proxy": format!("http://127.0.0.1:7851/{SECRET}") } } })
+        );
+        assert_eq!(planned["TCP"]["443"], json!({ "HTTPS": true }));
+
+        let rerun =
+            plan_publish_detailed(planned.clone(), "new.ts.net", &target).expect("rerun plan");
+        assert_eq!(rerun.config, planned);
+        assert!(rerun.removed_handlers.is_empty());
+    }
+
+    #[test]
+    fn unix_publish_removes_exact_target_and_old_root_proxy_but_keeps_other_handlers() {
+        let socket =
+            std::env::temp_dir().join(format!("tether-publish-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&socket);
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind test socket");
+        let target = ServeTarget::unix(&socket).expect("target identity");
+        let config = json!({
+            "Web": {
+                "old.ts.net:443": { "Handlers": { "/": { "Proxy": "http://127.0.0.1:7850" } } },
+                "prior.ts.net:443": { "Handlers": { "/old": { "Proxy": format!("unix:{}", socket.display()) } } },
+                "keep.ts.net:8443": { "Handlers": { "/": { "Proxy": "http://127.0.0.1:7850" } } }
+            }
+        });
+        let planned = plan_publish(config, "new.ts.net", &target).expect("valid plan");
+        assert!(planned["Web"]["old.ts.net:443"].is_null());
+        assert!(planned["Web"]["prior.ts.net:443"].is_null());
+        assert_eq!(
+            planned["Web"]["keep.ts.net:8443"]["Handlers"]["/"]["Proxy"],
+            "http://127.0.0.1:7850"
+        );
+        assert_eq!(
+            planned["Web"]["new.ts.net:443"]["Handlers"]["/"]["Proxy"],
+            format!("unix:{}", socket.display())
+        );
+        drop(_listener);
+        let _ = std::fs::remove_file(socket);
     }
 
     #[test]
@@ -435,64 +633,61 @@ mod tests {
             json!({ "Web": { "new.ts.net:443": { "Handlers": { "/": { "Proxy": "http://127.0.0.1:3000" } } } } }),
         ];
         for config in cases {
-            assert!(plan_publish(config, "new.ts.net", &target_front(7851)).is_err());
+            assert!(plan_publish(config, "new.ts.net", &mac_target(7851)).is_err());
         }
     }
 
     #[test]
-    fn withdraw_removes_only_named_tether_handlers_and_unused_https_port() {
+    fn withdraw_removes_target_handlers_across_entries_and_unused_https_port() {
         let config = json!({
             "Web": {
                 "devbox.ts.net:443": {
-                    "HTTPS": true,
                     "Handlers": {
-                        "/": { "Proxy": target(7851) },
-                        "/old": { "Proxy": target(9000) },
+                        "/": { "Proxy": format!("http://127.0.0.1:7851/{SECRET}") },
                         "/keep": { "Proxy": "http://127.0.0.1:3000" }
                     }
                 },
-                "elsewhere.ts.net:443": { "HTTPS": true, "Handlers": { "/": { "Proxy": target(7851) } } }
+                "old.ts.net:8443": { "Handlers": { "/": { "Proxy": format!("http://127.0.0.1:7851/{SECRET}") } } }
             },
-            "TCP": { "443": { "HTTPS": true, "opaque": "preserve" } }
+            "TCP": { "443": { "HTTPS": true }, "8443": { "HTTPS": true }, "9443": { "HTTPS": true, "opaque": true } }
         });
-        let planned = plan_withdraw(config, "devbox.ts.net").expect("changed");
-        assert_eq!(
-            planned["Web"]["devbox.ts.net:443"]["Handlers"]
-                .as_object()
-                .unwrap()
-                .len(),
-            1
-        );
+        let planned = plan_withdraw(config, &mac_matcher(7851))
+            .expect("valid")
+            .expect("changed");
         assert_eq!(
             planned["Web"]["devbox.ts.net:443"]["Handlers"]["/keep"]["Proxy"],
             "http://127.0.0.1:3000"
         );
-        assert!(planned["Web"]["elsewhere.ts.net:443"].is_object());
-        assert_eq!(planned["TCP"]["443"]["opaque"], "preserve");
+        assert!(planned["Web"]["old.ts.net:8443"].is_null());
+        assert!(planned["TCP"]["8443"].is_null());
+        assert_eq!(planned["TCP"]["443"]["HTTPS"], true);
+        assert_eq!(planned["TCP"]["9443"]["opaque"], true);
+    }
+
+    #[test]
+    fn withdraw_removes_exact_unix_proxy_without_a_live_socket() {
+        let path = "/run/user/1000/tether/serve.sock";
+        let config = json!({
+            "Web": {
+                "old.ts.net:443": { "Handlers": { "/": { "Proxy": format!("unix:{path}") } } },
+                "other.ts.net:8443": { "Handlers": { "/": { "Proxy": "unix:/run/user/1000/tether/serve.sock.backup" } } }
+            },
+            "TCP": { "443": { "HTTPS": true } }
+        });
+        let planned = plan_withdraw(config, &ServeTargetMatcher::unix(path))
+            .expect("valid")
+            .expect("changed");
+        assert!(planned["Web"]["old.ts.net:443"].is_null());
+        assert!(planned["Web"]["other.ts.net:8443"].is_object());
+        assert!(planned["TCP"]["443"].is_null());
     }
 
     #[test]
     fn withdraw_is_noop_without_its_tether_handler() {
         let config = json!({ "Web": { "devbox.ts.net:443": { "Handlers": { "/": { "Proxy": "http://127.0.0.1:3000" } } } } });
-        assert_eq!(plan_withdraw(config, "devbox.ts.net"), None);
-    }
-
-    #[test]
-    fn withdraw_drops_only_an_unused_plain_https_port_entry() {
-        let config = json!({
-            "Web": {
-                "devbox.ts.net:443": {
-                    "HTTPS": true,
-                    "Handlers": { "/": { "Proxy": target(7851) } }
-                }
-            },
-            "TCP": { "443": { "HTTPS": true }, "8443": { "HTTPS": true, "opaque": true } },
-            "UnknownRoot": "kept"
-        });
-        let planned = plan_withdraw(config, "devbox.ts.net").expect("changed");
-        assert!(planned["Web"]["devbox.ts.net:443"].is_null());
-        assert!(planned["TCP"]["443"].is_null());
-        assert_eq!(planned["TCP"]["8443"]["opaque"], true);
-        assert_eq!(planned["UnknownRoot"], "kept");
+        assert_eq!(
+            plan_withdraw(config, &mac_matcher(7851)).expect("valid"),
+            None
+        );
     }
 }

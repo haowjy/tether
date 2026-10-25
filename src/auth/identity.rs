@@ -6,16 +6,10 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::http::HeaderMap;
-#[cfg(target_os = "macos")]
-use axum::http::{HeaderValue, header};
-#[cfg(target_os = "macos")]
+use axum::http::{HeaderMap, HeaderValue, header};
 use bytes::Bytes;
-#[cfg(target_os = "macos")]
 use http_body_util::{BodyExt as _, Full, Limited};
-#[cfg(target_os = "macos")]
 use hyper::Request;
-#[cfg(target_os = "macos")]
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -23,7 +17,6 @@ use thiserror::Error;
 
 use super::localapi::{LocalApi, LocalApiError};
 use super::mac_front::MacFront;
-#[cfg(target_os = "macos")]
 use tokio::net::UnixStream;
 use tokio::sync::{Mutex, Notify};
 use tokio::time::Instant;
@@ -387,7 +380,6 @@ fn hex(byte: u8) -> Option<u8> {
     }
 }
 
-#[cfg(target_os = "macos")]
 pub async fn read_auth_info(socket: &Path, api: &LocalApi) -> Result<serde_json::Value, String> {
     let stream = UnixStream::connect(socket)
         .await
@@ -431,7 +423,6 @@ pub async fn read_auth_info(socket: &Path, api: &LocalApi) -> Result<serde_json:
     serde_json::from_slice(&body).map_err(|error| error.to_string())
 }
 
-#[cfg(target_os = "macos")]
 fn login_header(login: &str) -> Result<axum::http::HeaderValue, String> {
     let encoded = if login.is_ascii() {
         login.to_owned()
@@ -486,8 +477,6 @@ impl TcpHandler {
 struct WebServer {
     #[serde(rename = "Handlers", default)]
     handlers: HashMap<String, Handler>,
-    #[serde(rename = "HTTPS", default)]
-    https: bool,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -661,11 +650,10 @@ impl ServeConfig {
                     continue;
                 }
                 let port = parse_host_port(host_port).map(|(_, port)| port);
-                let https = server.https
-                    || port.is_some_and(|port| {
-                        tcp.get(&port.to_string())
-                            .is_some_and(|handler| handler.https)
-                    });
+                let https = port.is_some_and(|port| {
+                    tcp.get(&port.to_string())
+                        .is_some_and(|handler| handler.https)
+                });
                 let tcp_refusal = port.and_then(|port| {
                     tcp.get(&port.to_string())
                         .filter(|handler| !handler.is_https_only())
@@ -732,10 +720,7 @@ pub enum OriginRefusalReason {
 impl OriginRefusalReason {
     fn message(&self, target: &ServeTarget) -> String {
         let publish = match target {
-            ServeTarget::Unix { path, .. } => format!(
-                "publish tether with: sudo tailscale serve --bg --https=443 unix:{}",
-                path.display()
-            ),
+            ServeTarget::Unix { .. } => "run `tether setup`".to_owned(),
             ServeTarget::Loopback(_) => "restart tether to republish".to_owned(),
         };
         match self {
@@ -751,8 +736,8 @@ impl OriginRefusalReason {
             },
             Self::OldDefaultTarget { entry } => match target {
                 ServeTarget::Unix { path, .. } => format!(
-                    "{entry} still proxies to tether's old 127.0.0.1:7850 listener; replace it with: sudo tailscale serve --bg --https=443 unix:{}",
-                    path.display()
+                    "{entry} still proxies to tether's old 127.0.0.1:7850 listener; run `tether setup` to replace it with tether's Unix target at {}.",
+                    path.display(),
                 ),
                 ServeTarget::Loopback(_) => format!(
                     "{entry} still proxies to tether's old 127.0.0.1:7850 listener; remove the stale handler and {publish}"
@@ -929,6 +914,14 @@ pub enum ServeTarget {
     Loopback(MacFront),
 }
 
+/// The information needed to remove a managed handler without a running front.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServeTargetMatcher {
+    Unix(PathBuf),
+    LoopbackPort(u16),
+    LoopbackAnyPort,
+}
+
 impl std::fmt::Debug for ServeTarget {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -953,6 +946,22 @@ impl ServeTarget {
         Self::Loopback(front)
     }
 
+    /// The proxy target installed for this live front.
+    pub fn proxy_url(&self) -> String {
+        match self {
+            Self::Unix { path, .. } => format!("unix:{}", path.display()),
+            Self::Loopback(front) => front.proxy_url(),
+        }
+    }
+
+    /// Produces the matcher used by plans after the live front may have stopped.
+    pub fn matcher(&self) -> ServeTargetMatcher {
+        match self {
+            Self::Unix { path, .. } => ServeTargetMatcher::Unix(path.clone()),
+            Self::Loopback(front) => ServeTargetMatcher::LoopbackPort(front.port()),
+        }
+    }
+
     fn names(&self, proxy: &str) -> bool {
         match self {
             Self::Unix { identity, .. } => {
@@ -969,6 +978,32 @@ impl ServeTarget {
         match self {
             Self::Unix { .. } => self.names(proxy),
             Self::Loopback(front) => proxy == front.proxy_url(),
+        }
+    }
+}
+
+impl ServeTargetMatcher {
+    pub fn unix(path: impl Into<PathBuf>) -> Self {
+        Self::Unix(path.into())
+    }
+
+    pub fn loopback_port(port: u16) -> Self {
+        Self::LoopbackPort(port)
+    }
+
+    /// Used only by the daemon's bind-failure cleanup, before launchd provides a
+    /// socket and therefore before the configured port can be read.
+    pub(crate) fn loopback_any_port() -> Self {
+        Self::LoopbackAnyPort
+    }
+
+    /// Matches only a previously installed tether handler, never every proxy that
+    /// could point at the live socket or loopback port.
+    pub fn matches(&self, proxy: &str) -> bool {
+        match self {
+            Self::Unix(path) => proxy == format!("unix:{}", path.display()),
+            Self::LoopbackPort(port) => MacFront::is_tether_shaped(proxy, *port),
+            Self::LoopbackAnyPort => MacFront::is_any_tether_shaped(proxy),
         }
     }
 }
@@ -1007,10 +1042,10 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "Web": {
                 "devbox.ts.net:443": {
-                    "HTTPS": true,
                     "Handlers": { "/": { "Proxy": proxy } }
                 }
             },
+            "TCP": { "443": { "HTTPS": true } },
             "AllowFunnel": { "devbox.ts.net:443": false }
         }))
         .expect("Serve config")
@@ -1035,11 +1070,10 @@ mod tests {
         let forwarded: ServeConfig = serde_json::from_value(serde_json::json!({
             "Web": {
                 "devbox.ts.net:443": {
-                    "HTTPS": true,
                     "Handlers": { "/": { "Proxy": format!("http://127.0.0.1:7851/{SECRET}") } }
                 }
             },
-            "TCP": { "2222": { "TCPForward": "127.0.0.1:7851" } },
+            "TCP": { "443": { "HTTPS": true }, "2222": { "TCPForward": "127.0.0.1:7851" } },
             "AllowFunnel": { "devbox.ts.net:443": false }
         }))
         .expect("Serve config with a TCP forward");

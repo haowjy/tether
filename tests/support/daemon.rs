@@ -337,12 +337,12 @@ async fn start_as_with_allowlist(
     let mut serve_config = serde_json::json!({
         "Web": {
             "devbox.ts.net:443": {
-                "HTTPS": true,
                 "Handlers": {
                     "/": { "Proxy": format!("unix:{}", serve_socket.display()) }
                 }
             }
         },
+        "TCP": { "443": { "HTTPS": true } },
         "AllowFunnel": { "devbox.ts.net:443": false }
     });
     if extra_handler {
@@ -351,6 +351,7 @@ async fn start_as_with_allowlist(
     }
     if tcp_forward {
         serve_config["TCP"] = serde_json::json!({
+            "443": { "HTTPS": true },
             "2222": { "TCPForward": format!("unix:{}", serve_socket.display()) }
         });
     }

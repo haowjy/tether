@@ -8,10 +8,11 @@ enrolled nodes work only on Linux `serve.sock` and the Mac Loopback front.
 target and canonical-origin calculation; `mac_front.rs` owns Mac front identity and
 secret generation and wires its target, publication state and request gate together;
 `localapi.rs` owns LocalAPI transport and keep-alive clients, bounded uncached whois,
-and status/whois response parsing; `publish.rs` owns the raw-JSON Serve plan and
-compare-and-swap publication, judged by the same canonical-origin rule used for
-admission. `node.rs`
-owns pure forwarded-address, node and browser-origin rules;
+status/prefs/whois response parsing and typed Serve-write errors; `publish.rs` owns
+the raw-JSON Serve plans and three-attempt compare-and-swap loop shared by Mac
+publication, setup and teardown. Mac bind-failure withdrawal retries until its 2 s
+deadline. All plans are judged by the same canonical-origin rule used for admission.
+`node.rs` owns pure forwarded-address, node and browser-origin rules;
 `token.rs` owns tokens, codes and hashes; `store.rs` owns the shared
 `auth.toml` read-modify-write and native/node row shapes.
 
@@ -42,6 +43,7 @@ Rules the code relies on, which are easy to break:
 - Mac publication exposes one `watch<PublicationState>` to the front and `/auth/info`;
   while it is waiting, tailnet-state observations must not report a missing origin.
   Non-transient publication failures remain visible in `browserRefused` as the task
-  retries, while LocalAPI I/O and timeouts back off quietly.
+  retries, while LocalAPI I/O and timeouts back off quietly. `/auth/info` reports
+  `browserPending` while that watch is waiting; it is always false on Linux.
 - Store operations block on disk and run on the auth lane (`src/blocking.rs`), as
   request checks do; a hung mount must not take the runtime thread or other lanes.

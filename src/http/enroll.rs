@@ -17,7 +17,7 @@ use crate::proto::auth::{AuthInfo, EnrollRequest, EnrollResponse, ProtocolRange}
 use crate::proto::{HttpError, MIN_PROTOCOL, PROTOCOL_VERSION};
 
 pub(super) async fn info(State(ctx): State<Arc<Ctx>>) -> Response {
-    let origin = match ctx.app.auth.browser_origin().await {
+    let (origin, browser_pending) = match ctx.app.auth.browser_origin().await {
         Ok(origin) => origin,
         Err(_) => return Refusal::from(HttpError::IdentityUnavailable).into_response(),
     };
@@ -40,6 +40,7 @@ pub(super) async fn info(State(ctx): State<Arc<Ctx>>) -> Response {
         },
         browser_origin,
         browser_refused,
+        browser_pending,
     })
     .into_response()
 }

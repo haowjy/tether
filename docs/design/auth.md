@@ -366,9 +366,10 @@ Once LocalAPI answers, it:
      name after a rename, say), drops a `Web` entry left with no handler, and drops a
      `TCP` port entry that is exactly `{HTTPS: true}` when no `Web` entry uses that
      port any more;
-   - then it adds the new proxy without removing any other handler, ensures the new
-     Web entry is HTTPS, and adds `TCP["443"] = {HTTPS: true}` only if that port has
-     no entry. It deserializes the planned config and judges it with
+   - then it adds the new proxy without removing any other handler and adds
+     `TCP["443"] = {HTTPS: true}` only if that port has no entry. `Web` entries store
+     only their handlers; HTTPS is represented by the matching `TCP[port].HTTPS`.
+     It deserializes the planned config and judges it with
      `ServeConfig::canonical_origin(&target)`, the same rule used for request
      admission. Funnel, a TCP forward, a non-root or additional handler, a second
      reference to the front, or any other non-canonical shape refuses without a
@@ -795,21 +796,23 @@ pass through it.
 - `node.rs`: pure forwarded-address parsing, node eligibility and browser-origin
   admission rules.
 - `localapi.rs`: the platform-selected LocalAPI transport, endpoint discovery on
-  each connect, keep-alive clients, bounded uncached whois, answer parsing and the
-  versioned Serve-config access used by publication.
+  each connect, keep-alive clients, bounded uncached whois, status and prefs parsing,
+  typed Serve-write errors and the versioned Serve-config access used by setup,
+  publication and teardown.
 - `identity.rs`: the tailnet-state cell; Serve-config parsing, the serve target
   (`serve.sock` identity, or the Mac front's port and path secret) and canonical-origin
-  calculation; Tailscale login decoding and the Mac `local.sock` client used by
-  `tether enroll`. Cell fills and retries log changes in origin or availability.
+  calculation; Tailscale login decoding and the `local.sock` auth-info client used by
+  setup on both platforms and by `tether enroll` on a Mac. Cell fills and retries log
+  changes in origin or availability.
 - `mac_front.rs`: the Mac front identity and its proxy URL, strict tether-shaped
   matcher, and assembly into the target, publication and request gate.
-- `publish.rs`: the publication plans. A pure plan from the serve config's JSON, the
-  MagicDNS name and serve target (Unix or Mac) to the new JSON or a refusal; the plan
-  is judged with the canonical-origin rule before a POST. The Mac daemon's task and
-  `tether setup` on Linux share it, and the withdrawal plan serves `tether teardown`
-  on both. It also owns the withdrawal plan for a socket
-  launchd couldn't bind, and one task owns the publication state and retries with the
-  cell's 2–30 s backoff. The serve-config types redact proxy URLs in `Debug`.
+- `publish.rs`: pure publication and withdrawal plans from Serve JSON and a target
+  (Unix or Mac), preserving unknown fields and judging publication with the same
+  canonical-origin rule used for admission. One three-attempt `If-Match` loop is shared
+  by the Mac daemon's publisher, Linux `tether setup`, and `tether teardown` on both
+  platforms. It also owns best-effort withdrawal when launchd couldn't bind a socket;
+  one task owns Mac publication state and retries with the cell's 2–30 s backoff. The
+  serve-config types redact proxy URLs in `Debug`.
 - `store.rs`: `auth.toml` read-modify-write, native and node devices, and pending
   enrolment. Invalid device rows are kept as raw TOML when refused; writes preserve
   them, and removal can match their `name`.
