@@ -2,11 +2,15 @@
 
 use std::fs::File;
 use std::io;
+#[cfg(target_os = "macos")]
+use std::net::{Ipv4Addr, TcpListener as StdTcpListener};
 use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
 use rustix::fs::{Mode, OFlags};
 use thiserror::Error;
+#[cfg(target_os = "macos")]
+use tokio::net::TcpListener;
 use tokio::net::UnixListener;
 
 #[derive(Debug, Error)]
@@ -15,6 +19,10 @@ pub enum RuntimeError {
     Directory(#[from] crate::config::RuntimeDirError),
     #[error("tether is already running")]
     AlreadyRunning,
+    #[error("no launchd socket `Listener`")]
+    NoLaunchdSocket,
+    #[error("launchd couldn't bind the Mac front's port; another process holds it")]
+    MacFrontNotBound,
     #[error("{path}: {source}")]
     Io { path: PathBuf, source: io::Error },
 }
@@ -22,16 +30,28 @@ pub enum RuntimeError {
 pub struct Runtime {
     /// Keeping this descriptor open holds the daemon-wide lock until shutdown.
     _lock: File,
-    pub serve: UnixListener,
+    pub serve: ServeFront,
     pub local: UnixListener,
-    pub serve_path: PathBuf,
     pub local_path: PathBuf,
     pub paste_dir: PathBuf,
 }
 
+#[cfg(not(target_os = "macos"))]
+pub struct ServeFront {
+    pub listener: UnixListener,
+    pub path: PathBuf,
+}
+
+#[cfg(target_os = "macos")]
+pub struct ServeFront {
+    pub listener: Option<TcpListener>,
+}
+
 impl Runtime {
     /// Directory check, lock, stale socket replacement, binds, then paste cleanup.
-    pub fn open(dir: PathBuf) -> Result<Self, RuntimeError> {
+    pub fn open(dir: PathBuf, publish: bool) -> Result<Self, RuntimeError> {
+        #[cfg(not(target_os = "macos"))]
+        let _ = publish;
         crate::config::prepare_runtime_dir(&dir)?;
         let lock_path = dir.join("lock");
         let lock = rustix::fs::open(
@@ -55,7 +75,19 @@ impl Runtime {
         let local_path = dir.join("local.sock");
         unlink_stale(&serve_path)?;
         unlink_stale(&local_path)?;
-        let serve = bind(&serve_path)?;
+        #[cfg(not(target_os = "macos"))]
+        let serve = ServeFront {
+            listener: bind(&serve_path)?,
+            path: serve_path.clone(),
+        };
+        #[cfg(target_os = "macos")]
+        let serve = if publish {
+            ServeFront {
+                listener: Some(launchd_listener()?),
+            }
+        } else {
+            ServeFront { listener: None }
+        };
         let local = bind(&local_path)?;
 
         let paste_dir = dir.join("paste");
@@ -64,11 +96,36 @@ impl Runtime {
             _lock: lock,
             serve,
             local,
-            serve_path,
             local_path,
             paste_dir,
         })
     }
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_listener() -> Result<TcpListener, RuntimeError> {
+    use std::os::fd::OwnedFd;
+
+    let mut descriptors =
+        crate::launchd::activate_socket("Listener").map_err(|_| RuntimeError::NoLaunchdSocket)?;
+    if descriptors.len() != 1 {
+        return Err(RuntimeError::NoLaunchdSocket);
+    }
+    let descriptor: OwnedFd = descriptors.pop().expect("one descriptor");
+    rustix::io::fcntl_setfd(&descriptor, rustix::io::FdFlags::CLOEXEC)
+        .map_err(|_| RuntimeError::NoLaunchdSocket)?;
+    let listener = StdTcpListener::from(descriptor);
+    listener
+        .set_nonblocking(true)
+        .map_err(|_| RuntimeError::NoLaunchdSocket)?;
+    let address = listener
+        .local_addr()
+        .map_err(|_| RuntimeError::NoLaunchdSocket)?;
+    if address.ip() != Ipv4Addr::LOCALHOST || address.port() == 0 {
+        return Err(RuntimeError::MacFrontNotBound);
+    }
+    let listener = TcpListener::from_std(listener).map_err(|_| RuntimeError::NoLaunchdSocket)?;
+    Ok(listener)
 }
 
 fn unlink_stale(path: &Path) -> Result<(), RuntimeError> {

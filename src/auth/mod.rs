@@ -12,11 +12,14 @@ use crate::blocking::{Busy, Lane};
 
 pub mod identity;
 pub mod localapi;
+pub mod mac_front;
 pub mod node;
+pub mod publish;
 pub mod store;
 pub mod token;
 
 pub use identity::{CanonicalOrigin, IdentityError};
+pub use mac_front::MacFront;
 pub use store::{AuthFile, Device, DeviceKind, Store, StoreError};
 
 /// The subprotocol that carries a native token on a WebSocket.
@@ -108,6 +111,7 @@ pub struct Auth {
     api: localapi::LocalApi,
     state: identity::TailnetStateCell,
     serve_target: Option<identity::ServeTarget>,
+    publication: Option<publish::Publication>,
     logged_origin: Arc<Mutex<Option<String>>>,
 }
 
@@ -118,16 +122,37 @@ impl Auth {
         lane: Lane,
         api: localapi::LocalApi,
         serve_target: Option<identity::ServeTarget>,
+        publication: Option<publish::Publication>,
     ) -> Self {
         let logged_origin = Arc::new(Mutex::new(None));
         let observed_target = serve_target.clone();
         let observed_origin = logged_origin.clone();
+        let observed_publication = publication
+            .as_ref()
+            .map(|publication| publication.state().clone());
         let state = identity::TailnetStateCell::new(api.clone(), move |result| match result {
             Ok(state) => {
+                if observed_publication.as_ref().is_some_and(|publication| {
+                    !matches!(
+                        &*publication.borrow(),
+                        publish::PublicationState::Published(_)
+                    )
+                }) {
+                    return;
+                }
                 let origin = identity::origin(observed_target.as_ref(), &state.serve);
                 log_origin(&observed_origin, origin);
             }
-            Err(error) => log_unavailable(&observed_origin, error.to_string()),
+            Err(error) => {
+                if observed_publication.as_ref().is_none_or(|publication| {
+                    matches!(
+                        &*publication.borrow(),
+                        publish::PublicationState::Published(_)
+                    )
+                }) {
+                    log_unavailable(&observed_origin, error.to_string());
+                }
+            }
         });
         Self {
             store,
@@ -137,12 +162,25 @@ impl Auth {
             api,
             state,
             serve_target,
+            publication,
             logged_origin,
         }
     }
 
     pub fn start(&self) {
         self.state.start();
+        if let Some(publication) = self.publication.clone() {
+            let api = self.api.clone();
+            let state = self.state.clone();
+            let target = self.serve_target.clone();
+            let logged = self.logged_origin.clone();
+            tokio::spawn(async move {
+                let on_published = move |state: &identity::TailnetState| {
+                    log_origin(&logged, identity::origin(target.as_ref(), &state.serve));
+                };
+                publish::run(api, state, publication, on_published).await;
+            });
+        }
     }
 
     pub fn store(&self) -> &Store {
@@ -166,6 +204,20 @@ impl Auth {
     }
 
     pub async fn browser_origin(&self) -> Result<Result<CanonicalOrigin, String>, AuthError> {
+        if let Some(publication) = &self.publication {
+            match &*publication.state().borrow() {
+                publish::PublicationState::Waiting { last_error } => {
+                    return Ok(Err(last_error
+                        .as_deref()
+                        .unwrap_or("waiting for tether's Serve publication")
+                        .to_owned()));
+                }
+                publish::PublicationState::Refused(message) => {
+                    return Ok(Err(message.clone()));
+                }
+                publish::PublicationState::Published(_) => {}
+            }
+        }
         let state = self.tailnet_state().await?;
         let origin = identity::origin(self.serve_target.as_ref(), &state.serve);
         log_origin(&self.logged_origin, origin.clone());
@@ -178,6 +230,14 @@ impl Auth {
     }
 
     pub async fn cached_browser_origin(&self) -> Option<CanonicalOrigin> {
+        if let Some(publication) = &self.publication {
+            if !matches!(
+                &*publication.state().borrow(),
+                publish::PublicationState::Published(_)
+            ) {
+                return None;
+            }
+        }
         let state = self
             .state
             .get()

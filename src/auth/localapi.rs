@@ -1,19 +1,20 @@
 //! Tailscale LocalAPI transport, keep-alive clients, bounded uncached whois pool, and answer parsing.
 
 use std::collections::{HashMap, VecDeque};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
+use base64::Engine as _;
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::client::conn::http1::SendRequest;
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
 use thiserror::Error;
-use tokio::net::UnixStream;
+use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{Mutex, watch};
 
 const SOCKETS: [&str; 2] = [
@@ -43,6 +44,8 @@ pub enum LocalApiError {
     TooLarge,
     #[error("tailscaled's {path} isn't the expected JSON: {error}")]
     Json { path: &'static str, error: String },
+    #[error("can't read Tailscale's LocalAPI proof token; the daemon's user must be an admin")]
+    MacAdmin,
 }
 
 /// A parsed whois answer sufficient for the browser node rules.
@@ -144,12 +147,28 @@ impl WhoisFlight {
 impl LocalApi {
     /// Uses tailscaled's standard Unix socket search order.
     pub fn system() -> Self {
-        Self::new(Transport::Unix(None))
+        #[cfg(target_os = "macos")]
+        {
+            Self::new(Transport::MacProof)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Self::new(Transport::Unix(None))
+        }
     }
 
     /// Uses a fixed LocalAPI socket; public so integration tests can run a fake daemon.
     pub fn at(socket: PathBuf) -> Self {
         Self::new(Transport::Unix(Some(socket)))
+    }
+
+    /// Uses a TCP LocalAPI endpoint and its same-user proof token. This also lets
+    /// integration tests exercise the Mac transport without a real Tailscale daemon.
+    pub fn at_tcp(address: SocketAddr, token: &str) -> Self {
+        Self::new(Transport::Tcp {
+            address,
+            authorization: basic_authorization(token),
+        })
     }
 
     fn new(transport: Transport) -> Self {
@@ -172,11 +191,67 @@ impl LocalApi {
         self.cell.get_json("/localapi/v0/status?peers=false").await
     }
 
-    /// Parse the Serve-config answer as the caller's domain type.
-    pub(super) async fn serve_config<T: serde::de::DeserializeOwned>(
-        &self,
-    ) -> Result<Option<T>, LocalApiError> {
+    /// Reads the raw JSON view; identity owns the null/default interpretation.
+    pub(super) async fn serve_config(&self) -> Result<serde_json::Value, LocalApiError> {
         self.cell.get_json("/localapi/v0/serve-config").await
+    }
+
+    /// Reads the raw Serve config and its compare-and-swap token for publication.
+    pub async fn serve_config_raw(
+        &self,
+    ) -> Result<(serde_json::Value, HeaderValue), LocalApiError> {
+        let path = "/localapi/v0/serve-config";
+        let response = self
+            .cell
+            .request(Method::GET, path, &HeaderMap::new(), None)
+            .await?;
+        if !response.status.is_success() {
+            return Err(LocalApiError::Http(format!("{path}: {}", response.status)));
+        }
+        let mut etags = response.headers.get_all(header::ETAG).iter();
+        let etag = etags
+            .next()
+            .cloned()
+            .filter(|_| etags.next().is_none())
+            .ok_or_else(|| LocalApiError::Http(format!("{path}: missing or duplicate Etag")))?;
+        let config = parse_json(path, &response.body)?;
+        Ok((config, etag))
+    }
+
+    /// Writes a Serve config only if the Etag from its read is still current.
+    pub async fn set_serve_config(
+        &self,
+        config: &serde_json::Value,
+        etag: HeaderValue,
+    ) -> Result<(), SetServeConfigError> {
+        let body =
+            serde_json::to_vec(config).map_err(|error| LocalApiError::Http(error.to_string()))?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        headers.insert(header::IF_MATCH, etag);
+        let response = self
+            .cell
+            .request(
+                Method::POST,
+                "/localapi/v0/serve-config",
+                &headers,
+                Some(Bytes::from(body)),
+            )
+            .await?;
+        if response.status == StatusCode::PRECONDITION_FAILED {
+            return Err(SetServeConfigError::Conflict);
+        }
+        if !response.status.is_success() {
+            return Err(LocalApiError::Http(format!(
+                "/localapi/v0/serve-config: {}",
+                response.status
+            ))
+            .into());
+        }
+        Ok(())
     }
 
     pub async fn whois(&self, address: IpAddr) -> Result<Whois, LocalApiError> {
@@ -371,6 +446,12 @@ impl Client {
 #[derive(Clone)]
 enum Transport {
     Unix(Option<PathBuf>),
+    Tcp {
+        address: SocketAddr,
+        authorization: HeaderValue,
+    },
+    #[cfg(target_os = "macos")]
+    MacProof,
 }
 
 async fn connect(transport: &Transport) -> Result<Endpoint, LocalApiError> {
@@ -398,7 +479,123 @@ async fn connect(transport: &Transport) -> Result<Endpoint, LocalApiError> {
                 authorization: None,
             })
         }
+        Transport::Tcp {
+            address,
+            authorization,
+        } => connect_tcp(*address, Some(authorization.clone())).await,
+        #[cfg(target_os = "macos")]
+        Transport::MacProof => {
+            let (address, authorization) = mac_proof_endpoint().await?;
+            connect_tcp(address, Some(authorization)).await
+        }
     }
+}
+
+async fn connect_tcp(
+    address: SocketAddr,
+    authorization: Option<HeaderValue>,
+) -> Result<Endpoint, LocalApiError> {
+    let stream = TcpStream::connect(address)
+        .await
+        .map_err(|error| LocalApiError::Io(error.to_string()))?;
+    let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .map_err(|error| LocalApiError::Http(error.to_string()))?;
+    tokio::spawn(connection);
+    Ok(Endpoint {
+        sender,
+        authorization,
+    })
+}
+
+fn basic_authorization(token: &str) -> HeaderValue {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(format!(":{token}"));
+    HeaderValue::from_str(&format!("Basic {encoded}")).expect("base64 is a valid header value")
+}
+
+#[derive(Debug, Error)]
+pub enum SetServeConfigError {
+    #[error("tailscaled's Serve config changed while tether was publishing")]
+    Conflict,
+    #[error(transparent)]
+    LocalApi(#[from] LocalApiError),
+}
+
+#[cfg(target_os = "macos")]
+async fn mac_proof_endpoint() -> Result<(SocketAddr, HeaderValue), LocalApiError> {
+    let (port, token) = match macsys_proof()? {
+        Some(endpoint) => endpoint,
+        None => app_store_proof().await?,
+    };
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    Ok((address, basic_authorization(&token)))
+}
+
+#[cfg(target_os = "macos")]
+fn macsys_proof() -> Result<Option<(u16, String)>, LocalApiError> {
+    let link = match std::fs::read_link("/Library/Tailscale/ipnport") {
+        Ok(link) => link,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(LocalApiError::Io(error.to_string())),
+    };
+    let port = parse_port(link.to_str().unwrap_or_default())?;
+    let path = format!("/Library/Tailscale/sameuserproof-{port}");
+    let token = std::fs::read_to_string(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            LocalApiError::MacAdmin
+        } else {
+            LocalApiError::Io(error.to_string())
+        }
+    })?;
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(LocalApiError::Io(
+            "Tailscale's LocalAPI proof token is empty".to_owned(),
+        ));
+    }
+    Ok(Some((port, token.to_owned())))
+}
+
+#[cfg(target_os = "macos")]
+async fn app_store_proof() -> Result<(u16, String), LocalApiError> {
+    let uid = rustix::process::getuid().as_raw();
+    let user = format!("-u{uid}");
+    let output = tokio::process::Command::new("/usr/sbin/lsof")
+        .args(["-n", "-a", user.as_str(), "-c", "IPNExtension", "-F"])
+        .kill_on_drop(true)
+        .output()
+        .await
+        .map_err(|error| LocalApiError::Io(error.to_string()))?;
+    if !output.status.success() {
+        return Err(LocalApiError::Io(
+            "couldn't find Tailscale's LocalAPI endpoint".to_owned(),
+        ));
+    }
+    output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .filter_map(|line| std::str::from_utf8(line).ok())
+        .filter_map(|line| line.strip_prefix('n'))
+        .find_map(|path| {
+            let file = path.rsplit('/').next()?;
+            let suffix = file.strip_prefix("sameuserproof-")?;
+            let (port, token) = suffix.split_once('-')?;
+            let port = parse_port(port).ok()?;
+            (!token.is_empty()).then(|| (port, token.to_owned()))
+        })
+        .ok_or_else(|| LocalApiError::Io("couldn't find Tailscale's LocalAPI endpoint".to_owned()))
+}
+
+#[cfg(target_os = "macos")]
+fn parse_port(value: &str) -> Result<u16, LocalApiError> {
+    let port = value
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .and_then(|port| port.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .ok_or_else(|| LocalApiError::Io("invalid Tailscale LocalAPI port".to_owned()))?;
+    Ok(port)
 }
 
 fn request(

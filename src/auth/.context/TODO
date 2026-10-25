@@ -1,1 +1,0 @@
-- macOS host: the Tailscale macOS app has no LocalAPI at the Linux socket paths, so node admission returns 503 identity_unavailable and Serve to a Unix socket 502s (probe p125, 2026-10-24, .meridian/work/tether-mvp/serve-mac-probe.md). Either support the macOS LocalAPI (the app's same-user proof / standalone tailscaled socket) or state Linux-only for the daemon host.

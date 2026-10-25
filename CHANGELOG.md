@@ -5,6 +5,9 @@ version section on release.
 
 ## [Unreleased]
 
+- tether can host on a Mac with the Tailscale app (`tether serve --publish`, from a LaunchAgent).
+  When it can't publish, it names the conflict (Funnel, a TCP forward, or another app's handler).
+- Serve refusals on Linux name the actual conflict too.
 - An iOS app: the web UI bundled in a native shell that holds each server's token behind
   Face ID (one unlock for every server, locking after five minutes away), owns the keyboard
   (hardware keys go straight to the terminal: Esc, Ctrl and Option as Meta, held arrows

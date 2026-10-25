@@ -100,11 +100,10 @@ rebinds DNS to loopback has neither the secret nor the published `Host`.
 So the Mac host also trusts:
 
 - **that copies of the secret leaving the Mac stay harmless.** Tailscale's log upload
-  would carry it (the extension logs every handler's target through its uploading
-  logger), so the Mac setup turns log upload off ([running.md](../running.md#host-on-a-mac)),
-  and tether can't check that it did. What remains is a sysdiagnose Jimmy sends and the
-  Mac's backups. A copy is useless without code running on the Mac, and goes stale at
-  tether's next start, which picks a new secret;
+  carries it: the extension logs every handler's target through its uploading logger,
+  and the app has no opt-out. A sysdiagnose Jimmy sends and the Mac's backups carry it
+  too. A copy is useless without code running on the Mac, and goes stale at tether's
+  next start, which picks a new secret;
 - **that nothing binds tether's port while the agent is unloaded.** While tether's
   LaunchAgent is loaded and its socket bound, launchd holds the port across crashes
   and restarts. tether never removes its Serve entry, so whenever the agent is
@@ -208,9 +207,12 @@ proxy target.
 
 **Startup needs no LocalAPI.** The daemon starts even when tailscaled is down, so a
 boot that starts tether first costs no restart loop. It starts one background fill
-of the tailnet-state cell, retrying with backoff from 2 s to 30 s until it succeeds, then logs the
-canonical origin or the refusal message; it logs again whenever that changes. On a
-Mac with `--publish`, the publication waits for LocalAPI the same way.
+of the tailnet-state cell, retrying with backoff from 2 s to 30 s until it succeeds,
+then logs the canonical origin or the refusal message; it logs again whenever that
+changes. On a Mac with `--publish`, the publication waits for LocalAPI with the same
+2–30 s backoff. While publication is waiting, tailnet-state observations do not warn
+about a missing origin; once publication succeeds, its refreshed state is judged and
+logged.
 
 **Reaching LocalAPI.** How the daemon reaches LocalAPI is chosen at startup by
 platform, and the endpoint is found again each time a connection opens, so a Tailscale
@@ -220,7 +222,7 @@ restart that moves it costs one reconnect:
 |---|---|---|
 | Linux | Unix socket | the first of `/var/run/tailscale/tailscaled.sock` and `/var/run/tailscaled.socket` that exists |
 | macOS, standalone app (macsys) | TCP `127.0.0.1:<port>`, HTTP Basic auth with an empty user and the token | `readlink /Library/Tailscale/ipnport` gives the port; `/Library/Tailscale/sameuserproof-<port>` holds the token (`root:admin 0640`, so the daemon's user must be an admin) |
-| macOS, App Store app (unverified) | as macsys | when `ipnport` is missing: `lsof -n -a -u<uid> -c IPNExtension -F`, taking the port and token from the open file named `….tailscale.ipn.macos/sameuserproof-<port>-<token>`, as Tailscale's CLI does |
+| macOS, App Store app (unverified) | as macsys | when `ipnport` is missing: `/usr/sbin/lsof -n -a -u<uid> -c IPNExtension -F`, taking the port and token from the open file named `….tailscale.ipn.macos/sameuserproof-<port>-<token>`, as Tailscale's CLI does |
 
 Every request carries `Host: local-tailscaled.sock`. A failure to find or open the
 endpoint is a LocalAPI failure like any other: `503 identity_unavailable` and the
@@ -322,9 +324,9 @@ per-request service, before the router, because axum routes before any
 `Router::layer` middleware runs. The daemon compares the first `len + 2` bytes of the
 request target's raw path, before any percent-decoding, with `/<path secret>/`, using
 `subtle`'s constant-time equality; a shorter path fails. The secret's length is
-public; its bytes are not. A mismatch answers `404` with an empty body and nothing
-else: no headers beyond the status, no Tailscale check, no LocalAPI read, no log line
-above `debug`. A match rewrites the request's URI to the rest of the path, keeping
+public; its bytes are not. A mismatch answers `404` with an empty body; HTTP may add
+`date`, `content-length: 0` and, when closing, `connection: close`. It causes no
+Tailscale check, LocalAPI read or log line above `debug`. A match rewrites the request's URI to the rest of the path, keeping
 the query, and hands it to the router, so every layer, log line and route sees `/ws`,
 `/fs/raw` or `/` and never the secret. The daemon never logs the secret, never writes
 it to disk, and never returns it in a response; refusal and publication messages name
@@ -347,10 +349,13 @@ publication stops matching.
 **Publishing.** On a Mac the daemon writes its own Serve entry through LocalAPI, so
 the path secret can change at every start. The proof token can write the serve config,
 and `If-Match` makes the write a compare-and-swap. One task owns the publication and
-its state (waiting, published, refused). Once LocalAPI answers, it:
+its state (waiting with an optional last error, published with its authority, refused).
+Once LocalAPI answers, it:
 
 1. reads `GET /localapi/v0/serve-config` with its `Etag`, and the self node's
-   MagicDNS name from the tailnet-state read;
+   MagicDNS name from the tailnet-state read. `ServeConfig::parse` treats Tailscale's
+   `null` answer (a profile that has never configured Serve) as an empty config for
+   both this plan and the tailnet-state cell;
 2. plans the new config with a pure function over the config's JSON, preserving every
    field it doesn't change, including fields tether doesn't know. A handler is
    **tether-shaped** when its proxy is `http://127.0.0.1:<the front's port>/tether-<43
@@ -360,24 +365,33 @@ its state (waiting, published, refused). Once LocalAPI answers, it:
      name after a rename, say), drops a `Web` entry left with no handler, and drops a
      `TCP` port entry that is exactly `{HTTPS: true}` when no `Web` entry uses that
      port any more;
-   - then, for `<name>:443`: Funnel on refuses; `TCP["443"]` present and not exactly
-     `{HTTPS: true}` (a TCP forward, or HTTP) refuses; any handler left in
-     `Web["<name>:443"]` refuses;
-   - otherwise `Web["<name>:443"]` becomes `{Handlers: {"/": {Proxy: "http://127.0.0.1:<port>/<path secret>"}}}`
-     and `TCP["443"]` becomes `{HTTPS: true}`;
+   - then it adds the new proxy without removing any other handler, ensures the new
+     Web entry is HTTPS, and adds `TCP["443"] = {HTTPS: true}` only if that port has
+     no entry. It deserializes the planned config and judges it with
+     `ServeConfig::canonical_origin(&target)`, the same rule used for request
+     admission. Funnel, a TCP forward, a non-root or additional handler, a second
+     reference to the front, or any other non-canonical shape refuses without a
+     write; no parallel publication-specific policy decides what is safe;
 3. writes it with `POST /localapi/v0/serve-config` and `If-Match`. A `412` means the
    config changed under it: it reads and plans again, up to 3 times, then waits for
    the next retry;
-4. sets the published authority and refreshes the tailnet-state cell, which logs the
-   canonical origin.
+4. refreshes the tailnet-state cell, logs the canonical origin from that refreshed
+   state, and then publishes the authority to the front gate.
 
-A refused plan is logged once, naming the entry it found and how to clear it, and
-reported in `/auth/info`'s `browserRefused`; the daemon doesn't publish again until it
-restarts. LocalAPI being unavailable is retried with the cell's backoff, 2 s to 30 s,
-until the publication succeeds. After that the daemon never writes the config again
-while it runs: if Jimmy resets Serve to take tether off the tailnet, it stays off
-until the next start. The canonical-origin rule judges whatever the config holds from
-then on.
+The canonical-origin refusal carries a typed cause and is rendered for the serve
+target. It names the actual conflict (including Funnel, the incompatible TCP entry,
+or a sibling handler's mount), never its proxy URL, and explains how to clear it. On
+Linux it includes the `sudo tailscale serve` command below; on a Mac it tells Jimmy
+which handler or TCP forward to remove, or that Funnel must be turned off, then to
+restart tether to retry publication. A refused plan is logged once and reported in
+`/auth/info`'s `browserRefused`; the daemon doesn't publish again until it restarts.
+LocalAPI I/O failures and timeouts retry quietly with the cell's 2–30 s
+backoff. Other retryable failures, including a rejected write, a missing `Etag`, or
+three consecutive compare-and-swap conflicts, stay in `Waiting`; each distinct error
+is warned once and is shown by `/auth/info`'s `browserRefused` while tether retries.
+After publication the daemon never writes the config again while it runs: if Jimmy
+resets Serve to take tether off the tailnet, it stays off until the next start. The
+canonical-origin rule judges whatever the config holds from then on.
 
 **No unpublishing.** Apart from a withdrawal at a socket launchd couldn't bind, the
 daemon never removes its Serve entry, on any exit. A crash or
@@ -402,13 +416,11 @@ full target, path secret included, when a handler is created ("serve: creating a
 proxy handler for …") and when it is removed ("serve: closing idle connections to
 …"). tether can't avoid the line: a Serve proxy target is a URL, and the extension
 logs it. Only admins can read the unified log. The same logger uploads to Tailscale's
-log servers unless `TS_NO_LOGS_NO_SUPPORT` is set for the extension, which the Mac
-setup does ([running.md](../running.md#host-on-a-mac)). tether can't see whether it
-is set, so it neither warns nor refuses: LocalAPI reports it nowhere (status has no
-`Hostinfo`, and whois strips the self node's down to `Hostname` and `Services`), the
-extension's environment file is in root's `0750` home, and the one signal, the marker
-`tailscale bugreport` prints, comes from sending a bug report. Writing a new secret at
-each start makes every logged copy stale once the daemon that published it stops.
+log servers, and the app can't turn that off: `TS_NO_LOGS_NO_SUPPORT` and
+`--no-logs-no-support` work only for the open-source `tailscaled`
+([Tailscale: logging](https://tailscale.com/docs/features/logging.md)). Writing a new
+secret at each start makes every uploaded copy stale once the daemon that published
+it stops.
 
 **`tether enroll` on a Mac** asks the running daemon: `GET /auth/info` over
 `local.sock`, with the owner login from LocalAPI's status as `Tailscale-User-Login`.
@@ -499,10 +511,12 @@ reference is:
 - with Funnel off for its `host:port`.
 
 Otherwise there is no canonical origin and every node-lane request is `403
-bad_origin`. The refusal is one message that names the offending entry or
-reference and the fix, which each serve target words for itself: on Linux the
-`sudo tailscale serve` command below; on a Mac, removing the offending handler and
-restarting tether, which publishes itself again.
+bad_origin`. The typed refusal names the actual cause—such as the second reference,
+the TCP entry, Funnel, a non-root mount, or the sibling handler's mount—without
+printing a proxy URL, which may contain the Mac path secret. Each serve target gets
+its own repair instruction: on Linux the `sudo tailscale serve` command below; on a
+Mac, remove the named handler or TCP forward (or turn Funnel off), then restart tether
+to retry publication.
 
 | Rule | Why |
 |---|---|
@@ -777,14 +791,15 @@ pass through it.
   versioned Serve-config access used by publication.
 - `identity.rs`: the tailnet-state cell; Serve-config parsing, the serve target
   (`serve.sock` identity, or the Mac front's port and path secret) and canonical-origin
-  calculation; Tailscale login decoding. Cell fills and retries log changes in origin
-  or availability.
+  calculation; Tailscale login decoding and the Mac `local.sock` client used by
+  `tether enroll`. Cell fills and retries log changes in origin or availability.
+- `mac_front.rs`: the Mac front identity and its proxy URL, strict tether-shaped
+  matcher, and assembly into the target, publication and request gate.
 - `publish.rs`: the Mac publication. A pure plan from the serve config's JSON, the
-  MagicDNS name, the front's port and the target to the new JSON or a refusal, and the
-  withdrawal's plan for a socket launchd couldn't bind; one
-  task owns the publication's state and runs the plan against LocalAPI with the
-  retries above. The serve-config types redact proxy URLs
-  in `Debug`.
+  MagicDNS name and target to the new JSON or a refusal; the plan is judged with the
+  canonical-origin rule before a POST. It also owns the withdrawal plan for a socket
+  launchd couldn't bind, and one task owns the publication state and retries with the
+  cell's 2–30 s backoff. The serve-config types redact proxy URLs in `Debug`.
 - `store.rs`: `auth.toml` read-modify-write, native and node devices, and pending
   enrolment. Invalid device rows are kept as raw TOML when refused; writes preserve
   them, and removal can match their `name`.
@@ -792,7 +807,7 @@ pass through it.
   and live-socket re-checks. Node re-checks use the freshly read device row before
   applying policy.
 - `http/front.rs`: the front type. Each front names its lanes and its gate: the
-  `localhost` rule for `serve.sock`, the path secret and published-authority rule
+  `localhost` rule for `serve.sock`, the path secret and publication-state authority rule
   for the Mac front, none for `local.sock`. The gate is a pure function of the
   request and the front.
 - `http/server.rs`: bounded accept loop over every bound front, Unix or TCP (the Mac
@@ -806,8 +821,8 @@ pass through it.
   `launch_activate_socket`, returning `io::Result<Vec<OwnedFd>>`. It is the one
   module allowed `unsafe` (`lib.rs` denies it, so the module's `allow` can override
   it, and every block carries a `// SAFETY:` comment); no other code converts a raw
-  fd. A null array is an empty list. The fd arrives blocking, so the caller sets it
-  non-blocking before handing it to tokio.
+  fd. A null array is an empty list. The caller sets `FD_CLOEXEC` unconditionally and
+  sets the fd non-blocking before handing it to tokio.
 - `config.rs`: `runtime_dir()` returns `$XDG_RUNTIME_DIR/tether` on Linux or
   `$TMPDIR/tether` on macOS; both are private, checked directories.
 - `build.rs`: embeds the shell assets and computes their gzip payloads and ETags at
@@ -979,7 +994,7 @@ and G11 apply as written, plus:
 | M4 | `kill -9` the daemon: the port stays bound (a second bind on `127.0.0.1`, `0.0.0.0` and `[::]` with `IPV6_V6ONLY` off fails), a request waits and the restarted daemon answers; the new start replaces the handler with a new secret and the old secret gets `404`. `launchctl bootout`, and turning the job off under Login Items: the entry stays and Serve answers `502`; `tailscale serve --https=443 off`, as Jimmy without sudo, removes it and nothing else; the next bootstrap publishes again | Socket ownership, rotation, stopping |
 | M5 | Start tether before Tailscale; quit Tailscale and check whether `ipnport` and `sameuserproof-*` remain; relaunch it (the port changes) while a tab is open and confirm the next request reconnects | Not a startup gate; endpoint rediscovery; how long a stale `ipnport` lasts |
 | M6 | Enrol the iPhone app and a Safari node against the Mac; hold a WebSocket for 10 minutes through Serve's pooled connections; revoke both | Native and node lanes through the Mac front |
-| M7 | With `TS_NO_LOGS_NO_SUPPORT=true` in the extension's `tailscaled-env.txt` and Tailscale restarted, `tailscale bugreport` prints the `BUG-NO-LOGS-NO-SUPPORT-…` marker (run it only with the opt-out set: otherwise it uploads a bug report) | The extension reads the opt-out, so log upload is off |
+| M7 | Two daemon starts publish different secrets; after the second, the first secret gets the empty `404` through Serve and directly on the port | A logged secret goes stale at the next start |
 | M8 | Optional, if the App Store app is installed: `lsof` discovery finds the port and token, and M1 passes | App Store transport |
 
 ## Open risks
@@ -992,9 +1007,9 @@ and G11 apply as written, plus:
   the Linux dev box and the real browser/device matrix; a fake LocalAPI and HTTP tests
   do not replace them.
 - A Mac host's local boundary rests on its having no account but Jimmy's, on launchd
-  holding the front's port while he is logged in, on log upload being off, and on
-  nothing binding LocalAPI's port while Tailscale is stopped ([Threat model](#threat-model)).
-  tether can't check the log opt-out; M7 checks it once by hand. Whether `ipnport`
+  holding the front's port while he is logged in, on uploaded copies of the secret
+  being useless off the tailnet and stale after a restart, and on nothing binding
+  LocalAPI's port while Tailscale is stopped ([Threat model](#threat-model)). Whether `ipnport`
   outlives a Tailscale quit is unverified; M5 settles it.
 - The LaunchAgent is probed for socket activation (the port stays bound across `kill
   -9`, and a waiting connection relaunches the job); M0 settles the rest, including

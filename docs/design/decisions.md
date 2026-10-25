@@ -135,7 +135,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   boundary than Linux and supported only on a Mac whose one user account is Jimmy's
   (below).
 - **What the Mac trusts that Linux doesn't:** that copies of the path secret leaving
-  the Mac (a sysdiagnose, backups) are harmless, with Tailscale's log upload off; that
+  the Mac (Tailscale's log upload, a sysdiagnose, backups) are harmless; that
   nothing binds tether's port in the moments after a deliberate stop; that nothing
   binds LocalAPI's port while Tailscale is stopped; and that no local process fills the
   64 connection permits ([auth.md](auth.md#threat-model)).
@@ -200,26 +200,24 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
     environment and TCC behaviour were untested, and no GUI session.
   - The daemon binding the port itself: every crash frees it while Serve points at it.
 
-### Tailscale's log upload is off on a Mac host
+### Tailscale's log upload stays on for a Mac host
 
-- **Decided:** 2026-10-24, Jimmy, after p174 showed the extension uploads the Serve
-  handler line (`ipn/ipnlocal/serve.go:1450` at v1.104.2, through the logtail-backed
-  `b.logf`), path secret included.
-- **What:** the Mac setup puts `TS_NO_LOGS_NO_SUPPORT=true` in the extension's
-  `tailscaled-env.txt` (sudo) and restarts Tailscale ([running.md](../running.md#host-on-a-mac)).
-  tether doesn't check it, warn about it or refuse without it.
-- **Why:** a secret Tailscale's log servers hold is outside Jimmy's control, even if it
-  is useless without code on the Mac and stale at the next start. tether can't see the
-  setting reliably: LocalAPI's status has no `Hostinfo`, whois strips the self node's
-  to `Hostname` and `Services` (probed), the env file is under root's `0750` home, and
-  the one signal, `tailscale bugreport`'s marker, comes from sending a bug report.
-- **Costs:** Tailscale support can't use the Mac's logs; a tailnet that requires
-  network flow logs stops Tailscale on that Mac (`ipn/ipnlocal/local.go:2048`).
+- **Decided:** 2026-10-24, Jimmy. This replaces an earlier decision the same day to turn
+  upload off with `TS_NO_LOGS_NO_SUPPORT=true` in the extension's `tailscaled-env.txt`.
+- **What:** the Mac setup leaves Tailscale's log upload on. The extension uploads the
+  Serve handler line, path secret included (`ipn/ipnlocal/serve.go:1450` at v1.104.2,
+  through the logtail-backed `b.logf`, p174), and tether accepts that.
+- **Why:** the app can't turn upload off. Tailscale documents the opt-out only for the
+  open-source `tailscaled` on macOS, not the Standalone or App Store app
+  (https://tailscale.com/docs/features/logging.md, tailscale/tailscale#5114). On this
+  Mac, `tailscale bugreport` still returned a normal report ID with the variable set. An
+  uploaded secret is useless without a tailnet node reaching Serve, and goes stale at
+  tether's next start. Gate M7 checks the rotation.
 - **Rejected:**
-  - Leaving upload on and relying on rotation: Jimmy chose not to send the secret out.
-  - Warning at `--publish` through `bugreport`: it uploads a bug report and flushes
-    logs exactly when upload is on.
-  - Refusing to publish without the setting: no reliable signal to refuse on.
+  - Running the open-source `tailscaled` from Homebrew on the Mac: it supports the
+    opt-out and has a LocalAPI socket, but drops the app Jimmy uses and needs a root
+    service.
+  - Not hosting on a Mac.
   - Keeping the secret out of the logged target: a Serve target is a URL and the
     extension logs it whole, and Serve can't add a header.
 
@@ -3645,15 +3643,46 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 
 Decided 2026-10-24 by design (p171), within Jimmy's decisions above, revised after
 reviews p172 and p173, and simplified for Jimmy's answers (one account, a LaunchAgent,
-log upload off). Probe results: `.meridian/work/tether-mvp/mac-front-probes.md`.
+log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.md`.
+
+### Publication and admission use one canonical-origin rule
+
+- **What:** one `MacFront { port, secret }` owns target formatting, recognition of
+  earlier tether-shaped handlers, and assembly of the Serve target, publication and
+  request gate. Publication first plans edits to the raw Serve JSON, preserving
+  unrelated fields and handlers, then deserializes the planned config and judges it
+  with `ServeConfig::canonical_origin(&target)` before any POST. A plan refused by
+  this rule never writes; request admission applies the same rule to the current
+  config.
+- **Why (review p184):** the previous publication-specific checks accepted configs
+  the canonical-origin rule later rejected (including a TCP forward and a handler at
+  another port), so tether could publish a front that then refused every browser. One
+  policy boundary prevents those checks from drifting apart.
+- **Rejected:** separately re-implementing Funnel, TCP/443 and handler checks in the
+  publication plan; validating the daemon-generated proxy URL by parsing it back into
+  a URI; overwriting an existing handler to make the proposed config appear canonical.
+
+### Canonical-origin refusals retain their cause
+
+- **What:** `canonical_origin` returns a typed refusal reason, and renders a
+  target-specific message naming the actual conflict and its repair. In particular,
+  messages distinguish Funnel, a TCP forward on the HTTPS port, and a sibling handler
+  at its real mount path. Never include proxy URLs in messages: a Mac proxy contains
+  the path secret.
+- **Why (review p186):** returning only the offending target reference made a plan
+  report tether's newly invented `/_` handler instead of the app's real `/` handler,
+  and hid the Funnel or TCP-forward condition that caused rejection.
+- **Rejected:** reconstructing the cause from the final message or logging an entire
+  proxy target to make the conflict more specific.
 
 ### tether writes its own Serve entry and picks a new path secret at each start
 
 - **What:** `tether serve --publish` reads the serve config and its `Etag` through
-  LocalAPI, changes only `Web["<MagicDNS name>:443"]`, `TCP["443"]` and its own earlier
-  handlers (tether-shaped: `http://127.0.0.1:<its port>/tether-<43 chars>`), and writes
-  it back with `If-Match`. It publishes once per start and never unpublishes.
-  Another app's handler, a TCP forward on 443 or Funnel refuses without writing.
+  LocalAPI, changes only `Web["<MagicDNS name>:443"]`, `TCP["443"]` when it is
+  missing, and its own earlier handlers (tether-shaped:
+  `http://127.0.0.1:<its port>/tether-<43 base64url chars>`), and writes it back with
+  `If-Match` only when the resulting config passes canonical-origin validation. It
+  publishes once per start and never unpublishes.
 - **Why:** the macsys proof token, which tether already needs to read LocalAPI, can
   write the serve config, and `If-Match` turns the write into a compare-and-swap
   (probed: a wrong `Etag` gets `412`). The extension logs the full target at every
@@ -3687,8 +3716,8 @@ log upload off). Probe results: `.meridian/work/tether-mvp/mac-front-probes.md`.
 ### launchd holds the Mac front's socket
 
 - **What:** the LaunchAgent's `Sockets` entry `Listener` binds `127.0.0.1:7851` when
-  Jimmy logs in; the daemon takes it through `src/launchd.rs`, sets it non-blocking and
-  hands it to tokio. `--publish` without it exits 78 with "no launchd socket
+  Jimmy logs in; the daemon takes it through `src/launchd.rs`, sets `FD_CLOEXEC`
+  unconditionally, makes it non-blocking and hands it to tokio. `--publish` without it exits 78 with "no launchd socket
   `Listener`", since launchd's `ESRCH` means either "not a launchd job" or "no such
   socket" (p175). The front is published on the MagicDNS name's port 443 only.
 - **Why:** the publication must not point at a port something else can bind while

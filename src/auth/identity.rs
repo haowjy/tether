@@ -7,10 +7,24 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::HeaderMap;
+#[cfg(target_os = "macos")]
+use axum::http::{HeaderValue, header};
+#[cfg(target_os = "macos")]
+use bytes::Bytes;
+#[cfg(target_os = "macos")]
+use http_body_util::{BodyExt as _, Full, Limited};
+#[cfg(target_os = "macos")]
+use hyper::Request;
+#[cfg(target_os = "macos")]
+use hyper_util::rt::TokioIo;
 use serde::Deserialize;
+use serde_json::{Map, Value};
 use thiserror::Error;
 
 use super::localapi::{LocalApi, LocalApiError};
+use super::mac_front::MacFront;
+#[cfg(target_os = "macos")]
+use tokio::net::UnixStream;
 use tokio::sync::{Mutex, Notify};
 use tokio::time::Instant;
 
@@ -37,6 +51,8 @@ pub struct TailnetState {
     pub serve: ServeConfig,
 }
 
+pub(crate) const RETRY_INITIAL: Duration = Duration::from_secs(2);
+pub(crate) const RETRY_MAX: Duration = Duration::from_secs(30);
 const STATE_MAX_AGE: Duration = Duration::from_secs(10);
 const STATE_MAX_HOLD: Duration = Duration::from_secs(30);
 
@@ -69,7 +85,7 @@ impl TailnetStateCell {
                 value: None,
                 in_flight: false,
                 retrying: false,
-                retry_delay: Duration::from_secs(2),
+                retry_delay: RETRY_INITIAL,
             })),
             changed: Arc::new(Notify::new()),
             observe: Arc::new(observe),
@@ -86,7 +102,7 @@ impl TailnetStateCell {
             }
             state.in_flight = true;
             drop(state);
-            cell.refresh().await;
+            let _ = cell.refresh().await;
         });
     }
 
@@ -124,7 +140,9 @@ impl TailnetStateCell {
             state.in_flight = true;
             drop(state);
             let cell = self.clone();
-            tokio::spawn(async move { cell.refresh().await });
+            tokio::spawn(async move {
+                let _ = cell.refresh().await;
+            });
             notified.await;
         }
     }
@@ -139,14 +157,33 @@ impl TailnetStateCell {
             .map(|(_, value)| value.clone())
     }
 
-    async fn refresh(&self) {
+    async fn refresh(&self) -> Result<TailnetState, LocalApiError> {
         let result = tailnet_state(&self.api).await;
         if matches!(
-            self.complete(result).await,
+            self.complete(result.clone()).await,
             Completion::Failed { start_retry: true }
         ) {
             let cell = self.clone();
             tokio::spawn(async move { cell.retry().await });
+        }
+        result
+    }
+
+    /// Forces a post-publication read after any earlier cell read has completed.
+    pub async fn refresh_after_write(&self) -> Result<TailnetState, LocalApiError> {
+        loop {
+            let notified = self.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let mut state = self.state.lock().await;
+            if state.in_flight {
+                drop(state);
+                notified.await;
+                continue;
+            }
+            state.in_flight = true;
+            drop(state);
+            return self.refresh().await;
         }
     }
 
@@ -182,14 +219,14 @@ impl TailnetStateCell {
                 Ok(value) => {
                     state.value = Some((Instant::now(), value.clone()));
                     state.retrying = false;
-                    state.retry_delay = Duration::from_secs(2);
+                    state.retry_delay = RETRY_INITIAL;
                     Completion::Succeeded
                 }
                 Err(_) => {
                     let start_retry = !state.retrying;
                     state.retrying = true;
                     if !start_retry {
-                        state.retry_delay = (state.retry_delay * 2).min(Duration::from_secs(30));
+                        state.retry_delay = (state.retry_delay * 2).min(RETRY_MAX);
                     }
                     Completion::Failed { start_retry }
                 }
@@ -208,7 +245,11 @@ enum Completion {
 
 pub async fn tailnet_state(api: &LocalApi) -> Result<TailnetState, LocalApiError> {
     let status = api.status().await?;
-    let serve: Option<ServeConfig> = api.serve_config().await?;
+    let mut serve = api.serve_config().await?;
+    let serve = ServeConfig::parse(&mut serve).map_err(|error| LocalApiError::Json {
+        path: "/localapi/v0/serve-config",
+        error: error.to_string(),
+    })?;
     let this = status
         .this
         .filter(|node| !node.stable_id.is_empty())
@@ -222,7 +263,7 @@ pub async fn tailnet_state(api: &LocalApi) -> Result<TailnetState, LocalApiError
         self_id: this.stable_id,
         owner_login,
         dns_name: this.dns_name.trim_end_matches('.').to_owned(),
-        serve: serve.unwrap_or_default(),
+        serve,
     })
 }
 
@@ -346,6 +387,71 @@ fn hex(byte: u8) -> Option<u8> {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub async fn read_auth_info(socket: &Path, api: &LocalApi) -> Result<serde_json::Value, String> {
+    let stream = UnixStream::connect(socket)
+        .await
+        .map_err(|_| "tether isn't running".to_owned())?;
+    let state = tailnet_state(api)
+        .await
+        .map_err(|error| format!("tailnet identity is unavailable ({error})"))?;
+    let login = state
+        .owner_login
+        .ok_or_else(|| "Tailscale didn't report an owner login".to_owned())?;
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .map_err(|error| error.to_string())?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let mut request = Request::builder()
+        .method("GET")
+        .uri("/auth/info")
+        .body(Full::new(Bytes::new()))
+        .map_err(|error| error.to_string())?;
+    request
+        .headers_mut()
+        .insert(header::HOST, HeaderValue::from_static("localhost"));
+    request
+        .headers_mut()
+        .insert("tailscale-user-login", login_header(&login)?);
+    let response = sender
+        .send_request(request)
+        .await
+        .map_err(|error| error.to_string())?;
+    let (parts, body) = response.into_parts();
+    let body = Limited::new(body, 64 * 1024)
+        .collect()
+        .await
+        .map_err(|error| error.to_string())?
+        .to_bytes();
+    if !parts.status.is_success() {
+        return Err(format!("tether's /auth/info: {}", parts.status));
+    }
+    serde_json::from_slice(&body).map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn login_header(login: &str) -> Result<axum::http::HeaderValue, String> {
+    let encoded = if login.is_ascii() {
+        login.to_owned()
+    } else {
+        let mut output = String::from("=?UTF-8?Q?");
+        for byte in login.bytes() {
+            match byte {
+                b' ' => output.push('_'),
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'!' | b'*' | b'+' | b'-' | b'/' => {
+                    output.push(char::from(byte));
+                }
+                _ => output.push_str(&format!("={byte:02X}")),
+            }
+        }
+        output.push_str("?=");
+        output
+    };
+    axum::http::HeaderValue::from_str(&encoded).map_err(|error| error.to_string())
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ServeConfig {
     #[serde(rename = "TCP", default)]
@@ -366,6 +472,14 @@ struct TcpHandler {
     tcp_forward: String,
     #[serde(rename = "HTTPS", default)]
     https: bool,
+    #[serde(flatten)]
+    other: HashMap<String, serde_json::Value>,
+}
+
+impl TcpHandler {
+    fn is_https_only(&self) -> bool {
+        self.https && self.tcp_forward.is_empty() && self.other.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -376,10 +490,19 @@ struct WebServer {
     https: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 struct Handler {
     #[serde(rename = "Proxy", default)]
     proxy: String,
+}
+
+impl std::fmt::Debug for Handler {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Handler")
+            .field("proxy", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -393,28 +516,52 @@ struct Service {
 }
 
 impl ServeConfig {
+    /// Parses LocalAPI's JSON view; a never-configured Tailscale profile returns null.
+    pub(super) fn parse(value: &mut Value) -> Result<Self, serde_json::Error> {
+        if value.is_null() {
+            *value = Value::Object(Map::new());
+        }
+        serde_json::from_value(value.clone())
+    }
+
     pub fn canonical_origin(&self, target: &ServeTarget) -> Result<CanonicalOrigin, OriginRefusal> {
         let mut references = Vec::new();
         self.collect_references("serve", target, &mut references);
+        if references.is_empty() {
+            let reason = self
+                .old_default_target()
+                .map(|entry| OriginRefusalReason::OldDefaultTarget { entry })
+                .unwrap_or(OriginRefusalReason::NoReference);
+            return Err(OriginRefusal::for_target(reason, target));
+        }
         if references.len() != 1 {
+            references.sort_by(|left, right| left.label.cmp(&right.label));
             let offender = references
-                .get(1)
-                .or_else(|| references.first())
-                .map_or_else(|| target.no_reference().to_owned(), |r| r.label.clone());
-            return Err(self.refusal(&offender, target));
+                .iter()
+                .find(|reference| !reference.is_canonical_candidate(target))
+                .or_else(|| references.get(1))
+                .expect("more than one reference");
+            let reason = if offender.is_canonical_candidate(target) {
+                OriginRefusalReason::MultipleReferences {
+                    entry: offender.label.clone(),
+                }
+            } else {
+                offender.refusal_reason(target)
+            };
+            return Err(OriginRefusal::for_target(reason, target));
         }
         let reference = &references[0];
-        let Some((host_port, mount, web, service_funnel, https)) = &reference.web else {
-            return Err(self.refusal(&reference.label, target));
+        if !reference.is_canonical_candidate(target) {
+            return Err(OriginRefusal::for_target(
+                reference.refusal_reason(target),
+                target,
+            ));
+        }
+        let SocketRefKind::Web { host_port, .. } = &reference.kind else {
+            unreachable!("a canonical candidate is a Web handler")
         };
-        if web.handlers.len() != 1 || mount.as_str() != "/" || !https || *service_funnel {
-            return Err(self.refusal(&reference.label, target));
-        }
         let (host, port) =
-            parse_host_port(host_port).ok_or_else(|| self.refusal(&reference.label, target))?;
-        if host.is_empty() || host.ends_with('.') {
-            return Err(self.refusal(&reference.label, target));
-        }
+            parse_host_port(host_port).expect("a canonical candidate has a valid authority");
         let host = host.to_ascii_lowercase();
         let host = if host.contains(':') {
             format!("[{host}]")
@@ -430,23 +577,6 @@ impl ServeConfig {
             origin: format!("https://{authority}"),
             authority,
         })
-    }
-
-    fn refusal(&self, entry: &str, target: &ServeTarget) -> OriginRefusal {
-        match target {
-            ServeTarget::Unix { path, .. } => {
-                if let Some(old) = self.old_default_target() {
-                    return OriginRefusal::new(&format!(
-                        "{old} still proxies to tether's old 127.0.0.1:7850 listener. Replace it with: sudo tailscale serve --bg --https=443 unix:{}",
-                        path.display()
-                    ));
-                }
-                OriginRefusal::new(&format!(
-                    "Tailscale Serve entry {entry} is not tether's sole HTTPS handler. Publish tether with: sudo tailscale serve --bg --https=443 unix:{}",
-                    path.display()
-                ))
-            }
-        }
     }
 
     fn old_default_target(&self) -> Option<String> {
@@ -488,7 +618,7 @@ impl ServeConfig {
             if target.names(&handler.tcp_forward) {
                 out.push(SocketRef {
                     label: format!("{scope} TCP {port}"),
-                    web: None,
+                    kind: SocketRefKind::Tcp { port },
                 });
             }
         }
@@ -501,7 +631,7 @@ impl ServeConfig {
                 if target.names(&handler.tcp_forward) {
                     out.push(SocketRef {
                         label: format!("{scope} Service {name} TCP {port}"),
-                        web: None,
+                        kind: SocketRefKind::Tcp { port },
                     });
                 }
             }
@@ -536,15 +666,21 @@ impl ServeConfig {
                         tcp.get(&port.to_string())
                             .is_some_and(|handler| handler.https)
                     });
+                let tcp_refusal = port.and_then(|port| {
+                    tcp.get(&port.to_string())
+                        .filter(|handler| !handler.is_https_only())
+                        .map(|_| format!("{scope} TCP {port}"))
+                });
                 out.push(SocketRef {
-                    label: format!("{scope} Web {host_port} {mount}"),
-                    web: Some((
+                    label: format!("{scope} Web {host_port}"),
+                    kind: SocketRefKind::Web {
                         host_port,
                         mount,
-                        server,
-                        funnel.get(host_port).copied().unwrap_or(false),
+                        web: server,
+                        funnel: funnel.get(host_port).copied().unwrap_or(false),
                         https,
-                    )),
+                        tcp_refusal,
+                    },
                 });
             }
         }
@@ -559,13 +695,96 @@ pub struct CanonicalOrigin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OriginRefusal {
+    pub reason: OriginRefusalReason,
     pub message: String,
 }
 
 impl OriginRefusal {
-    fn new(message: &str) -> Self {
+    fn for_target(reason: OriginRefusalReason, target: &ServeTarget) -> Self {
+        let message = reason.message(target);
+        Self { reason, message }
+    }
+
+    fn no_front() -> Self {
         Self {
-            message: message.to_owned(),
+            reason: OriginRefusalReason::NoServeFront,
+            message: "tether has no bound Serve front".to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OriginRefusalReason {
+    NoServeFront,
+    NoReference,
+    OldDefaultTarget { entry: String },
+    MultipleReferences { entry: String },
+    TcpForward { entry: String, port: String },
+    Funnel { entry: String },
+    IncompatibleTcp { entry: String, tcp_entry: String },
+    SharedHandler { entry: String, mount: String },
+    NonRootMount { entry: String, mount: String },
+    NotHttps { entry: String },
+    WrongProxy { entry: String },
+    InvalidHost { entry: String },
+}
+
+impl OriginRefusalReason {
+    fn message(&self, target: &ServeTarget) -> String {
+        let publish = match target {
+            ServeTarget::Unix { path, .. } => format!(
+                "publish tether with: sudo tailscale serve --bg --https=443 unix:{}",
+                path.display()
+            ),
+            ServeTarget::Loopback(_) => "restart tether to republish".to_owned(),
+        };
+        match self {
+            Self::NoServeFront => "tether has no bound Serve front".to_owned(),
+            Self::NoReference => match target {
+                ServeTarget::Unix { .. } => {
+                    format!("no Tailscale Serve entry names tether's serve.sock; {publish}")
+                }
+                ServeTarget::Loopback(front) => format!(
+                    "no Tailscale Serve entry names tether's Mac front on port {}; start tether with --publish",
+                    front.port()
+                ),
+            },
+            Self::OldDefaultTarget { entry } => match target {
+                ServeTarget::Unix { path, .. } => format!(
+                    "{entry} still proxies to tether's old 127.0.0.1:7850 listener; replace it with: sudo tailscale serve --bg --https=443 unix:{}",
+                    path.display()
+                ),
+                ServeTarget::Loopback(_) => format!(
+                    "{entry} still proxies to tether's old 127.0.0.1:7850 listener; remove the stale handler and {publish}"
+                ),
+            },
+            Self::MultipleReferences { entry } => format!(
+                "Tailscale Serve reference {entry} is a second reference to tether's front; remove the duplicate reference and {publish}"
+            ),
+            Self::TcpForward { entry, port } => format!(
+                "Tailscale Serve entry {entry} forwards TCP to tether's front on port {port}; remove that TCP forward and {publish}"
+            ),
+            Self::Funnel { entry } => {
+                format!("Tailscale Funnel is enabled for {entry}; turn Funnel off, then {publish}")
+            }
+            Self::IncompatibleTcp { entry, tcp_entry } => format!(
+                "Tailscale Serve TCP entry {tcp_entry} is not the plain HTTPS entry required by {entry}; remove it or replace it with `{{HTTPS: true}}`, then {publish}"
+            ),
+            Self::SharedHandler { entry, mount } => format!(
+                "Tailscale Serve entry {entry} also serves another handler at {mount}; remove that handler and {publish}"
+            ),
+            Self::NonRootMount { entry, mount } => format!(
+                "Tailscale Serve entry {entry} mounts tether at {mount}, not /; move tether to / and {publish}"
+            ),
+            Self::NotHttps { entry } => {
+                format!("Tailscale Serve entry {entry} is not HTTPS; enable HTTPS and {publish}")
+            }
+            Self::WrongProxy { entry } => format!(
+                "Tailscale Serve entry {entry} does not use tether's exact Mac front; remove the stale handler and {publish}"
+            ),
+            Self::InvalidHost { entry } => format!(
+                "Tailscale Serve entry {entry} has an invalid host or port; correct it and {publish}"
+            ),
         }
     }
 }
@@ -578,13 +797,121 @@ pub(super) fn origin(
 ) -> Result<CanonicalOrigin, OriginRefusal> {
     match target {
         Some(target) => serve.canonical_origin(target),
-        None => Err(OriginRefusal::new("tether's serve.sock is not bound")),
+        None => Err(OriginRefusal::no_front()),
     }
+}
+
+enum SocketRefKind<'a> {
+    Tcp {
+        port: &'a String,
+    },
+    Web {
+        host_port: &'a String,
+        mount: &'a String,
+        web: &'a WebServer,
+        funnel: bool,
+        https: bool,
+        tcp_refusal: Option<String>,
+    },
 }
 
 struct SocketRef<'a> {
     label: String,
-    web: Option<(&'a String, &'a String, &'a WebServer, bool, bool)>,
+    kind: SocketRefKind<'a>,
+}
+
+impl SocketRef<'_> {
+    fn is_canonical_candidate(&self, target: &ServeTarget) -> bool {
+        let SocketRefKind::Web {
+            host_port,
+            mount,
+            web,
+            funnel,
+            https,
+            tcp_refusal,
+        } = &self.kind
+        else {
+            return false;
+        };
+        let canonical_host = parse_host_port(host_port)
+            .is_some_and(|(host, _)| !host.is_empty() && !host.ends_with('.'));
+        web.handlers.len() == 1
+            && mount.as_str() == "/"
+            && *https
+            && tcp_refusal.is_none()
+            && !*funnel
+            && canonical_host
+            && web
+                .handlers
+                .get(mount.as_str())
+                .is_some_and(|handler| target.is_canonical_proxy(&handler.proxy))
+    }
+
+    fn refusal_reason(&self, target: &ServeTarget) -> OriginRefusalReason {
+        match &self.kind {
+            SocketRefKind::Tcp { port } => OriginRefusalReason::TcpForward {
+                entry: self.label.clone(),
+                port: (**port).clone(),
+            },
+            SocketRefKind::Web {
+                mount,
+                web,
+                funnel,
+                https,
+                tcp_refusal,
+                ..
+            } => {
+                if *funnel {
+                    return OriginRefusalReason::Funnel {
+                        entry: self.label.clone(),
+                    };
+                }
+                if let Some(tcp_entry) = tcp_refusal {
+                    return OriginRefusalReason::IncompatibleTcp {
+                        entry: self.label.clone(),
+                        tcp_entry: tcp_entry.clone(),
+                    };
+                }
+                if web.handlers.len() != 1 {
+                    if let Some(other_mount) = web
+                        .handlers
+                        .iter()
+                        .filter(|(other_mount, _)| other_mount.as_str() != mount.as_str())
+                        .map(|(other_mount, _)| other_mount)
+                        .min()
+                    {
+                        return OriginRefusalReason::SharedHandler {
+                            entry: self.label.clone(),
+                            mount: other_mount.clone(),
+                        };
+                    }
+                }
+                if mount.as_str() != "/" {
+                    return OriginRefusalReason::NonRootMount {
+                        entry: self.label.clone(),
+                        mount: (*mount).clone(),
+                    };
+                }
+                if !https {
+                    return OriginRefusalReason::NotHttps {
+                        entry: self.label.clone(),
+                    };
+                }
+                if !web
+                    .handlers
+                    .get(mount.as_str())
+                    .is_some_and(|handler| target.is_canonical_proxy(&handler.proxy))
+                {
+                    return OriginRefusalReason::WrongProxy {
+                        entry: self.label.clone(),
+                    };
+                }
+                OriginRefusalReason::InvalidHost {
+                    entry: self.label.clone(),
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -593,12 +920,26 @@ pub struct SocketIdentity {
     inode: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ServeTarget {
     Unix {
         identity: SocketIdentity,
         path: PathBuf,
     },
+    Loopback(MacFront),
+}
+
+impl std::fmt::Debug for ServeTarget {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unix { identity, path } => formatter
+                .debug_struct("Unix")
+                .field("identity", identity)
+                .field("path", path)
+                .finish(),
+            Self::Loopback(front) => formatter.debug_tuple("Loopback").field(front).finish(),
+        }
+    }
 }
 
 impl ServeTarget {
@@ -606,6 +947,10 @@ impl ServeTarget {
         let path = path.into();
         let identity = socket_identity(&path)?;
         Ok(Self::Unix { identity, path })
+    }
+
+    pub fn loopback(front: MacFront) -> Self {
+        Self::Loopback(front)
     }
 
     fn names(&self, proxy: &str) -> bool {
@@ -616,12 +961,14 @@ impl ServeTarget {
                 };
                 socket_identity(Path::new(path)).is_ok_and(|found| found == *identity)
             }
+            Self::Loopback(front) => front.references_port(proxy),
         }
     }
 
-    fn no_reference(&self) -> &'static str {
+    fn is_canonical_proxy(&self, proxy: &str) -> bool {
         match self {
-            Self::Unix { .. } => "no Serve entry names serve.sock",
+            Self::Unix { .. } => self.names(proxy),
+            Self::Loopback(front) => proxy == front.proxy_url(),
         }
     }
 }
@@ -647,4 +994,63 @@ fn parse_host_port(host_port: &str) -> Option<(String, u16)> {
         .and_then(|host| host.strip_suffix(']'))
         .unwrap_or(host);
     Some((host.to_owned(), port))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ServeConfig, ServeTarget};
+    use crate::auth::MacFront;
+
+    const SECRET: &str = "tether-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    fn serve(proxy: &str) -> ServeConfig {
+        serde_json::from_value(serde_json::json!({
+            "Web": {
+                "devbox.ts.net:443": {
+                    "HTTPS": true,
+                    "Handlers": { "/": { "Proxy": proxy } }
+                }
+            },
+            "AllowFunnel": { "devbox.ts.net:443": false }
+        }))
+        .expect("Serve config")
+    }
+
+    #[test]
+    fn loopback_origin_requires_its_exact_proxy_url() {
+        let target = ServeTarget::loopback(MacFront::new(7851, SECRET));
+        let config = serve(&format!("http://127.0.0.1:7851/{SECRET}"));
+        let origin = config.canonical_origin(&target).expect("origin");
+        assert_eq!(origin.origin, "https://devbox.ts.net");
+        assert_eq!(origin.authority, "devbox.ts.net");
+
+        for proxy in [
+            "http://0.0.0.0:7851/tether-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "http://127.0.0.1:7851/not-the-secret",
+            "http://127.0.0.1:7852/tether-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ] {
+            assert!(serve(proxy).canonical_origin(&target).is_err(), "{proxy}");
+        }
+
+        let forwarded: ServeConfig = serde_json::from_value(serde_json::json!({
+            "Web": {
+                "devbox.ts.net:443": {
+                    "HTTPS": true,
+                    "Handlers": { "/": { "Proxy": format!("http://127.0.0.1:7851/{SECRET}") } }
+                }
+            },
+            "TCP": { "2222": { "TCPForward": "127.0.0.1:7851" } },
+            "AllowFunnel": { "devbox.ts.net:443": false }
+        }))
+        .expect("Serve config with a TCP forward");
+        assert!(forwarded.canonical_origin(&target).is_err());
+    }
+
+    #[test]
+    fn serve_target_and_config_debug_redact_loopback_secret() {
+        let target = ServeTarget::loopback(MacFront::new(7851, SECRET));
+        let config = serve(&format!("http://127.0.0.1:7851/{SECRET}"));
+        assert!(!format!("{target:?}").contains(SECRET));
+        assert!(!format!("{config:?}").contains(SECRET));
+    }
 }

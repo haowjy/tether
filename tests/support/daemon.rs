@@ -8,12 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{BodyExt as _, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
+use tether::auth::MacFront;
 use tether::auth::identity::ServeTarget;
 use tether::auth::localapi::LocalApi;
 use tether::auth::{Auth, Store};
@@ -32,6 +33,8 @@ use tokio::task::JoinHandle;
 
 pub const LOGIN: &str = "jimmy@github";
 pub const WAIT: Duration = Duration::from_secs(5);
+pub const LOOPBACK_SECRET: &str = "tether-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const FAKE_LOCALAPI_TOKEN: &str = "fake-localapi-token";
 
 pub struct Daemon {
     /// Test relay to `local.sock` for native clients.
@@ -63,6 +66,9 @@ pub struct FakeLocalApi {
     pub hold_whois: Arc<AtomicBool>,
     pub release_whois: Arc<Notify>,
     pub whois_delay: Arc<Mutex<Duration>>,
+    pub expected_authorization: Arc<Mutex<Option<String>>>,
+    pub serve_etag: Arc<AtomicUsize>,
+    pub conflict_next_serve_write: Arc<AtomicBool>,
 }
 
 impl FakeLocalApi {
@@ -165,6 +171,152 @@ pub async fn start_without_allow_login(name: &str) -> Daemon {
     start_as_with_allowlist(name, LOGIN, false, false, true, false).await
 }
 
+/// Starts the Mac Loopback front against a TCP fake LocalAPI that requires Basic auth.
+pub async fn start_loopback(name: &str) -> Daemon {
+    start_loopback_with_serve_config(
+        name,
+        serde_json::json!({
+            "UnknownRoot": { "keep": true }
+        }),
+    )
+    .await
+}
+
+/// Starts a Loopback front with the given initial Serve-config response.
+pub async fn start_loopback_with_serve_config(
+    name: &str,
+    initial_serve_config: serde_json::Value,
+) -> Daemon {
+    use base64::Engine as _;
+
+    let dir = std::env::temp_dir().join(format!("tether-http-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let store = Store::open(dir.join("state")).expect("a state dir");
+    let serve_socket = dir.join("serve.sock");
+    let local_socket = dir.join("local.sock");
+    let front_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("front listener");
+    let front_port = front_listener.local_addr().expect("front address").port();
+    let local_listener = UnixListener::bind(&local_socket).expect("local socket");
+    let fake_api_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("fake LocalAPI listener");
+    let fake_api_address = fake_api_listener
+        .local_addr()
+        .expect("fake LocalAPI address");
+    let fake = FakeLocalApi {
+        whois_available: Arc::new(AtomicBool::new(true)),
+        whois_answer: Arc::new(Mutex::new(serde_json::json!({
+            "Node": {
+                "StableID": "nLAPTOP0123456789CNTRL",
+                "Tags": [],
+                "Sharer": 0,
+                "Addresses": ["100.101.102.103/32"],
+                "AllowedIPs": ["100.101.102.103/32"],
+                "DNSName": "laptop.ts.net."
+            },
+            "UserProfile": { "LoginName": LOGIN }
+        }))),
+        status_answer: Arc::new(Mutex::new(serde_json::json!({
+            "BackendState": "Running",
+            "Self": {
+                "StableID": "nSELF0123456789CNTRL",
+                "UserID": 1,
+                "DNSName": "devbox.ts.net."
+            },
+            "User": { "1": { "LoginName": LOGIN } },
+            "Peer": {}
+        }))),
+        serve_config: Arc::new(Mutex::new(initial_serve_config)),
+        conflict_next_serve_write: Arc::new(AtomicBool::new(true)),
+        expected_authorization: Arc::new(Mutex::new(Some(format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!(":{FAKE_LOCALAPI_TOKEN}"))
+        )))),
+        ..FakeLocalApi::default()
+    };
+    let fake_api = tokio::spawn(serve_fake_localapi_tcp(fake_api_listener, fake.clone()));
+
+    let paste_dir = dir.join("paste");
+    std::fs::create_dir_all(&paste_dir).expect("a paste dir");
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).expect("a home");
+    let home = std::fs::canonicalize(home).expect("canonical");
+    let config = dir.join("config.toml");
+    std::fs::write(&config, "").expect("a config");
+    let endpoint = Endpoint {
+        program: PathBuf::from("tmux"),
+        socket: Socket::Name(format!("tether-http-test-{}", std::process::id())),
+    };
+    let (hub, _task) = hub::spawn(
+        Endpoints { main: endpoint },
+        DEFAULT_CAPS.control_clients,
+        "test".to_owned(),
+    );
+    let lanes = Lanes::default();
+    let api = LocalApi::at_tcp(fake_api_address, FAKE_LOCALAPI_TOKEN);
+    let (target, publication, gate) = MacFront::new(front_port, LOOPBACK_SECRET).into_parts();
+    let auth = Auth::with_local_api(
+        store.clone(),
+        vec![LOGIN.to_owned()],
+        lanes.auth.clone(),
+        api,
+        Some(target),
+        Some(publication),
+    );
+    let app = App {
+        auth,
+        hub,
+        host: HostInfo {
+            id: store.host_id().expect("a host id"),
+            name: "test".to_owned(),
+        },
+        paste_dir,
+        config: ConfigFile::resolve(Some(&config)).expect("a config path"),
+        complete: complete::Settings::new(
+            &Default::default(),
+            complete::Environment {
+                home: home.clone(),
+                ..Default::default()
+            },
+        ),
+        caps: DEFAULT_CAPS,
+        home: home.clone(),
+        lanes,
+    };
+    let server = tokio::spawn(http::serve(
+        vec![
+            (Listener::Tcp(front_listener), gate),
+            (Listener::Unix(local_listener), Front::Local),
+        ],
+        app,
+        std::future::pending(),
+    ));
+    let local_relay = TcpListener::bind("127.0.0.1:0").await.expect("local relay");
+    let local_port = local_relay
+        .local_addr()
+        .expect("local relay address")
+        .port();
+    let proxy = tokio::spawn(relay_local(local_relay, local_socket.clone()));
+    let serve_proxy = tokio::spawn(async {});
+    Daemon {
+        port: local_port,
+        serve_port: front_port,
+        store,
+        dir,
+        home,
+        config,
+        serve_socket,
+        local_socket,
+        server,
+        proxy,
+        serve_proxy,
+        fake_api,
+        fake,
+    }
+}
+
 async fn start_as_with_allowlist(
     name: &str,
     login: &str,
@@ -231,6 +383,9 @@ async fn start_as_with_allowlist(
         hold_whois: Arc::new(AtomicBool::new(false)),
         release_whois: Arc::new(Notify::new()),
         whois_delay: Arc::new(Mutex::new(Duration::ZERO)),
+        expected_authorization: Arc::new(Mutex::new(None)),
+        serve_etag: Arc::new(AtomicUsize::new(0)),
+        conflict_next_serve_write: Arc::new(AtomicBool::new(false)),
     };
     let fake_api = tokio::spawn(serve_fake_localapi(fake_api_listener, fake.clone()));
 
@@ -262,6 +417,7 @@ async fn start_as_with_allowlist(
             lanes.auth.clone(),
             LocalApi::at(api_socket),
             Some(ServeTarget::unix(serve_socket.clone()).expect("serve socket identity")),
+            None,
         ),
         hub,
         host: HostInfo {
@@ -336,53 +492,118 @@ async fn serve_fake_localapi(listener: UnixListener, fake: FakeLocalApi) {
             break;
         };
         let fake = fake.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |request: Request<Incoming>| {
-                let path = request.uri().path().to_owned();
-                let fake = fake.clone();
-                async move {
-                    let (status, answer) = match path.as_str() {
-                        "/localapi/v0/status" => (
-                            200,
-                            fake.status_answer.lock().expect("status answer").clone(),
-                        ),
-                        "/localapi/v0/serve-config" => {
-                            (200, fake.serve_config.lock().expect("serve config").clone())
-                        }
-                        "/localapi/v0/whois" => {
-                            fake.whois_calls.fetch_add(1, Ordering::SeqCst);
-                            fake.whois_queries
-                                .lock()
-                                .expect("whois query lock")
-                                .push(request.uri().to_string());
-                            let delay = *fake.whois_delay.lock().expect("whois delay lock");
-                            tokio::time::sleep(delay).await;
-                            if fake.hold_whois.load(Ordering::SeqCst) {
-                                fake.release_whois.notified().await;
-                            }
-                            if !fake.whois_available.load(Ordering::SeqCst) {
-                                (503, serde_json::json!({ "Error": "unavailable" }))
-                            } else {
-                                (200, fake.whois_answer.lock().expect("whois answer").clone())
-                            }
-                        }
-                        _ => (404, serde_json::json!({})),
-                    };
-                    let body = serde_json::to_vec(&answer).expect("fake JSON");
-                    Ok::<_, std::convert::Infallible>(
-                        Response::builder()
-                            .status(status)
-                            .header("content-type", "application/json")
-                            .body(Full::new(Bytes::from(body)))
-                            .expect("fake response"),
-                    )
-                }
-            });
-            let _ = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await;
-        });
+        tokio::spawn(serve_fake_localapi_connection(stream, fake));
     }
+}
+
+async fn serve_fake_localapi_tcp(listener: TcpListener, fake: FakeLocalApi) {
+    loop {
+        let Ok((stream, _)) = listener.accept().await else {
+            break;
+        };
+        tokio::spawn(serve_fake_localapi_connection(stream, fake.clone()));
+    }
+}
+
+async fn serve_fake_localapi_connection<S>(stream: S, fake: FakeLocalApi)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let service = service_fn(move |request: Request<Incoming>| {
+        let fake = fake.clone();
+        async move {
+            let expected = fake
+                .expected_authorization
+                .lock()
+                .expect("expected authorization")
+                .clone();
+            let authorized = expected.as_ref().is_none_or(|expected| {
+                request
+                    .headers()
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    == Some(expected.as_str())
+            });
+            let path = request.uri().path().to_owned();
+            let method = request.method().clone();
+            let (status, answer) = if !authorized {
+                (401, serde_json::json!({}))
+            } else if method == "POST" && path == "/localapi/v0/serve-config" {
+                let revision = fake.serve_etag.load(Ordering::SeqCst);
+                let current = format!("\"fake-{revision}\"");
+                let matches = request
+                    .headers()
+                    .get("if-match")
+                    .and_then(|value| value.to_str().ok())
+                    == Some(current.as_str());
+                if !matches {
+                    (412, serde_json::json!({ "Error": "etag mismatch" }))
+                } else if fake.conflict_next_serve_write.swap(false, Ordering::SeqCst) {
+                    let mut config = fake.serve_config.lock().expect("Serve config");
+                    if let Some(config) = config.as_object_mut() {
+                        config.insert("ConcurrentEdit".to_owned(), serde_json::json!("kept"));
+                    } else {
+                        *config = serde_json::json!({ "ConcurrentEdit": "kept" });
+                    }
+                    fake.serve_etag.fetch_add(1, Ordering::SeqCst);
+                    (412, serde_json::json!({ "Error": "concurrent Serve edit" }))
+                } else {
+                    match request.into_body().collect().await {
+                        Ok(body) => match serde_json::from_slice(body.to_bytes().as_ref()) {
+                            Ok(config) => {
+                                *fake.serve_config.lock().expect("serve config") = config;
+                                fake.serve_etag.fetch_add(1, Ordering::SeqCst);
+                                (200, serde_json::json!({}))
+                            }
+                            Err(_) => (400, serde_json::json!({ "Error": "bad JSON" })),
+                        },
+                        Err(_) => (400, serde_json::json!({ "Error": "bad body" })),
+                    }
+                }
+            } else {
+                match path.as_str() {
+                    "/localapi/v0/status" => (
+                        200,
+                        fake.status_answer.lock().expect("status answer").clone(),
+                    ),
+                    "/localapi/v0/serve-config" => {
+                        (200, fake.serve_config.lock().expect("serve config").clone())
+                    }
+                    "/localapi/v0/whois" => {
+                        fake.whois_calls.fetch_add(1, Ordering::SeqCst);
+                        fake.whois_queries
+                            .lock()
+                            .expect("whois query lock")
+                            .push(request.uri().to_string());
+                        let delay = *fake.whois_delay.lock().expect("whois delay lock");
+                        tokio::time::sleep(delay).await;
+                        if fake.hold_whois.load(Ordering::SeqCst) {
+                            fake.release_whois.notified().await;
+                        }
+                        if !fake.whois_available.load(Ordering::SeqCst) {
+                            (503, serde_json::json!({ "Error": "unavailable" }))
+                        } else {
+                            (200, fake.whois_answer.lock().expect("whois answer").clone())
+                        }
+                    }
+                    _ => (404, serde_json::json!({})),
+                }
+            };
+            let etag = format!("\"fake-{}\"", fake.serve_etag.load(Ordering::SeqCst));
+            let body = serde_json::to_vec(&answer).expect("fake JSON");
+            Ok::<_, std::convert::Infallible>(
+                Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .header("Etag", etag)
+                    .body(Full::new(Bytes::from(body)))
+                    .expect("fake response"),
+            )
+        }
+    });
+    let _ = http1::Builder::new()
+        .serve_connection(TokioIo::new(stream), service)
+        .await;
 }
 
 pub struct Reply {

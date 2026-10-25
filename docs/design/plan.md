@@ -78,8 +78,8 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
   standalone Tailscale app, under a weaker local boundary: Serve reaches tether on a
   loopback port guarded by a path secret that tether publishes and rotates at each
   start, instead of a socket in a private directory. It is supported only on a Mac
-  whose one user account is Jimmy's, with Tailscale's log upload off, and serves only
-  while he is logged in ([auth.md](auth.md#the-mac-front); not built yet). A Mac
+  whose one user account is Jimmy's, and serves only
+  while he is logged in ([auth.md](auth.md#the-mac-front)). A Mac
   is also a fine client: its browser is judged by whois on the host it connects to.
   The Mac records the 3.7b tmux fixtures ([daemon-core.md §8](daemon-core.md#8-testing))
   and builds the iOS app.

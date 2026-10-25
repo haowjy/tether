@@ -840,6 +840,7 @@ dependencies = [
  "humantime",
  "hyper",
  "hyper-util",
+ "libc",
  "rand",
  "rustix",
  "sd-notify",

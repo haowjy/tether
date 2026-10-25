@@ -5,8 +5,9 @@ What's left needs your hands: a real tailnet host and your iPhone. Three parts, 
 
 ## 1. Put tether on pop-os (about 10 minutes)
 
-The Mac can't host tether: the macOS Tailscale app has no LocalAPI socket, so the
-daemon can't tell who is calling. pop-os can.
+The Mac front (commit "Add Mac Tailscale Serve front") lets this Mac host tether too,
+behind a rotating path secret. It isn't gated yet (auth.md gates M0–M8), and it waits on
+your call about Tailscale log upload. pop-os is the proven path, so start there.
 
 First, on the Mac, run `ssh pop-os` once and accept the host key. After that I can do
 the build and the systemd setup for you. Only the `sudo` line has to be yours. To do it

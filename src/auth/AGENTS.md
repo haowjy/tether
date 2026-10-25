@@ -1,13 +1,18 @@
 # auth
 
 Request admission and durable device state for the daemon ([auth.md](../../docs/design/auth.md)).
-The socket front selects the lane: native token on either front, enrolled Tailscale
-node only on `serve.sock`. `mod.rs` owns admission and live-socket rechecks;
-`identity.rs` owns the shared 10 s/30 s tailnet-state cell, Serve target and
-canonical-origin calculation;
+The listener front selects the lane: native tokens work on local and Serve fronts;
+enrolled nodes work only on Linux `serve.sock` and the Mac Loopback front.
+`mod.rs` owns admission and live-socket rechecks;
+`identity.rs` owns the shared 10 s/30 s tailnet-state cell, Serve-config parsing,
+target and canonical-origin calculation; `mac_front.rs` owns Mac front identity and
+secret generation and wires its target, publication state and request gate together;
 `localapi.rs` owns LocalAPI transport and keep-alive clients, bounded uncached whois,
-and response parsing. `node.rs` owns pure forwarded-address, node and browser-origin
-rules; `token.rs` owns tokens, codes and hashes; `store.rs` owns the shared
+and status/whois response parsing; `publish.rs` owns the raw-JSON Serve plan and
+compare-and-swap publication, judged by the same canonical-origin rule used for
+admission. `node.rs`
+owns pure forwarded-address, node and browser-origin rules;
+`token.rs` owns tokens, codes and hashes; `store.rs` owns the shared
 `auth.toml` read-modify-write and native/node row shapes.
 
 Rules the code relies on, which are easy to break:
@@ -23,7 +28,9 @@ Rules the code relies on, which are easy to break:
   no IPC and closes a live socket at its next 10 s check. Don't add a device cache.
 - Only native token hashes are stored. Browser nodes store the stable node ID and
   owner login; the node lane has no cookie or portable credential. Never log tokens,
-  codes or file contents.
+  path secrets, codes or file contents. On Mac the path secret lives in the Serve
+  proxy target; `ServeTarget` and handler `Debug` implementations redact it, while
+  the logged canonical browser origin contains only the public authority.
 - Whois is never cached between requests. Same-address requests share one in-flight
   result; two LocalAPI clients run at once and at most 16 distinct addresses wait.
   Keep the address-family, node eligibility and login-match decisions in `node.rs`.
@@ -32,5 +39,9 @@ Rules the code relies on, which are easy to break:
   read permits a held value to be used until it is 30 s old. Retries run in the
   background with a 2–30 s backoff, independent of request demand. Don't turn startup
   LocalAPI availability into a daemon startup gate.
+- Mac publication exposes one `watch<PublicationState>` to the front and `/auth/info`;
+  while it is waiting, tailnet-state observations must not report a missing origin.
+  Non-transient publication failures remain visible in `browserRefused` as the task
+  retries, while LocalAPI I/O and timeouts back off quietly.
 - Store operations block on disk and run on the auth lane (`src/blocking.rs`), as
   request checks do; a hung mount must not take the runtime thread or other lanes.

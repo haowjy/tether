@@ -6,8 +6,12 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use clap::{Parser, Subcommand};
-use tether::auth::identity::{self, ServeTarget};
+use tether::auth::identity;
+#[cfg(not(target_os = "macos"))]
+use tether::auth::identity::ServeTarget;
 use tether::auth::localapi::LocalApi;
+#[cfg(target_os = "macos")]
+use tether::auth::publish;
 use tether::auth::{Auth, DeviceKind, Store};
 use tether::blocking::{BLOCKING_THREADS, Lanes};
 use tether::complete::{self, Environment};
@@ -40,8 +44,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the daemon on private Unix sockets for `tailscale serve` and local tools.
+    /// Run the daemon behind Tailscale Serve and local tools.
     Serve {
+        /// Publish a Mac front through the LaunchAgent's socket activation.
+        #[arg(long)]
+        publish: bool,
         /// Tailscale logins let through [default: this node's owner, from tailscaled]
         #[arg(long = "allow-login", value_name = "LOGIN")]
         allow_login: Vec<String>,
@@ -73,7 +80,10 @@ fn main() -> ExitCode {
         .and_then(|file| Ok((file.load()?, file)))
         .map_err(Into::into)
         .and_then(|(config, file)| match cli.command {
-            Command::Serve { allow_login } => serve(config, file, allow_login),
+            Command::Serve {
+                allow_login,
+                publish,
+            } => serve(config, file, allow_login, publish),
             Command::Enroll { ttl } => enroll(&config, ttl),
             Command::Device(command) => device(command),
         });
@@ -89,7 +99,12 @@ fn main() -> ExitCode {
                 || cause
                     .downcast_ref::<tether::runtime::RuntimeError>()
                     .is_some_and(|error| {
-                        matches!(error, tether::runtime::RuntimeError::Directory(_))
+                        matches!(
+                            error,
+                            tether::runtime::RuntimeError::Directory(_)
+                                | tether::runtime::RuntimeError::NoLaunchdSocket
+                                | tether::runtime::RuntimeError::MacFrontNotBound
+                        )
                     })
             {
                 ExitCode::from(78)
@@ -108,22 +123,34 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
     Ok(runtime)
 }
 
-fn serve(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<()> {
+fn serve(config: Config, file: ConfigFile, allow_login: Vec<String>, publish: bool) -> Result<()> {
+    if publish && !cfg!(target_os = "macos") {
+        return Err(ConfigError::PublishOnLinux.into());
+    }
     init_tracing();
     // An error reaches stderr, and so the journal, through `main`.
-    runtime()?.block_on(daemon(config, file, allow_login))
+    runtime()?.block_on(daemon(config, file, allow_login, publish))
 }
 
-async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> Result<()> {
+async fn daemon(
+    config: Config,
+    file: ConfigFile,
+    allow_login: Vec<String>,
+    publish: bool,
+) -> Result<()> {
     let tier = tether::budget::resolve(config.memory_budget_mib)?;
     let runtime_dir = config::runtime_dir()?;
-    let runtime = tether::runtime::Runtime::open(runtime_dir)?;
-    let serve_path = runtime.serve_path.clone();
-    let serve_target = ServeTarget::unix(&serve_path).ok();
+    let runtime = open_runtime(runtime_dir, publish).await?;
     let local_path = runtime.local_path.clone();
     let paste_dir = runtime.paste_dir.clone();
-    let serve_listener = runtime.serve;
     let local_listener = runtime.local;
+
+    let mut serve = assemble_serve_front(runtime.serve)?;
+    let serve_target = serve.target.take();
+    let publication = serve.publication.take();
+    let mut fronts = serve.fronts;
+    fronts.push((Listener::Unix(local_listener), Front::Local));
+
     let store = Store::open(config::state_dir()?)?;
     let home = config::home()?;
     let host_id = store.host_id()?;
@@ -144,7 +171,14 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
     let hub_stop = hub.clone();
     let api = LocalApi::system();
     let app = App {
-        auth: Auth::with_local_api(store, allow_login, lanes.auth.clone(), api, serve_target),
+        auth: Auth::with_local_api(
+            store,
+            allow_login,
+            lanes.auth.clone(),
+            api,
+            serve_target,
+            publication,
+        ),
         hub,
         host: HostInfo { id: host_id, name },
         paste_dir,
@@ -162,21 +196,14 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         info!("shutting down");
         let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
     };
-    let mut server = std::pin::pin!(http::serve(
-        vec![
-            (Listener::Unix(serve_listener), Front::UnixServe),
-            (Listener::Unix(local_listener), Front::Local),
-        ],
-        app,
-        signalled,
-    ));
+    let mut server = std::pin::pin!(http::serve(fronts, app, signalled,));
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
     info!(
-        serve_socket = %serve_path.display(),
+        serve_front = %serve.description,
         local_socket = %local_path.display(),
         tmux = ?endpoint,
         version = env!("CARGO_PKG_VERSION"),
-        "listening on private Unix sockets"
+        "listening on private fronts"
     );
 
     tokio::select! {
@@ -193,6 +220,62 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         Ok(Err(cause)) => Err(format!("the hub ended: {cause}").into()),
         Err(_) => Err("the hub didn't end within 2 s".into()),
     }
+}
+
+struct ServeAssembly {
+    fronts: Vec<(Listener, Front)>,
+    target: Option<tether::auth::identity::ServeTarget>,
+    publication: Option<tether::auth::publish::Publication>,
+    description: String,
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn open_runtime(dir: PathBuf, publish: bool) -> Result<tether::runtime::Runtime> {
+    Ok(tether::runtime::Runtime::open(dir, publish)?)
+}
+
+#[cfg(target_os = "macos")]
+async fn open_runtime(dir: PathBuf, publish_requested: bool) -> Result<tether::runtime::Runtime> {
+    match tether::runtime::Runtime::open(dir, publish_requested) {
+        Ok(runtime) => Ok(runtime),
+        Err(error @ tether::runtime::RuntimeError::MacFrontNotBound) => {
+            publish::withdraw_unbound(&LocalApi::system()).await;
+            Err(Box::new(error))
+        }
+        Err(error) => Err(Box::new(error)),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn assemble_serve_front(front: tether::runtime::ServeFront) -> Result<ServeAssembly> {
+    let target = ServeTarget::unix(&front.path)?;
+    Ok(ServeAssembly {
+        fronts: vec![(Listener::Unix(front.listener), Front::UnixServe)],
+        target: Some(target),
+        publication: None,
+        description: format!("unix:{}", front.path.display()),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn assemble_serve_front(front: tether::runtime::ServeFront) -> Result<ServeAssembly> {
+    let Some(listener) = front.listener else {
+        return Ok(ServeAssembly {
+            fronts: Vec::new(),
+            target: None,
+            publication: None,
+            description: "local only".to_owned(),
+        });
+    };
+    let port = listener.local_addr()?.port();
+    let mac_front = tether::auth::MacFront::generate(port)?;
+    let (target, publication, gate) = mac_front.into_parts();
+    Ok(ServeAssembly {
+        fronts: vec![(Listener::Tcp(listener), gate)],
+        target: Some(target),
+        publication: Some(publication),
+        description: format!("127.0.0.1:{port}"),
+    })
 }
 
 /// Deletes the part files of uploads a daemon that died left, and warns of roots that
@@ -242,6 +325,15 @@ fn enroll(config: &Config, ttl: Duration) -> Result<()> {
         "It works once, for {}.",
         humantime::format_duration(Duration::from_secs(ttl.as_secs()))
     );
+    #[cfg(target_os = "macos")]
+    enroll_on_mac(config)?;
+    #[cfg(not(target_os = "macos"))]
+    enroll_on_linux(config)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enroll_on_linux(config: &Config) -> Result<()> {
     let api = LocalApi::system();
     let publication = runtime()?.block_on(identity::tailnet_state(&api));
     match publication {
@@ -271,6 +363,44 @@ fn enroll(config: &Config, ttl: Duration) -> Result<()> {
                     println!("Browser: {refusal}");
                 }
             }
+        }
+        Err(cause) => {
+            println!("Host: unknown ({cause})");
+            println!("Browser: tailnet state is unavailable ({cause})");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn enroll_on_mac(config: &Config) -> Result<()> {
+    let api = LocalApi::system();
+    let socket = config::runtime_dir()?.join("local.sock");
+    let info = runtime()?.block_on(identity::read_auth_info(&socket, &api));
+    match info {
+        Ok(info) => {
+            let name = config
+                .name
+                .clone()
+                .filter(|name| !name.is_empty())
+                .or_else(|| info["name"].as_str().map(str::to_owned))
+                .unwrap_or_else(|| "tether".to_owned());
+            if let Some(origin) = info["browserOrigin"].as_str() {
+                println!("Host: {origin} ({name})");
+                println!("Browser: {origin}");
+            } else {
+                println!("Host: unavailable");
+                println!(
+                    "Browser: {}",
+                    info["browserRefused"]
+                        .as_str()
+                        .unwrap_or("browser origin is unavailable")
+                );
+            }
+        }
+        Err(cause) if cause == "tether isn't running" => {
+            println!("Host: unknown");
+            println!("Browser: tether isn't running");
         }
         Err(cause) => {
             println!("Host: unknown ({cause})");

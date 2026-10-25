@@ -16,15 +16,18 @@ names a tmux type.
 Rules the code relies on, which are easy to break:
 
 - Every route, including shell and fallback paths, stays behind the Tailscale check.
-  `Front::UnixServe` gates on `Host: localhost` before routing; the shell and
+  `Front::UnixServe` gates on `Host: localhost`; `Front::Loopback` checks its raw
+  request-target path secret in constant time and published authority before routing;
+  it refuses absolute-form URIs and duplicate `Host`/`X-Forwarded-Host`. The
+  path-secret miss is an empty 404 before headers or route work. The shell and
   `/auth/info` skip device admission so a cold launch can load. Keep `Front` derived
   from the listening socket, never from request headers.
 - A node-lane request is judged before handler work: canonical origin and request
   metadata, one tailnet `X-Forwarded-For`, whois, node rules, then the device row.
   Never trust these headers on `local.sock`; it is the dev/native front.
 - A bad native token never falls back to node admission. A browser is tokenless, and
-  its node lane is available only on `serve.sock`. `/auth/enroll` refuses browser
-  Origin/fetch metadata because it returns a native token.
+  its node lane is available only on the Unix Serve front or the Mac Loopback front.
+  `/auth/enroll` refuses browser Origin/fetch metadata because it returns a native token.
 - Use `Refusal`/`HttpError` in `error.rs` for the shared route errors and
   status/header mapping. Browser admission's `bad_origin`, `node_refused`,
   `not_enrolled` and `identity_unavailable` codes are part of the shared generated

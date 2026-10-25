@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 pub mod auth;
 pub mod blocking;
@@ -9,6 +9,8 @@ pub mod files;
 pub mod fs;
 pub mod http;
 pub mod hub;
+#[cfg(target_os = "macos")]
+pub mod launchd;
 pub mod proto;
 pub mod runtime;
 pub mod tmux;

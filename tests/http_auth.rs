@@ -16,8 +16,8 @@ use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 mod daemon;
 
 use daemon::{
-    LOGIN, WAIT, request, send, send_owned, send_with_host, start, start_as, start_with_fake,
-    start_without_allow_login,
+    LOGIN, LOOPBACK_SECRET, WAIT, request, send, send_owned, send_with_host, start, start_as,
+    start_loopback, start_loopback_with_serve_config, start_with_fake, start_without_allow_login,
 };
 
 /// Every `/fs` route and `/complete`, with a body where it takes one.
@@ -839,9 +839,9 @@ async fn a_second_serve_handler_or_tcp_forward_removes_the_browser_origin() {
     let info: serde_json::Value = serde_json::from_str(&body).expect("auth info JSON");
     assert!(info["browserOrigin"].is_null(), "{info}");
     assert!(
-        info["browserRefused"]
-            .as_str()
-            .is_some_and(|text| text.contains("Publish tether")),
+        info["browserRefused"].as_str().is_some_and(
+            |text| text.contains("TCP 2222") && text.contains("remove that TCP forward")
+        ),
         "{info}"
     );
 
@@ -1079,4 +1079,102 @@ async fn removing_a_node_closes_its_live_socket_at_the_recheck() {
         panic!("no close frame: {closed:?}");
     };
     assert_eq!(frame.code, CloseCode::from(4401));
+}
+
+#[tokio::test]
+async fn loopback_front_replans_conflicts() {
+    let daemon = start_loopback("mac-loopback").await;
+    let path = format!("/{LOOPBACK_SECRET}/auth/info");
+    let headers = [
+        ("Tailscale-User-Login", LOGIN),
+        ("X-Forwarded-Host", "devbox.ts.net"),
+    ];
+    let accepted = tokio::time::timeout(WAIT, async {
+        loop {
+            let reply = send_with_host(
+                daemon.serve_port,
+                "devbox.ts.net",
+                "GET",
+                &path,
+                &headers,
+                &[],
+            )
+            .await;
+            if reply.status == 200 {
+                break reply;
+            }
+            assert_eq!(reply.status, 503, "{}", reply.text());
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the publication completes");
+    assert_eq!(accepted.status, 200, "{}", accepted.text());
+    assert_eq!(accepted.json()["browserOrigin"], "https://devbox.ts.net");
+    assert_eq!(
+        daemon.fake.serve_config.lock().expect("Serve config")["UnknownRoot"]["keep"],
+        true
+    );
+    assert_eq!(
+        daemon.fake.serve_config.lock().expect("Serve config")["ConcurrentEdit"],
+        "kept",
+        "the plan preserved an edit made between its read and write"
+    );
+}
+
+#[tokio::test]
+async fn loopback_front_publishes_from_null_serve_config() {
+    let daemon =
+        start_loopback_with_serve_config("mac-loopback-null", serde_json::Value::Null).await;
+    let path = format!("/{LOOPBACK_SECRET}/auth/info");
+    let headers = [
+        ("Tailscale-User-Login", LOGIN),
+        ("X-Forwarded-Host", "devbox.ts.net"),
+    ];
+    let accepted = tokio::time::timeout(WAIT, async {
+        loop {
+            let reply = send_with_host(
+                daemon.serve_port,
+                "devbox.ts.net",
+                "GET",
+                &path,
+                &headers,
+                &[],
+            )
+            .await;
+            if reply.status == 200 {
+                break reply;
+            }
+            assert_eq!(reply.status, 503, "{}", reply.text());
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the publication completes from null config");
+    assert_eq!(accepted.json()["browserOrigin"], "https://devbox.ts.net");
+    assert_eq!(
+        daemon.fake.serve_config.lock().expect("Serve config")["ConcurrentEdit"],
+        "kept",
+        "the plan retries after a concurrent edit to the initially null config"
+    );
+}
+
+#[tokio::test]
+async fn loopback_front_secret_mismatch_is_an_empty_404() {
+    let daemon = start_loopback("mac-loopback-gate").await;
+    let headers = [
+        ("Tailscale-User-Login", LOGIN),
+        ("X-Forwarded-Host", "devbox.ts.net"),
+    ];
+    let denied = send_with_host(
+        daemon.serve_port,
+        "devbox.ts.net",
+        "GET",
+        "/not-the-secret/auth/info",
+        &headers,
+        &[],
+    )
+    .await;
+    assert_eq!(denied.status, 404);
+    assert!(denied.body.is_empty());
 }

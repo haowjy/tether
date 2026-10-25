@@ -92,6 +92,8 @@ pub enum ConfigError {
     NoHome(&'static str),
     #[error("$HOME isn't an absolute path")]
     NoHomeDir,
+    #[error("on Linux, publish with `sudo tailscale serve …`")]
+    PublishOnLinux,
 }
 
 /// Where `config.toml` is: resolved once at startup, read again by each fs request.

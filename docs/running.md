@@ -77,9 +77,6 @@ prints it as the browser refusal.
 
 ## Host on a Mac
 
-> **Not built yet.** This section is the design in [auth.md](design/auth.md#the-mac-front);
-> until it lands, `tether serve` on a Mac reaches no LocalAPI and publishes nothing.
-
 Host on a Mac only if your account is its only user account. tether isn't supported
 on a Mac with other logins: its Mac defences assume there are none.
 
@@ -97,19 +94,12 @@ App Store app is untested), signed in, with its `tailscale` command installed (t
 app's settings offer it), and your account an admin, which tether needs to read
 Tailscale's LocalAPI token.
 
-**Turn off Tailscale's log upload first**, so the path secret doesn't leave the Mac:
-
-```bash
-echo TS_NO_LOGS_NO_SUPPORT=true | sudo tee -a \
-  /private/var/root/Library/Containers/io.tailscale.ipn.macsys.network-extension/Data/tailscaled-env.txt
-```
-
-Then quit Tailscale from its menu and open it again. Check it took: `tailscale
-bugreport` must print `BUG-NO-LOGS-NO-SUPPORT-this-node-has-had-its-logging-disabled`
-(don't run it before the change: it would upload a bug report). The cost: Tailscale
-support can't use this Mac's logs, and a tailnet that requires network flow logs
-stops Tailscale on this Mac. tether can't see whether the setting is on, so it
-neither warns nor refuses; check again after reinstalling Tailscale.
+The Tailscale app uploads its logs to Tailscale, and those logs include tether's
+path secret: the app logs each Serve target in full. The app has no way to turn
+log upload off; Tailscale's opt-out works only with the command-line `tailscaled`
+([Tailscale: logging](https://tailscale.com/docs/features/logging.md)). The copy
+on Tailscale's servers is useless from outside your tailnet, and tether picks a new
+secret at every start.
 
 tether runs from a LaunchAgent, as you, with no sudo. launchd binds tether's port,
 `127.0.0.1:7851`, when you log in, starts tether, and keeps the port across crashes,
@@ -129,9 +119,11 @@ macOS may ask once whether tether can read `~/Documents`, `~/Desktop` or
 set `socket_path` in `config.toml`, as on Linux.
 
 It runs `tether serve --publish`, which writes tether's own Serve entry, the `/`
-handler of `https://<this Mac's MagicDNS name>`, without sudo. It refuses, and logs
-why, if another app's handler is on that name's port 443 or Funnel is on there. If
-7851 is taken, change the port in the plist before installing; to change it later,
+handler of `https://<this Mac's MagicDNS name>`, without sudo. A fresh profile with
+no Serve config publishes on its first start. Before writing, tether refuses if Funnel
+is enabled, TCP forwarding occupies port 443, or another handler shares the entry;
+the log and `tether enroll` name the actual cause and how to clear it. If 7851 is
+taken, change the port in the plist before installing; to change it later,
 stop tether first (below). `--publish` works only with the port from launchd; without
 `--publish`, a Mac daemon serves only `local.sock` and never touches the Serve config,
 which is what the e2e stack and dev runs use. Don't run `tailscale serve` for tether
@@ -331,7 +323,7 @@ browser profile. Removing the node revokes every browser on that machine.
 | `401 auth_required`, or the native socket closes with 4401 | token is missing or its device was removed; enrol the native app again |
 | `503 identity_unavailable` | LocalAPI whois or tailnet state is unavailable; tether retries and never interprets a failed lookup as “not enrolled” |
 | `503 auth_unavailable`, or the native socket closes with 4503 | `auth.toml` can't be read, usually a typo from a hand edit; the log names the line. Fix it: native keeps its token and retries |
-| Mac: the log or `tether enroll` says another handler is on port 443, or Funnel is on | tether wouldn't overwrite it; remove that handler or turn Funnel off, then restart tether |
+| Mac: the log or `tether enroll` names Funnel, a TCP forward on 443, or a handler path | tether wouldn't overwrite it; turn Funnel off, remove the named TCP forward or handler, then restart tether to republish |
 | Mac: `503 identity_unavailable` and the log says the daemon's user must be an admin | tether can't read `/Library/Tailscale/sameuserproof-*`; run it as an admin user |
 | Mac: the browser or app gets 502 | tether isn't running: you're logged out, it was booted out, or it is restarting. Log in, or bootstrap it again; if you meant to stop it, run `tailscale serve --https=443 off` |
 | Mac: tether exits 78 saying launchd couldn't bind the front's port | another process holds `127.0.0.1:7851` (`lsof -nP -iTCP:7851`); stop it, or change the port in the plist, then `launchctl kickstart -k gui/$(id -u)/com.jimmyyao.tether` |
