@@ -547,14 +547,20 @@ fn write_error(error: &PlanError, version: &str, operation: WriteOperation) -> S
                 "Tailscale refused the write: your account isn't its operator. Run `sudo tailscale set --operator=$USER`, then rerun {rerun}."
             )
         }
+        // tailscaled checks `sudo --other-user=<GECOS full name> --list tailscale`
+        // (tailscale/tailscale#21204), so a valid sudo rule still fails when the full
+        // name differs from the login name.
         PlanError::NotLocalAdmin => {
+            let cause = format!(
+                "Tailscale {version} checks that you may run `sudo tailscale` using your account's full name instead of your login name (tailscale/tailscale#21204)"
+            );
             if operation.is_setup() {
                 format!(
-                    "Tailscale {version} requires an operator who may run `sudo tailscale` to change a config that serves a Unix socket or a path. Allow this account to run `sudo tailscale`, then rerun {rerun}."
+                    "{cause}. Set your full name to your login name with `sudo usermod -c $USER $USER`, then rerun {rerun}. If it still fails, check that `sudo -l tailscale` lists tailscale."
                 )
             } else {
                 format!(
-                    "Tailscale {version} requires an operator who may run `sudo tailscale` to change a config that serves a Unix socket or a path. Remove tether's entry as root: `sudo tailscale serve --https=443 off`, or grant this account access and rerun {rerun}."
+                    "{cause}. Run `sudo usermod -c $USER $USER` and rerun {rerun}, or remove tether's entry as root: `sudo tailscale serve --https=443 off`."
                 )
             }
         }
@@ -802,7 +808,7 @@ mod tests {
             ),
             (
                 401,
-                "Tailscale 1.104 requires an operator who may run `sudo tailscale` to change a config that serves a Unix socket or a path. Allow this account to run `sudo tailscale`, then rerun tether setup --background.",
+                "Tailscale 1.104 checks that you may run `sudo tailscale` using your account's full name instead of your login name (tailscale/tailscale#21204). Set your full name to your login name with `sudo usermod -c $USER $USER`, then rerun tether setup --background. If it still fails, check that `sudo -l tailscale` lists tailscale.",
             ),
             (
                 412,
