@@ -183,6 +183,9 @@ fn no_tmux_server_note(config: &Config) -> Option<String> {
 async fn setup_foreground_async(
     config_path: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // The report says tether is running, so a terminal run logs only problems; set up
+    // before `daemon::open`, whose budget warnings would otherwise be dropped.
+    daemon::init_tracing(tracing_subscriber::filter::LevelFilter::WARN);
     let file = ConfigFile::resolve(config_path.as_deref())?;
     let config = file.load()?;
     let user = systemd::username()?;
@@ -242,8 +245,6 @@ async fn setup_foreground_async(
         origin,
         opened.auth().store(),
     )?;
-    // The report already says tether is running; a terminal run logs only problems.
-    daemon::init_tracing(tracing_subscriber::filter::LevelFilter::WARN);
     opened.run().await
 }
 
@@ -547,20 +548,18 @@ fn write_error(error: &PlanError, version: &str, operation: WriteOperation) -> S
                 "Tailscale refused the write: your account isn't its operator. Run `sudo tailscale set --operator=$USER`, then rerun {rerun}."
             )
         }
-        // tailscaled checks `sudo --other-user=<GECOS full name> --list tailscale`
-        // (tailscale/tailscale#21204), so a valid sudo rule still fails when the full
-        // name differs from the login name.
+        // tailscaled's check is `sudo --other-user=<full name> --list tailscale`
+        // (tailscale/tailscale#21204): a valid sudo rule fails when the full name, up to
+        // its first comma, differs from the login name.
         PlanError::NotLocalAdmin => {
             let cause = format!(
-                "Tailscale {version} checks that you may run `sudo tailscale` using your account's full name instead of your login name (tailscale/tailscale#21204)"
+                "Tailscale {version} lets an operator change a Serve config that serves a Unix socket only if root can run `sudo --other-user=<your full name> --list tailscale`; it uses your account's full name, not your login name (tailscale/tailscale#21204). If they differ, run `sudo chfn -f $USER $USER`; check that `sudo -l tailscale` lists tailscale"
             );
             if operation.is_setup() {
-                format!(
-                    "{cause}. Set your full name to your login name with `sudo usermod -c $USER $USER`, then rerun {rerun}. If it still fails, check that `sudo -l tailscale` lists tailscale."
-                )
+                format!("{cause}; then rerun {rerun}.")
             } else {
                 format!(
-                    "{cause}. Run `sudo usermod -c $USER $USER` and rerun {rerun}, or remove tether's entry as root: `sudo tailscale serve --https=443 off`."
+                    "{cause}; then rerun {rerun}. Or remove every handler on port 443 as root: `sudo tailscale serve --https=443 off`."
                 )
             }
         }
@@ -808,7 +807,7 @@ mod tests {
             ),
             (
                 401,
-                "Tailscale 1.104 checks that you may run `sudo tailscale` using your account's full name instead of your login name (tailscale/tailscale#21204). Set your full name to your login name with `sudo usermod -c $USER $USER`, then rerun tether setup --background. If it still fails, check that `sudo -l tailscale` lists tailscale.",
+                "Tailscale 1.104 lets an operator change a Serve config that serves a Unix socket only if root can run `sudo --other-user=<your full name> --list tailscale`; it uses your account's full name, not your login name (tailscale/tailscale#21204). If they differ, run `sudo chfn -f $USER $USER`; check that `sudo -l tailscale` lists tailscale; then rerun tether setup --background.",
             ),
             (
                 412,

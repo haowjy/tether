@@ -591,7 +591,7 @@ background service, and attaches to his tmux server directly.
 `serve.sock` (Tailscale 1.94 or later), as Tailscale's operator
 ([setup.md](setup.md)). The daemon starts
 without LocalAPI and refuses Funnel traffic per request; it does not make Funnel a
-startup gate. On Tailscale 1.100 and later changing Serve after publishing a Unix
+startup gate. On Tailscale 1.98.9 and later changing Serve after publishing a Unix
 socket needs root, or an operator who may run `sudo tailscale`. See [running.md](../running.md).
 
 **Identity and device lanes.** Every request requires an allowed

@@ -346,12 +346,12 @@ impl Auth {
             })
             .cloned();
         let Some(device) = device else {
+            // A normal client state, which the response reports: every phone is
+            // unenrolled until it enters its code.
+            debug!(stable_id = %node.id, "Tailscale node is not enrolled");
             return if allow_unenrolled {
-                // A phone opening the link before entering its code: the expected order.
-                debug!(stable_id = %node.id, "Tailscale node is not enrolled yet");
                 Ok(Session::NodeUnenrolled { node, origin })
             } else {
-                warn!(stable_id = %node.id, "Tailscale node is not enrolled");
                 Err(AuthError::NotEnrolled {
                     node_name: node.name,
                 })

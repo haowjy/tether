@@ -60,8 +60,9 @@ so `sudo` or polkit may ask for your password:
   running after you log out. If that fails, setup runs `sudo loginctl enable-linger $USER`.
 - `sudo tailscale set --operator=$USER`, which lets your account change Tailscale's
   Serve config without `sudo`. From then on setup writes tether's Serve entry itself.
-  On Tailscale 1.100 and later your account must also be allowed to run `sudo
-  tailscale`: once Serve has a Unix target, tailscaled lets only root, or an operator
+  On Tailscale 1.98.9 and later your account must also be allowed to run `sudo
+  tailscale`, and its full name, up to the first comma, must equal its login name
+  (see Troubleshooting): once Serve has a Unix target, tailscaled lets only root, or an operator
   who may run `sudo tailscale`, change Serve at all, for any app.
 
 Each grant is skipped once it is in place. If a grant is still missing and stdin is not
@@ -411,7 +412,7 @@ its `/` handler. Until then, the iOS app gets HTTP 502 because nothing is listen
 the old target, and tether logs, and `tether enroll` prints, that `tether setup --background`
 replaces it. The old `port` key is ignored and can be deleted from `config.toml`.
 
-On tailscaled 1.100 and later, once Serve has a Unix target, every later Serve change
+On tailscaled 1.98.9 and later, once Serve has a Unix target, every later Serve change
 needs root, or an operator who may run `sudo tailscale`: the CLI writes the whole
 config, which contains the Unix target. Another Unix user who runs tether needs root to
 publish their socket too. The Tailscale operator remains trusted and can replace the
@@ -453,7 +454,7 @@ points at a free port that any process could take.
 |---|---|
 | `GET /auth/info` has no `browserOrigin`, or browser says to publish tether | Serve is missing, has another handler/publication, or Funnel is on; fix what `browserRefused` names, leave Funnel off, and rerun setup (`--background` if using the service) |
 | `tether setup` says Tailscale refused the write (`403`) | your account isn't Tailscale's operator; run `sudo tailscale set --operator=$USER` and rerun the same setup command (`--background` if using the service) |
-| `tether setup` says Tailscale checks `sudo tailscale` using your full name (`401`) | on Tailscale 1.100+, an operator may publish a Unix socket only if tailscaled's `sudo --other-user=<name> --list tailscale` succeeds, and it passes your account's full name, not your login name (tailscale/tailscale#21204). Run `sudo usermod -c $USER $USER` so they match (`getent passwd $USER \| cut -d: -f5` must print exactly your login name, with no trailing commas), check `sudo -l tailscale` lists tailscale, then rerun setup in the same mode |
+| `tether setup` says Tailscale checks `sudo tailscale` with your full name (`401`) | on Tailscale 1.98.9+, an operator may publish a Unix socket only if tailscaled's `sudo --other-user=<name> --list tailscale` succeeds, and it passes your account's full name (up to its first comma), not your login name (tailscale/tailscale#21204). If the text before the first comma of `getent passwd $USER \| cut -d: -f5` isn't exactly your login name, run `sudo chfn -f $USER $USER`; check `sudo -l tailscale` lists tailscale; then rerun setup in the same mode |
 | Plain `tether setup` says tether is already running | another daemon holds the runtime lock; stop it first. If the active daemon is the service, use `tether setup --background` to restart it and print a new code |
 | Plain `tether setup` on a Mac says to use `--background` | phones reach the Mac only through its LaunchAgent, which holds the front's port; run `tether setup --background` |
 | `403 forbidden` | missing/invalid Tailscale login or Funnel marker; confirm the request goes through Serve and the login is allowed |

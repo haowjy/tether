@@ -244,7 +244,7 @@ Each failed POST gets its own message, from typed `SetServeConfigError` variants
 | Answer | Cause | Setup prints |
 |---|---|---|
 | `403`, body `serve config denied` | Jimmy isn't the operator | "Tailscale refused the write: your account isn't its operator. Run `sudo tailscale set --operator=$USER`, then rerun the same setup command." Background setup names `tether setup --background`; foreground names `tether setup`. |
-| `401` | On Tailscale 1.100 and later, a non-root operator may write a config that serves any Unix socket or path only if tailscaled, as root, can run `sudo --other-user=<name> --list tailscale`, where `<name>` is the account's GECOS full name, not its login name (`ipn/ipnserver/actor.go`, tailscale/tailscale#21204, open). A valid sudo rule therefore fails whenever the two differ, as on pop-os (`Jimmy Yao`, then `jimyao,,,`). The check covers the whole config, other apps' handlers included | "Tailscale <v> checks that you may run `sudo tailscale` using your account's full name instead of your login name (tailscale/tailscale#21204). Set your full name to your login name with `sudo usermod -c $USER $USER`, then rerun the same setup command. If it still fails, check that `sudo -l tailscale` lists tailscale." Teardown offers the same `usermod` or `sudo tailscale serve --https=443 off`. |
+| `401` | On Tailscale 1.98.9 and later, a non-root operator may write a config that serves any Unix socket or path only if tailscaled, as root, can run `sudo --other-user=<name> --list tailscale`, where `<name>` is the account's full name (GECOS, up to its first comma), not its login name (`ipn/ipnserver/actor.go`, tailscale/tailscale#21204, open). A valid sudo rule therefore fails whenever the two differ. The check covers the whole config, other apps' handlers included | "Tailscale <v> lets an operator change a Serve config that serves a Unix socket only if root can run `sudo --other-user=<your full name> --list tailscale`; it uses your account's full name, not your login name (tailscale/tailscale#21204). If they differ, run `sudo chfn -f $USER $USER`; check that `sudo -l tailscale` lists tailscale; then rerun the same setup command." |
 | `412` three times | another writer kept changing Serve | "Tailscale's Serve config kept changing while tether wrote it; rerun the same setup command." |
 | other | LocalAPI's own error | "Tailscale refused the Serve write: <status and body>." |
 
@@ -356,10 +356,9 @@ running daemon.
    handlers and unused `TCP` entries whose only field is `HTTPS: true` are dropped;
    every other entry, handler and field stays. A `403` says to make the account the
    Tailscale operator and rerun `tether teardown`; a repeated `412` likewise says to
-   rerun teardown. A `401` gets "Tailscale <v> requires an operator who may run
-   `sudo tailscale` to change a config that serves a Unix socket or a path. Remove
-   tether's entry as root: `sudo tailscale serve --https=443 off`, or grant this
-   account access and rerun tether teardown."
+   rerun teardown. A `401` gets setup's message ([Publication](#linux-setup-writes-the-entry))
+   naming `tether teardown`, followed by "Or remove every handler on port 443 as root:
+   `sudo tailscale serve --https=443 off`."
 4. **Remove the file**: the unit, then `daemon-reload`; or the plist.
 
 If the withdrawal fails on Linux, teardown still removes the unit: Serve then points
@@ -459,7 +458,7 @@ findings are also covered by S12 on the target host.
 | S1 | pop-os | From a fresh state (no unit, linger off, no operator), `tether setup --background` over SSH asks for at most two passwords, publishes, prints link, QR and code. The iPhone camera opens the link; Safari enrols with the code; the iOS app adds the host |
 | S2 | pop-os | A rerun with `--background`: same link, new code, one restart, no change lines. `tailscale serve status --json` before and after differ only in tether's handler; another app's entry on another port survives byte for byte |
 | S3 | pop-os | Background refusals without writing: another app at `/` of `<name>:443`, Funnel on, a TCP forward on 443. Without a terminal, `tether setup --background` prints the grant commands and exits 1 |
-| S4 | pop-os and a container | Tailscale 1.94–1.98 and 1.100 or later: `tether setup --background` writes as operator; an operator who may not `sudo tailscale` gets the `401` message on 1.100+ and succeeds on 1.98; a non-operator gets the `403` message; teardown with another app's Unix handler present, on 1.100+ |
+| S4 | pop-os and a container | Tailscale 1.94–1.98.8 and 1.98.9 or later: `tether setup --background` writes as operator; an operator who may not `sudo tailscale`, or whose full name differs from the login name, gets the `401` message on 1.98.9+ and succeeds on 1.98.8; a non-operator gets the `403` message; teardown with another app's Unix handler present, on 1.98.9+ |
 | S5 | pop-os | Upgrade from the loopback-TCP daemon and from a current one: `cargo install` a newer build, rerun `tether setup --background`; `/auth/info` reports the new version, the 7850 handler is replaced, a `MemoryMax` drop-in survives, an edited unit is backed up and replaced |
 | S6 | pop-os | Reboot: tether runs before any login, published; the phone reconnects |
 | S7 | pop-os | `tether teardown` removes the unit and tether's handler only; a second teardown says "Nothing to remove"; `tether setup --background` again brings the iOS app's host back with its existing token. With no unit installed, teardown withdraws the handler only |

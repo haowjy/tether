@@ -3992,8 +3992,9 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **What:** the success report is the mode line (with "starts at boot" or "starts when
   you log in" for a service), one line per change, any notes, the link, its QR code and
   "Enrolment code: <code> (one device, 10 minutes)". A terminal run logs at `warn`
-  unless `RUST_LOG` is set. An unenrolled node reaching the enrolment page logs at
-  `debug`; one refused elsewhere still logs at `warn`.
+  unless `RUST_LOG` is set, from before the daemon opens so its budget warnings show.
+  An unenrolled node logs at `debug` on every route: the response already reports it,
+  and every phone is unenrolled until it enters its code.
 - **Why:** each dropped line repeated another one or explained something a second run
   doesn't need: "Nothing else to change" (no change lines says it), "Published on your
   tailnet", per-client enrolment steps (the phone page asks for the code; the iOS host
@@ -4004,3 +4005,20 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Rejected:** a `--quiet` flag (two output formats to keep correct); keeping the
   banner for the foreground Serve entry that outlives Ctrl-C (running.md says so, and
   the phone shows 502, not someone else's page).
+
+### Setup's `401` names Tailscale's full-name check
+
+- **Decided:** 2026-10-25, lead (first Linux setup run on pop-os, review p210).
+- **What:** on a `401` from the Serve write, setup explains that tailscaled 1.98.9+
+  checks `sudo --other-user=<full name> --list tailscale` with the account's full name
+  (tailscale/tailscale#21204), suggests `sudo chfn -f $USER $USER` when the names
+  differ, then checking `sudo -l tailscale`. Teardown adds `sudo tailscale serve
+  --https=443 off`, stating that it removes every handler on port 443.
+- **Why:** pop-os's account had a sudo rule for tailscale and still got the `401`; the
+  old message asked for that rule. `chfn -f` changes only the full name; Go's user
+  lookup, which tailscaled tries first, cuts the name at the first comma.
+- **Rejected:** setup reading the account's full name and choosing one of two messages
+  (another lookup, wrong for LDAP accounts, for a rare error); `usermod -c` (replaces
+  the whole GECOS field); a narrower teardown command with `--set-path` (unverified);
+  naming tailscaled's `PATH` lacking `tailscale`, the other cause reported on #21204
+  (seen with Homebrew's launchd tailscaled; a Linux tailscaled finds `/usr/bin`).
