@@ -3,6 +3,9 @@ import type { Entry, FsApi, Listing, Roots } from "./api";
 import type { FilesPlace } from "../platform/types";
 import { hostProblem, type HostProblem } from "../ui/hostProblem";
 import { Store } from "../ui/store";
+import { baseName, join, parentOf } from "./paths";
+import { Folders, listFolder, type Via } from "./folders";
+import type { Where } from "./pathfield";
 
 /** A file to view: from a listing, or from a path (a Markdown link, a reload) and a probe. */
 export interface FileRef {
@@ -20,6 +23,8 @@ export type Place = { kind: "roots" } | { kind: "dir"; path: string } | { kind: 
 /** A directory's pages loaded so far. */
 export interface Pages extends Listing {
   hidden: boolean;
+  /** `dirs`: a folder outside every root, listed by the `$HOME` picker (subfolders only), which offers to add it. */
+  via: Via;
 }
 
 export interface FilesView {
@@ -36,15 +41,6 @@ export interface FilesView {
 export interface BrowserOptions {
   api: FsApi;
   hidden: boolean;
-}
-
-export const parentOf = (path: string): string => path.slice(0, Math.max(1, path.lastIndexOf("/")));
-export const baseName = (path: string): string => path.slice(path.lastIndexOf("/") + 1) || "/";
-export const join = (dir: string, name: string): string => (dir.endsWith("/") ? dir + name : `${dir}/${name}`);
-
-/** `/a/repo` holds `/a/repo/x` but not `/a/repo2`: compared by component, as fs.md does. */
-export function within(path: string, root: string): boolean {
-  return path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`);
 }
 
 /** The canonical directories the file list may show: the working roots and uploads_dir. */
@@ -88,12 +84,21 @@ export function savedPlace(place: Place): FilesPlace {
 export class FileBrowser extends Store<FilesView> {
   /** The host's file API, which the viewers read through too. */
   readonly api: FsApi;
+  /** The path field's subfolder listings; browsing seeds them. */
+  readonly folders: Folders;
   /** Bumped on every navigation, so an answer for a place already left is dropped. */
   private seq = 0;
 
   constructor(opts: BrowserOptions) {
     super({ place: { kind: "roots" }, roots: null, pages: null, loading: true, error: null, hidden: opts.hidden });
     this.api = opts.api;
+    this.folders = new Folders(opts.api, () => this.where());
+  }
+
+  /** What completion needs of the roots; null until they are known. */
+  where(): Where | null {
+    const { roots } = this.snapshot;
+    return roots && { home: roots.home, scope: scope(roots) };
   }
 
   /**
@@ -126,8 +131,10 @@ export class FileBrowser extends Store<FilesView> {
   /** The current listing again from its first page: pull-to-refresh, or Retry. */
   async reload(): Promise<void> {
     const { place } = this.snapshot;
-    if (place.kind === "dir") await this.load(place);
-    else if (place.kind === "file") await this.openFile(place.file.path);
+    if (place.kind === "dir") {
+      this.folders.drop(place.path);
+      await this.load(place);
+    } else if (place.kind === "file") await this.openFile(place.file.path);
     else await this.showRoots();
   }
 
@@ -138,8 +145,12 @@ export class FileBrowser extends Store<FilesView> {
     const offset = pages.entries.length;
     await this.run(
       { loading: true },
-      () => this.api.list(pages.path, offset, pages.hidden),
-      (next) => { this.update({ pages: { ...pages, total: next.total, truncated: next.truncated, entries: [...pages.entries, ...next.entries] }, loading: false }); },
+      () => listFolder(this.api, null, pages.path, offset, pages.hidden, pages.via),
+      (next) => {
+        const grown = { ...pages, total: next.total, truncated: next.truncated, entries: [...pages.entries, ...next.entries] };
+        this.folders.seed(grown, grown.hidden);
+        this.update({ pages: grown, loading: false });
+      },
     );
   }
 
@@ -148,9 +159,11 @@ export class FileBrowser extends Store<FilesView> {
     if (this.snapshot.place.kind === "dir") await this.reload();
   }
 
-  /** Adds a root, then shows the roots the daemon answered with. A refusal throws for the dialog to show. */
+  /** Adds a root. A refusal throws for the caller to show. The folder on screen lists in full once it is one. */
   async addRoot(path: string): Promise<void> {
     this.update({ roots: await this.api.addRoot(path) });
+    const { place } = this.snapshot;
+    if (place.kind === "dir" && place.path === path) await this.reload();
   }
 
   async removeRoot(path: string): Promise<void> {
@@ -159,6 +172,7 @@ export class FileBrowser extends Store<FilesView> {
 
   /** An upload landed at `path`: relist if it is in the folder on screen. */
   async uploaded(path: string): Promise<void> {
+    this.folders.drop(parentOf(path));
     const { place } = this.snapshot;
     if (place.kind === "dir" && place.path === parentOf(path)) await this.reload();
   }
@@ -188,13 +202,18 @@ export class FileBrowser extends Store<FilesView> {
 
   /** Lists `place` from its first page. */
   private load(place: { kind: "dir"; path: string }): Promise<void> {
-    const hidden = this.snapshot.hidden;
+    const { hidden } = this.snapshot;
+    const where = this.where();
     // The same folder's pages stay up (greyed by `loading`) while it reloads; another folder's go.
     return this.run(
       { place, pages: this.snapshot.pages?.path === place.path ? this.snapshot.pages : null, loading: true, error: null },
-      () => this.api.list(place.path, 0, hidden),
+      async () => (await this.folders.take(place.path, hidden)) ?? listFolder(this.api, where, place.path, 0, hidden),
       // The daemon answers with the canonical path; the place follows it.
-      (listing) => { this.update({ place: { ...place, path: listing.path }, pages: { ...listing, hidden }, loading: false }); },
+      (listing) => {
+        const pages = { ...listing, hidden };
+        this.folders.seed(pages, hidden);
+        this.update({ place: { ...place, path: listing.path }, pages, loading: false });
+      },
     );
   }
 

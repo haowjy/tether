@@ -5,6 +5,10 @@ version section on release.
 
 ## [Unreleased]
 
+- Files finds folders by typing a path: one field at the top completes the folders as you type
+  (ghost text, tap a row or press `/`, Tab or → to accept, Go to open), without a request per
+  keystroke. `~` outside your folders lists your home folder with rows marked "not added", and
+  opening one offers "Add this folder". This replaces the "Add a folder" dialog.
 - The "Update ready" and "Reload" banners now sit inside the app shell, so showing one no longer
   makes the page scroll or pushes the bottom of the screen out of view.
 - `tether setup` publishes tether on your tailnet and prints its link, a QR code of it and
@@ -37,6 +41,8 @@ version section on release.
   each tab keeps its own draft across tab switches and reloads, a refused line comes back
   marked "Not sent", and the tab chip opens a sheet with the open tabs, every session and its
   windows, search and New session.
+- Session tabs follow the session's current window when it changes in tmux, and selecting or
+  opening a window takes it at the tab's size before input is sent.
 - A window now takes the size of whichever terminal acted on it last. Opening or returning to
   a tab, typing, pasting and rotating size it to the phone; typing in another terminal (the
   laptop) takes it back, and a reconnect after a network blip leaves it there. A window sized

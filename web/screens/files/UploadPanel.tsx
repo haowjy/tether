@@ -1,5 +1,5 @@
 import { useApp } from "../../app/context";
-import { baseName } from "../../files/browser";
+import { baseName } from "../../files/paths";
 import type { UploadItem } from "../../files/uploads";
 import { useStore } from "../../ui/store";
 import { Button } from "../../ui/primitives/Button";

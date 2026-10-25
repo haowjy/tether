@@ -3,7 +3,7 @@
 // of `page` entries. Paths are already canonical.
 import { HttpRefusal } from "../../net/http";
 import type { Entry, FsApi, Listing, Roots } from "../../files/api";
-import { within } from "../../files/browser";
+import { within } from "../../files/paths";
 import type { FakeDaemon } from ".";
 
 export interface FakeTree {
@@ -19,6 +19,8 @@ export class FakeFs implements FsApi {
   calls: string[] = [];
   /** Answers wait for `release()` while set, so a test can interleave them. */
   hold = false;
+  /** Every call fails as a dead network does. */
+  offline = false;
   private held: (() => void)[] = [];
 
   constructor(readonly tree: FakeTree, readonly page = 3) {}
@@ -119,7 +121,7 @@ export class FakeFs implements FsApi {
 
   private answer<T>(call: string, body: () => T): Promise<T> {
     this.calls.push(call);
-    const run = (): Promise<T> => new Promise((resolve) => { resolve(body()); });
+    const run = (): Promise<T> => new Promise((resolve, reject) => { if (this.offline) reject(new HttpRefusal(0, "network")); else resolve(body()); });
     if (!this.hold) return run();
     return new Promise((resolve, reject) => { this.held.push(() => { run().then(resolve, reject); }); });
   }

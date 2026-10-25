@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppView } from "../../app/context";
-import { baseName, describeError, parentOf, parentPlace } from "../../files/browser";
+import { describeError, parentPlace } from "../../files/browser";
+import { baseName, parentOf } from "../../files/paths";
 import type { LinkTarget } from "../../files/render/markdown";
 import type { FilesPlace } from "../../platform/types";
 import { useStore } from "../../ui/store";
@@ -8,8 +9,11 @@ import { Button } from "../../ui/primitives/Button";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { Spinner } from "../../ui/primitives/Spinner";
-import { AddFolderDialog, RemoveFolderDialog } from "./FolderDialogs";
-import { DirList, RootsList, shorten } from "./FolderList";
+import { shorten } from "../../files/format";
+import { AddThisFolder } from "./AddThisFolder";
+import { RemoveFolderDialog } from "./FolderDialogs";
+import { DirList, RootsList } from "./FolderList";
+import { PathField } from "./PathField";
 import { Preview } from "./Preview";
 import { startUpload, type FilesSession } from "./session";
 import { UploadPanel } from "./UploadPanel";
@@ -26,13 +30,15 @@ export function FilesPane({ session }: { session: FilesSession }) {
   const wanted = useAppView((v) => v.nav.entry.files);
   const { place, pages, roots, loading, error } = view;
   const scroller = useRef<HTMLDivElement>(null);
+  // While the path field is being typed in, its completions are the list.
+  const [finding, setFinding] = useState(false);
 
   useEffect(() => { void browser.follow(wanted); }, [browser, wanted]);
 
   const open = (to: FilesPlace): void => { app.router.pushFiles(to); };
   const up = parentPlace(view);
   const listed = pages !== null && (place.kind === "dir" ? pages.path === place.path : place.kind === "file" && pages.path === parentOf(place.file.path));
-  const listingVisible = place.kind === "dir" && listed && !error;
+  const listingVisible = place.kind === "dir" && listed && !error && !finding;
 
   // Back finds a folder's list scrolled where it was left.
   const folder = listed ? pages.path : null;
@@ -49,7 +55,7 @@ export function FilesPane({ session }: { session: FilesSession }) {
 
   const home = roots?.home ?? null;
   const title = place.kind === "roots" ? "Files" : place.kind === "dir" ? baseName(place.path) : place.file.name;
-  const crumb = place.kind === "roots" ? session.hostName : shorten(place.kind === "dir" ? place.path : place.file.path, home);
+  const rest = place.kind === "dir" ? shorten(place.path, home) : "";
   const backLabel = place.kind === "file" ? "Back to folder" : up?.kind === "roots" ? "All folders" : "Up one folder";
 
   let body;
@@ -63,7 +69,7 @@ export function FilesPane({ session }: { session: FilesSession }) {
         roots={roots}
         hostName={session.hostName}
         onOpen={open}
-        onAdd={(from) => { app.openOverlay({ screen: "files", name: "addFolder" }, from); }}
+        onAdd={() => { app.focus.focusTarget("path", true); }}
         onRemove={(path, from) => { app.openOverlay({ screen: "files", name: "removeFolder", params: { path } }, from); }}
       />
     ) : <Loading what="Loading folders" />;
@@ -79,7 +85,7 @@ export function FilesPane({ session }: { session: FilesSession }) {
         {up && <IconButton icon="back" label={backLabel} onClick={() => { app.router.toParent(up); }} />}
         <div class={styles.heading}>
           <h1 class={styles.title}>{title}</h1>
-          <p class={styles.crumb} title={crumb}>{crumb}</p>
+          {place.kind === "file" && <p class={styles.crumb} title={place.file.path}>{shorten(place.file.path, home)}</p>}
         </div>
         {place.kind !== "file" && (
           <div class={styles.actions}>
@@ -88,7 +94,8 @@ export function FilesPane({ session }: { session: FilesSession }) {
           </div>
         )}
       </header>
-      <UploadPanel session={session} onPreview={(path) => { open({ kind: "file", path }); }} />
+      {place.kind !== "file" && roots && <PathField session={session} rest={rest} onEditing={setFinding} />}
+      {!finding && <UploadPanel session={session} onPreview={(path) => { open({ kind: "file", path }); }} />}
       {/* The list stays mounted under a preview, so Back returns to it as it was. */}
       {listed && !error && (
         <div
@@ -98,25 +105,25 @@ export function FilesPane({ session }: { session: FilesSession }) {
           hidden={!listingVisible}
           onScroll={(e) => { session.scroll.set(pages.path, e.currentTarget.scrollTop); }}
         >
-          
-            <DirList
-              path={pages.path}
-              entries={pages.entries}
-              total={pages.total}
-              truncated={pages.truncated}
-              hidden={view.hidden}
-              loading={loading}
-              onOpen={open}
-              onMore={() => { void browser.more(); }}
-              onToggleHidden={() => { void browser.toggleHidden(); }}
-            />
+          {pages.via === "dirs" && <AddThisFolder session={session} path={pages.path} />}
+          <DirList
+            path={pages.path}
+            entries={pages.entries}
+            total={pages.total}
+            truncated={pages.truncated}
+            hidden={view.hidden}
+            loading={loading}
+            onOpen={open}
+            onMore={() => { void browser.more(); }}
+            onToggleHidden={() => { void browser.toggleHidden(); }}
+            foldersOnly={pages.via === "dirs"}
+          />
         </div>
       )}
       {place.kind === "file" && !error && !(loading && place.file.mime === null && place.file.size === null) && (
         <Preview session={session} file={place.file} onLink={onLink} />
       )}
-      {body && <div class={styles.scroll}>{body}</div>}
-      <AddFolderDialog session={session} />
+      {body && !finding && <div class={styles.scroll}>{body}</div>}
       <RemoveFolderDialog session={session} />
     </div>
   );

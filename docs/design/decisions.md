@@ -4411,3 +4411,19 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   every claim while the resize is on its way); a fixed one-second wait (review p233: a
   round trip on a spotty link often takes longer, so every open and rotation would
   flash it).
+
+### Late completion answers are kept; Back ends a path edit
+
+- **Decided:** 2026-10-25, design (p230 build, review p234).
+- **What:** an answer for a folder the path field has left is never shown but is kept
+  in the cache, not dropped. Editing the path is a `files/find` router overlay, so Back
+  ends the edit before it leaves the folder. The first page a completion fetch gets is
+  handed to browsing (opening the folder costs one listing), and a failed listing is
+  asked for again.
+- **Why:** completion reads only the listing of the folder the field names now, so a
+  late answer cannot appear in the wrong place; the bytes are already paid for, and
+  backspacing into that folder then costs nothing. Cancelling the pending 250 ms timer
+  is what saves requests.
+- **Rejected:** discarding late answers (a request wasted for nothing); a second,
+  browsing-only cache of the same listing (two copies to keep in step).
+

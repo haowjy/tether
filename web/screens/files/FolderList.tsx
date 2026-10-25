@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import type { Entry, Roots } from "../../files/api";
 import { entryPlace } from "../../files/browser";
-import { formatSize } from "../../files/format";
+import { formatSize, shorten } from "../../files/format";
 import type { FilesPlace } from "../../platform/types";
 import { Button } from "../../ui/primitives/Button";
 import { EmptyState } from "../../ui/primitives/EmptyState";
@@ -11,12 +11,6 @@ import { Row } from "../../ui/primitives/Row";
 import { RovingList } from "../../ui/primitives/RovingList";
 import { Spinner } from "../../ui/primitives/Spinner";
 import styles from "./FolderList.module.css";
-
-/** `/home/j/repo` → `~/repo`: how a path reads on the phone. */
-export function shorten(path: string, home: string | null): string {
-  if (home && (path === home || path.startsWith(`${home}/`))) return `~${path.slice(home.length)}`;
-  return path;
-}
 
 function iconFor(entry: Entry): IconName {
   if (entry.kind === "dir") return "folder";
@@ -36,8 +30,8 @@ export interface RootsListProps {
   roots: Roots;
   hostName: string;
   onOpen: (place: FilesPlace) => void;
-  /** The button that asked is passed along, so the dialog returns focus to it. */
-  onAdd: (from: HTMLElement) => void;
+  /** Starts the path field at `~/`. */
+  onAdd: () => void;
   onRemove: (path: string, from: HTMLElement) => void;
 }
 
@@ -48,7 +42,7 @@ export function RootsList({ roots, hostName, onOpen, onAdd, onRemove }: RootsLis
   ];
   const usable = rows.filter((r) => r.entry.ok && r.entry.canonical !== null);
   const add = (
-    <Button icon="plus" focusTarget="addFolder" onClick={(e) => { onAdd(e.currentTarget); }}>Add folder…</Button>
+    <Button icon="plus" focusTarget="addFolder" onClick={onAdd}>Add folder…</Button>
   );
   return (
     <div class={styles.wrap}>
@@ -94,9 +88,11 @@ export interface DirListProps {
   onOpen: (place: FilesPlace) => void;
   onMore: () => void;
   onToggleHidden: () => void;
+  /** A folder outside the roots lists its subfolders only. */
+  foldersOnly: boolean;
 }
 
-export function DirList({ path, entries, total, truncated, hidden, loading, onOpen, onMore, onToggleHidden }: DirListProps) {
+export function DirList({ path, entries, total, truncated, hidden, loading, onOpen, onMore, onToggleHidden, foldersOnly }: DirListProps) {
   const more = entries.length < total;
   const sentinel = useRef<HTMLDivElement>(null);
   const latest = useRef(onMore);
@@ -113,7 +109,7 @@ export function DirList({ path, entries, total, truncated, hidden, loading, onOp
   return (
     <div class={styles.wrap} aria-busy={loading}>
       {entries.length === 0 ? (
-        <EmptyState icon="folder" title="This folder is empty">{hidden ? undefined : "Hidden files are not shown."}</EmptyState>
+        <EmptyState icon="folder" title={foldersOnly ? "No folders here" : "This folder is empty"}>{hidden ? undefined : "Hidden files are not shown."}</EmptyState>
       ) : (
         <RovingList label="Contents" class={styles.list}>
           {entries.map((entry) => {

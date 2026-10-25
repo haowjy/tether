@@ -67,6 +67,31 @@ export function filesTree(): FakeTree {
   };
 }
 
+/**
+ * A home folder for finding folders by path: one root (`~/repos/tether`) inside a `~/repos` that
+ * holds more, a folder of twenty subfolders (three pages), and ones to refuse, hang on and cap.
+ */
+export const FIND_ROOT = `${HOME}/repos/tether`;
+export function findTree(): FakeTree {
+  const many = Array.from({ length: 20 }, (_, i) => `${HOME}/repos/many/folder-${String(i + 1).padStart(2, "0")}`);
+  return {
+    home: HOME,
+    roots: [FIND_ROOT],
+    uploads: UPLOADS,
+    dirs: [
+      HOME, `${HOME}/repos`, FIND_ROOT, `${FIND_ROOT}/src`, `${FIND_ROOT}/web`, `${FIND_ROOT}/docs`, `${FIND_ROOT}/empty`, `${FIND_ROOT}/.git`, `${FIND_ROOT}/web/src`,
+      `${HOME}/repos/tether-old`, `${HOME}/repos/test-data`, `${HOME}/repos/zebra`, `${HOME}/repos/many`, ...many,
+      UPLOADS, `${HOME}/other`, `${HOME}/other/deep`, `${HOME}/.config`, ESCAPE,
+    ],
+    files: {
+      [`${FIND_ROOT}/README.md`]: MD,
+      [`${FIND_ROOT}/Cargo.toml`]: TEXT,
+      [`${HOME}/repos/notes.txt`]: TEXT,
+      [`${UPLOADS}/20261022-101010Z-abcd.jpg`]: "image/jpeg",
+    },
+  };
+}
+
 const CONTENT: Record<string, string> = {
   [`${REPO}/README.md`]: README,
   [`${REPO}/Cargo.toml`]: '[package]\nname = "tether"\nversion = "0.1.0"\n',
@@ -80,10 +105,26 @@ const CONTENT: Record<string, string> = {
 export class FilesFs extends FakeFs {
   /** Paths whose listing is refused, for the error state. */
   denied = new Set<string>();
+  /** Paths whose listing never answers, for the loading state. */
+  hanging = new Set<string>();
+  /** Paths the network drops, for the offline state. */
+  unreachable = new Set<string>();
+  /** Paths whose listing the daemon says it cut short at its scan cap. */
+  capped = new Set<string>();
 
-  override list(path: string, offset: number, hidden: boolean): ReturnType<FakeFs["list"]> {
+  override async list(path: string, offset: number, hidden: boolean): ReturnType<FakeFs["list"]> {
+    return this.guarded(path, await super.list(path, offset, hidden));
+  }
+
+  override async dirs(path: string, offset: number, hidden: boolean): ReturnType<FakeFs["dirs"]> {
+    return this.guarded(path, await super.dirs(path, offset, hidden));
+  }
+
+  private guarded<T extends { truncated: boolean }>(path: string, listing: T): Promise<T> {
     if (this.denied.has(path)) return Promise.reject(new HttpRefusal(403, "denied"));
-    return super.list(path, offset, hidden);
+    if (this.unreachable.has(path)) return Promise.reject(new TypeError("Failed to fetch"));
+    if (this.hanging.has(path)) return new Promise(() => undefined);
+    return Promise.resolve(this.capped.has(path) ? { ...listing, truncated: true } : listing);
   }
 
   override addRoot(path: string): ReturnType<FakeFs["addRoot"]> {

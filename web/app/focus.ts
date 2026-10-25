@@ -145,6 +145,11 @@ export class FocusController extends Store<FocusView> implements FocusPort {
     element.focus();
   }
 
+  /** A field the user is done with: let go of it now, which lowers the keyboard. */
+  blurElement(element: HTMLElement): void {
+    element.blur();
+  }
+
   /** The tap that opens a dialog notes its control here: Safari leaves a clicked button unfocused, so `document.activeElement` is not it. */
   noteOpener(opener: Element | null): void {
     this.opener = opener;

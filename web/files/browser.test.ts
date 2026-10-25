@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { entryPlace, FileBrowser, parentPlace, within } from "./browser";
+import { entryPlace, FileBrowser, parentPlace } from "./browser";
+import { within } from "./paths";
 import { FakeFs, type FakeTree } from "../platform/test/fs";
 
 const tree = (): FakeTree => ({
@@ -102,13 +103,31 @@ describe("FileBrowser", () => {
     expect(browser.snapshot.pages?.path).toBe("/home/j/up");
   });
 
-  it("shows a refusal and no stale entries for a folder outside the roots", async () => {
+  it("shows a refusal and no stale entries for a folder outside the roots and $HOME", async () => {
     const { browser } = setup();
     await browser.follow({ kind: "dir", path: "/home/j/repo" });
-    await browser.follow({ kind: "dir", path: "/home/j/other" });
-    expect(browser.snapshot.error?.code).toBe("outside_roots");
+    await browser.follow({ kind: "dir", path: "/etc" });
+    expect(browser.snapshot.error?.code).toBe("outside_home");
     expect(browser.snapshot.pages).toBeNull();
     expect(parentPlace(browser.snapshot)).toEqual({ kind: "roots" });
+  });
+
+  it("lists a folder under $HOME outside the roots by the picker, subfolders only, and in full once added", async () => {
+    const { browser, fs } = setup();
+    await browser.follow({ kind: "dir", path: "/home/j/repo" });
+    await browser.follow({ kind: "dir", path: "/home/j/other" });
+    expect(fs.calls.at(-1)).toBe("dirs /home/j/other 0");
+    expect(browser.snapshot.pages?.via).toBe("dirs");
+    await browser.addRoot("/home/j/other");
+    expect(browser.snapshot.pages?.via).toBe("list");
+  });
+
+  it("falls back to the picker when a root's folder leads out of the roots", async () => {
+    const { browser, fs } = setup();
+    // Roots unknown yet: the first listing is asked of /fs/list, which refuses it.
+    await browser.follow({ kind: "dir", path: "/home/j/other" });
+    expect(fs.calls).toContain("list /home/j/other 0");
+    expect(browser.snapshot.pages?.via).toBe("dirs");
   });
 
   it("relists the folder on screen when an upload lands in it", async () => {

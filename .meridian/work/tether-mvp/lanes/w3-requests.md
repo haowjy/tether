@@ -83,3 +83,20 @@ that, the phone layout of the real app shows Home's placeholder; the harness fix
 `manualChunks` merges each wrapper into `grammar-<name>`, yet a dynamic-import facade
 (`c-*.js`, 44 to 60 bytes) remains for each of the 13 grammars. The shell is 46 files and
 553 KB gz, within budget; only the file count is spent.
+
+## 8. `blurElement` and the `path` focus target (app/focus.ts, ui/focus.ts, W0)
+
+The path field (decisions.md "Add folder becomes the path field") needs two things from the
+focus owner. The change was made directly in the working tree, ahead of this request, so
+W0's commit should take it as written (`git diff web/app/focus.ts web/ui/focus.ts`):
+
+- `ui/focus.ts`: `FocusTarget` gains `"path"`, which "Add folder…" raises the keyboard for
+  (`app.focus.focusTarget("path", true)` inside the tap). `FocusPort` gains
+  `blurElement(element)`, and the default context stub gains it too.
+- `app/focus.ts`: `FocusController.blurElement` calls `element.blur()`.
+
+Why: lint rule 2 lets only the focus controller call `.blur()`, and Cancel, Go and Escape
+must lower the keyboard. It is a field-level blur, not the `blur` of a registered target.
+W3's stand-in until W0 lands the commit: none possible (the type must exist), so W3's
+commit depends on it.
+
