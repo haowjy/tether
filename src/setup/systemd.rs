@@ -12,7 +12,7 @@ use super::{Host, SetupError, command_text};
 const DEFAULT_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 pub(super) fn inspect() -> Result<Host, SetupError> {
-    let user = command_text("/usr/bin/id", &["-un"])?;
+    let user = username()?;
     let uid = rustix::process::geteuid().as_raw();
     let home = super::config::home()?;
     let manager_dir = PathBuf::from(format!("/run/user/{uid}"));
@@ -117,6 +117,15 @@ pub(super) fn inspect() -> Result<Host, SetupError> {
     })
 }
 
+pub(super) fn username() -> Result<String, SetupError> {
+    command_text("/usr/bin/id", &["-un"])
+}
+
+pub(super) fn service_active() -> bool {
+    let uid = rustix::process::geteuid().as_raw();
+    manager_command_for_uid(uid, "is-active", &["tether"]).is_ok()
+}
+
 pub(super) fn inspect_teardown() -> Result<super::TeardownHost, SetupError> {
     let home = super::config::home()?;
     let uid = rustix::process::geteuid().as_raw();
@@ -156,11 +165,11 @@ pub(super) fn grant_linger(host: &Host) -> Result<(), SetupError> {
     }
 }
 
-pub(super) fn grant_operator(host: &Host) -> Result<(), SetupError> {
-    let command = format!("sudo tailscale set --operator={}", host.user);
+pub(super) fn grant_operator(user: &str) -> Result<(), SetupError> {
+    let command = format!("sudo tailscale set --operator={user}");
     println!("Tailscale must let your account change its Serve config. Running: {command}");
     let status = Command::new("sudo")
-        .args(["tailscale", "set", &format!("--operator={}", host.user)])
+        .args(["tailscale", "set", &format!("--operator={user}")])
         .status()
         .map_err(|error| SetupError::new(format!("{command}: {error}")))?;
     if status.success() {

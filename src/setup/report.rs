@@ -8,7 +8,7 @@ use qrcode::render::unicode::Dense1x2;
 pub(crate) struct Success<'a> {
     pub version: &'a str,
     pub previous_version: Option<&'a str>,
-    pub platform: &'a str,
+    pub platform: Option<&'a str>,
     pub changes: &'a [String],
     pub notes: &'a [String],
     pub origin: &'a str,
@@ -19,16 +19,22 @@ pub(crate) fn render_success(
     report: &Success<'_>,
     terminal: bool,
 ) -> Result<String, qrcode::types::QrError> {
-    let mut output = format!(
-        "tether {} is running as your {}, {}",
-        report.version,
-        report.platform,
-        if report.platform == "systemd user service" {
-            "started at boot"
-        } else {
-            "started when you log in"
-        }
-    );
+    let mut output = match report.platform {
+        Some(platform) => format!(
+            "tether {} is running as your {}, {}",
+            report.version,
+            platform,
+            if platform == "systemd user service" {
+                "started at boot"
+            } else {
+                "started when you log in"
+            }
+        ),
+        None => format!(
+            "tether {} is running in this terminal; Ctrl-C stops it",
+            report.version
+        ),
+    };
     if let Some(previous) = report.previous_version {
         output.push_str(&format!(" (was {previous})"));
     }
@@ -59,8 +65,13 @@ pub(crate) fn render_success(
         output.push_str(&code.render::<Dense1x2>().build());
         output.push('\n');
     }
+    let cleanup = if report.platform.is_some() {
+        "`tether enroll` prints a new code. `tether teardown` removes all of this."
+    } else {
+        "`tether enroll` prints a new code. The Serve entry stays when you stop tether; `tether teardown` removes it."
+    };
     output.push_str(&format!(
-        "\nEnrolment code: {}, for one device, valid for 10 minutes.\n  Phone browser: scan the QR code or open the link, then enter the code.\n  iOS app: Add host, {}, code {}.\n`tether enroll` prints a new code. `tether teardown` removes all of this.\n",
+        "\nEnrolment code: {}, for one device, valid for 10 minutes.\n  Phone browser: scan the QR code or open the link, then enter the code.\n  iOS app: Add host, {}, code {}.\n{cleanup}\n",
         report.code,
         report.origin
             .strip_prefix("https://")

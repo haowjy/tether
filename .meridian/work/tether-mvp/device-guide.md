@@ -9,10 +9,7 @@ What's left needs your hands: a real tailnet host and your iPhone. Three parts, 
 
 ```bash
 git pull && pnpm --dir web install && cargo install --path .
-sed -e "s|@HOME@|$HOME|g" -e "s|@PATH@|$PATH|g" contrib/com.jimmyyao.tether.plist \
-  > ~/Library/LaunchAgents/com.jimmyyao.tether.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jimmyyao.tether.plist
-tether enroll        # prints a one-time code (10 minutes) and the browser URL
+tether setup --background   # installs the LaunchAgent, publishes and prints the code
 ```
 
 No sudo is needed. tether publishes itself at `https://jimmys-macbook-air.tail852a76.ts.net`.
@@ -20,17 +17,15 @@ The automated checks of the Mac front passed (`evidence/mac-gates/README.md`). T
 only reaches it while you're logged in to the Mac. To stop it, see `docs/running.md`, "Host on a Mac".
 
 **Or pop-os.** First, on the Mac, run `ssh pop-os` once and accept the host key; after that
-I can do the build and the systemd setup. Only the `sudo` line has to be yours. To do it all
-yourself, on pop-os:
+I can do the build and setup. To do it all yourself, on pop-os:
 
 ```bash
 cd ~/gitrepos/tether && git pull && pnpm --dir web install && cargo install --path .
-mkdir -p ~/.config/systemd/user && cp contrib/tether.service ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now tether
-loginctl enable-linger "$USER"
-sudo tailscale serve --bg --https=443 unix:/run/user/$(id -u)/tether/serve.sock
-tether enroll
+tether setup                 # keeps tether in this terminal until Ctrl-C
 ```
+
+Use `tether setup --background` instead if pop-os should keep tether running after
+this terminal closes; it installs the systemd service.
 
 `tmux -V` on pop-os decides which tmux the fix in 8db5622 protects. Tell me the version.
 

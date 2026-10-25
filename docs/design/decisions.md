@@ -3847,6 +3847,21 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 ## tether setup
 
+### Setup runs in the foreground by default
+
+- **Decided:** 2026-10-25, Jimmy.
+- **What:** plain Linux `tether setup` runs tether in the terminal until SIGINT or
+  SIGTERM; `tether setup --background` installs the systemd user service. Plain setup
+  on a Mac refuses before changing anything; the LaunchAgent is still the only Mac
+  front phones can reach.
+- **Why:** Jimmy chose plain `tether setup` to stay attached to the terminal; background
+  installation requires an explicit flag. Stopping the process does not imply ownership
+  of the tailnet's Serve config.
+- **Rejected:** background by default (Jimmy chose foreground); a foreground Mac run
+  over loopback TCP (phones cannot reach it without launchd's socket, and an unsecreted
+  loopback port is the Mac front's known hole); withdrawing Serve on Ctrl-C (a crash
+  would leave the entry anyway, and reruns would churn the config).
+
 ### Linux setup publishes as the operator
 
 - **Decided:** 2026-10-25, lead (setup review findings).
@@ -3864,18 +3879,20 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   setup and the daemon would otherwise race as two publication owners.
 - **Rejected:** having the Linux daemon publish like the Mac daemon.
 
-### Every setup run restarts tether
+### Every background setup run restarts tether
 
 - **Decided:** 2026-10-25, lead (setup review findings).
-- **What:** every successful setup run restarts tether, even when its installed file
-  is identical.
-- **Why:** rerunning setup is how Jimmy applies a config change, upgrade or fix.
+- **What:** every successful `tether setup --background` run restarts the service,
+  even when its installed file is identical. Foreground setup starts the daemon in the
+  current process instead.
+- **Why:** rerunning background setup is how Jimmy applies a config change, upgrade or
+  fix.
 - **Rejected:** restarting only when the service file changes.
 
 ### Automatic setup uses only `~/.cargo/bin/tether`
 
 - **Decided:** 2026-10-25, lead (setup review findings).
-- **What:** setup installs a service that runs only `~/.cargo/bin/tether`.
+- **What:** background setup installs a service that runs only `~/.cargo/bin/tether`.
 - **Why:** both embedded service definitions use that fixed path and setup can verify
   the invoked binary against it.
 - **Rejected:** templating Linux `ExecStart`; deferred under "Not in setup".
@@ -3883,14 +3900,15 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 ### systemd is the only automatic Linux service manager
 
 - **Decided:** 2026-10-25, lead (setup review findings).
-- **What:** automatic Linux setup supports systemd only.
+- **What:** background Linux setup supports systemd only; foreground setup needs no
+  service manager.
 - **Why:** no target host uses another service manager.
 - **Rejected:** adding OpenRC and runit support.
 
-### Mac setup refuses a second login account
+### Mac background setup refuses a second login account
 
 - **Decided:** 2026-10-25, lead (setup review findings).
-- **What:** setup refuses to install on a Mac with another login account.
+- **What:** background setup refuses to install on a Mac with another login account.
 - **Why:** the loopback front's local-process defences assume Jimmy is the Mac's only
   user account.
 - **Rejected:** warning and proceeding with the second account present.

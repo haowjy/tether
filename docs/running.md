@@ -1,9 +1,12 @@
 # Running tether
 
-tether runs on your dev box as a background service and shows your tmux sessions on
-your phone, over Tailscale. To install it: build it, run `~/.cargo/bin/tether setup`,
-scan the QR code it prints, and enter the code it prints. tether attaches to your
-tmux server and never starts one, so start tmux the way you always do.
+tether runs on your dev box and shows your tmux sessions on your phone, over Tailscale.
+On Linux, plain `tether setup` runs it in the terminal; Ctrl-C stops it. Use
+`tether setup --background` to install a service that outlives the terminal. On a Mac,
+use `--background`: plain setup refuses because phones reach the daemon through the
+LaunchAgent's socket. Build it, run setup, scan the QR code it prints, and enter the
+code. tether attaches to your tmux server and never starts one, so start tmux the way
+you always do.
 
 A Linux box is the usual host. A Mac can host tether too, under weaker local
 guarantees, if your account is its only one ([Host on a Mac](#host-on-a-mac)).
@@ -23,42 +26,54 @@ cargo install --path .          # puts tether in ~/.cargo/bin
 ~/.cargo/bin/tether setup
 ```
 
-`tether setup` installs tether as your background service, publishes it on your
-tailnet, and prints the link to open on your phone, a QR code of it, and an
-enrolment code. To use Safari or the home-screen app, scan the QR code with the
+Plain Linux `tether setup` runs tether in this terminal, publishes it on your tailnet,
+and prints the link to open on your phone, a QR code of it, and an enrolment code. It
+serves until Ctrl-C or SIGTERM; the Serve entry stays while tether is stopped, so the
+phone sees 502 until you run it again. Daemon logs follow the report on stderr. Use
+`tether setup --background` to install the systemd user service or Mac LaunchAgent
+instead. Plain `tether setup` on a Mac refuses without changing anything and tells you
+to use `--background`. To use Safari or the home-screen app, scan the QR code with the
 iPhone camera or open the link, then enter the code. To use the iOS app, tap Add host
 and enter the printed host name and the same code. A code works for one device; `tether
 enroll` prints another ([Enrol more devices](#enrol-more-devices)). The design is
 [setup.md](design/setup.md).
 
-Before it changes anything, setup checks that it's the installed binary
-(`~/.cargo/bin/tether`, which the service runs), that tmux is on the service's
-`PATH`, and that Tailscale is running, logged in, recent enough (1.94 on Linux, the
-standalone app 1.104 on a Mac) and has MagicDNS and HTTPS certificates on. It lists
-every failed check with its fix, and changes nothing until they all pass.
+All supported setup paths check that you are not root. Linux paths also check that
+Tailscale is reachable, logged in, recent enough (1.94 or later), and has MagicDNS and
+HTTPS certificates on. Mac background setup checks the standalone app (1.104 or later),
+MagicDNS and HTTPS certificates. Foreground setup also checks that the configured tmux
+program is executable on setup's own `PATH`. It can use `--config`; `TMUX_TMPDIR` is inherited
+by the daemon. It does not check the binary path, service environment, systemd, the
+user manager, systemd version, or cgroup controllers. Background setup requires the
+default config path, the installed `~/.cargo/bin/tether`, and tmux on the service's
+`PATH`; it also checks service environment and Linux systemd requirements. Any failed
+check stops setup before it changes anything.
 
-On Linux the first run makes two one-time system changes. Setup prints each command
-and runs it, so `sudo` or polkit may ask for your password:
+On Linux, `tether setup --background` may make two one-time system changes; plain
+`tether setup` may make only the operator grant. Setup prints each command and runs it,
+so `sudo` or polkit may ask for your password:
 
-- `loginctl enable-linger`, so tether starts at boot and keeps running after you log
-  out. If that fails, setup runs `sudo loginctl enable-linger $USER`.
+- `loginctl enable-linger` (background only), so tether starts at boot and keeps
+  running after you log out. If that fails, setup runs `sudo loginctl enable-linger $USER`.
 - `sudo tailscale set --operator=$USER`, which lets your account change Tailscale's
   Serve config without `sudo`. From then on setup writes tether's Serve entry itself.
   On Tailscale 1.100 and later your account must also be allowed to run `sudo
   tailscale`: once Serve has a Unix target, tailscaled lets only root, or an operator
   who may run `sudo tailscale`, change Serve at all, for any app.
 
-Each grant is skipped once it is in place. A setup rerun then needs no terminal; if
-a grant is still missing and stdin is not a terminal, setup prints only the commands
-needed and asks you to rerun `tether setup` in a terminal or run those commands first.
+Each grant is skipped once it is in place. If a grant is still missing and stdin is not
+a terminal, setup prints only the commands needed and asks you to rerun the same setup
+command in a terminal or run those commands first. Keep `--background` when rerunning a
+background setup. Foreground setup never enables linger.
 
-Setup installs `~/.config/systemd/user/tether.service` (Linux) or
+Only `tether setup --background` installs `~/.config/systemd/user/tether.service` (Linux) or
 `~/Library/LaunchAgents/com.jimmyyao.tether.plist` (Mac) from `contrib/`, restarts
 tether, publishes it, and waits for the new daemon to report the published link
 before it prints anything. If the installed file differs from this tether's, setup
 replaces it and keeps the old copy under `~/.local/state/tether/setup-backup/`. Put
 your own unit settings in a drop-in (`systemctl --user edit tether`), which setup
-leaves alone. To let in a Tailscale login other than this machine's owner, for
+leaves alone. Foreground setup installs no service or unit and serves in the current
+process. To let in a Tailscale login other than this machine's owner, for
 example:
 
 ```ini
@@ -67,28 +82,34 @@ ExecStart=
 ExecStart=%h/.cargo/bin/tether serve --allow-login you@example.com
 ```
 
-**Rerun it after every upgrade.** `cargo install` doesn't restart the service. Each
-run restarts tether, so it picks up the new binary, the shipped unit and any
-`config.toml` change, and prints the same link with a new code. The phone reconnects
-by itself.
+**Rerun setup after every upgrade.** For the background service, `cargo install`
+doesn't restart tether; rerun `tether setup --background` to pick up the new binary,
+shipped unit and any `config.toml` change. For a foreground run, stop the old process
+with Ctrl-C and rerun `tether setup`. If the background service is active, plain setup
+refuses because the runtime lock is held; `--background` restarts it and prints a new
+code. The phone reconnects by itself.
 
 If Serve already has something tether won't share, such as another app at `/` of the
-MagicDNS name, Funnel, or a TCP forward on port 443, setup installs and starts tether,
-writes nothing to Serve, prints the conflict and its fix, and exits 1. Rerun it once
-the conflict is gone.
+MagicDNS name, Funnel, or a TCP forward on port 443, setup writes nothing to Serve and
+prints the conflict and its fix. Background setup leaves the installed service running
+but unpublished. Foreground setup exits before serving and leaves the terminal run
+stopped. Rerun setup once the conflict is gone.
 
-**To remove it,** run `tether teardown`. It stops tether, removes its Serve handler
-and nothing else from Serve, and removes the unit or plist. It keeps your enrolled
-devices, `host_id`, `config.toml` and any drop-ins, so a later `tether setup` brings
-the phone's host back as it was. It also leaves linger and the operator grant, and
+**To remove it,** run `tether teardown`. It stops tether if a service is installed,
+removes its Serve handler and nothing else from Serve, and removes the unit or plist.
+With no unit installed, teardown just withdraws the Serve entry. It keeps your enrolled
+devices, `host_id`, `config.toml` and any drop-ins, so a later setup brings the phone's
+host back as it was. It also leaves linger and the operator grant, and
 prints the commands that undo them.
 
-**Logs:** `journalctl --user -u tether -f` on Linux, `~/Library/Logs/tether.log` on a
-Mac. They hold ids, lengths and logins, never terminal contents, tokens or codes;
-`RUST_LOG=debug` in the service's environment shows more.
+**Logs:** `journalctl --user -u tether -f` for the Linux service,
+`~/Library/Logs/tether.log` for the Mac LaunchAgent. Foreground daemon logs follow the
+setup report on stderr in the terminal. Logs hold ids, lengths and logins, never
+terminal contents, tokens or codes; set `RUST_LOG=debug` before setup for more.
 
-If setup can't run on your machine (no systemd, a binary elsewhere, a port other than
-7851 on a Mac), follow [Manual setup](#manual-setup).
+If background setup can't run on your machine (no systemd, a binary elsewhere, a port
+other than 7851 on a Mac), follow [Manual setup](#manual-setup). Plain Linux setup does
+not need systemd.
 
 ## Configure
 
@@ -111,14 +132,14 @@ program = "tmux"         # an absolute path if the unit's PATH doesn't find it
 ```
 
 With neither socket key, tether uses tmux's default socket, which tmux finds through
-`TMUX_TMPDIR`. A systemd user unit doesn't see variables set in your shell's rc
-files, so if you set `TMUX_TMPDIR` there, set `socket_path` here.
+`TMUX_TMPDIR`. A foreground run inherits it. A systemd user unit doesn't see variables
+set in your shell's rc files, so if you set `TMUX_TMPDIR` there, set `socket_path` here.
 
 ## Host on a Mac
 
 Host on a Mac only if your account is its only user account. tether isn't supported
-on a Mac with other logins: its Mac defences assume there are none, and `tether
-setup` refuses to install on one.
+on a Mac with other logins: its Mac defences assume there are none, and
+`tether setup --background` refuses to install on one.
 
 The Mac's boundary is weaker than Linux's. On Linux, Serve's target is a Unix socket
 in a `0700` directory: the kernel keeps every other account out, and the target holds
@@ -139,7 +160,7 @@ log upload off; Tailscale's opt-out works only with the command-line `tailscaled
 on Tailscale's servers is useless from outside your tailnet, and tether picks a new
 secret at every start.
 
-tether runs from a LaunchAgent, as you, with no sudo; `tether setup` installs it
+tether runs from a LaunchAgent, as you, with no sudo; `tether setup --background` installs it
 with your `HOME` and your shell's `PATH`, which must find tmux. launchd binds
 tether's port, `127.0.0.1:7851`, when you log in, starts tether, and keeps the port
 across crashes, so Serve never points at a port someone else could take while you're
@@ -154,12 +175,12 @@ set `socket_path` in `config.toml`, as on Linux.
 The agent runs `tether serve --publish`, which writes tether's own Serve entry, the
 `/` handler of `https://<this Mac's MagicDNS name>`, at each start, without sudo.
 Before writing, tether refuses if Funnel is enabled, TCP forwarding occupies port
-443, or another handler shares the entry; the log, `tether setup` and `tether enroll`
+443, or another handler shares the entry; the log, `tether setup --background` and `tether enroll`
 name the actual cause and how to clear it. `--publish` works only with the port from
 launchd; without `--publish`, a Mac daemon serves only `local.sock` and never touches
 the Serve config, which is what the e2e stack and dev runs use. Don't run `tailscale
 serve` for tether by hand. If you reset Serve while tether runs, tether stays
-unpublished until it restarts; `tether setup` restarts it.
+unpublished until it restarts; rerun `tether setup --background` to restart the agent.
 
 **Stopping.** `tether teardown` stops tether and removes its Serve entry. If you turn
 tether off under System Settings → Login Items instead, run `tether teardown` too:
@@ -172,7 +193,7 @@ tether withdraws its own entry and exits 78 saying so. launchd can't skip restar
 for configuration errors, so an exit 78 repeats every 10 s until you fix the logged
 cause.
 
-Renaming the Mac in Tailscale needs a restart: rerun `tether setup`. macOS has no
+Renaming the Mac in Tailscale needs a restart: rerun `tether setup --background`. macOS has no
 cgroup, so `memory_budget_mib` only sizes the counts.
 
 ## Set up completion
@@ -197,7 +218,7 @@ without carapace there are no flag chips. These three steps make the strip depen
    set.
 2. **Give tether your shell's `PATH`.** The systemd user manager's `PATH` lacks what
    your rc files add (nvm, bun, Go). In an interactive shell run `echo $PATH`, put the
-   output in `[complete] path` in `config.toml`, and rerun `tether setup` (on Linux,
+   output in `[complete] path` in `config.toml`, and rerun `tether setup --background` (on Linux,
    `systemctl --user restart tether` also works). On a Mac the agent already has the
    `PATH` setup ran with.
    If your history isn't in the default place, set `[complete] history` too.
@@ -231,10 +252,11 @@ unmeasured.
 
 ## Tune the resource limits
 
-On Linux, the unit caps tether's memory at 72 MiB and CPU at half a core
+On Linux, the background unit caps tether's memory at 72 MiB and CPU at half a core
 (`MemoryMax=72M`, no `MemoryHigh`, `CPUQuota=50%`, `CPUQuotaPeriodSec=10ms`).
-`tether setup` installs the current unit; rerun it after an upgrade. Change the
-limits with a drop-in, as below, never in the unit file, which setup replaces.
+`tether setup --background` installs the current unit; rerun it after an upgrade. A
+foreground run has no unit CPU or memory cap. Change service limits with a drop-in,
+as below, never in the unit file, which setup replaces.
 
 The `memory_budget_mib` config value selects the counts at the next restart:
 
@@ -320,9 +342,10 @@ that device. A Mac's browser works as a client too.
 
 ## Manual setup
 
-`tether setup` does everything in this section. Follow it by hand only when setup
-can't run: a Linux without systemd, a binary somewhere other than `~/.cargo/bin`, or
-another port on a Mac. A later `tether setup` refuses a Mac hand install on another
+For a supported automatic install, `tether setup --background` installs and runs the
+service. Follow this section by hand when background setup can't run: a Linux without
+systemd, a binary somewhere other than `~/.cargo/bin`, or
+another port on a Mac. A later background setup refuses a Mac hand install on another
 port; run `tether teardown` first if you switch.
 
 ### Linux: the systemd unit
@@ -377,9 +400,9 @@ Funnel are refused, and the browser origin becomes unavailable until Serve is sa
 The default Tailscale owner login is allowed; `tether serve --allow-login <login>`
 replaces that allowlist ([Set it up](#set-it-up) shows the drop-in).
 
-**Upgrade from the loopback-TCP daemon:** this command, or `tether setup`, replaces
+**Upgrade from the loopback-TCP daemon:** this command, or `tether setup --background`, replaces
 its `/` handler. Until then, the iOS app gets HTTP 502 because nothing is listening on
-the old target, and tether logs, and `tether enroll` prints, that `tether setup`
+the old target, and tether logs, and `tether enroll` prints, that `tether setup --background`
 replaces it. The old `port` key is ignored and can be deleted from `config.toml`.
 
 On tailscaled 1.100 and later, once Serve has a Unix target, every later Serve change
@@ -422,9 +445,11 @@ points at a free port that any process could take.
 
 | Symptom | Cause |
 |---|---|
-| `GET /auth/info` has no `browserOrigin`, or browser says to publish tether | Serve is missing, has another handler/publication, or Funnel is on; fix what `browserRefused` names, leave Funnel off, and rerun `tether setup` |
-| `tether setup` says Tailscale refused the write (`403`) | your account isn't Tailscale's operator; run `sudo tailscale set --operator=$USER` and rerun |
-| `tether setup` says your account may not run `sudo tailscale` (`401`) | on Tailscale 1.100+, an operator may change a Serve config that serves any Unix socket or path only if they may run `sudo tailscale`; allow this account to run `sudo tailscale`, then rerun setup |
+| `GET /auth/info` has no `browserOrigin`, or browser says to publish tether | Serve is missing, has another handler/publication, or Funnel is on; fix what `browserRefused` names, leave Funnel off, and rerun setup (`--background` if using the service) |
+| `tether setup` says Tailscale refused the write (`403`) | your account isn't Tailscale's operator; run `sudo tailscale set --operator=$USER` and rerun the same setup command (`--background` if using the service) |
+| `tether setup` says your account may not run `sudo tailscale` (`401`) | on Tailscale 1.100+, an operator may change a Serve config that serves any Unix socket or path only if they may run `sudo tailscale`; allow this account to run `sudo tailscale`, then rerun setup in the same mode |
+| Plain `tether setup` says tether is already running | another daemon holds the runtime lock; stop it first. If the active daemon is the service, use `tether setup --background` to restart it and print a new code |
+| Plain `tether setup` on a Mac says to use `--background` | phones reach the Mac only through its LaunchAgent, which holds the front's port; run `tether setup --background` |
 | `403 forbidden` | missing/invalid Tailscale login or Funnel marker; confirm the request goes through Serve and the login is allowed |
 | `403 bad_origin` | browser Origin/forwarded host/fetch metadata did not match the canonical Serve origin, or a Serve handler was added beside tether |
 | `403 node_refused` | the node is tagged, shared, a subnet router, the box itself, or has a login mismatch; use another node |
@@ -432,10 +457,10 @@ points at a free port that any process could take.
 | `401 auth_required`, or the native socket closes with 4401 | token is missing or its device was removed; enrol the native app again |
 | `503 identity_unavailable` | LocalAPI whois or tailnet state is unavailable; tether retries and never interprets a failed lookup as “not enrolled” |
 | `503 auth_unavailable`, or the native socket closes with 4503 | `auth.toml` can't be read, usually a typo from a hand edit; the log names the line. Fix it: native keeps its token and retries |
-| Mac: the log, `tether setup` or `tether enroll` names Funnel, a TCP forward on 443, or a handler path | tether wouldn't overwrite it; turn Funnel off, remove the named TCP forward or handler, then rerun `tether setup` to republish |
+| Mac: the log, `tether setup --background` or `tether enroll` names Funnel, a TCP forward on 443, or a handler path | tether wouldn't overwrite it; turn Funnel off, remove the named TCP forward or handler, then rerun `tether setup --background` to republish |
 | Mac: `503 identity_unavailable` and the log says the daemon's user must be an admin | tether can't read `/Library/Tailscale/sameuserproof-*`; run it as an admin user |
-| Mac: the browser or app gets 502 | tether isn't running: you're logged out, it was booted out, or it is restarting. Log in, or rerun `tether setup`; if you meant to stop it, run `tether teardown` |
-| Mac: tether exits 78 saying launchd couldn't bind the front's port | another process holds `127.0.0.1:7851` (`lsof -nP -iTCP:7851`); stop it and rerun `tether setup`, or install by hand with another port ([Manual setup](#mac-the-launchagent)) |
+| Mac: the browser or app gets 502 | tether isn't running: you're logged out, it was booted out, or it is restarting. Log in, or rerun `tether setup --background`; if you meant to stop it, run `tether teardown` |
+| Mac: tether exits 78 saying launchd couldn't bind the front's port | another process holds `127.0.0.1:7851` (`lsof -nP -iTCP:7851`); stop it and rerun `tether setup --background`, or install by hand with another port ([Manual setup](#mac-the-launchagent)) |
 | Mac: `tether serve --publish` exits 78 saying there is no launchd socket `Listener` | it was started by hand, or its plist lacks the `Sockets` entry `Listener`; run it from the installed plist |
 | tether exits with “already running” | another daemon holds the runtime lock; do not delete its sockets or paste files |
 | tether exits at start with status 78 naming a runtime directory variable | `XDG_RUNTIME_DIR` on Linux or `TMPDIR` on macOS is absent or unsafe; use the user's private runtime directory |

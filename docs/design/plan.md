@@ -23,7 +23,7 @@ and record decisions in decisions.md.
 | [ios-shell.md](ios-shell.md) | The native iOS app: keyboard, focus, bridge, scheme handler, lifecycle, media |
 | [auth.md](auth.md) | Native device tokens, enrolled-node browser admission, enrolment and auth routes |
 | [fs.md](fs.md) | `src/fs/`: roots, path resolution, the `/fs/*` routes, uploads, their limits |
-| [setup.md](setup.md) | `src/setup/`: `tether setup` and `tether teardown`, installing the service, publishing on the tailnet, the checks and their messages |
+| [setup.md](setup.md) | `src/setup/`: foreground and background `tether setup`, `tether teardown`, publishing on the tailnet, and setup checks |
 | [complete.md](complete.md) | `src/complete/`: `POST /complete`, the history, PATH, carapace and path sources, the shell snippet, how they stay inside the budget |
 | [decisions.md](decisions.md) | The decision log: what, why, alternatives rejected, who, when |
 | [plan-review.md](plan-review.md) | The first review of this plan, kept as a record |
@@ -89,15 +89,16 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
 
 ## Architecture
 
-The daemon runs as Jimmy on the dev box, in a systemd user unit (on a Mac host, a
-LaunchAgent in Jimmy's login session), reached only through `tailscale serve`. It talks to tmux directly through control mode: no SSH, no wrapping
-of commands or agents.
+The daemon runs as Jimmy on the dev box. On Linux, plain `tether setup` runs it in
+the terminal; `tether setup --background` installs it as a systemd user unit. On a Mac,
+the LaunchAgent in Jimmy's login session owns the front phones can reach. It talks to
+tmux directly through control mode: no SSH, no wrapping of commands or agents.
 
 ```mermaid
 flowchart TB
   phone["iPhone: tether app (Swift + WKWebView)<br/>xterm.js is the only terminal emulator"]
   serve["tailscale serve<br/>HTTPS on the *.ts.net name, tailnet only"]
-  subgraph unit["tether.service: systemd user unit, runs as Jimmy"]
+  subgraph unit["tether daemon process (foreground or systemd user unit), runs as Jimmy"]
     daemon["tether daemon<br/>one static Rust binary"]
     cc["tmux -C control clients<br/>one per session with a watched tab"]
   end
@@ -582,8 +583,8 @@ load as they scroll into view; upload has a "resize / send original" toggle.
 
 ## Security
 
-**Runs as Jimmy, no SSH keys.** The daemon runs as Jimmy in a systemd user unit and
-attaches to his tmux server directly.
+**Runs as Jimmy, no SSH keys.** The daemon runs as Jimmy in the terminal or a
+background service, and attaches to his tmux server directly.
 
 **Tailnet only.** The daemon binds `serve.sock` and `local.sock` in
 `$XDG_RUNTIME_DIR/tether/`, a private `0700` directory. `tether setup` publishes only
@@ -663,7 +664,7 @@ src/auth/      LocalAPI identity, native/node devices, admission and enrolment (
 src/runtime.rs private runtime directory, single-instance lock, serve/local Unix sockets
 src/fs/        the only place paths are resolved and checked against roots
 src/complete/  /complete: history, PATH index, carapace runner (bounded, cached; complete.md)
-src/setup/     tether setup and teardown: checks, service install, publication (setup.md)
+src/setup/     tether setup and teardown: checks, foreground run, service install and publication (setup.md)
 web/           one Preact app embedded by the daemon and bundled into the iOS app:
   main.tsx, index.html pick the Platform, boot it and render App
   platform/
@@ -780,8 +781,8 @@ The spikes come first. The native app's keyboard checks are in
 ### MVP
 
 - **Daemon:** the control-mode bridge with snapshots and pane pausing; never starts
-  tmux; the resource budget met and measured; systemd unit with limits and
-  `sd-notify`; the protocol version handshake.
+  tmux; the resource budget met and measured; foreground mode and systemd unit with
+  limits and `sd-notify`; the protocol version handshake.
 - **iOS app:** WKWebView shell with the bundled web UI (the Debug dev-server switch is
   deferred: `ios/.context/FUTURE`);
   the native terminal input and keyboard geometry under the web dock; focus

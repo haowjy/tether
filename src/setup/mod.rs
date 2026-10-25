@@ -1,4 +1,4 @@
-//! Install and remove tether's per-user service.
+//! Run tether in the terminal or install its per-user service, and tear it down.
 
 mod checks;
 mod install;
@@ -24,7 +24,10 @@ use crate::auth::identity::ServeTarget;
 use crate::auth::identity::{self, ServeTargetMatcher};
 use crate::auth::localapi::{LocalApi, LocalApiError};
 use crate::auth::publish::{self, PlanError};
+use crate::blocking::BLOCKING_THREADS;
 use crate::config::{self, Config, ConfigError, ConfigFile};
+#[cfg(target_os = "linux")]
+use crate::daemon;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(400);
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -113,10 +116,24 @@ impl TeardownHost {
     }
 }
 
-/// Runs checks before making any changes, then install, publication, verification and
-/// code issuance in order. A custom config path is rejected before the service is touched.
+/// Installs the background service, publishes it, and prints a new enrolment code.
 pub fn setup(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     tokio_runtime()?.block_on(setup_async(config_path))
+}
+
+/// Runs tether in this terminal on Linux; macOS requires its LaunchAgent front.
+pub fn setup_foreground(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    {
+        tokio_runtime()?.block_on(setup_foreground_async(config_path))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = config_path;
+        Err(Box::new(SetupError::new(
+            "On a Mac, phones reach tether only through its LaunchAgent, which holds its port; run `tether setup --background`.",
+        )))
+    }
 }
 
 async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
@@ -130,27 +147,9 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
     };
     let host = inspect_host()?;
     let mut facts = make_facts(&host, &config, config_path.is_some())?;
-    facts.tailscale = tailnet_facts(&LocalApi::system(), &host.platform).await;
+    facts.tailscale = tailnet_facts(&LocalApi::system(), host.platform.kind()).await;
     let findings = checks::evaluate(&facts);
-    for finding in findings
-        .iter()
-        .filter(|finding| finding.level == checks::Level::Warning)
-    {
-        eprintln!("warning: {}", finding.message);
-    }
-    let errors: Vec<_> = findings
-        .iter()
-        .filter(|finding| finding.level == checks::Level::Error)
-        .collect();
-    if !errors.is_empty() {
-        return Err(Box::new(SetupError::new(
-            errors
-                .iter()
-                .map(|finding| finding.message.as_str())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )));
-    }
+    fail_on_findings(&findings)?;
 
     let api = LocalApi::system();
     let mut changes = Vec::new();
@@ -161,13 +160,18 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
             &facts.tailscale,
             checks::TailnetFacts::Status { operator_user: Some(Ok(operator)), .. } if operator.is_empty()
         );
-        require_terminal_for_grants(!host.linger, operator_needed, &host.user)?;
+        require_terminal_for_grants(
+            !host.linger,
+            operator_needed,
+            &host.user,
+            "tether setup --background",
+        )?;
         if !host.linger {
             systemd::grant_linger(&host)?;
             changes.push("Enabled linger".to_owned());
         }
         if operator_needed {
-            systemd::grant_operator(&host)?;
+            systemd::grant_operator(&host.user)?;
             changes.push(format!("Set Tailscale's operator to {}", host.user));
         }
     }
@@ -211,7 +215,7 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
         };
         let (_, plan) = publish::publish_target(&api, &dns_name, &target)
             .await
-            .map_err(|error| write_error(&error, &version, WriteOperation::Setup))?;
+            .map_err(|error| write_error(&error, &version, WriteOperation::BackgroundSetup))?;
         changes.extend(plan.removed_handlers.iter().map(|handler| {
             format!(
                 "Removed tether's old handler at {} {}",
@@ -246,13 +250,167 @@ async fn setup_async(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::er
     report::print_success(&report::Success {
         version: env!("CARGO_PKG_VERSION"),
         previous_version: previous_version.as_deref(),
-        platform,
+        platform: Some(platform),
         changes: &changes,
         notes: &notes,
         origin: &origin,
         code: &code,
     })?;
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+async fn setup_foreground_async(
+    config_path: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let file = ConfigFile::resolve(config_path.as_deref())
+        .map_err(|error| SetupError::new(error.to_string()))?;
+    let config = file
+        .load()
+        .map_err(|error| SetupError::new(error.to_string()))?;
+    let user = systemd::username()?;
+    let program = config.tmux.program.as_path();
+    let setup_path = std::env::var_os("PATH").unwrap_or_default();
+    let tmux_on_setup_path = resolve_program(program, &setup_path);
+    let api = LocalApi::system();
+    let tailscale = tailnet_facts(&api, checks::PlatformKind::Linux).await;
+    let findings = checks::evaluate_foreground(
+        effective_uid() == 0,
+        &user,
+        program,
+        tmux_on_setup_path.as_deref(),
+        &tailscale,
+    );
+    fail_on_findings(&findings)?;
+
+    let state_dir = config::state_dir().map_err(SetupError::from)?;
+    config::runtime_dir()?;
+    let operator_needed = matches!(
+        &tailscale,
+        checks::TailnetFacts::Status {
+            operator_user: Some(Ok(operator)),
+            ..
+        } if operator.is_empty()
+    );
+    require_terminal_for_grants(false, operator_needed, &user, "tether setup")?;
+    let mut changes = Vec::new();
+    if operator_needed {
+        systemd::grant_operator(&user)?;
+        changes.push(format!("Set Tailscale's operator to {user}"));
+    }
+
+    let dns_name = match &tailscale {
+        checks::TailnetFacts::Status {
+            dns_name: Some(name),
+            ..
+        } => name.clone(),
+        _ => {
+            return Err(Box::new(SetupError::new(
+                "Tailscale's MagicDNS name disappeared",
+            )));
+        }
+    };
+    let version = match &tailscale {
+        checks::TailnetFacts::Status { version, .. } => short_version(version),
+        _ => "unknown version".to_owned(),
+    };
+    let mut notes = Vec::new();
+    if !tmux_server_exists(&config) {
+        notes.push(format!(
+            "No tmux server yet on {}; start tmux as you usually do.",
+            tmux_socket(&config).display()
+        ));
+    }
+    let serve = daemon::serve_with_hook(config, file, Vec::new(), false, move |ready| {
+        foreground_report(ready, api, dns_name, version, state_dir, changes, notes)
+    })
+    .await;
+    match serve {
+        Err(error)
+            if error
+                .downcast_ref::<crate::runtime::RuntimeError>()
+                .is_some_and(|error| {
+                    matches!(error, crate::runtime::RuntimeError::AlreadyRunning)
+                }) =>
+        {
+            let message = if systemd::service_active() {
+                "tether is already running as your service. `tether setup --background` restarts it and prints a new code; `systemctl --user stop tether` frees this terminal's run."
+            } else {
+                "Another tether is already running; stop it first."
+            };
+            Err(Box::new(SetupError::new(message)))
+        }
+        result => result,
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn foreground_report(
+    ready: daemon::Ready,
+    api: LocalApi,
+    dns_name: String,
+    version: String,
+    state_dir: PathBuf,
+    mut changes: Vec<String>,
+    notes: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let target = ready
+        .serve_target
+        .as_ref()
+        .ok_or_else(|| SetupError::new("the foreground daemon didn't bind a Serve front"))?;
+    let (_, plan) = publish::publish_target(&api, &dns_name, target)
+        .await
+        .map_err(|error| write_error(&error, &version, WriteOperation::ForegroundSetup))?;
+    changes.extend(plan.removed_handlers.iter().map(|handler| {
+        format!(
+            "Removed tether's old handler at {} {}",
+            handler.entry, handler.mount
+        )
+    }));
+    ready.auth.refresh_after_serve_write().await?;
+    let (origin, pending) = ready.auth.browser_origin().await?;
+    if pending {
+        return Err(Box::new(SetupError::new(
+            "the daemon's Serve publication is still pending",
+        )));
+    }
+    let origin = origin.map_err(SetupError::new)?.origin;
+    let store = Store::open(state_dir)?;
+    let code = store.set_pending(Duration::from_secs(600), SystemTime::now())?;
+    report::print_success(&report::Success {
+        version: env!("CARGO_PKG_VERSION"),
+        previous_version: None,
+        platform: None,
+        changes: &changes,
+        notes: &notes,
+        origin: &origin,
+        code: &code,
+    })?;
+    Ok(())
+}
+
+fn fail_on_findings(findings: &[checks::Finding]) -> Result<(), SetupError> {
+    for finding in findings
+        .iter()
+        .filter(|finding| finding.level == checks::Level::Warning)
+    {
+        eprintln!("warning: {}", finding.message);
+    }
+    let errors: Vec<_> = findings
+        .iter()
+        .filter(|finding| finding.level == checks::Level::Error)
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(SetupError::new(
+            errors
+                .iter()
+                .map(|finding| finding.message.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ))
+    }
 }
 
 /// Stops and removes tether's service and only its own Serve handlers.
@@ -417,7 +575,7 @@ fn make_facts(
     })
 }
 
-async fn tailnet_facts(api: &LocalApi, platform: &checks::PlatformFacts) -> checks::TailnetFacts {
+async fn tailnet_facts(api: &LocalApi, platform: checks::PlatformKind) -> checks::TailnetFacts {
     let deadline = tokio::time::Instant::now() + STARTING_TIMEOUT;
     loop {
         match api.status().await {
@@ -427,7 +585,7 @@ async fn tailnet_facts(api: &LocalApi, platform: &checks::PlatformFacts) -> chec
                 tokio::time::sleep(POLL_INTERVAL).await;
             }
             Ok(status) => {
-                let operator_user = if matches!(platform, checks::PlatformFacts::Linux { .. }) {
+                let operator_user = if platform == checks::PlatformKind::Linux {
                     Some(
                         api.prefs()
                             .await
@@ -545,16 +703,23 @@ async fn verify_new_daemon(
 #[derive(Clone, Copy)]
 enum WriteOperation {
     #[cfg_attr(target_os = "macos", allow(dead_code))]
-    Setup,
+    BackgroundSetup,
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    ForegroundSetup,
     Teardown,
 }
 
 impl WriteOperation {
     fn command(self) -> &'static str {
         match self {
-            Self::Setup => "tether setup",
+            Self::BackgroundSetup => "tether setup --background",
+            Self::ForegroundSetup => "tether setup",
             Self::Teardown => "tether teardown",
         }
+    }
+
+    fn is_setup(self) -> bool {
+        matches!(self, Self::BackgroundSetup | Self::ForegroundSetup)
     }
 }
 
@@ -567,13 +732,14 @@ fn write_error(error: &PlanError, version: &str, operation: WriteOperation) -> S
             )
         }
         PlanError::Write(crate::auth::localapi::SetServeConfigError::NotLocalAdmin { .. }) => {
-            match operation {
-                WriteOperation::Setup => format!(
+            if operation.is_setup() {
+                format!(
                     "Tailscale {version} requires an operator who may run `sudo tailscale` to change a config that serves a Unix socket or a path. Allow this account to run `sudo tailscale`, then rerun {rerun}."
-                ),
-                WriteOperation::Teardown => format!(
+                )
+            } else {
+                format!(
                     "Tailscale {version} requires an operator who may run `sudo tailscale` to change a config that serves a Unix socket or a path. Remove tether's entry as root: `sudo tailscale serve --https=443 off`, or grant this account access and rerun {rerun}."
-                ),
+                )
             }
         }
         PlanError::ConflictsExhausted
@@ -585,12 +751,13 @@ fn write_error(error: &PlanError, version: &str, operation: WriteOperation) -> S
             format!("Tailscale refused the Serve write: {status} {body}.")
         }
         PlanError::Write(crate::auth::localapi::SetServeConfigError::LocalApi(error))
-        | PlanError::LocalApi(error) => match operation {
-            WriteOperation::Setup => format!("Can't reach Tailscale's LocalAPI: {error}"),
-            WriteOperation::Teardown => {
+        | PlanError::LocalApi(error) => {
+            if operation.is_setup() {
+                format!("Can't reach Tailscale's LocalAPI: {error}")
+            } else {
                 format!("Can't reach Tailscale to remove tether's Serve entry: {error}")
             }
-        },
+        }
     };
     SetupError::new(message)
 }
@@ -618,7 +785,12 @@ fn short_version(version: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn require_terminal_for_grants(linger: bool, operator: bool, user: &str) -> Result<(), SetupError> {
+fn require_terminal_for_grants(
+    linger: bool,
+    operator: bool,
+    user: &str,
+    setup_command: &str,
+) -> Result<(), SetupError> {
     if !linger && !operator {
         return Ok(());
     }
@@ -632,9 +804,9 @@ fn require_terminal_for_grants(linger: bool, operator: bool, user: &str) -> Resu
         if operator {
             eprintln!("sudo tailscale set --operator={user}");
         }
-        Err(SetupError::new(
-            "Linux grants need a terminal. Rerun `tether setup` in a terminal, or run the printed commands first.",
-        ))
+        Err(SetupError::new(format!(
+            "Linux grants need a terminal. Rerun `{setup_command}` in a terminal, or run the printed commands first."
+        )))
     }
 }
 
@@ -739,6 +911,7 @@ fn display_name(path: &Path) -> String {
 fn tokio_runtime() -> Result<tokio::runtime::Runtime, SetupError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        .max_blocking_threads(BLOCKING_THREADS)
         .build()
         .map_err(|error| SetupError::new(format!("can't create setup runtime: {error}")))
 }
@@ -836,15 +1009,15 @@ mod tests {
         let cases = [
             (
                 403,
-                "Tailscale refused the write: your account isn't its operator. Run `sudo tailscale set --operator=$USER`, then rerun tether setup.",
+                "Tailscale refused the write: your account isn't its operator. Run `sudo tailscale set --operator=$USER`, then rerun tether setup --background.",
             ),
             (
                 401,
-                "Tailscale 1.104 requires an operator who may run `sudo tailscale` to change a config that serves a Unix socket or a path. Allow this account to run `sudo tailscale`, then rerun tether setup.",
+                "Tailscale 1.104 requires an operator who may run `sudo tailscale` to change a config that serves a Unix socket or a path. Allow this account to run `sudo tailscale`, then rerun tether setup --background.",
             ),
             (
                 412,
-                "Tailscale's Serve config kept changing while tether wrote it; rerun tether setup.",
+                "Tailscale's Serve config kept changing while tether wrote it; rerun tether setup --background.",
             ),
         ];
         for (index, (status, expected)) in cases.into_iter().enumerate() {
@@ -872,7 +1045,7 @@ mod tests {
                 .await
                 .expect_err("the fake write is refused");
             assert_eq!(
-                write_error(&error, "1.104", WriteOperation::Setup).to_string(),
+                write_error(&error, "1.104", WriteOperation::BackgroundSetup).to_string(),
                 expected
             );
             fake.abort();

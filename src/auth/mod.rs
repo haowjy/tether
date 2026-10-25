@@ -194,6 +194,17 @@ impl Auth {
             .map_err(|error| AuthError::IdentityUnavailable(error.to_string()))
     }
 
+    /// Refresh the shared view immediately after setup writes the Serve config.
+    #[cfg(target_os = "linux")]
+    pub(crate) async fn refresh_after_serve_write(
+        &self,
+    ) -> Result<identity::TailnetState, AuthError> {
+        self.state
+            .refresh_after_write()
+            .await
+            .map_err(|error| AuthError::IdentityUnavailable(error.to_string()))
+    }
+
     pub async fn machine_name(&self, fallback: &str) -> String {
         self.state
             .last_known()

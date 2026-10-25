@@ -45,8 +45,12 @@ enum Command {
         #[arg(long, default_value = "10m", value_parser = humantime::parse_duration)]
         ttl: Duration,
     },
-    /// Install tether as a background service and publish it on your tailnet.
-    Setup,
+    /// Run tether in this terminal, or install a background service with --background.
+    Setup {
+        /// Install tether as a systemd user service or LaunchAgent.
+        #[arg(long)]
+        background: bool,
+    },
     /// Stop tether and remove its service and Serve handler.
     Teardown,
     /// List, add or remove enrolled devices.
@@ -68,7 +72,13 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let config_path = cli.config;
     let result = match cli.command {
-        Command::Setup => tether::setup::setup(config_path),
+        Command::Setup { background } => {
+            if background {
+                tether::setup::setup(config_path)
+            } else {
+                tether::setup::setup_foreground(config_path)
+            }
+        }
         Command::Teardown => tether::setup::teardown(),
         command => ConfigFile::resolve(config_path.as_deref())
             .and_then(|file| Ok((file.load()?, file)))
@@ -80,7 +90,7 @@ fn main() -> ExitCode {
                 } => daemon::serve(config, file, allow_login, publish),
                 Command::Enroll { ttl } => enroll(&config, ttl),
                 Command::Device(command) => device(command),
-                Command::Setup | Command::Teardown => unreachable!("handled above"),
+                Command::Setup { .. } | Command::Teardown => unreachable!("handled above"),
             }),
     };
     match result {

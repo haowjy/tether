@@ -1,6 +1,8 @@
 //! Pure setup checks: gathered machine facts in, complete user-facing findings out.
 
 use std::ffi::OsString;
+#[cfg(target_os = "linux")]
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::config::{self, ConfigError};
@@ -93,6 +95,23 @@ pub(crate) enum PlatformFacts {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlatformKind {
+    Linux,
+    Mac,
+}
+
+const BACKGROUND_SETUP: &str = "tether setup --background";
+
+impl PlatformFacts {
+    pub(crate) fn kind(&self) -> PlatformKind {
+        match self {
+            Self::Linux { .. } => PlatformKind::Linux,
+            Self::Mac { .. } => PlatformKind::Mac,
+        }
+    }
+}
+
 pub(crate) fn directory_mismatches(
     setup: &DirectoryEnvironment,
     service: &DirectoryEnvironment,
@@ -150,7 +169,7 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
     if !facts.default_config {
         error(
             &mut findings,
-            "tether setup installs a service that reads the default config path; drop --config.",
+            "tether setup --background installs a service that reads the default config path; drop --config.",
         );
     }
     if facts.binary.installed_canonical.as_ref() != Some(&facts.binary.current_canonical) {
@@ -163,7 +182,7 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
             )
         };
         let mut message = format!(
-            "{message} Install it with `cargo install --path .`, then run `~/.cargo/bin/tether setup`."
+            "{message} Install it with `cargo install --path .`, then run `~/.cargo/bin/tether setup --background`."
         );
         if facts.binary.cargo_home_other {
             message.push_str(
@@ -186,7 +205,9 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
                 "Unset it in the user manager with `systemctl --user unset-environment {}`.",
                 mismatch.variable
             ),
-            (PlatformFacts::Mac { .. }, _) => "Unset it before running tether setup.".to_owned(),
+            (PlatformFacts::Mac { .. }, _) => {
+                "Unset it before running tether setup --background.".to_owned()
+            }
         };
         error(
             &mut findings,
@@ -219,7 +240,12 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
             ),
         }
     }
-    check_tailscale(facts, &mut findings);
+    check_tailscale(
+        facts.platform.kind(),
+        &facts.tailscale,
+        BACKGROUND_SETUP,
+        &mut findings,
+    );
     match &facts.platform {
         PlatformFacts::Linux {
             username,
@@ -238,7 +264,7 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
                 error(
                     &mut findings,
                     format!(
-                        "No systemd user manager is running for {username}. Log in as {username} directly (SSH or a console, not su or sudo), then rerun."
+                        "No systemd user manager is running for {username}. Log in as {username} directly (SSH or a console, not su or sudo), then rerun `{BACKGROUND_SETUP}`."
                     ),
                 );
             }
@@ -274,7 +300,7 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
                 ..
             } = &facts.tailscale
             {
-                check_operator(operator, username, &mut findings);
+                check_operator(operator, username, BACKGROUND_SETUP, &mut findings);
             }
         }
         PlatformFacts::Mac {
@@ -301,7 +327,7 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
                 Ok(Some(port)) if *port != 7851 => error(
                     &mut findings,
                     format!(
-                        "tether was installed by hand on port {port}. Keep that install (Manual setup), or run `tether teardown` and then tether setup, which uses 7851."
+                        "tether was installed by hand on port {port}. Keep that install (Manual setup), or run `tether teardown` and then `tether setup --background`, which uses 7851."
                     ),
                 ),
                 Err(cause) => error(
@@ -321,9 +347,54 @@ pub(crate) fn evaluate(facts: &Facts) -> Vec<Finding> {
     findings
 }
 
-fn check_tailscale(facts: &Facts, findings: &mut Vec<Finding>) {
-    if !matches!(&facts.platform, PlatformFacts::Linux { .. }) {
-        if let TailnetFacts::Unreachable { failure, .. } = &facts.tailscale {
+#[cfg(target_os = "linux")]
+pub(crate) fn evaluate_foreground(
+    is_root: bool,
+    username: &str,
+    program: &Path,
+    tmux_on_setup_path: Option<&Path>,
+    tailscale: &TailnetFacts,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    if is_root {
+        error(
+            &mut findings,
+            "Run tether setup as the user whose tmux tether serves, not as root.",
+        );
+    }
+    if tmux_on_setup_path.is_none() {
+        error(
+            &mut findings,
+            format!(
+                "tmux isn't available at {} on this shell's PATH. Install tmux or set `[tmux] program` to its executable path.",
+                program.display()
+            ),
+        );
+    }
+    check_tailscale(
+        PlatformKind::Linux,
+        tailscale,
+        "tether setup",
+        &mut findings,
+    );
+    if let TailnetFacts::Status {
+        operator_user: Some(operator),
+        ..
+    } = tailscale
+    {
+        check_operator(operator, username, "tether setup", &mut findings);
+    }
+    findings
+}
+
+fn check_tailscale(
+    platform: PlatformKind,
+    tailscale: &TailnetFacts,
+    setup_command: &str,
+    findings: &mut Vec<Finding>,
+) {
+    if platform == PlatformKind::Mac {
+        if let TailnetFacts::Unreachable { failure, .. } = tailscale {
             match failure {
                 LocalApiFailure::MacAdmin => error(
                     findings,
@@ -336,10 +407,10 @@ fn check_tailscale(facts: &Facts, findings: &mut Vec<Finding>) {
             }
             return;
         }
-        check_status(facts, findings);
+        check_status(platform, tailscale, setup_command, findings);
         return;
-    };
-    match &facts.tailscale {
+    }
+    match tailscale {
         TailnetFacts::Unreachable { failure, detail } => match failure {
             LocalApiFailure::NoSocket => error(
                 findings,
@@ -350,38 +421,39 @@ fn check_tailscale(facts: &Facts, findings: &mut Vec<Finding>) {
                 format!("Can't reach Tailscale LocalAPI: {detail}."),
             ),
         },
-        TailnetFacts::Status { .. } => check_status(facts, findings),
+        TailnetFacts::Status { .. } => check_status(platform, tailscale, setup_command, findings),
     }
 }
 
-fn check_status(facts: &Facts, findings: &mut Vec<Finding>) {
+fn check_status(
+    platform: PlatformKind,
+    tailscale: &TailnetFacts,
+    setup_command: &str,
+    findings: &mut Vec<Finding>,
+) {
     let TailnetFacts::Status {
         version,
         backend_state,
         dns_name,
         cert_domains,
         ..
-    } = &facts.tailscale
+    } = tailscale
     else {
         return;
     };
-    let running = backend_state == "Running" && facts_status_has_self(facts);
+    let running = backend_state == "Running" && dns_name.is_some();
     if !running {
-        match (&facts.platform, backend_state.as_str()) {
-            (PlatformFacts::Linux { .. }, "NeedsLogin") => error(
+        match (platform, backend_state.as_str()) {
+            (PlatformKind::Linux, "NeedsLogin") => error(
                 findings,
                 "Tailscale isn't logged in: run `sudo tailscale login`.",
             ),
-            (PlatformFacts::Linux { .. }, "Stopped") => error(
+            (PlatformKind::Linux, "Stopped") => error(
                 findings,
                 "Tailscale is stopped: run `sudo tailscale up` (if it asks you to repeat your settings, add the flags it names).",
             ),
-            (PlatformFacts::Mac { .. }, "NeedsLogin") => {
-                error(findings, "Sign in from the Tailscale app.")
-            }
-            (PlatformFacts::Mac { .. }, "Stopped") => {
-                error(findings, "Connect from the Tailscale app.")
-            }
+            (PlatformKind::Mac, "NeedsLogin") => error(findings, "Sign in from the Tailscale app."),
+            (PlatformKind::Mac, "Stopped") => error(findings, "Connect from the Tailscale app."),
             _ => error(
                 findings,
                 format!("Tailscale isn't ready (backend state: {backend_state})."),
@@ -391,14 +463,14 @@ fn check_status(facts: &Facts, findings: &mut Vec<Finding>) {
     match parse_major_minor(version) {
         Some((major, minor)) => {
             let version_string = format!("{major}.{minor}");
-            match &facts.platform {
-                PlatformFacts::Linux { .. } if (major, minor) < (1, 94) => error(
+            match platform {
+                PlatformKind::Linux if (major, minor) < (1, 94) => error(
                     findings,
                     format!(
                         "Tailscale {version_string} can't proxy to a Unix socket; upgrade to 1.94 or later."
                     ),
                 ),
-                PlatformFacts::Mac { .. } if (major, minor) < (1, 104) => error(
+                PlatformKind::Mac if (major, minor) < (1, 104) => error(
                     findings,
                     format!(
                         "The Tailscale app {version_string} is older than 1.104, the oldest tether is tested with; update it."
@@ -426,7 +498,9 @@ fn check_status(facts: &Facts, findings: &mut Vec<Finding>) {
             {
                 error(
                     findings,
-                    "HTTPS certificates are off for your tailnet. Turn them on under HTTPS Certificates at https://login.tailscale.com/admin/dns, then rerun tether setup.",
+                    format!(
+                        "HTTPS certificates are off for your tailnet. Turn them on under HTTPS Certificates at https://login.tailscale.com/admin/dns, then rerun `{setup_command}`."
+                    ),
                 );
             }
             _ => {}
@@ -434,24 +508,18 @@ fn check_status(facts: &Facts, findings: &mut Vec<Finding>) {
     }
 }
 
-fn facts_status_has_self(facts: &Facts) -> bool {
-    matches!(
-        &facts.tailscale,
-        TailnetFacts::Status {
-            backend_state,
-            dns_name: Some(_),
-            ..
-        } if backend_state == "Running"
-    )
-}
-
-fn check_operator(operator: &Result<String, String>, username: &str, findings: &mut Vec<Finding>) {
+fn check_operator(
+    operator: &Result<String, String>,
+    username: &str,
+    setup_command: &str,
+    findings: &mut Vec<Finding>,
+) {
     match operator {
         Ok(operator) if operator.is_empty() || operator == username => {}
         Ok(operator) => error(
             findings,
             format!(
-                "Tailscale's operator is {operator}. tether setup won't replace it; run `sudo tailscale set --operator=$USER` if you mean to, then rerun."
+                "Tailscale's operator is {operator}. tether setup won't replace it; run `sudo tailscale set --operator=$USER` if you mean to, then rerun `{setup_command}`."
             ),
         ),
         Err(cause) => error(
@@ -594,14 +662,14 @@ mod tests {
         facts.default_config = false;
         cases.push((
             facts,
-            "tether setup installs a service that reads the default config path; drop --config.",
+            "tether setup --background installs a service that reads the default config path; drop --config.",
         ));
         let mut facts = valid_facts(linux());
         facts.binary.installed_canonical = None;
         facts.binary.cargo_home_other = true;
         cases.push((
             facts,
-            "~/.cargo/bin/tether doesn't exist. Install it with `cargo install --path .`, then run `~/.cargo/bin/tether setup`. cargo installs into $CARGO_HOME/bin; use [Manual setup](../running.md#manual-setup).",
+            "~/.cargo/bin/tether doesn't exist. Install it with `cargo install --path .`, then run `~/.cargo/bin/tether setup --background`. cargo installs into $CARGO_HOME/bin; use [Manual setup](../running.md#manual-setup).",
         ));
         let mut facts = valid_facts(linux());
         facts.directories.push(DirectoryMismatch {
@@ -623,7 +691,7 @@ mod tests {
         });
         cases.push((
             facts,
-            "Your shell sets XDG_CONFIG_HOME=/tmp/config, so tether setup would use /tmp/config/tether while the service uses /home/jimmy/.config/tether: it would read another config and another device list. Unset it before running tether setup.",
+            "Your shell sets XDG_CONFIG_HOME=/tmp/config, so tether setup would use /tmp/config/tether while the service uses /home/jimmy/.config/tether: it would read another config and another device list. Unset it before running tether setup --background.",
         ));
         let mut facts = valid_facts(linux());
         facts.tmux_tmpdir_without_socket = true;
@@ -683,7 +751,7 @@ mod tests {
         };
         cases.push((
             facts,
-            "Tailscale's operator is someone. tether setup won't replace it; run `sudo tailscale set --operator=$USER` if you mean to, then rerun.",
+            "Tailscale's operator is someone. tether setup won't replace it; run `sudo tailscale set --operator=$USER` if you mean to, then rerun `tether setup --background`.",
         ));
         let mut facts = valid_facts(linux());
         if let PlatformFacts::Linux {
@@ -742,14 +810,14 @@ mod tests {
         };
         cases.push((
             facts,
-            "HTTPS certificates are off for your tailnet. Turn them on under HTTPS Certificates at https://login.tailscale.com/admin/dns, then rerun tether setup.",
+            "HTTPS certificates are off for your tailnet. Turn them on under HTTPS Certificates at https://login.tailscale.com/admin/dns, then rerun `tether setup --background`.",
         ));
 
         let mut facts = valid_facts(linux());
         facts.binary.current_canonical = PathBuf::from("/tmp/tether");
         cases.push((
             facts,
-            "The service runs ~/.cargo/bin/tether, but this is /tmp/tether. Install it with `cargo install --path .`, then run `~/.cargo/bin/tether setup`.",
+            "The service runs ~/.cargo/bin/tether, but this is /tmp/tether. Install it with `cargo install --path .`, then run `~/.cargo/bin/tether setup --background`.",
         ));
         let mut facts = valid_facts(linux());
         facts.tmux_on_service_path = None;
@@ -862,7 +930,7 @@ mod tests {
         }
         cases.push((
             facts,
-            "No systemd user manager is running for jimmy. Log in as jimmy directly (SSH or a console, not su or sudo), then rerun.",
+            "No systemd user manager is running for jimmy. Log in as jimmy directly (SSH or a console, not su or sudo), then rerun `tether setup --background`.",
         ));
         let mut facts = valid_facts(linux());
         if let PlatformFacts::Linux {
@@ -921,7 +989,7 @@ mod tests {
         }
         cases.push((
             facts,
-            "tether was installed by hand on port 9000. Keep that install (Manual setup), or run `tether teardown` and then tether setup, which uses 7851.",
+            "tether was installed by hand on port 9000. Keep that install (Manual setup), or run `tether teardown` and then `tether setup --background`, which uses 7851.",
         ));
         let mut facts = valid_facts(mac());
         if let PlatformFacts::Mac { port_available, .. } = &mut facts.platform {

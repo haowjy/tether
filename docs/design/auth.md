@@ -551,7 +551,8 @@ this.
 `GET /auth/info` reports `browserOrigin` (or `null`, with `browserRefused` set to
 the message). `browserPending` is true while a Mac publication is still waiting or
 retrying, so `browserRefused` holds its last error rather than a final refusal;
-`tether setup` keeps waiting while it is set. It is always false on Linux. The shell compares it with `location.origin` before connecting, and
+Background setup keeps waiting while it is set. Foreground setup publishes and
+refreshes in-process before it prints. It is always false on Linux. The shell compares it with `location.origin` before connecting, and
 on a mismatch shows "Open tether at `<browserOrigin>`" and opens no socket; with
 `null` it shows the message.
 
@@ -743,8 +744,8 @@ enrolled_by = "jimmy@github"
 
 | Command | Effect |
 |---|---|
-| `tether setup` | Install the service, publish it, and print the link, its QR code and a new code ([setup.md](setup.md)) |
-| `tether teardown` | Stop and remove the service and remove tether's Serve handlers; devices and config stay |
+| `tether setup` | On Linux, run in the terminal and publish; `--background` installs the service. On a Mac, use `--background` for the LaunchAgent. Both print the link, its QR code and a new code ([setup.md](setup.md)) |
+| `tether teardown` | Stop an installed service if present, remove it, and remove tether's Serve handlers; devices and config stay |
 | `tether enroll [--ttl 10m]` | Print a new code, the host URL for the app, and the browser URL (`browserOrigin`, or the refusal message with its fix). The code works for either kind |
 | `tether device list` | Devices with name, kind, enrolled date and `enrolled_by`; for nodes, the stored stable ID; named refused rows are marked `refused` |
 | `tether device remove <name>` | Remove a device of either kind; its requests are refused at once and its sockets close at the next re-check |
@@ -981,7 +982,7 @@ LocalAPI do not replace them. `browser-setup.md` links here for the complete che
 
 | Gate | Check on the real system | Settles |
 |---|---|---|
-| G1 | On the dev box with Tailscale 1.104.1, publish `serve.sock` with `tether setup` as the operator, and once by hand with `sudo tailscale serve --https=443 unix:<serve.sock>`; confirm a non-operator's write is refused, later Serve changes need root or an operator who may `sudo tailscale`, and another Unix user gets `EACCES` on the socket. The setup gates S1–S11 ([setup.md](setup.md#probe-gates)) cover the rest | Unix Serve publication and runtime-directory boundary |
+| G1 | On the dev box with Tailscale 1.104.1, publish `serve.sock` with `tether setup` as the operator, and once by hand with `sudo tailscale serve --https=443 unix:<serve.sock>`; confirm a non-operator's write is refused, later Serve changes need root or an operator who may `sudo tailscale`, and another Unix user gets `EACCES` on the socket. The setup gates S1–S13 ([setup.md](setup.md#probe-gates)) cover the rest | Unix Serve publication and runtime-directory boundary |
 | G2 | Through Serve from laptop, phone browser and PWA, inspect Host, forwarded host/address and identity headers on GET, POST and WebSocket upgrade; try forged identity headers and Safari HTTP/2 WebSocket | Serve header trust and browser authority |
 | G3 | Check real whois fields and refusals for tagged, shared, subnet-router, self and login-mismatch nodes; admit only a plain owner node and an exit-node route; confirm `/status?peers=false` includes self ID and owner | Node rules and tailnet-state parsing |
 | G4 | Measure whois latency, tailscaled CPU and response sizes for 1,000 calls over new and keep-alive connections and for 20 concurrent calls; measure status and Serve-config answers | Per-request whois and bounded keep-alive pools |
