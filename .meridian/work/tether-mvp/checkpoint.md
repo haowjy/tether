@@ -16,7 +16,18 @@ and **not pushed to GitHub** (Jimmy hasn't said to push); homebox runs them from
   (review p214).
 - c0b9ca4: focus rings no longer clipped by scroll containers (p212).
 
-Evidence: evidence/setup-linux/README.md, evidence/web-spacing/. Open: S1–S8/S12 Linux
+- 76010ce: banners inside the one shell that fills the window (p221).
+
+**In flight (2026-10-25 afternoon):** Jimmy's real-use decisions are in
+real-use-decisions.md (sessions not windows, path-field Files, sizing). Design for
+session-follow + folder find: p222 wrote uncommitted docs/design/ changes; review p228 not
+converged; round 2 is p229 (review fixes, p225's switch-client sizing, Jimmy's answers),
+the last design round. Files build lane p230 runs in parallel (web/files only). After
+p229: commit the design, then lanes 1a (tmux bridge) -> gate probe -> 1b (protocol 2: hub,
+proto, web, iOS) per design-session-follow-and-folder-find.md. Sizing findings:
+window-size-investigation.md (p216), latest-client-probe.md (p225).
+
+Evidence: evidence/setup-linux/README.md, evidence/web-spacing/, evidence/app-shell-fill/. Open: S1–S8/S12 Linux
 gates beyond this first run; p212's proposed ring-clipping assertion (Jimmy hasn't been
 asked); "Find a sessio" placeholder truncation at 320px (minor).
 

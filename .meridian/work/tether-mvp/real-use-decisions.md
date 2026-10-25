@@ -23,3 +23,17 @@ Not yet in docs/design/; the design pass folds each into the spec and decisions.
 4. **App shell fill.** "we should have 1 main shell that fills the window, and any banners
    etc should be inside it" ("Update ready" banner made the page scroll). Bug fix, p221.
 5. **Removed note** "Another terminal is attached..." (done, 9a987e0/4ef3b5f).
+
+## Answers to the design's open questions (p222), 2026-10-25
+
+6. Choosing a window in tether moves an attached laptop too (like prefix-n): **accepted**.
+   Rejected: hidden grouped sessions per tab.
+7. Files' path field **replaces** the 10-23 "Add folder" dialog.
+8. Desktop windows button **shows on one-window sessions** (only way to create a window).
+9. Tab label **shows the window name** even with one window.
+10. Window sizing (p216 + p225): typing, pasting or Fit in tether should take the window
+    to tether's size, and laptop typing takes it back. Mechanism found by p225:
+    `switch-client -c <owner> -t <same session>` before the input makes tether tmux's
+    `latest` client on 3.4/3.7b/3.8 with no key injection and no `manual` window-size.
+    Rejected: `resize-window` (flips window-size to manual; a crash leaves it), `send-keys
+    -K` (goes through key bindings; on 3.4 drops ASCII and Enter).
