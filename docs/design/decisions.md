@@ -3991,14 +3991,16 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Decided:** 2026-10-25, Jimmy ("really verbose", first Linux run).
 - **What:** the success report is the mode line (with "starts at boot" or "starts when
   you log in" for a service), one line per change, any notes, the link, its QR code and
-  "Enrolment code: <code> (one device, 10 minutes)". A terminal run logs at `warn`
+  "Enrolment code: <code> (one device, 10 minutes)", then "For another device, run
+  `tether enroll`." A terminal run logs at `warn`
   unless `RUST_LOG` is set, from before the daemon opens so its budget warnings show.
   An unenrolled node logs at `debug` on every route: the response already reports it,
   and every phone is unenrolled until it enters its code.
 - **Why:** each dropped line repeated another one or explained something a second run
   doesn't need: "Nothing else to change" (no change lines says it), "Published on your
   tailnet", per-client enrolment steps (the phone page asks for the code; the iOS host
-  name is the link's), the `enroll`/`teardown` banner (in running.md), the clipboard
+  name is the link's), the `teardown` line (in running.md; `tether enroll` keeps a line under the code, since
+  Jimmy had to ask how to get another code), the clipboard
   sentence (setup can't tell whether OSC 52 landed), the daemon's "listening" line
   under a report that already says tether is running, and a warning for the expected
   enrol-after-opening order.

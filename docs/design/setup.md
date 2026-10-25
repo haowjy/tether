@@ -300,6 +300,7 @@ Replaced tether.service, which differed from this tether's; the old copy is <pat
   ...
 
 Enrolment code: 7KQ4-XM2P (one device, 10 minutes)
+For another device, run `tether enroll`.
 ```
 
 On a Mac the first line reads "running as your LaunchAgent and starts when you log
@@ -308,8 +309,9 @@ setup lists what it changed ("Enabled linger", "Replaced tether.service…",
 "Removed tether's old handler…"), one per line, and nothing when it changed nothing.
 Drop-in notices and "No tmux server yet…" appear separately under "Notes:". The link
 is on a line of its own, for copying. A failed run prints no code. How to enrol (the
-phone page asks for the code; the iOS app takes the host name from the link), `tether
-enroll` and `tether teardown` are in [running.md](../running.md), not the report.
+phone page asks for the code; the iOS app takes the host name from the link) and `tether
+teardown` are in [running.md](../running.md), not the report; the line after the code names `tether
+enroll`, the one next step a reader can't guess.
 
 Foreground Linux's first line is "tether <v> is running in this terminal. Ctrl-C stops
 it." The rest follows the same format. Its daemon logs only warnings and errors unless

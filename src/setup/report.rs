@@ -69,7 +69,7 @@ pub(crate) fn render_success(
         output.push('\n');
     }
     output.push_str(&format!(
-        "Enrolment code: {} (one device, 10 minutes)\n",
+        "Enrolment code: {} (one device, 10 minutes)\nFor another device, run `tether enroll`.\n",
         report.code
     ));
     Ok(output)
