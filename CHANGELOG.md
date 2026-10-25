@@ -5,17 +5,13 @@ version section on release.
 
 ## [Unreleased]
 
-- Plain Linux `tether setup` runs tether in the terminal and leaves the Serve entry when
-  it stops. Use `tether setup --background` for the systemd service or Mac LaunchAgent;
-  plain setup on a Mac refuses. Both print a QR link and enrolment code.
-- `tether teardown` removes an installed service and only tether's Serve handler while
-  preserving enrolled devices and configuration; with no service installed it withdraws
-  the handler only.
-- Background setup reruns leave unchanged Serve config alone, need no terminal after
-  Linux grants exist, and recover disabled Mac LaunchAgents.
-- Setup refuses conflicting terminal runs before grants or installation, foreground
-  setup checks its runtime directory and opens the daemon before granting the Tailscale
-  operator, and teardown reports an active terminal run and only mentions enabled linger.
+- `tether setup` publishes tether on your tailnet and prints its link, a QR code of it and
+  an enrolment code. On Linux it runs tether in the terminal until Ctrl-C, leaving the
+  Serve entry in place; `tether setup --background` installs the systemd user service, or
+  the LaunchAgent on a Mac, where plain setup refuses. Every check runs before it changes
+  anything, and a rerun changes only what differs.
+- `tether teardown` removes an installed service and only tether's Serve handler, keeping
+  enrolled devices and configuration; with no service installed it withdraws the handler.
 - tether can host on a Mac with the Tailscale app (`tether serve --publish`, from a LaunchAgent).
   When it can't publish, it names the conflict (Funnel, a TCP forward, or another app's handler).
 - Serve refusals on Linux name the actual conflict too.
