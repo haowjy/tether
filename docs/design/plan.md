@@ -34,10 +34,11 @@ and record decisions in decisions.md.
 A phone-first client for the tmux sessions on Jimmy's dev server, reached only over
 his tailnet. It needs:
 
-- **Tabs**, one per tmux window, plus a session list for quickly reopening one.
+- **Tabs**, one per tmux session, like `tmux attach`, plus a session list for quickly
+  reopening one.
 - **Holding up on spotty travel connections:** no polling from the phone, a cheap
   reconnect that sends a fresh screen snapshot, and tabs that stay open
-  ("reconnecting") until their tmux window is gone.
+  ("reconnecting") until their tmux session is gone.
 - **A keyboard as good as Termius's**, plus a suggestion strip (history, commands,
   flags, paths).
 - **A built-in file manager:** upload or paste photos and insert the file path into
@@ -60,12 +61,16 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
 - **tmux:** 3.4 on the server, 3.7b on the Mac, `window-size latest`, default prefix
   `C-b`, the laptop sometimes attached at the same time. A window takes the size of
   the client that acted on it last, as tmux's `latest` does: opening a tab, typing,
-  pasting, rotating, a font change or Fit sizes it to the phone, and the laptop typing
-  takes it back ([daemon-core.md §3.6](daemon-core.md#36-sizing)). The keyboard
+  pasting, rotating, a font change or Fit sizes it to exactly the phone's size, whether
+  the laptop's terminal is larger or smaller, and the laptop typing takes it back; a
+  window tether stops holding with nobody else acting there keeps the size it had when
+  tether attached until the laptop types ([daemon-core.md §3.6](daemon-core.md#36-sizing)). The keyboard
   never resizes it.
-- **Tabs:** 1 tab = 1 tmux window, showing its active pane full screen. Jimmy doesn't
-  split panes; a split window shows its active pane and follows it. Tabs never close
-  on network loss.
+- **Tabs:** 1 tab = 1 tmux session, as `tmux attach` is: it shows the session's current
+  window's active pane full screen and follows the current window when any client
+  changes it. A window switcher, with the session's windows when it has two or more,
+  changes and creates windows. Jimmy doesn't split panes; a split window shows its
+  active pane and follows it. Tabs never close on network loss.
 - **Shell:** shell-agnostic, with one OSC 133 snippet in his dotfiles and carapace for
   completion.
 - **Files:** project roots picked in the app; one uploads folder; HEIC converted on
@@ -137,14 +142,17 @@ tether's cgroup.
 
 ### Tabs and the session sheet
 
-One tab opens one tmux window and follows its active pane. Display actual
-`session / window` names, with the real window index when labels collide;
-identity is the stable server/window ID, never the display name.
+One tab opens one tmux session and shows its current window, following it when the
+laptop, a script or tether's window switcher changes it; within the window it follows
+the active pane. The label is the actual session name, then the current window's
+name; identity is the stable server/session ID, never the display name. Lists show
+sessions only.
 
 Desktop Terminal + opens the existing-session picker only; on the phone the dock's
-tab chip opens the session switcher. Creation is on Home, and on the phone also in the
-switcher, as labelled New session and New window actions, with optional name and absolute start
-directory. Session/window search is local; refresh is event-driven. Another-client
+tab chip opens the session switcher. New session is on Home, and on the phone also in
+the switcher; New window is in the window switcher (the phone's switcher sheet, the
+desktop's active-tab menu). Both take an optional name and absolute start directory.
+Session search is local; refresh is event-driven. Another-client
 attachment does not identify a laptop. Closing a tab never kills its tmux process.
 See [the interaction contract](client/browser-behaviors.md) for the full behavior.
 Scratch shells are outside this minimal client pass.
@@ -168,19 +176,20 @@ watched.
 - **Tabs never close on network loss.** A dropped tab shows "reconnecting…" on its
   pill indefinitely. Retries back off with jitter: 0.5 s, 1, 2, 4… capped at 30 s. The
   backoff resets and a retry fires at once on becoming visible, coming online, or a
-  tap on the pill. A tab closes only when the daemon reports its window or server gone
-  (`windowClosed`, `serverExited`), when a `sessions` listing no longer has its window
+  tap on the pill. A tab closes only when the daemon reports its session or server gone
+  (`sessionClosed`, `serverExited`), when a `sessions` listing no longer has its session
   (below), or when Jimmy closes it.
-- **Pruning.** The daemon sends `windowClosed` only for a window with a watch, and only
-  the tab on screen has one ([daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate)),
-  so a window killed under another tab would leave that tab open. The web therefore
+- **Pruning.** The daemon sends `sessionClosed` for a watched session, and only the tab
+  on screen has a watch ([daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate)),
+  so a session killed under another tab would leave that tab open. The web therefore
   asks each host for a `sessions` listing on every connect and prunes against it, and
   prunes against every later listing too (the sheet opening, a pull to refresh, the
   `sessionsChanged` refetch, debounced). The daemon sends `sessionsChanged` when tmux
-  closes or moves a window nobody watches, so a kill under an off-screen tab is pruned
-  within moments instead of at the next listing. A tab goes when no window in the
-  listing has its `WindowRef` (instance and id): another `server` instance counts as
-  gone, and a listing of `tmux: null` has no windows, so it closes the host's tabs as
+  creates, closes or renames a session or adds or closes a window, so a kill under an
+  off-screen tab is pruned within moments instead of at the next listing. A tab goes
+  when no session in the listing has its `SessionRef` (instance and id): another
+  `server` instance counts as gone, and a listing of `tmux: null` has no sessions, so it
+  closes the host's tabs as
   `serverExited` would. The listing covers the `main` tmux server only, so it never prunes scratch
   tabs (after the core MVP). A refused or failed listing prunes nothing.
 
@@ -219,7 +228,7 @@ and the note on `TMUX_TMPDIR` under systemd, are in [running.md](../running.md).
 | `[tmux] program` | `tmux` | the tmux executable; an absolute path if the unit's `PATH` doesn't find it |
 | `[tmux] socket_name` | none | `tmux -L <name>` |
 | `[tmux] socket_path` | none | `tmux -S <path>`; not together with `socket_name` |
-| `roots`, `uploads_dir` | none, `~/tether-uploads` | project roots and the uploads folder; read on every file request, written by the Settings sheet ([fs.md](fs.md#roots)) |
+| `roots`, `uploads_dir` | none, `~/tether-uploads` | project roots and the uploads folder; read on every file request; Files adds and removes roots ([fs.md](fs.md#roots)) |
 | `[complete] history` | the most recently modified of `~/.zsh_history`, `~/.bash_history`, fish's history | the one history file the suggestion strip reads; set it when the shell's `$HISTFILE` is elsewhere ([complete.md](complete.md#history)) |
 | `[complete] path` | the daemon's own `PATH` | the `PATH` the command index scans and carapace runs with; set it to the interactive shell's `PATH`, since the systemd user manager's lacks what rc files add ([complete.md](complete.md#commands-on-path)) |
 | `[complete] carapace` | `carapace` on that `PATH` | the carapace binary; absent or failing means no flag chips ([complete.md](complete.md#carapace)) |
@@ -538,12 +547,16 @@ width.
 
 Opened from `[⊞]` or `[<]`, as a sheet over the terminal; the keyboard stays put.
 
-**Roots.** Project roots are chosen in the app: a Settings sheet browses from `$HOME`
-one directory at a time and adds or removes them, and sets the uploads folder
-(`uploads_dir`, default `~/tether-uploads`), which is browsable like a root. Both are
-saved in `~/.config/tether/config.toml`. A tab opens the file manager at its cwd (from
+**Roots.** Project roots are chosen in Files: its path field completes folders under
+`$HOME` and adds one with "Add this folder", and each root has Remove
+([interaction contract](client/browser-behaviors.md#files)). The uploads folder
+(`uploads_dir`, default `~/tether-uploads`) is browsable like a root and moves in
+`config.toml`. Both are saved in `~/.config/tether/config.toml`. A tab opens the file manager at its cwd (from
 `watching`) if that's inside a root, otherwise at the root picker. No file watcher:
 listings are read on open, on pull-to-refresh, and after tether's own file operations.
+A path field heads the list: typed into, it completes the next existing folder from
+listings the client already holds, one request per folder entered, never one per
+keystroke ([interaction contract](client/browser-behaviors.md#files)).
 
 **API.** The routes, path resolution, roots management, limits and errors are in
 [fs.md](fs.md). The web reaches them through its host's scheme-handler origin,
@@ -672,9 +685,9 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
     browser/      index.ts assembles and boots the Platform; transport.ts, viewport.ts,
                   lifecycle.ts, storage.ts, uploads.ts, clipboard.ts, links.ts,
                   restart.ts, pwa.ts (updates and install)
-    native/       bridge v2 and adapter for the Swift shell
+    native/       bridge v3 and adapter for the Swift shell
     test/         in-memory Platform for vitest and the Playwright harness
-  proto/          generated wire types, binary frames, HostLink and window identity
+  proto/          generated wire types, binary frames, HostLink and session identity
   net/            host.ts, http.ts, hosts.ts (registry), admission.ts (pure)
   tabs/           connection.ts, driver.ts, input.ts, keymap.ts, status.ts
   term/           pipeline.ts, size.ts, prompt.ts, xterm.ts, xterm-input.ts
@@ -713,8 +726,8 @@ Dependency rules: `hub/` never sees HTTP, `http/` never talks to tmux, and
 `complete/` never touches tmux. The renderer stays behind `term/`.
 
 The web `workspace/` is a pure reducer over tabs, not the navigation owner. It handles
-`hostsKnown`, `opened`, `closed`, `activated`, `listing`, `windowClosed`, `serverExited`,
-`renamed`, `restored`, `watching` and `navigated` events. It emits `save`, `navigate`,
+`hostsKnown`, `opened`, `closed`, `activated`, `listing`, `sessionClosed`, `serverExited`,
+`restored`, `watching` and `navigated` events. It emits `save`, `navigate`,
 `focus` and `notice`;
 the controller applies navigation through the router before focus effects. The terminal
 lane's `Terminals` owns every tab driver: it covers each one except `shownTab(workspace)`,
@@ -790,9 +803,10 @@ The spikes come first. The native app's keyboard checks are in
 - **Auth:** `tailscale serve` only, with the Funnel check; the login allowlist from
   LocalAPI; a device token per phone behind Face ID; one middleware on every route;
   strict CSP.
-- **Tabs and layout:** 1 tab = 1 window; collapsed and keyboard states; safe areas;
-  the desktop's attach-only "+" picker, the phone's session switcher, and Home creation
-  actions; pinch font size per tab; landscape.
+- **Tabs and layout:** 1 tab = 1 session, following its current window; the window
+  switcher; collapsed and keyboard states; safe areas; the desktop's attach-only "+"
+  picker, the phone's session switcher, and creation actions; pinch font size per tab;
+  landscape.
 - **Reconnect:** indefinite "reconnecting" with backoff and instant retry; the connect
   timeout with web view recreation; a snapshot on every (re)watch; prompt release of
   server state; WebGL context loss handled by recreating the renderer, with DOM

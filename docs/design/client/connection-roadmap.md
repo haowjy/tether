@@ -25,7 +25,7 @@ revocation, session lifetime and reauthentication remain design decisions.
 
 Use **Server** for a saved Tether endpoint, not “Tailscale connection.” A server
 profile has a display name, HTTPS URL, and connection/authentication status. Keep
-terminal state and saved drafts scoped to stable server/window identity; names and
+terminal state and saved drafts scoped to stable server/session identity; names and
 URLs alone are not durable identity. Credentials belong to that server, never to
 whichever profile happens to be active when a request completes.
 

@@ -78,7 +78,8 @@ Roots = { home: string,                          // canonical $HOME
           uploadsDir: { path, canonical, ok } }
 ```
 
-**The picker** (`/fs/dirs`) browses from `$HOME` one directory at a time. It is a
+**The picker** (`/fs/dirs`) lists one directory under `$HOME` at a time; Files' path
+field completes and browses folders outside the roots with it. It is a
 listing ([below](#get-fslistpath)) with the same query, paging and shape, scoped to the
 canonical `$HOME` instead of the roots, returning **directories only**, with no size
 or time. A path, or a symlinked directory, that canonicalizes outside `$HOME` gets

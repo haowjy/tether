@@ -52,7 +52,7 @@ the ephemeral vote mechanism.
 ## Verification
 
 - Custom real-daemon Chromium probe: reproduced on tmux 3.4 and 3.7b at
-  2000x970 with an 80x24 PTY. Evidence: `p218/3.4-observations.json`,
+  2000x970 with an 80x24 PTY. Raw captures (not kept): `p218/3.4-observations.json`,
   `p218/3.7b-observations.json`.
 - `cargo test`, `cargo clippy --all-targets -- -D warnings`,
   `pnpm --dir web run check`: passed.

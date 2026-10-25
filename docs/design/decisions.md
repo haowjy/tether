@@ -48,6 +48,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **What:** 1 tab = 1 tmux window, showing its active pane full screen. Tabs never
   close on network loss.
 - **Why:** Jimmy doesn't split panes.
+- **Superseded:** by "One tab per session, like `tmux attach`" (2026-10-25).
 
 ### Shell integration
 
@@ -543,6 +544,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   a session's last window ended its watches.
 - **Rejected:** resolving inside the hinted session with `list-windows`, an `Exists`
   check, a listing fallback and a `session` hint on `watch`.
+- **Changed 2026-10-25:** views are per watched session, and the owner is that session's control client; `Locate { session }` replaces the window Locate ("The daemon follows the window; the client never re-watches").
 
 ### How ownership and Locate interact
 
@@ -569,6 +571,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **Changed 2026-10-22 (p35):** a bound window stays bound during a re-Locate, a window
   binds only from its owner's own answer, and a Locate that fails ends the watches;
   see "A window binds only from its owner's own Locate answer" below.
+- **Changed 2026-10-25:** a view binds from its owner's own `Locate { session }` answer; sessions don't move, so no answer rebinds a view to another owner ("The daemon follows the window; the client never re-watches").
 
 ### `tmux -N` on every invocation
 
@@ -700,6 +703,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   `window-size manual` (changes a global option and the laptop's behaviour).
 - **Two phones with different sizes** (tech lead, review round 2): last resize wins;
   not designed for.
+- **Changed 2026-10-25:** the vote is for the window the view's claim names, its current window or the one being selected ("A claim names a window and moves only by tether's own act").
 
 ### A watch exists only while its tab is on screen
 
@@ -741,6 +745,9 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **Changed 2026-10-22 (p45):** the daemon sends `windowClosed` only for windows with a
   watch, so the web also prunes tabs against `sessions` listings; see "The web prunes
   its tabs against `sessions` listings" below.
+- **Changed 2026-10-25:** tabs are sessions, so `windowClosed` is gone and
+  `sessionClosed` closes tabs ("The daemon follows the window; the client never
+  re-watches").
 
 ### No automatic reattach after a detach
 
@@ -773,6 +780,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **Rejected:** server-assigned ids (a round trip per tab); reusable ids (a stale frame
   for an old watch could reach the new one); watching a pane (the client would track
   active-pane changes it can't see).
+- **Changed 2026-10-25:** a watch targets a session (`SessionRef`); `input` and `paste` name the window the tab showed ("Input, paste and inserted paths name the window the tab showed").
 
 ### One hub task
 
@@ -902,6 +910,10 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   attached session.
 - **Rejected:** `Session::new(SessionId)` as the earlier spec had it.
 
+- **Changed 2026-10-25:** `Session::new` takes the session id the pump attaches to,
+  so it can tell its own session's `%session-window-changed` from others' from the
+  first byte ("The daemon follows the window; the client never re-watches").
+
 ### Notification choices in `Session`
 
 - **Decided:** 2026-10-22, design (p25), where the spec was silent.
@@ -915,6 +927,8 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   - `%exit` follows a detach, `kill-server` and a closed stdin alike, so
     `LocateSession` keeps running first in the exit path.
 - **Rejected:** the window layout for sizes (it is the unzoomed layout).
+- **Changed 2026-10-25:** the exit path's session check is `Locate { session }`, which
+  replaces `LocateSession` ("The daemon follows the window; the client never re-watches").
 
 ### Caps sized for the memory ceiling
 
@@ -942,12 +956,15 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   `scratch`, so the hub routes a window to its tmux server from the id alone.
 - **Rejected:** a separate endpoint field on every ref; a lookup from instance to
   endpoint (empty after a daemon restart, before anything is attached).
+- **Changed 2026-10-25:** tabs name sessions, so `SessionRef.server` carries the instance
+  the same way; `WindowRef` remains only in `created` ("One tab per session, like `tmux
+  attach`").
 
 ### A window binds only from its owner's own Locate answer
 
 - **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes "How
   ownership and Locate interact" above
-  ([daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate)).
+  ([daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate)).
 - **What:** a window binds only from a Locate answered by the control client that will
   own it. An answer from another client or a one-shot only names the session; the hub
   finds or spawns that session's client and Locates again on it. A bound window stays
@@ -963,12 +980,16 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **Rejected:** binding from any answer (the race above); returning a window to
   `Locating` on every unlink (a live stream broken, and a snapshot paid, for a change
   that names the same owner and pane).
+- **Changed 2026-10-25:** a *view* (one per watched session) binds from its owner's own
+  `Locate { session }` answer; sessions don't move between control clients, so the
+  rebinding cases and `WindowUnlinked` are gone ("The daemon follows the window; the
+  client never re-watches").
 
 ### A failing Locate or session check ends the watches
 
 - **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes "How
   ownership and Locate interact" above
-  ([daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate)).
+  ([daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate)).
 - **What:** a Locate or session check answered with anything but `NoServer` (tmux can't
   run, a timeout, an unexpected reply) ends the window's watches with `watchEnded {
   error }`. `NoServer` still means the server is gone. Work lost because its control
@@ -977,6 +998,8 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   all, a one-shot fails at once and every `handle` would spawn a failing process.
 - **Rejected:** "needed again" for one-shot failures and timeouts, as the earlier entry
   had it.
+- **Changed 2026-10-25:** the watches it ends are the view's, one view per watched
+  session (daemon-core §4.2).
 
 ### The reply timeout is a progress deadline; every unplanned exit gets a session check
 
@@ -1007,6 +1030,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **Extended 2026-10-22 (p51):** the reporter's close notifications for unwatched
   windows are turned into `sessionsChanged` too, coalesced per input; see "An unwatched
   window's close broadcasts `sessionsChanged`, once per input" below.
+- **Changed 2026-10-25:** window renames are no longer broadcast; every window add or close from the reporter becomes `sessionsChanged` (daemon-core §4.5).
 
 ### The stream is part of the window; `state.rs` is split three ways
 
@@ -1020,6 +1044,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   messages.
 - **Rejected:** a `streams` map keyed by pane (it always changes together with its
   window, and every change would touch both); one `state.rs` (three concerns in one file).
+- **Changed 2026-10-25:** the stream is part of the view, one per watched session (daemon-core §4.3).
 
 ### Reconcile runs only after inputs that may change desired state
 
@@ -1066,7 +1091,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 ### Watches that can never bind, and reused ids
 
 - **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Fills a gap in
-  [daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate).
+  [daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate).
 - **What:** a `watch` whose `server` string doesn't parse, or names an unknown endpoint,
   gets `serverExited` for that string on that connection, which closes the tab. A watch
   id that is already active gets `error { badRequest }` and the active watch is
@@ -1233,12 +1258,13 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
     watch exists only while its tab is on screen" avoids.
   - A broadcast per closed window: five for a 4-window session.
   - A timed debounce in the hub: a new timer, and the web already debounces.
+- **Changed 2026-10-25:** every window close from the reporter broadcasts it, since the hub holds no windows (daemon-core §4.5).
 
 ### `Starting` is folded into `Locating { after, on }`
 
 - **Decided:** 2026-10-22, tech lead, from the structural review (p49), applied in p51
   (commit 97f8c39). Changes the phases of "How ownership and Locate interact" and the
-  state diagram of [daemon-core.md §4.2](daemon-core.md#42-windows-owners-and-locate).
+  state diagram of [daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate).
 - **What:** a window's phases are `Locating { after, on }`, `Bound` and `Orphaned`. `on`
   is the control client the window was found to belong to, which may still be starting
   or waiting out a crash delay; the Locate runs on it once it is `Ready`. `join` always
@@ -1255,6 +1281,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   outlive the phase. Forcing the respawn's "awaited" check to false fails the two crash
   tests, so the tests cover the fold.
 - **Rejected:** keeping `Starting` as its own phase.
+- **Changed 2026-10-25:** a view's phases are `Checking`, `Locating`, `Bound` and `Orphaned`; `after` and `on` are gone with moved-window rebinding (daemon-core §4.2).
 
 ### Reserved credit stays a counter, with a debug check
 
@@ -1529,6 +1556,9 @@ found each point while running the daemon.
   or moves a window nobody watches, so the web's relisting follows the kill; see "An
   unwatched window's close broadcasts `sessionsChanged`, once per input" above.
 
+- **Changed 2026-10-25:** tabs are sessions; a tab goes when no session in the listing
+  has its `SessionRef` ("One tab per session, like `tmux attach`").
+
 ### A host entry carries its base URL
 
 - **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b). Adds
@@ -1569,6 +1599,9 @@ found each point while running the daemon.
   native).
 
 ### Tab titles follow `windowRenamed`
+
+- **Superseded:** 2026-10-25; the shown window's name arrives in `watching` ("The daemon
+  follows the window; the client never re-watches").
 
 - **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b).
 - **What:** a tab's title is its window's name and is updated by `windowRenamed`; the
@@ -2845,6 +2878,8 @@ the p61 review. The product calls behind it are Jimmy's
 ## Add folder in Files
 
 - **Decided:** 2026-10-23, Jimmy.
+- **Changed:** 2026-10-25 by "Add folder becomes the path field": the dialog is
+  replaced by Files' path field.
 - **What:** Files adds "Add folder…" and a Remove button per root, reversing the removal
   recorded in "Files details" (client-architecture.md §3.1). The picker browses `/fs/dirs` from
   `$HOME`, directories only, one folder at a time, and adds with `POST /fs/roots/add`; Remove
@@ -3356,6 +3391,9 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
   the phone watched); `largest` (the phone would always get the laptop's size, the
   opposite of "whoever I'm using"); dropping the vote after N idle minutes (a timer
   where an act is the signal).
+- **Changed 2026-10-25:** a claim now makes tmux size the window to the watch exactly,
+  not only cap it: the owner takes `latest` with a same-session `switch-client` when it
+  starts voting ("tether takes tmux's `latest` with a same-session `switch-client`").
 
 ### "Acts" means input or bringing the tab on screen, not looking
 
@@ -3407,6 +3445,11 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
   still caps, so the phone gets the smaller dimension when the laptop's window has
   fewer rows. Flags in the entry (review p119): without them, a focus-out, which
   updates a client's activity but not `latest`, would yield.
+- **Changed 2026-10-25:** tether does become `latest`, for the session's current window,
+  which is the only window a claim is on now that tabs follow sessions; the cost "a
+  claim still caps" is gone. The subscription still detects the other client's act,
+  which is when the vote clears ("tether takes tmux's `latest` with a same-session
+  `switch-client`").
 
 ### A window sized for another terminal is clipped, not scaled
 
@@ -3430,6 +3473,9 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
   (review p119: its canvas grows with the other terminal, about 17 M device pixels for
   250×70 at 3×, past WebKit's canvas limit); a band shown the moment the pane is larger
   (it would flash on every rotation, Fit and tab open).
+- **Changed 2026-10-25:** the band shows whenever the window's size differs from the
+  tab's, smaller included, and the daemon reports the window's size in `watching` ("The
+  band shows whenever the window isn't at this screen's size").
 
 ### Files in landscape lowers the keyboard, as in portrait
 
@@ -4041,3 +4087,327 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   incompatible, and the Swift app version was left behind); setting minimum 2 (locks
   out dev builds over a note); sending the field to v1 peers (per-version message
   shaping for a misleading `false`).
+
+## Tabs follow a session
+
+### One tab per session, like `tmux attach`
+
+- **Decided:** 2026-10-25, Jimmy, from first real use.
+- **What:** a tether tab is a tmux session. It shows the session's current window and
+  follows it when any client changes it (the laptop's prefix-n, a script, a window
+  exiting, tether's window switcher). Home, the picker and the switcher list sessions
+  only. A small window switcher, with the session's windows when it has two or more,
+  changes and creates windows. This replaces one tab per window, its window rows and
+  accordions (browser-behaviors.md, plan.md, daemon-core.md).
+- **Why:** Jimmy, on Home listing "0: python / open / + New window" under every session:
+  "default just list the session … by default it should just load the whole thing
+  (especially if there is only 1 window)".
+- **Rejected:** opening the session's active window as a fixed tab (today's model, one
+  tap shorter, but the tab stops matching what the laptop shows after a prefix-n).
+
+### The daemon follows the window; the client never re-watches
+
+- **Decided:** 2026-10-25, design (p222).
+- **What:** a watch names a session. The hub keeps one view per watched session, owned
+  by the control client attached to it; that client's `%session-window-changed` for its
+  own session sets the view's current window, and a Locate on the owner
+  (`display-message -t '$S'`) finds the window's pane. The tab gets one `watching` and
+  one snapshot per change. `Locate { window }` and `LocateSession` become one
+  `Locate { session }`; window phases, `windowClosed` and `windowRenamed` are deleted.
+- **Why:** following costs the network the minimum: the snapshot the new window needs
+  anyway, with no client round trip. Sessions don't move, so the owner is known without
+  asking tmux, which removes the moved-window rebinding the window model needed. The
+  probe ([research/probe-session-follow.md](research/probe-session-follow.md)) showed
+  the notification on 3.4 and 3.7b for every trigger, ahead of the new window's layout.
+- **Rejected:** the daemon telling the client and the client re-watching the new window
+  (an extra round trip on every switch, on the connections where it hurts most); a
+  session-scoped subscription carrying the acts and cwd in place of the per-window one
+  (the laptop riding along on a switch would read as an act and yield tether's claim;
+  a session subscription carrying only the current window id is kept, as the backstop
+  for `swap-window`); grouped sessions so tether's window choice doesn't move the laptop
+  (tether would create sessions in Jimmy's tmux, against "a window onto tmux, never its
+  owner").
+
+### A claim names a window and moves only by tether's own act
+
+- **Decided:** 2026-10-25, design (p222).
+- **What:** a view's claim is (watch, window), and its window is always the current
+  window or the one a `selectWindow` in flight is selecting (`selecting`). tmux
+  announces the switch after the group's reply and the owner's replies are ordered with
+  its notifications, so `selecting` clears at the group's failure or at the owner's
+  first `CurrentWindow` or Locate answer after the reply. `selectWindow` selects and
+  then takes `latest` with its vote, in one group; `newWindow` with a watch claims the created window. Any
+  change of current window (`CurrentWindow` from the notification or the current-window
+  subscription, a Locate answer naming another window) drops the claim unless the new
+  window is the claim's own; the old window's vote clears and the new window keeps its
+  size until the tab acts. Input aimed at a window that is no longer current claims
+  nothing; while `selecting` is set, input aimed at the window being left still goes
+  there but leaves the claim on the selected window, and `Acted` yields only the
+  claim's own window. A failed select drops the claim, and a select's reply triggers a
+  Locate, which ends `selecting` for a select of the window already current (review
+  p233).
+- **Why:** it is acted-last applied literally. The probe showed a control client's
+  `select-window` makes no client `latest`, so without the take the
+  selected window would keep the laptop's size; select then take reflows it once,
+  where a vote ahead of the select reflowed it twice (probe §16). A laptop prefix-n
+  then leaves the laptop's windows at the laptop's size.
+- **Review (p226):** an earlier draft only stopped counting a claim whose window was
+  no longer current, so a laptop's prefix-n then prefix-p brought the phone's vote back
+  onto a window the laptop had just switched to; and reconcile, still seeing the old
+  current window, cleared `selectWindow`'s own vote before tmux announced the switch.
+  Dropping the claim and holding `selecting` fix both.
+- **Rejected:** a session-wide claim that carries the phone's size to whatever window
+  becomes current (the laptop's prefix-n would land on a phone-sized window until its
+  next key); comparing tmux's `client_activity` with the claim time to guess who
+  switched (second resolution, two clocks, and a rule nobody could predict).
+- **Accepted cost:** with only the phone attached, typing `exit` shows the next window
+  at its old size, with the band, until the next keystroke claims it.
+
+### Input, paste and inserted paths name the window the tab showed
+
+- **Decided:** 2026-10-25, design (p222).
+- **What:** `input` and `paste` carry `window`, the window of the tab's latest
+  `watching`, and the daemon sends to `-t @W`. Image paste and Files' insert capture
+  the window with the tab.
+- **Why:** on a slow link the laptop can switch windows between a keystroke and its
+  arrival; the key should land where the user was looking. A path inserted after an
+  upload lands in the window it was pasted into, not whatever the session shows by
+  then; a gone window fails visibly, as a gone tab did.
+- **Rejected:** targeting the session (`-t '$S:'`, tmux attach's own semantics, which
+  sends a line typed for one window into another); refusing input whose window is no
+  longer current (drops keys typed in the instant after a switch made elsewhere).
+
+### The window switcher: the phone's session sheet, the desktop's active pill
+
+- **Decided:** 2026-10-25, design (p222).
+- **What:** on the phone, the session switcher sheet gains a "Windows in <session>"
+  block for the active tab's session: its windows when it has two or more, then
+  "+ New window". On the desktop, the active tab's pill holds a windows button that
+  opens a menu of the same rows and "New window". tmux's own prefix keys don't work
+  from tether on any platform, because `send-keys` writes to the pane past tmux's key
+  tables, so the menu is the desktop's switcher (review p227). The windows button shows on every
+  session, one-window sessions included: it is the desktop's only way to create a window,
+  and its window rows still appear only with two or more. Choosing a window runs
+  `select-window` on the session, so a laptop attached to it moves with it, as prefix-n
+  does. Home loses "+ New window"; the label is the session name, then the current
+  window's name even with one window (with tmux's automatic naming it names the running
+  program), set apart by spacing, never a dot or separator, the window truncating first.
+  Jimmy accepted the laptop moving, the button on one-window sessions and the window name
+  in every label on 2026-10-25.
+- **Why:** the chip already opens the sheet, so switching windows costs two taps, as
+  switching tabs does, with no new chrome on the terminal. A strip that appears with a
+  second window would change the terminal's height, and so resize tmux, whenever the
+  window count crossed one. Creating a window is something done from inside a session.
+- **Rejected:** a window strip above the phone terminal (a row of terminal lost, and a
+  tmux resize when it appears); a swipe on the dock to change windows (hidden); window
+  rows on Home that open a session at a window (the accordions Jimmy asked to remove);
+  matching window names in Home's search (a match that opens a different window than
+  the one searched for); "+ New window" per Home session row (a row action on a list
+  Jimmy wants plain); grouped sessions per tab so tether can show a window
+  without moving the laptop (tether creating sessions in Jimmy's tmux); hiding the
+  desktop windows button on one-window sessions (no way left to create a window); the
+  window name only when the session has two or more windows.
+
+### Protocol 2, bridge 3, and the old saved workspace is dropped
+
+- **Decided:** 2026-10-25, design (p222).
+- **What:** `PROTOCOL_VERSION` and `MIN_PROTOCOL` become 2, and so does Swift's
+  `DaemonProtocol.version`, which enrolment and the `/fs` scheme handler check; bridge
+  version 3 changes `TabKey` to name a session; a saved workspace of version 1 is
+  discarded whole on both platforms, with the drafts keyed by its window tabs, and its
+  `expanded` field is gone.
+- **Why:** a version-1 peer would send window watches the new daemon can't read: the
+  bump rule's "an older peer would act wrongly". The web is bundled with the app and
+  served by the daemon, so peers move together; a stale tab gets `incompatible` instead
+  of a 4003 loop. Migrating window tabs needs the session of each window, which the
+  saved workspace never recorded, and the cost of dropping is reopening a few sessions
+  once.
+- **Rejected:** a daemon range of 1..=2 with per-version watch handling (both models
+  kept alive); resolving old window tabs against the first listing (code that runs once,
+  for one user).
+
+### `%session-changed` closes the control client
+
+- **Decided:** 2026-10-25, design (p222).
+- **What:** when tmux moves a control client to another session (its own destroyed
+  under `detach-on-destroy off`), the hub closes it and checks the session, which
+  reports `sessionClosed`. Only a `%session-changed` naming another session counts:
+  tmux also sends one naming the client's own session at attach and for every take
+  ("tether takes tmux's `latest` with a same-session `switch-client`"), and `Session`
+  drops those.
+- **Why:** a control client belongs to one session for life; reusing it for the
+  session tmux picked would bind views to a session nobody watched.
+- **Rejected:** adopting the client for the new session.
+
+## Files: find a folder by path completion
+
+### A path field with completion
+
+- **Decided:** 2026-10-25, Jimmy, from first real use.
+- **What:** Files gets a path field: type a path; it predicts the next existing folder;
+  accepting takes it; a list below narrows as you type. Mobile first.
+- **Why:** Jimmy: "/#/files needs a ui rework … there should be a search for a folder
+  … maybe like vscode, prediction match the next folder … it should be mobile first".
+- **Rejected:** fuzzy search over all folders (needs a server index); both modes in one
+  field.
+
+### The field heads Files, and Go opens
+
+- **Decided:** 2026-10-25, design (p222).
+- **What:** one field at the top of Files on every platform, showing the current path
+  at rest. Editing starts from the current path plus `/`. A row tap, a `/` after a name
+  that isn't a folder, Tab, or → at the end accepts the prediction into the field
+  without leaving the current folder; Go (Return) opens the highlighted folder or the
+  one typed. Completion lists folders only. Hidden folders appear when the segment
+  starts with `.` or the hidden toggle is on.
+- **Keyboard:** the ordinary text keyboard, not `inputmode="url"`: the iPhone's URL
+  keyboard has `/` on its first layer but no space bar, and folder names can hold
+  spaces. With the empty-segment rule, Go right after an accept opens the accepted
+  folder (review p226, p227 found Go opening its first subfolder).
+- **Why:** at the top the field doubles as the path context Files already had, and the
+  best match sits right under it, above the keyboard. A phone keyboard has no Tab, so
+  the thumb's accept is the row tap, and `/` (which the user types anyway) accepts a
+  prefix ("rep/" becomes "repos/"). Keeping accept and open apart lets the user go
+  several folders deep without a listing of files at every step.
+- **Rejected:** the field at the bottom in thumb reach, like the session switcher's
+  search (the location display would sit at the bottom, and matches would read upward);
+  a row tap that opens the folder (every step would leave the field); a ghost-text tap
+  target (too small beside the caret); files in completion (Jimmy asked for folders;
+  the folder view lists files once opened).
+
+### One listing per folder, never one per keystroke
+
+- **Decided:** 2026-10-25, design (p222).
+- **What:** completion filters listings the client holds. Entering a folder fetches its
+  listing once, after typing pauses 250 ms, only for the folder the field settles on;
+  listings are cached per host for the Files session (32 folders, shared with
+  browsing). Folders-only first pages page on to 1,000 folders. Above the roots and
+  outside `$HOME`, completion uses the root paths already loaded and asks for nothing.
+  No daemon change: `/fs/list` sorts directories first and `/fs/dirs` lists only them.
+- **Why:** each request costs a round trip on a spotty link; a folder is entered far
+  less often than a key is typed.
+- **Rejected:** a `prefix` query on `/fs/list` (a request per keystroke pause, and a
+  daemon change for folders with more than 1,000 subfolders); prefetching the
+  predicted folder (bytes spent on guesses).
+
+### Add folder becomes the path field
+
+- **Decided:** 2026-10-25, design (p222); confirmed by Jimmy the same day.
+- **What:** the path field completes under `$HOME` outside the roots from `/fs/dirs`,
+  marking those rows "not added"; opening such a folder lists its subfolders under
+  "Not one of your folders" with "Add this folder", keeping the dialog's refusals
+  ($HOME itself, already added, outside `$HOME`, read-only `config.toml`). "Add folder…"
+  starts the field at `~/`. The Add folder dialog and its one-folder-at-a-time browser
+  are deleted. This changes "Add folder in Files" (2026-10-23).
+- **Why:** the dialog was a second folder browser with its own field-less navigation;
+  the path field now does what it did, faster. "Add folder in Files" rejected a path
+  field because there was no way to see what exists; completion is that way.
+- **Rejected:** keeping the dialog beside the field (two ways to browse `$HOME`).
+
+### `swap-window` is caught by a current-window subscription
+
+- **Decided:** 2026-10-25, design (p222), from reviews p226 and p228.
+- **What:** each owner with a view subscribes to its session's current window id
+  (`refresh-client -B 'c::#{window_id}'`); a value naming another window becomes
+  `CurrentWindow`, as the notification does.
+- **Why:** `swap-window` without `-d` changes a session's current window without
+  `%session-window-changed` (it never calls `session_set_current`; tmux's window menu
+  offers Swap Left and Swap Right). The session subscription sends one line per change,
+  costs one evaluation per owner per second and bounds a swap's lag at about a second.
+  It carries no client entries, so it doesn't reopen the rejected session-scoped
+  subscription for acts: that one was rejected because its value changes whenever any
+  client types anywhere and can't say which window a client is on ("The other client's
+  act is seen through the window subscription"); this value is a window id, which
+  changes only when the current window does, and carries no clients. Probed on 3.4 and
+  3.7b (p231, p232): a line 0.2–0.7 s after each swap that changes the current window,
+  `-d` included, and none for typing, idling, a cwd change, a swap of two other windows
+  or a window linked twice.
+- **Rejected:** `#{window_active}` in each `w<W>` value (an earlier fix: a window
+  linked twice into one session sends a 0 line from its other place on every value
+  change, about once a second while anyone types, which would re-locate and drop the
+  claim each time); polling the session's current window; ignoring swaps (the tab
+  would show and vote a window the session no longer shows).
+
+### Scrollback names its pane
+
+- **Decided:** 2026-10-25, design (p222), from review p226.
+- **What:** `historyChunk` carries `pane`; the client drops a chunk for any pane but its
+  latest `watching.pane` and restarts its history cache when the pane changes.
+- **Why:** a window change made elsewhere swaps the pane under a tab mid-scroll; without
+  the pane, one window's rows could sit above another's.
+- **Rejected:** a `pane` in the request that the hub refuses when stale (a refusal to
+  handle for a race the client can settle alone).
+
+### tether takes tmux's `latest` with a same-session `switch-client`
+
+- **Decided:** 2026-10-25, Jimmy (typing, pasting or Fit in tether takes the window to
+  tether's size even when the laptop is smaller; laptop typing takes it back), design
+  (p229). Probes: [probe-latest-client.md](research/probe-latest-client.md) (p225, 3.4,
+  3.7b, 3.8) and [probe-session-follow.md](research/probe-session-follow.md) §9–14
+  (p231, 3.4 and 3.7b).
+- **What:** when a take is due, the owner **takes** `latest` before its vote: when it
+  starts voting a window (a new claim, a claim after a yield, a claim on a window just
+  made current, the first vote on a respawned client), when the window's size has moved
+  off a standing vote since tmux last showed it at the vote (a laptop act the
+  subscription didn't report, review p233), and on every Fit. A take that leaves the
+  window off the vote isn't repeated until the vote is cast again or Fit. The take is `switch-client -c '<client>' -t '$S' ;
+  refresh-client -C '@W:CxR'`, its own name (from the startup line) and its own
+  session, then the vote. `selectWindow`'s group is the select, then the take. A claiming
+  `input` or `paste` writes its take-and-vote group just before its own group. The yield
+  is unchanged: another client's act clears the vote, and tmux has already made that
+  client `latest` (daemon-core §3.6).
+- **Why:** under `window-size latest` a vote only caps, so the phone could never be
+  larger than the laptop's terminal: p216 reproduced a 274×53 browser held at the
+  laptop's 80×23 after typing. `server_client_set_session` sets `latest` for the
+  session's current window on every `switch-client`, the session it is already on
+  included; on 3.4 it does so after its own recalculation, so the vote after the
+  switch recalculates. The take injects no key, leaves `window-size` alone and dies
+  with the control client, so tmux's state never depends on tether's: after a crash,
+  the laptop's next key sizes the window as before. Since tabs follow sessions, a claim
+  is always on the session's current window, the one window a switch can take.
+- **Rejected:**
+  - `resize-window`: it sets the window's `window-size` to `manual`, which tether would
+    have to restore on every yield, and a crash would leave behind.
+  - `send-keys -K` for input: keys go through tmux's key tables, so `C-b` starts the
+    prefix and the next key runs a binding; on 3.4 ASCII and Enter didn't reach the pane.
+  - Keeping the cap (Jimmy's requirement unmet; the band never showed).
+  - A take with every keystroke: each take runs the `client-session-changed` hook and
+    sends a line to every other control client; the window's size says when tmux has
+    stopped sizing by the vote.
+  - A take only when no vote stands (the first draft, review p233): a laptop key in the
+    same second as its last reported act makes it `latest` unreported, and typing on
+    the phone would then never take the window back.
+  - The switch alone, without the vote after it: 3.4 doesn't recalculate.
+  - The take inside the input's own group: tmux skips a group's remaining commands
+    after an error, so a failed take would drop keys.
+  - Handing the window back to the laptop's size when a claim ends without a yield:
+    tmux has no way to make another client `latest`; the window takes the owner's
+    client size until the laptop's next key.
+- **Cost:** a take is a real `switch-client`: the owner gets `%session-changed` for its
+  own session and other control clients `%client-session-changed` (both dropped by
+  `Session`); a `client-session-changed` hook runs once per take; the session's activity
+  and last-attached times advance; the control client's key table resets (unused). A
+  window the owner took and no longer votes takes the owner's client size until a
+  terminal acts there. Under `window-size smallest`, `largest` or `manual` the take does
+  nothing.
+
+### The band shows whenever the window isn't at this screen's size
+
+- **Decided:** 2026-10-25, Jimmy ("Sized for another terminal" + Fit whenever tmux's
+  size differs from tether's, nothing when tether holds it), design (p229).
+- **What:** `ShownWindow` carries the window's `size`, from Locate and from each
+  `%layout-change`'s root, and `watching` is re-sent when it changes. The band shows
+  after the window's size has differed from the size the tab sent, in either
+  direction, for longer than the wait: one second or the last ping round trip plus
+  half a second, whichever is longer, restarted at each claiming send; Fit re-sends the size and takes `latest`. A smaller window still
+  sits in the top-left corner.
+- **Why:** with the take, a window this screen holds is exactly its size, so a
+  difference means another terminal holds it, whichever is larger. The p216 probe's
+  window was smaller than the browser, the case the old rule (band only when larger)
+  never covered.
+- **Rejected:** a `held` flag from the daemon (a second fact that can disagree with the
+  size on screen, which is what the band is about); comparing the pane's size (a split
+  pane is always smaller than its window); showing the band at once (it would flash on
+  every claim while the resize is on its way); a fixed one-second wait (review p233: a
+  round trip on a spotty link often takes longer, so every open and rotation would
+  flash it).

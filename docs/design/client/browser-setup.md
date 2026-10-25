@@ -81,14 +81,14 @@ polling. Cache only this app's namespaces and remove obsolete versions safely.
 [Service-worker lifecycle](https://web.dev/articles/service-worker-lifecycle).
 
 Offline launch shows Disconnected and the locally saved drafts, not a pretend live
-terminal. Never send a line against a stale or different window. Preserve immutable
+terminal. Never send a line to a different tab than the one it was written in; it goes to the window that tab shows when it is sent. Preserve immutable
 target identity and explicit delivery uncertainty. Do not cache terminal/file content
 for offline reading in the minimal pass.
 
 ### Drafts, installation and lifecycle
 
 Prefer bounded IndexedDB storage for drafts and workspace metadata, with stable
-host/window identity and a schema version. Save small changed records, not the whole
+host/session identity and a schema version. Save small changed records, not the whole
 workspace per keystroke. Expose save failure and Clear; request persistent storage
 where supported without promising it. Storage is not encryption or guaranteed backup.
 [WebKit storage policy](https://webkit.org/blog/14403/updates-to-storage-policy/).
@@ -110,7 +110,7 @@ service worker as a persistent terminal transport.
 
 ## Platform boundary and implementation sequence
 
-Keep shared tab/window state, protocol, reconnect, terminal rendering, files and layout.
+Keep shared tab state, protocol, reconnect, terminal rendering, files and layout.
 Replace the native-only assumption at boot with explicit browser/native adapters for
 credentials, input/focus, viewport/lifecycle, storage, file selection and link opening.
 Avoid scattered user-agent branches or promoting `web/dev/shim.ts` into production.
@@ -144,7 +144,7 @@ work; it does block signing off on phone input, clipboard, and lifecycle behavio
   storage, force-quit, background/foreground, rotation, ordinary/hardware keyboard.
 - Upgrade with an active terminal, unsaved IME composition, multiple windows and old
   cached assets; no lost draft, duplicate input or mixed-version API calls.
-- Storage unavailable/evicted/full, node removal, lost server/window, uncertain
+- Storage unavailable/evicted/full, node removal, lost server/session, uncertain
   Return delivery; draft survives normal hiding and reload without accidental send.
 - Bound connections for browser + PWA + native: current daemon cap is three admitted WebSockets, not three HTTP connections. Do not
   increase it blindly; show an actionable over-cap state and measure resource use.

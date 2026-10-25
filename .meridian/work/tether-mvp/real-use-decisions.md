@@ -1,6 +1,6 @@
 # Jimmy's decisions from first real use (2026-10-25)
 
-Not yet in docs/design/; the design pass folds each into the spec and decisions.md.
+Items 1-3 and 6-10 are folded into docs/design/ (p222 round 1, p229 round 2, uncommitted).
 
 1. **Sessions, not windows.** Screenshot of Home: every session expanded to "0: python /
    open / + New window". Jimmy: "I don't think u should be listing the windows... default
