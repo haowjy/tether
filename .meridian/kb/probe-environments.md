@@ -7,9 +7,9 @@ which place a result came from.
 
 | Place | Answers | Cannot answer |
 | --- | --- | --- |
-| Jimmy's Mac (the primary checkout) | builds, preflight, real-tmux tests on 3.4, 3.7b and Homebrew 3.8, web e2e against a real daemon, iOS builds and Simulator screenshots | anything that needs Tailscale identity; software-keyboard and touch behavior |
-| Docker Linux container on the Mac | Linux builds and tests, the systemd user unit, cgroup limits, Linux memory and CPU numbers | tailnet behavior; Pop!_OS's own systemd and cgroup setup |
-| The Linux dev box (`pop-os`) | the deployment: `tailscale serve`, LocalAPI whois, the auth probe gates G1–G12 in `docs/design/auth.md` | — |
+| Jimmy's Mac (the primary checkout) | builds, preflight, real-tmux tests on 3.4, 3.7b and Homebrew 3.8, web e2e against a real daemon, iOS builds and Simulator screenshots; a Mac host behind real Tailscale: the Mac gates M0–M8 in `docs/design/auth.md` and S9 and S13 in `docs/design/setup.md` | the Linux deployment (Serve to a Unix socket, the systemd service); software-keyboard and touch behavior |
+| Docker Linux container on the Mac | Linux builds and tests, the systemd user unit, cgroup limits, Linux memory and CPU numbers, setup's refusals on hosts without systemd or on old Tailscale (S11) | tailnet behavior; Pop!_OS's own systemd and cgroup setup |
+| The Linux dev box (`pop-os`) | the Linux deployment: `tailscale serve` to `serve.sock`, LocalAPI whois, the auth gates G1–G12 and the setup gates S1–S8 and S12 | — (agents on the Mac can't reach it over SSH yet, because the Mac hasn't accepted its host key, so the Linux gates wait for Jimmy or a session on the box) |
 | Jimmy's iPhone | the device checklist in `docs/design/ios-shell.md`: keyboard, focus, geometry, selection, latency, Face ID | — (Jimmy runs it; agents can't drive the device) |
 
 ## tmux: probe on a private server, never Jimmy's
@@ -31,13 +31,26 @@ when output is queued (`docs/design/daemon-core.md` §3.3). So:
   Unix socket paths tmux and tether create past the 104-byte limit. The private
   tmux 3.4 and 3.7b builds live under that directory (`tmux/<version>/bin/tmux`).
 
-## The Mac can't run the daemon behind Tailscale
+## Probing Tailscale on the Mac touches Jimmy's real tailnet
 
-The macOS Tailscale apps expose no LocalAPI socket, so a daemon on the Mac answers
-`503 identity_unavailable` and Serve returns 502. `docs/running.md` states this as
-"`tether serve` runs on Linux only for now". Auth and Serve gates need the dev box.
-Use the Mac's `tailscale serve` only for tailnet-only checks, never Funnel, and reset
-it afterwards.
+The Mac hosts tether through its LaunchAgent and the standalone Tailscale app
+(`docs/running.md`, "Host on a Mac"), so a Mac probe writes the Serve config of
+Jimmy's own node and can enrol devices on his tailnet. So:
+
+- Before you start, save `tailscale serve status --json` and its hash, whether
+  `~/Library/LaunchAgents/com.jimmyyao.tether.plist` exists, `launchctl print
+  gui/$UID/com.jimmyyao.tether`, and the device rows in
+  `~/.local/state/tether/auth.toml`. Afterwards run `tether teardown`, and check that
+  the Serve config hashes the same as before and the other three match.
+- Never enable Funnel, and leave other Serve entries alone.
+- Don't run `tailscale bugreport`. It uploads a report to Tailscale each time it runs,
+  and the app's log upload can't be turned off (`docs/design/decisions.md`, "Tailscale's
+  log upload stays on for a Mac host").
+- Redact enrolment codes and path secrets (the random prefix in the Mac's Serve target
+  that guards its loopback port) from evidence.
+
+What runs on the Mac proves nothing about the Linux path, and the reverse holds too:
+the two hosts publish different targets through different services.
 
 ## Docker: cheap on the build, heavy on the host
 
@@ -67,10 +80,16 @@ tmux, but still never raises the software keyboard. So a Simulator run verifies 
 the bridge, networking and layout at rest; keyboard, focus, geometry and rotation wait
 for the device checklist. `ios/AGENTS.md` has the build rules.
 
-## Coder spawns commit unless the lead stops them
+## Commits: coder spawns commit, and the hook checks only the tip
 
 In the single-checkout build (root `AGENTS.md`, "How work lands"), parallel lanes
 share one working tree and the lead commits each change by pathspec after review. The
 `coder` and `frontend-coder` agent profiles (`.mars/agents/`) tell the agent to
 commit, and the agent follows the profile over a brief that says "don't commit". Check `git log` after every coder
 lane and fold or amend any commit it made before preflighting.
+
+The pre-push hook preflights only the pushed tip, so a commit in the middle of the
+range can fail while the tip passes. Folding review fixes in with `git rebase
+--autosquash` has left an intermediate commit failing clippy under a tip that passed.
+After any history rewrite, run `scripts/preflight.sh full` on a `git archive` export of
+every commit in the range before pushing.

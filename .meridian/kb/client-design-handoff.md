@@ -63,7 +63,7 @@ tested in browsers and the Simulator. None of these close from an agent shell
 | --- | --- |
 | Real device | The device checklist in `docs/design/ios-shell.md`, run by Jimmy on his iPhone: keyboard toggle, focus restoration, line-field lending, geometry and rotation, selection, hardware keys, latency, paste, Face ID. |
 | Touch on device | Tap, scroll and long-press resolve before anything is sent, and selection and copy behave in iPhone Safari and WKWebView, not only in emulated touch. |
-| Deployment | The auth probe gates G1–G12 in `docs/design/auth.md`, on the Linux dev box behind real Tailscale Serve. The Mac can't run them. |
+| Deployment | The auth probe gates G1–G12 in `docs/design/auth.md`, on the Linux dev box behind real Tailscale Serve; a Mac host has its own gates, M0–M8, which don't stand in for G1–G12. |
 | tmux versions | The real-tmux Rust suite (`tests/tmux_real.rs`) and the real-daemon web suites (`pnpm --dir web run e2e:real`, with `TETHER_E2E_TMUX=3.4` or `3.7b`) pass on both versions. |
 
 The full verification matrix for touch and copy is in
