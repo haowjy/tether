@@ -221,7 +221,7 @@ pub async fn start_loopback_with_serve_config(
         status_answer: Arc::new(Mutex::new(serde_json::json!({
             "BackendState": "Running",
             "Self": {
-                "StableID": "nSELF0123456789CNTRL",
+                "ID": "nSELF0123456789CNTRL",
                 "UserID": 1,
                 "DNSName": "devbox.ts.net."
             },
@@ -370,7 +370,7 @@ async fn start_as_with_allowlist(
         status_answer: Arc::new(Mutex::new(serde_json::json!({
             "BackendState": "Running",
             "Self": {
-                "StableID": "nSELF0123456789CNTRL",
+                "ID": "nSELF0123456789CNTRL",
                 "UserID": 1,
                 "DNSName": "devbox.ts.net."
             },

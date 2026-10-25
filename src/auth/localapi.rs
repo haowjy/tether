@@ -90,7 +90,9 @@ pub(super) struct Status {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct StatusNode {
-    #[serde(rename = "StableID", default)]
+    // Status reports the stable node ID as `ID` (ipnstate.PeerStatus); only whois's
+    // tailcfg.Node calls it `StableID`.
+    #[serde(rename = "ID", default)]
     pub(super) stable_id: String,
     #[serde(rename = "UserID", default)]
     pub(super) user_id: u64,

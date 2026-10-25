@@ -448,7 +448,7 @@ answer.
 | `UserProfile.LoginName` equals the decoded `Tailscale-User-Login` | Both come from the same netmap; disagreement means the two lookups saw different nodes, so neither is trusted |
 | `Sharer` is zero | A node shared in from another tailnet is someone else's machine, whatever user it shows |
 | `AllowedIPs` holds only the node's own `Addresses`, apart from the exit-node routes `0.0.0.0/0` and `::/0` | A subnet router masquerades every host on its LAN as itself, so its identity says nothing about which device sent the request. An exit node forwards only outbound traffic, so it can't do that |
-| the stable ID isn't the box's own (`Self.StableID` in the tailnet-state cell) | Every local user on the host, Linux or Mac, reaches Serve from the host's own node. Admitting it would let any of them in, through the front door |
+| the stable ID isn't the box's own (status's `Self.ID` in the tailnet-state cell) | Every local user on the host, Linux or Mac, reaches Serve from the host's own node. Admitting it would let any of them in, through the front door |
 
 Then, on the auth lane, the device lookup: a `node` device whose `node_id` equals
 the stable ID **and** whose `login` equals the node's login. No match is `401

@@ -403,7 +403,7 @@ async fn missing_self_stable_id_makes_tailnet_identity_unavailable() {
     let daemon = start("missing-self").await;
     daemon.fake.set_status_answer(serde_json::json!({
         "BackendState": "Running",
-        "Self": { "StableID": "", "UserID": 1, "DNSName": "devbox.ts.net." },
+        "Self": { "ID": "", "UserID": 1, "DNSName": "devbox.ts.net." },
         "User": { "1": { "LoginName": LOGIN } },
         "Peer": {}
     }));
