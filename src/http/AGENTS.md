@@ -1,8 +1,9 @@
 # http
 
-The daemon's HTTP surface: bounded hyper HTTP/1 connections over the private
-`serve.sock` and `local.sock` fronts. `server.rs` owns the shared accept loop and
-shutdown; the accepted socket inserts a `Front` on every request. `mod.rs` builds the
+The daemon's HTTP surface: bounded hyper HTTP/1 connections over its private fronts.
+`server.rs` owns the shared accept loop and shutdown for Unix or TCP listeners; it runs
+the listener's `Front` gate before the router, then inserts only its copyable `NodeLane`
+view on passing requests. `front.rs` owns the lane view and gate. `mod.rs` builds the
 router and orders the Tailscale/login check before native-token or enrolled-node
 admission. The node lane's pure policy is in `src/auth/node.rs`.
 
@@ -15,9 +16,9 @@ names a tmux type.
 Rules the code relies on, which are easy to break:
 
 - Every route, including shell and fallback paths, stays behind the Tailscale check.
-  `serve.sock` also requires `Host: localhost`; the shell and `/auth/info` skip device
-  admission so a cold launch can load. Keep `Front` derived from the listening socket,
-  never from request headers.
+  `Front::UnixServe` gates on `Host: localhost` before routing; the shell and
+  `/auth/info` skip device admission so a cold launch can load. Keep `Front` derived
+  from the listening socket, never from request headers.
 - A node-lane request is judged before handler work: canonical origin and request
   metadata, one tailnet `X-Forwarded-For`, whois, node rules, then the device row.
   Never trust these headers on `local.sock`; it is the dev/native front.

@@ -1597,9 +1597,9 @@ hyper's defaults and no hook (`serve/mod.rs`). At the default (8 KiB + 400 KiB p
 buffer), 61 connections could hold about 25 MiB. The loop:
 
 - accepts on both daemon Unix sockets, `$XDG_RUNTIME_DIR/tether/serve.sock` and
-  `$XDG_RUNTIME_DIR/tether/local.sock`, sharing the same 64 permits. The accepted
-  socket's `Front::Serve | Front::Local` is inserted into every request; the front
-  chooses the allowed auth lane ([auth.md](auth.md#sockets-and-the-tailscale-check));
+  `$XDG_RUNTIME_DIR/tether/local.sock`, sharing the same 64 permits. The front gate
+  runs before routing; only requests that pass receive its copyable `NodeLane` view
+  in their extensions ([auth.md](auth.md#sockets-and-the-tailscale-check));
 - takes one of the **64 connection permits** before each `accept`. With none free it
   stops accepting, and the kernel's listen backlog holds newcomers: `somaxconn` on
   the Unix socket (mio passes −1), where only tailscaled and Jimmy's own processes can

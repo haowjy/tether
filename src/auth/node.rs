@@ -7,7 +7,8 @@ use std::str::FromStr as _;
 use axum::http::{HeaderMap, HeaderValue, Method};
 use thiserror::Error;
 
-use super::identity::{CanonicalOrigin, Whois};
+use super::identity::CanonicalOrigin;
+use super::localapi::Whois;
 
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {

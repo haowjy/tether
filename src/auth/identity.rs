@@ -1,32 +1,21 @@
-//! Tailscale LocalAPI and request identity. LocalAPI answers are bounded and reused;
-//! whois is deliberately not cached between requests.
+//! Tailnet identity, its shared state cell, and Serve-origin calculation.
 
-use std::collections::{HashMap, VecDeque};
-use std::net::IpAddr;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::http::{HeaderMap, Request, header};
-use bytes::Bytes;
-use http_body_util::{BodyExt as _, Empty, Limited};
-use hyper::client::conn::http1::SendRequest;
-use hyper_util::rt::TokioIo;
+use axum::http::HeaderMap;
 use serde::Deserialize;
 use thiserror::Error;
-use tokio::net::UnixStream;
-use tokio::sync::{Mutex, Notify, watch};
+
+use super::localapi::{LocalApi, LocalApiError};
+use tokio::sync::{Mutex, Notify};
 use tokio::time::Instant;
 
 pub const LOGIN_HEADER: &str = "tailscale-user-login";
 pub const FUNNEL_HEADER: &str = "tailscale-funnel-request";
-const SOCKETS: [&str; 2] = [
-    "/var/run/tailscale/tailscaled.sock",
-    "/var/run/tailscaled.socket",
-];
-pub const LOCALAPI_TIMEOUT: Duration = Duration::from_secs(2);
-pub const LOCALAPI_MAX_BODY: usize = 64 * 1024;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum IdentityError {
@@ -38,28 +27,6 @@ pub enum IdentityError {
     NotAllowed(String),
     #[error("can't read tailnet identity: {0}")]
     Unavailable(String),
-}
-
-#[derive(Debug, Error, Clone)]
-pub enum LocalApiError {
-    #[error("no tailscaled LocalAPI socket at {0}")]
-    NoSocket(String),
-    #[error("can't reach tailscaled: {0}")]
-    Io(String),
-    #[error("tailscaled's LocalAPI: {0}")]
-    Http(String),
-    #[error("tailscaled didn't answer within {LOCALAPI_TIMEOUT:?}")]
-    Timeout,
-    #[error("tailscaled has no node for this address")]
-    NoPeer,
-    #[error("whois queue is full")]
-    Busy,
-    #[error("tailnet identity is unavailable")]
-    Unavailable,
-    #[error("tailscaled's LocalAPI answer exceeds {LOCALAPI_MAX_BODY} bytes")]
-    TooLarge,
-    #[error("tailscaled's {path} isn't the expected JSON: {error}")]
-    Json { path: &'static str, error: String },
 }
 
 #[derive(Debug, Clone)]
@@ -173,7 +140,7 @@ impl TailnetStateCell {
     }
 
     async fn refresh(&self) {
-        let result = self.api.tailnet_state().await;
+        let result = tailnet_state(&self.api).await;
         if matches!(
             self.complete(result).await,
             Completion::Failed { start_retry: true }
@@ -200,7 +167,7 @@ impl TailnetStateCell {
                 }
                 state.in_flight = true;
             }
-            let result = self.api.tailnet_state().await;
+            let result = tailnet_state(&self.api).await;
             if matches!(self.complete(result).await, Completion::Succeeded) {
                 return;
             }
@@ -239,333 +206,30 @@ enum Completion {
     Failed { start_retry: bool },
 }
 
+pub async fn tailnet_state(api: &LocalApi) -> Result<TailnetState, LocalApiError> {
+    let status = api.status().await?;
+    let serve: Option<ServeConfig> = api.serve_config().await?;
+    let this = status
+        .this
+        .filter(|node| !node.stable_id.is_empty())
+        .ok_or(LocalApiError::Unavailable)?;
+    let owner_login = status
+        .users
+        .get(&this.user_id.to_string())
+        .map(|user| user.login_name.clone())
+        .filter(|login| !login.is_empty());
+    Ok(TailnetState {
+        self_id: this.stable_id,
+        owner_login,
+        dns_name: this.dns_name.trim_end_matches('.').to_owned(),
+        serve: serve.unwrap_or_default(),
+    })
+}
+
 impl TailnetState {
     pub fn machine_name(&self) -> &str {
         self.dns_name.split('.').next().unwrap_or_default()
     }
-}
-
-/// A parsed whois answer sufficient for the browser node rules.
-#[derive(Debug, Clone, Deserialize)]
-pub struct Whois {
-    #[serde(rename = "Node")]
-    pub node: Option<WhoisNode>,
-    #[serde(rename = "UserProfile")]
-    pub user_profile: Option<UserProfile>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct WhoisNode {
-    #[serde(rename = "StableID", default)]
-    pub stable_id: String,
-    #[serde(rename = "Tags", default)]
-    pub tags: Vec<String>,
-    #[serde(rename = "Sharer", default)]
-    pub sharer: u64,
-    #[serde(rename = "Addresses", default)]
-    pub addresses: Vec<String>,
-    #[serde(rename = "AllowedIPs", default)]
-    pub allowed_ips: Vec<String>,
-    #[serde(rename = "DNSName", default)]
-    pub dns_name: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct UserProfile {
-    #[serde(rename = "LoginName", default)]
-    pub login_name: String,
-}
-
-/// The one LocalAPI owner. A cell client is separate from the two whois connections.
-#[derive(Clone)]
-pub struct LocalApi {
-    socket: Option<PathBuf>,
-    cell: Arc<Client>,
-    whois: Arc<[Client; 2]>,
-    whois_state: Arc<Mutex<WhoisState>>,
-}
-
-struct WhoisState {
-    free_clients: Vec<usize>,
-    waiting: VecDeque<(IpAddr, Arc<WhoisFlight>)>,
-    flights: HashMap<IpAddr, Arc<WhoisFlight>>,
-}
-
-struct WhoisFlight {
-    start: watch::Receiver<Option<usize>>,
-    start_tx: watch::Sender<Option<usize>>,
-    result: watch::Receiver<Option<Result<Whois, LocalApiError>>>,
-    result_tx: watch::Sender<Option<Result<Whois, LocalApiError>>>,
-}
-
-impl WhoisFlight {
-    fn new() -> Arc<Self> {
-        let (start_tx, start) = watch::channel(None);
-        let (result_tx, result) = watch::channel(None);
-        Arc::new(Self {
-            start,
-            start_tx,
-            result,
-            result_tx,
-        })
-    }
-}
-
-impl LocalApi {
-    /// Uses tailscaled's standard socket search order.
-    pub fn system() -> Self {
-        Self::new(None)
-    }
-
-    /// Uses a fixed LocalAPI socket; public so integration tests can run a fake daemon.
-    pub fn at(socket: PathBuf) -> Self {
-        Self::new(Some(socket))
-    }
-
-    fn new(socket: Option<PathBuf>) -> Self {
-        Self {
-            socket,
-            cell: Arc::new(Client::new()),
-            whois: Arc::new([Client::new(), Client::new()]),
-            whois_state: Arc::new(Mutex::new(WhoisState {
-                free_clients: vec![0, 1],
-                waiting: VecDeque::new(),
-                flights: HashMap::new(),
-            })),
-        }
-    }
-
-    fn socket_path(&self) -> Result<PathBuf, LocalApiError> {
-        self.socket.clone().map_or_else(
-            || {
-                SOCKETS
-                    .iter()
-                    .map(PathBuf::from)
-                    .find(|path| path.exists())
-                    .ok_or_else(|| LocalApiError::NoSocket(SOCKETS.join(" or ")))
-            },
-            Ok,
-        )
-    }
-
-    /// The status and serve config are read as one answer for the tailnet-state cell.
-    pub async fn tailnet_state(&self) -> Result<TailnetState, LocalApiError> {
-        #[derive(Deserialize)]
-        struct Status {
-            #[serde(rename = "Self")]
-            this: Option<SelfNode>,
-            #[serde(rename = "User", default)]
-            users: HashMap<String, User>,
-        }
-        #[derive(Deserialize)]
-        struct SelfNode {
-            #[serde(rename = "StableID", default)]
-            stable_id: String,
-            #[serde(rename = "UserID", default)]
-            user_id: u64,
-            #[serde(rename = "DNSName", default)]
-            dns_name: String,
-        }
-        #[derive(Deserialize)]
-        struct User {
-            #[serde(rename = "LoginName", default)]
-            login_name: String,
-        }
-
-        let socket = self.socket_path()?;
-        let status_bytes = self
-            .cell
-            .get(&socket, "/localapi/v0/status?peers=false")
-            .await?;
-        let serve_bytes = self.cell.get(&socket, "/localapi/v0/serve-config").await?;
-        let status: Status = parse_json("/localapi/v0/status?peers=false", &status_bytes)?;
-        let serve: Option<ServeConfig> = parse_json("/localapi/v0/serve-config", &serve_bytes)?;
-        let this = status
-            .this
-            .filter(|node| !node.stable_id.is_empty())
-            .ok_or(LocalApiError::Unavailable)?;
-        let owner_login = status
-            .users
-            .get(&this.user_id.to_string())
-            .map(|user| user.login_name.clone())
-            .filter(|login| !login.is_empty());
-        Ok(TailnetState {
-            self_id: this.stable_id,
-            owner_login,
-            dns_name: this.dns_name.trim_end_matches('.').to_owned(),
-            serve: serve.unwrap_or_default(),
-        })
-    }
-
-    pub async fn whois(&self, address: IpAddr) -> Result<Whois, LocalApiError> {
-        let (flight, start) = {
-            let mut state = self.whois_state.lock().await;
-            if let Some(flight) = state.flights.get(&address) {
-                (flight.clone(), false)
-            } else {
-                if state.free_clients.is_empty() && state.waiting.len() >= 16 {
-                    return Err(LocalApiError::Busy);
-                }
-                let flight = WhoisFlight::new();
-                state.flights.insert(address, flight.clone());
-                if let Some(index) = state.free_clients.pop() {
-                    let _ = flight.start_tx.send(Some(index));
-                    (flight, true)
-                } else {
-                    state.waiting.push_back((address, flight.clone()));
-                    // The dequeued flight gets its worker only when a client is assigned.
-                    (flight, false)
-                }
-            }
-        };
-        if start {
-            self.run_whois(address, flight.clone());
-        }
-        let mut result = flight.result.clone();
-        loop {
-            if let Some(result) = result.borrow().clone() {
-                return result;
-            }
-            result.changed().await.map_err(|_| {
-                LocalApiError::Http("whois worker stopped without a result".to_owned())
-            })?;
-        }
-    }
-
-    fn run_whois(&self, address: IpAddr, flight: Arc<WhoisFlight>) {
-        let api = self.clone();
-        tokio::spawn(async move {
-            let mut start = flight.start.clone();
-            let index = loop {
-                if let Some(index) = *start.borrow() {
-                    break index;
-                }
-                if start.changed().await.is_err() {
-                    return;
-                }
-            };
-            let path = format!("/localapi/v0/whois?addr={address}");
-            let result = match api.socket_path() {
-                Ok(socket) => api.whois[index]
-                    .get(&socket, &path)
-                    .await
-                    .and_then(|bytes| parse_json("/localapi/v0/whois", &bytes)),
-                Err(error) => Err(error),
-            };
-
-            let next = {
-                let mut state = api.whois_state.lock().await;
-                state.flights.remove(&address);
-                state.free_clients.push(index);
-                if let Some((next_address, next_flight)) = state.waiting.pop_front() {
-                    state.free_clients.pop().map(|next_index| {
-                        let _ = next_flight.start_tx.send(Some(next_index));
-                        (next_address, next_flight)
-                    })
-                } else {
-                    None
-                }
-            };
-            let _ = flight.result_tx.send(Some(result));
-            if let Some((next_address, next_flight)) = next {
-                api.run_whois(next_address, next_flight);
-            }
-        });
-    }
-}
-
-type RequestSender = SendRequest<Empty<Bytes>>;
-
-struct Client {
-    sender: Mutex<Option<RequestSender>>,
-}
-
-impl Client {
-    fn new() -> Self {
-        Self {
-            sender: Mutex::new(None),
-        }
-    }
-
-    async fn get(&self, socket: &Path, path: &str) -> Result<Bytes, LocalApiError> {
-        tokio::time::timeout(LOCALAPI_TIMEOUT, self.request(socket, path))
-            .await
-            .map_err(|_| LocalApiError::Timeout)?
-    }
-
-    async fn request(&self, socket: &Path, path: &str) -> Result<Bytes, LocalApiError> {
-        let mut current = self.sender.lock().await;
-        if current.is_none() {
-            *current = Some(connect(socket).await?);
-        }
-        let response = match current
-            .as_mut()
-            .expect("connected")
-            .send_request(request(path)?)
-            .await
-        {
-            Ok(response) => response,
-            Err(first) => {
-                *current = None;
-                let mut sender = connect(socket).await?;
-                let response = sender
-                    .send_request(request(path)?)
-                    .await
-                    .map_err(|error| LocalApiError::Http(error.to_string()))?;
-                *current = Some(sender);
-                let _ = first;
-                response
-            }
-        };
-        if response.status() == hyper::StatusCode::NOT_FOUND {
-            return Err(LocalApiError::NoPeer);
-        }
-        if !response.status().is_success() {
-            return Err(LocalApiError::Http(format!(
-                "{path}: {}",
-                response.status()
-            )));
-        }
-        Limited::new(response.into_body(), LOCALAPI_MAX_BODY)
-            .collect()
-            .await
-            .map(|body| body.to_bytes())
-            .map_err(|error| {
-                if error.to_string().contains("length limit") {
-                    LocalApiError::TooLarge
-                } else {
-                    LocalApiError::Http(error.to_string())
-                }
-            })
-    }
-}
-
-async fn connect(socket: &Path) -> Result<RequestSender, LocalApiError> {
-    let stream = UnixStream::connect(socket)
-        .await
-        .map_err(|error| LocalApiError::Io(error.to_string()))?;
-    let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-        .await
-        .map_err(|error| LocalApiError::Http(error.to_string()))?;
-    tokio::spawn(connection);
-    Ok(sender)
-}
-
-fn request(path: &str) -> Result<Request<Empty<Bytes>>, LocalApiError> {
-    Request::get(path)
-        .header(header::HOST, "local-tailscaled.sock")
-        .body(Empty::<Bytes>::new())
-        .map_err(|error| LocalApiError::Http(error.to_string()))
-}
-
-fn parse_json<T: serde::de::DeserializeOwned>(
-    path: &'static str,
-    bytes: &[u8],
-) -> Result<T, LocalApiError> {
-    serde_json::from_slice(bytes).map_err(|error| LocalApiError::Json {
-        path,
-        error: error.to_string(),
-    })
 }
 
 /// A login decoded by Serve, checked against either the explicit or default allowlist.
@@ -729,37 +393,27 @@ struct Service {
 }
 
 impl ServeConfig {
-    pub fn canonical_origin(
-        &self,
-        wanted: SocketIdentity,
-        serve_socket: &Path,
-    ) -> Result<CanonicalOrigin, OriginRefusal> {
-        if wanted == SocketIdentity::default() {
-            return Err(OriginRefusal::new("tether's serve.sock is not bound"));
-        }
+    pub fn canonical_origin(&self, target: &ServeTarget) -> Result<CanonicalOrigin, OriginRefusal> {
         let mut references = Vec::new();
-        self.collect_references("serve", wanted, &mut references);
+        self.collect_references("serve", target, &mut references);
         if references.len() != 1 {
             let offender = references
                 .get(1)
                 .or_else(|| references.first())
-                .map_or_else(
-                    || "no Serve entry names serve.sock".to_owned(),
-                    |r| r.label.clone(),
-                );
-            return Err(self.refusal(&offender, serve_socket));
+                .map_or_else(|| target.no_reference().to_owned(), |r| r.label.clone());
+            return Err(self.refusal(&offender, target));
         }
         let reference = &references[0];
         let Some((host_port, mount, web, service_funnel, https)) = &reference.web else {
-            return Err(self.refusal(&reference.label, serve_socket));
+            return Err(self.refusal(&reference.label, target));
         };
         if web.handlers.len() != 1 || mount.as_str() != "/" || !https || *service_funnel {
-            return Err(self.refusal(&reference.label, serve_socket));
+            return Err(self.refusal(&reference.label, target));
         }
-        let (host, port) = parse_host_port(host_port)
-            .ok_or_else(|| self.refusal(&reference.label, serve_socket))?;
+        let (host, port) =
+            parse_host_port(host_port).ok_or_else(|| self.refusal(&reference.label, target))?;
         if host.is_empty() || host.ends_with('.') {
-            return Err(self.refusal(&reference.label, serve_socket));
+            return Err(self.refusal(&reference.label, target));
         }
         let host = host.to_ascii_lowercase();
         let host = if host.contains(':') {
@@ -778,17 +432,21 @@ impl ServeConfig {
         })
     }
 
-    fn refusal(&self, entry: &str, serve_socket: &Path) -> OriginRefusal {
-        if let Some(old) = self.old_default_target() {
-            return OriginRefusal::new(&format!(
-                "{old} still proxies to tether's old 127.0.0.1:7850 listener. Replace it with: sudo tailscale serve --bg --https=443 unix:{}",
-                serve_socket.display()
-            ));
+    fn refusal(&self, entry: &str, target: &ServeTarget) -> OriginRefusal {
+        match target {
+            ServeTarget::Unix { path, .. } => {
+                if let Some(old) = self.old_default_target() {
+                    return OriginRefusal::new(&format!(
+                        "{old} still proxies to tether's old 127.0.0.1:7850 listener. Replace it with: sudo tailscale serve --bg --https=443 unix:{}",
+                        path.display()
+                    ));
+                }
+                OriginRefusal::new(&format!(
+                    "Tailscale Serve entry {entry} is not tether's sole HTTPS handler. Publish tether with: sudo tailscale serve --bg --https=443 unix:{}",
+                    path.display()
+                ))
+            }
         }
-        OriginRefusal::new(&format!(
-            "Tailscale Serve entry {entry} is not tether's sole HTTPS handler. Publish tether with: sudo tailscale serve --bg --https=443 unix:{}",
-            serve_socket.display()
-        ))
     }
 
     fn old_default_target(&self) -> Option<String> {
@@ -823,24 +481,24 @@ impl ServeConfig {
     fn collect_references<'a>(
         &'a self,
         scope: &str,
-        wanted: SocketIdentity,
+        target: &ServeTarget,
         out: &mut Vec<SocketRef<'a>>,
     ) {
         for (port, handler) in &self.tcp {
-            if same_socket(&handler.tcp_forward, wanted) {
+            if target.names(&handler.tcp_forward) {
                 out.push(SocketRef {
                     label: format!("{scope} TCP {port}"),
                     web: None,
                 });
             }
         }
-        self.collect_web(scope, wanted, out, &self.web, &self.tcp, &self.allow_funnel);
+        self.collect_web(scope, target, out, &self.web, &self.tcp, &self.allow_funnel);
         for (name, config) in &self.foreground {
-            config.collect_references(&format!("{scope} Foreground {name}"), wanted, out);
+            config.collect_references(&format!("{scope} Foreground {name}"), target, out);
         }
         for (name, service) in &self.services {
             for (port, handler) in &service.tcp {
-                if same_socket(&handler.tcp_forward, wanted) {
+                if target.names(&handler.tcp_forward) {
                     out.push(SocketRef {
                         label: format!("{scope} Service {name} TCP {port}"),
                         web: None,
@@ -849,7 +507,7 @@ impl ServeConfig {
             }
             self.collect_web(
                 &format!("{scope} Service {name}"),
-                wanted,
+                target,
                 out,
                 &service.web,
                 &service.tcp,
@@ -861,7 +519,7 @@ impl ServeConfig {
     fn collect_web<'a>(
         &'a self,
         scope: &str,
-        wanted: SocketIdentity,
+        target: &ServeTarget,
         out: &mut Vec<SocketRef<'a>>,
         web: &'a HashMap<String, WebServer>,
         tcp: &'a HashMap<String, TcpHandler>,
@@ -869,7 +527,7 @@ impl ServeConfig {
     ) {
         for (host_port, server) in web {
             for (mount, handler) in &server.handlers {
-                if !same_socket(&handler.proxy, wanted) {
+                if !target.names(&handler.proxy) {
                     continue;
                 }
                 let port = parse_host_port(host_port).map(|(_, port)| port);
@@ -912,20 +570,59 @@ impl OriginRefusal {
     }
 }
 
+/// Resolves the browser origin for a configured Serve target, including no-target
+/// daemons so callers share one refusal rule.
+pub(super) fn origin(
+    target: Option<&ServeTarget>,
+    serve: &ServeConfig,
+) -> Result<CanonicalOrigin, OriginRefusal> {
+    match target {
+        Some(target) => serve.canonical_origin(target),
+        None => Err(OriginRefusal::new("tether's serve.sock is not bound")),
+    }
+}
+
 struct SocketRef<'a> {
     label: String,
     web: Option<(&'a String, &'a String, &'a WebServer, bool, bool)>,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SocketIdentity {
     device: u64,
     inode: u64,
 }
 
-impl SocketIdentity {
-    pub fn of(path: &Path) -> std::io::Result<Self> {
-        socket_identity(path)
+#[derive(Debug, Clone)]
+pub enum ServeTarget {
+    Unix {
+        identity: SocketIdentity,
+        path: PathBuf,
+    },
+}
+
+impl ServeTarget {
+    pub fn unix(path: impl Into<PathBuf>) -> std::io::Result<Self> {
+        let path = path.into();
+        let identity = socket_identity(&path)?;
+        Ok(Self::Unix { identity, path })
+    }
+
+    fn names(&self, proxy: &str) -> bool {
+        match self {
+            Self::Unix { identity, .. } => {
+                let Some(path) = proxy.strip_prefix("unix:") else {
+                    return false;
+                };
+                socket_identity(Path::new(path)).is_ok_and(|found| found == *identity)
+            }
+        }
+    }
+
+    fn no_reference(&self) -> &'static str {
+        match self {
+            Self::Unix { .. } => "no Serve entry names serve.sock",
+        }
     }
 }
 
@@ -936,13 +633,6 @@ fn socket_identity(path: &Path) -> std::io::Result<SocketIdentity> {
         device: metadata.dev(),
         inode: metadata.ino(),
     })
-}
-
-fn same_socket(target: &str, wanted: SocketIdentity) -> bool {
-    let Some(path) = target.strip_prefix("unix:") else {
-        return false;
-    };
-    socket_identity(Path::new(path)).is_ok_and(|identity| identity == wanted)
 }
 
 fn parse_host_port(host_port: &str) -> Option<(String, u16)> {

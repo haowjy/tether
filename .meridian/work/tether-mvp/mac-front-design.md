@@ -97,6 +97,10 @@ unchanged apart from constructor signatures.
   Gate: constant-time compare (`subtle`) of the raw path's first `len + 2` bytes with
   `/<secret>/`, a shorter path failing; rewrite the URI to the remainder plus the query; empty 404 on mismatch,
   returned before `common_headers` or any LocalAPI call. Then the authority rule.
+- Inspect the raw HTTP request-target, not only `uri().path()`: reject absolute-form
+  targets rather than allowing an absolute URI with the secret path to pass. Refuse
+  duplicate `Host` or `X-Forwarded-Host` headers instead of choosing one value from
+  an ambiguous request.
 - `ServeTarget::Loopback { port, secret }`; canonical-origin references are every
   target on that port, whatever the host; the sole handler must be exactly
   `http://127.0.0.1:<port>/<secret>`. Refusal text comes from the target

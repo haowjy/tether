@@ -6,7 +6,7 @@
 use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use tether::auth::identity::{LocalApi, LocalApiError};
+use tether::auth::localapi::{LocalApi, LocalApiError};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -407,9 +407,8 @@ async fn missing_self_stable_id_makes_tailnet_identity_unavailable() {
         "User": { "1": { "LoginName": LOGIN } },
         "Peer": {}
     }));
-    let result = LocalApi::at(daemon.dir.join("tailscaled.sock"))
-        .tailnet_state()
-        .await;
+    let api = LocalApi::at(daemon.dir.join("tailscaled.sock"));
+    let result = tether::auth::identity::tailnet_state(&api).await;
     assert!(matches!(result, Err(LocalApiError::Unavailable)));
 }
 

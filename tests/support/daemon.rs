@@ -14,13 +14,14 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use tether::auth::identity::LocalApi;
+use tether::auth::identity::ServeTarget;
+use tether::auth::localapi::LocalApi;
 use tether::auth::{Auth, Store};
 use tether::blocking::Lanes;
 use tether::budget::DEFAULT_CAPS;
 use tether::complete;
 use tether::config::ConfigFile;
-use tether::http::{self, App};
+use tether::http::{self, App, Front, Listener};
 use tether::hub::{self, Endpoints};
 use tether::proto::HostInfo;
 use tether::tmux::{Endpoint, Socket};
@@ -260,7 +261,7 @@ async fn start_as_with_allowlist(
             },
             lanes.auth.clone(),
             LocalApi::at(api_socket),
-            Some(&serve_socket),
+            Some(ServeTarget::unix(serve_socket.clone()).expect("serve socket identity")),
         ),
         hub,
         host: HostInfo {
@@ -282,8 +283,10 @@ async fn start_as_with_allowlist(
         lanes,
     };
     let server = tokio::spawn(http::serve(
-        serve_listener,
-        local_listener,
+        vec![
+            (Listener::Unix(serve_listener), Front::UnixServe),
+            (Listener::Unix(local_listener), Front::Local),
+        ],
         app,
         std::future::pending(),
     ));

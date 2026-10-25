@@ -3,10 +3,12 @@
 Request admission and durable device state for the daemon ([auth.md](../../docs/design/auth.md)).
 The socket front selects the lane: native token on either front, enrolled Tailscale
 node only on `serve.sock`. `mod.rs` owns admission and live-socket rechecks;
-`identity.rs` owns Serve headers, the shared 10 s/30 s tailnet-state cell, keep-alive
-LocalAPI and bounded, uncached whois; `node.rs` owns pure forwarded-address, node and
-browser-origin rules; `token.rs` owns tokens, codes and hashes; `store.rs` owns the
-shared `auth.toml` read-modify-write and native/node row shapes.
+`identity.rs` owns the shared 10 s/30 s tailnet-state cell, Serve target and
+canonical-origin calculation;
+`localapi.rs` owns LocalAPI transport and keep-alive clients, bounded uncached whois,
+and response parsing. `node.rs` owns pure forwarded-address, node and browser-origin
+rules; `token.rs` owns tokens, codes and hashes; `store.rs` owns the shared
+`auth.toml` read-modify-write and native/node row shapes.
 
 Rules the code relies on, which are easy to break:
 

@@ -6,13 +6,14 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use clap::{Parser, Subcommand};
-use tether::auth::identity::LocalApi;
+use tether::auth::identity::{self, ServeTarget};
+use tether::auth::localapi::LocalApi;
 use tether::auth::{Auth, DeviceKind, Store};
 use tether::blocking::{BLOCKING_THREADS, Lanes};
 use tether::complete::{self, Environment};
 use tether::config::{self, Config, ConfigError, ConfigFile};
 use tether::fs;
-use tether::http::{self, App};
+use tether::http::{self, App, Front, Listener};
 use tether::hub::{self, Endpoints};
 use tether::proto::HostInfo;
 use tokio::signal::unix::{SignalKind, signal};
@@ -118,6 +119,7 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
     let runtime_dir = config::runtime_dir()?;
     let runtime = tether::runtime::Runtime::open(runtime_dir)?;
     let serve_path = runtime.serve_path.clone();
+    let serve_target = ServeTarget::unix(&serve_path).ok();
     let local_path = runtime.local_path.clone();
     let paste_dir = runtime.paste_dir.clone();
     let serve_listener = runtime.serve;
@@ -142,13 +144,7 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
     let hub_stop = hub.clone();
     let api = LocalApi::system();
     let app = App {
-        auth: Auth::with_local_api(
-            store,
-            allow_login,
-            lanes.auth.clone(),
-            api,
-            Some(&serve_path),
-        ),
+        auth: Auth::with_local_api(store, allow_login, lanes.auth.clone(), api, serve_target),
         hub,
         host: HostInfo { id: host_id, name },
         paste_dir,
@@ -166,7 +162,14 @@ async fn daemon(config: Config, file: ConfigFile, allow_login: Vec<String>) -> R
         info!("shutting down");
         let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
     };
-    let mut server = std::pin::pin!(http::serve(serve_listener, local_listener, app, signalled));
+    let mut server = std::pin::pin!(http::serve(
+        vec![
+            (Listener::Unix(serve_listener), Front::UnixServe),
+            (Listener::Unix(local_listener), Front::Local),
+        ],
+        app,
+        signalled,
+    ));
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
     info!(
         serve_socket = %serve_path.display(),
@@ -240,16 +243,16 @@ fn enroll(config: &Config, ttl: Duration) -> Result<()> {
         humantime::format_duration(Duration::from_secs(ttl.as_secs()))
     );
     let api = LocalApi::system();
-    let publication = runtime()?.block_on(api.tailnet_state());
+    let publication = runtime()?.block_on(identity::tailnet_state(&api));
     match publication {
         Ok(state) => {
             let path = config::runtime_dir()?.join("serve.sock");
-            let origin = tether::auth::identity::SocketIdentity::of(&path)
+            let origin = ServeTarget::unix(path)
                 .map_err(|error| error.to_string())
-                .and_then(|socket| {
+                .and_then(|target| {
                     state
                         .serve
-                        .canonical_origin(socket, &path)
+                        .canonical_origin(&target)
                         .map(|origin| origin.origin)
                         .map_err(|refusal| refusal.message)
                 });

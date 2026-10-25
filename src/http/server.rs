@@ -1,9 +1,11 @@
-//! The bounded HTTP/1 accept loop (daemon-core.md §6.4). Each accepted transport owns
+//! The bounded HTTP/1 accept loop (daemon-core.md §6.4). Each accepted stream owns
 //! its permit, including after hyper transfers it into an upgraded WebSocket.
 
 use std::convert::Infallible;
 use std::future::Future;
+use std::future::poll_fn;
 use std::io::{self, IoSlice};
+use std::os::fd::AsFd;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -18,7 +20,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, watch};
 use tokio::task::JoinSet;
 use tokio::time::{Instant, Sleep, sleep, sleep_until, timeout_at};
@@ -36,6 +38,87 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(100);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
 const SOCKET_BUFFER: usize = 64 * 1024;
 const SHELL_STALL: Duration = Duration::from_secs(30);
+
+pub enum Listener {
+    Unix(UnixListener),
+    Tcp(TcpListener),
+}
+
+enum Stream {
+    Unix(UnixStream),
+    Tcp(TcpStream),
+}
+
+impl Listener {
+    fn poll_accept(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<Stream>> {
+        match self {
+            Self::Unix(listener) => listener
+                .poll_accept(cx)
+                .map(|result| result.map(|(stream, _)| Stream::Unix(stream))),
+            Self::Tcp(listener) => listener
+                .poll_accept(cx)
+                .map(|result| result.map(|(stream, _)| Stream::Tcp(stream))),
+        }
+    }
+}
+
+impl AsyncRead for Stream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Self::Unix(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for Stream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Self::Unix(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Self::Unix(stream) => Pin::new(stream).poll_flush(cx),
+            Self::Tcp(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Self::Unix(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            Self::Unix(stream) => stream.is_write_vectored(),
+            Self::Tcp(stream) => stream.is_write_vectored(),
+        }
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Self::Unix(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
+            Self::Tcp(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
+        }
+    }
+}
 
 /// Shared with a shell body so its accepted transport can enforce a write-progress
 /// deadline without timing ordinary idle keep-alive connections.
@@ -64,11 +147,20 @@ impl Drop for ShellStallGuard {
 
 /// Serves until shutdown, then gives requests and upgraded sockets a bounded grace.
 pub async fn serve(
-    serve_listener: UnixListener,
-    local_listener: UnixListener,
+    fronts: Vec<(Listener, Front)>,
     app: App,
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> io::Result<()> {
+    let mut fronts: Vec<_> = fronts
+        .into_iter()
+        .map(|(listener, front)| (listener, Arc::new(front)))
+        .collect();
+    if fronts.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "HTTP server requires at least one listener",
+        ));
+    }
     app.auth.start();
     let (stop, shutdown) = watch::channel(false);
     tokio::spawn(async move {
@@ -95,6 +187,7 @@ pub async fn serve(
     let routes = router(ctx.clone());
     let mut stopping = shutdown.clone();
     let mut connections = JoinSet::new();
+    let mut next_listener = 0;
 
     loop {
         let permit = tokio::select! {
@@ -111,12 +204,7 @@ pub async fn serve(
                 drop(permit);
                 break;
             }
-            accepted = async {
-                tokio::select! {
-                    accepted = serve_listener.accept() => accepted.map(|(stream, _)| (stream, Front::Serve)),
-                    accepted = local_listener.accept() => accepted.map(|(stream, _)| (stream, Front::Local)),
-                }
-            } => accepted,
+            accepted = accept(&mut fronts, &mut next_listener) => accepted,
         };
         let (stream, front) = match accepted {
             Ok(accepted) => accepted,
@@ -130,17 +218,17 @@ pub async fn serve(
                 continue;
             }
         };
-        if let Err(error) = small_buffers(&stream) {
-            debug!(%error, "can't size an accepted socket's buffers");
-        }
-        spawn_and_reap(
+        spawn_connection(
             &mut connections,
-            connection(stream, front, permit, routes.clone(), shutdown.clone()),
+            stream,
+            front,
+            permit,
+            routes.clone(),
+            shutdown.clone(),
         );
     }
 
-    drop(serve_listener);
-    drop(local_listener);
+    drop(fronts);
     let deadline = Instant::now() + SHUTDOWN_WAIT;
     while !connections.is_empty() {
         match timeout_at(deadline, connections.join_next()).await {
@@ -161,6 +249,24 @@ pub async fn serve(
     Ok(())
 }
 
+async fn accept(
+    fronts: &mut [(Listener, Arc<Front>)],
+    next_listener: &mut usize,
+) -> io::Result<(Stream, Arc<Front>)> {
+    poll_fn(|cx| {
+        let start = *next_listener % fronts.len();
+        for offset in 0..fronts.len() {
+            let index = (start + offset) % fronts.len();
+            if let Poll::Ready(result) = fronts[index].0.poll_accept(cx) {
+                *next_listener = (index + 1) % fronts.len();
+                return Poll::Ready(result.map(|stream| (stream, fronts[index].1.clone())));
+            }
+        }
+        Poll::Pending
+    })
+    .await
+}
+
 fn spawn_and_reap(connections: &mut JoinSet<()>, task: impl Future<Output = ()> + Send + 'static) {
     connections.spawn(task);
     while let Some(result) = connections.try_join_next() {
@@ -170,30 +276,77 @@ fn spawn_and_reap(connections: &mut JoinSet<()>, task: impl Future<Output = ()> 
     }
 }
 
-fn small_buffers(stream: &UnixStream) -> io::Result<()> {
+fn small_buffers(stream: &impl AsFd) -> io::Result<()> {
     rustix::net::sockopt::set_socket_send_buffer_size(stream, SOCKET_BUFFER)?;
     rustix::net::sockopt::set_socket_recv_buffer_size(stream, SOCKET_BUFFER)?;
     Ok(())
 }
 
-async fn connection(
-    stream: UnixStream,
-    front: Front,
+fn spawn_connection(
+    connections: &mut JoinSet<()>,
+    stream: Stream,
+    front: Arc<Front>,
+    permit: OwnedSemaphorePermit,
+    routes: Router,
+    shutdown: watch::Receiver<bool>,
+) {
+    match stream {
+        Stream::Unix(stream) => spawn_stream(connections, stream, front, permit, routes, shutdown),
+        Stream::Tcp(stream) => {
+            if let Err(error) = stream.set_nodelay(true) {
+                debug!(%error, "can't set TCP_NODELAY on an accepted socket");
+            }
+            spawn_stream(connections, stream, front, permit, routes, shutdown);
+        }
+    }
+}
+
+fn spawn_stream<S>(
+    connections: &mut JoinSet<()>,
+    stream: S,
+    front: Arc<Front>,
+    permit: OwnedSemaphorePermit,
+    routes: Router,
+    shutdown: watch::Receiver<bool>,
+) where
+    S: AsyncRead + AsyncWrite + AsFd + Unpin + Send + 'static,
+{
+    if let Err(error) = small_buffers(&stream) {
+        debug!(%error, "can't size an accepted socket's buffers");
+    }
+    spawn_and_reap(
+        connections,
+        connection(stream, front, permit, routes, shutdown),
+    );
+}
+
+async fn connection<S>(
+    stream: S,
+    front: Arc<Front>,
     permit: OwnedSemaphorePermit,
     routes: Router,
     mut shutdown: watch::Receiver<bool>,
-) {
+) where
+    S: AsyncRead + AsyncWrite + AsFd + Unpin + Send + 'static,
+{
     let stall = Arc::new(ShellStall::default());
     let service_stall = stall.clone();
-    let service = service_fn(move |mut request: Request<Incoming>| {
+    let service = service_fn(move |request: Request<Incoming>| {
+        let mut request = request.map(Body::new);
+        let refused = front.gate(&mut request);
+        let node_lane = front.node_lane();
         let routes = routes.clone();
         let stall = service_stall.clone();
         async move {
-            request.extensions_mut().insert(front);
-            request.extensions_mut().insert(stall);
-            let response = match routes.oneshot(request.map(Body::new)).await {
-                Ok(response) => response,
-                Err(never) => match never {},
+            let response = if let Some(response) = refused {
+                response
+            } else {
+                request.extensions_mut().insert(node_lane);
+                request.extensions_mut().insert(stall);
+                match routes.oneshot(request).await {
+                    Ok(response) => response,
+                    Err(never) => match never {},
+                }
             };
             Ok::<Response<Body>, Infallible>(response)
         }
@@ -228,15 +381,15 @@ async fn connection(
 
 /// Hyper transfers this I/O object to `Upgraded` on a WebSocket upgrade. Keeping the
 /// permit inside it makes the 64-connection backstop count upgraded sockets too.
-struct AcceptedStream {
-    stream: UnixStream,
+struct AcceptedStream<S> {
+    stream: S,
     _permit: OwnedSemaphorePermit,
     stall: Arc<ShellStall>,
     stall_generation: u64,
     stall_deadline: Pin<Box<Sleep>>,
 }
 
-impl AcceptedStream {
+impl<S> AcceptedStream<S> {
     fn poll_stall(&mut self, cx: &mut Context<'_>) -> bool {
         if !self.stall.active.load(Ordering::SeqCst) {
             return false;
@@ -260,7 +413,10 @@ impl AcceptedStream {
     }
 }
 
-impl AsyncRead for AcceptedStream {
+impl<S> AsyncRead for AcceptedStream<S>
+where
+    S: AsyncRead + AsyncWrite + AsFd + Unpin,
+{
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -270,7 +426,10 @@ impl AsyncRead for AcceptedStream {
     }
 }
 
-impl AsyncWrite for AcceptedStream {
+impl<S> AsyncWrite for AcceptedStream<S>
+where
+    S: AsyncRead + AsyncWrite + AsFd + Unpin,
+{
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,

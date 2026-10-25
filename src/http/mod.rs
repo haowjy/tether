@@ -1,5 +1,5 @@
-//! HTTP routes and admission layers. The accepted socket sets `Front`; that front
-//! chooses which credential lane may run, and unknown API paths never become shell UI.
+//! HTTP routes and admission layers. Each listener supplies its `Front`, which gates
+//! requests before routing and chooses the credential lanes available to them.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use axum::routing::{get, post};
 use tokio::sync::{Semaphore, watch};
 use tracing::{error, warn};
 
-use crate::auth::{Auth, AuthError, Front, Session};
+use crate::auth::{Auth, AuthError, NodeLane, Session};
 use crate::blocking::{Lanes, PermitPool};
 use crate::budget::Caps;
 use crate::config::ConfigFile;
@@ -26,13 +26,15 @@ use error::Refusal;
 mod complete;
 mod enroll;
 mod error;
+mod front;
 mod fs;
 mod node_auth;
 mod server;
 mod shell;
 mod ws;
 
-pub use server::serve;
+pub use front::Front;
+pub use server::{Listener, serve};
 
 const ENROLL_BODY: usize = 4 * 1024;
 
@@ -94,42 +96,27 @@ fn router(ctx: Arc<Ctx>) -> Router {
         .with_state(ctx)
 }
 
-/// Every route on either front requires an allowed Serve login. Serve rewrites Host
-/// to localhost for Unix targets; the browser's actual authority is in its forwarded
-/// host and is checked later on the node lane.
+/// Every request that passes its front's gate requires an allowed Serve login. Serve
+/// rewrites Host to localhost for Unix targets; the browser's actual authority is in
+/// its forwarded host and is checked later on the node lane.
 async fn tailscale_check(
     State(ctx): State<Arc<Ctx>>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    let front = request
-        .extensions()
-        .get::<Front>()
-        .copied()
-        .unwrap_or(Front::Local);
-    let bad_serve_host = front == Front::Serve
-        && request
-            .headers()
-            .get(header::HOST)
-            .and_then(|value| value.to_str().ok())
-            != Some("localhost");
     let shell_path = shell::is_shell_path(request.uri().path());
-    let mut response = if bad_serve_host {
-        Refusal::from(HttpError::Forbidden).into_response()
-    } else {
-        match ctx.app.auth.identity(request.headers()).await {
-            Ok(login) => {
-                request.extensions_mut().insert(Login(login));
-                next.run(request).await
-            }
-            Err(refused) => {
-                warn!(%refused, path = request.uri().path(), "refused by the Tailscale check");
-                match refused {
-                    crate::auth::IdentityError::Unavailable(_) => {
-                        Refusal::from(HttpError::IdentityUnavailable).into_response()
-                    }
-                    _ => Refusal::from(HttpError::Forbidden).into_response(),
+    let mut response = match ctx.app.auth.identity(request.headers()).await {
+        Ok(login) => {
+            request.extensions_mut().insert(Login(login));
+            next.run(request).await
+        }
+        Err(refused) => {
+            warn!(%refused, path = request.uri().path(), "refused by the Tailscale check");
+            match refused {
+                crate::auth::IdentityError::Unavailable(_) => {
+                    Refusal::from(HttpError::IdentityUnavailable).into_response()
                 }
+                _ => Refusal::from(HttpError::Forbidden).into_response(),
             }
         }
     };
@@ -138,11 +125,11 @@ async fn tailscale_check(
 }
 
 async fn device_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: Next) -> Response {
-    let front = request
+    let node_lane = request
         .extensions()
-        .get::<Front>()
+        .get::<NodeLane>()
         .copied()
-        .unwrap_or(Front::Local);
+        .unwrap_or(NodeLane::Refused);
     let login = request
         .extensions()
         .get::<Login>()
@@ -156,7 +143,7 @@ async fn device_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: N
         .app
         .auth
         .check(
-            front,
+            node_lane,
             request.method(),
             request.headers(),
             upgrade,
@@ -182,11 +169,11 @@ async fn device_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: N
 }
 
 async fn node_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: Next) -> Response {
-    let front = request
+    let node_lane = request
         .extensions()
-        .get::<Front>()
+        .get::<NodeLane>()
         .copied()
-        .unwrap_or(Front::Local);
+        .unwrap_or(NodeLane::Refused);
     let login = request
         .extensions()
         .get::<Login>()
@@ -204,7 +191,7 @@ async fn node_check(State(ctx): State<Arc<Ctx>>, mut request: Request, next: Nex
         .app
         .auth
         .check(
-            front,
+            node_lane,
             request.method(),
             request.headers(),
             upgrade,

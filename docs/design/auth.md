@@ -772,13 +772,13 @@ pass through it.
 
 - `node.rs`: pure forwarded-address parsing, node eligibility and browser-origin
   admission rules.
-- `localapi.rs`: the LocalAPI transport chosen at startup (Unix socket, or the Mac's
-  proof-token TCP), endpoint discovery on each connect, and the keep-alive clients,
-  including the serve-config read with its `Etag` and the `If-Match` write.
-- `identity.rs`: the tailnet-state cell; bounded, single-flight whois; Serve-config
-  parsing, the serve target (`serve.sock` identity, or the Mac front's port and path
-  secret) and canonical-origin calculation; Tailscale login decoding. Cell fills and
-  retries log changes in origin or availability.
+- `localapi.rs`: the platform-selected LocalAPI transport, endpoint discovery on
+  each connect, keep-alive clients, bounded uncached whois, answer parsing and the
+  versioned Serve-config access used by publication.
+- `identity.rs`: the tailnet-state cell; Serve-config parsing, the serve target
+  (`serve.sock` identity, or the Mac front's port and path secret) and canonical-origin
+  calculation; Tailscale login decoding. Cell fills and retries log changes in origin
+  or availability.
 - `publish.rs`: the Mac publication. A pure plan from the serve config's JSON, the
   MagicDNS name, the front's port and the target to the new JSON or a refusal, and the
   withdrawal's plan for a socket launchd couldn't bind; one
@@ -788,8 +788,9 @@ pass through it.
 - `store.rs`: `auth.toml` read-modify-write, native and node devices, and pending
   enrolment. Invalid device rows are kept as raw TOML when refused; writes preserve
   them, and removal can match their `name`.
-- `mod.rs`: front and credential dispatch, device admission, and live-socket
-  re-checks. Node re-checks use the freshly read device row before applying policy.
+- `mod.rs`: credential dispatch from the HTTP front's lane view, device admission,
+  and live-socket re-checks. Node re-checks use the freshly read device row before
+  applying policy.
 - `http/front.rs`: the front type. Each front names its lanes and its gate: the
   `localhost` rule for `serve.sock`, the path secret and published-authority rule
   for the Mac front, none for `local.sock`. The gate is a pure function of the

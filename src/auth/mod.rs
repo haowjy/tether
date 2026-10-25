@@ -2,7 +2,6 @@
 //! native or node lane; `admit` is the one post-lookup policy for both.
 
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use axum::http::{HeaderMap, Method, header};
@@ -12,6 +11,7 @@ use tracing::{info, warn};
 use crate::blocking::{Busy, Lane};
 
 pub mod identity;
+pub mod localapi;
 pub mod node;
 pub mod store;
 pub mod token;
@@ -22,10 +22,11 @@ pub use store::{AuthFile, Device, DeviceKind, Store, StoreError};
 /// The subprotocol that carries a native token on a WebSocket.
 pub const SUBPROTOCOL_PREFIX: &str = "tether.auth.";
 
+/// Whether a listener permits tokenless browser-node authentication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Front {
-    Serve,
-    Local,
+pub enum NodeLane {
+    Allowed,
+    Refused,
 }
 
 #[derive(Debug, Error)]
@@ -104,10 +105,9 @@ pub struct Auth {
     allow: Vec<String>,
     explicit_allow: bool,
     lane: Lane,
-    api: identity::LocalApi,
+    api: localapi::LocalApi,
     state: identity::TailnetStateCell,
-    serve_socket: Option<identity::SocketIdentity>,
-    serve_path: Option<PathBuf>,
+    serve_target: Option<identity::ServeTarget>,
     logged_origin: Arc<Mutex<Option<String>>>,
 }
 
@@ -116,26 +116,15 @@ impl Auth {
         store: Store,
         allow: Vec<String>,
         lane: Lane,
-        api: identity::LocalApi,
-        serve_socket: Option<&Path>,
+        api: localapi::LocalApi,
+        serve_target: Option<identity::ServeTarget>,
     ) -> Self {
-        let serve_path = serve_socket.map(Path::to_owned);
-        let serve_socket = serve_path
-            .as_deref()
-            .and_then(|path| identity::SocketIdentity::of(path).ok());
         let logged_origin = Arc::new(Mutex::new(None));
-        let observed_path = serve_path.clone();
+        let observed_target = serve_target.clone();
         let observed_origin = logged_origin.clone();
         let state = identity::TailnetStateCell::new(api.clone(), move |result| match result {
             Ok(state) => {
-                let origin = serve_socket.zip(observed_path.as_deref()).map_or_else(
-                    || {
-                        Err(identity::OriginRefusal {
-                            message: "tether's serve.sock is not bound".to_owned(),
-                        })
-                    },
-                    |(socket, path)| state.serve.canonical_origin(socket, path),
-                );
+                let origin = identity::origin(observed_target.as_ref(), &state.serve);
                 log_origin(&observed_origin, origin);
             }
             Err(error) => log_unavailable(&observed_origin, error.to_string()),
@@ -147,8 +136,7 @@ impl Auth {
             lane,
             api,
             state,
-            serve_socket,
-            serve_path,
+            serve_target,
             logged_origin,
         }
     }
@@ -179,21 +167,14 @@ impl Auth {
 
     pub async fn browser_origin(&self) -> Result<Result<CanonicalOrigin, String>, AuthError> {
         let state = self.tailnet_state().await?;
-        let Some(socket) = self.serve_socket else {
-            return Ok(Err("tether's serve.sock is not bound".to_owned()));
-        };
-        let path = self
-            .serve_path
-            .as_deref()
-            .unwrap_or(Path::new("serve.sock"));
-        let origin = state.serve.canonical_origin(socket, path);
+        let origin = identity::origin(self.serve_target.as_ref(), &state.serve);
         log_origin(&self.logged_origin, origin.clone());
         Ok(origin.map_err(|refusal| refusal.message))
     }
 
     /// Whether this daemon sits behind Tailscale serve, so the browser's origin is knowable.
     pub fn serves_origin(&self) -> bool {
-        self.serve_socket.is_some()
+        self.serve_target.is_some()
     }
 
     pub async fn cached_browser_origin(&self) -> Option<CanonicalOrigin> {
@@ -203,12 +184,7 @@ impl Auth {
             .await
             .ok()
             .or(self.state.last_known().await)?;
-        let socket = self.serve_socket?;
-        let path = self
-            .serve_path
-            .as_deref()
-            .unwrap_or(Path::new("serve.sock"));
-        state.serve.canonical_origin(socket, path).ok()
+        identity::origin(self.serve_target.as_ref(), &state.serve).ok()
     }
 
     /// The Tailscale check, on every route of both fronts.
@@ -228,10 +204,10 @@ impl Auth {
 
     /// Authenticates one request after the Tailscale login check. Credentials always
     /// select native, even when invalid; only a request with no credential may try the
-    /// node lane, and that lane exists on `serve.sock` only.
+    /// node lane, which the HTTP front's lane view enables only on Serve listeners.
     pub async fn check(
         &self,
-        front: Front,
+        node_lane: NodeLane,
         method: &Method,
         headers: &HeaderMap,
         upgrade: bool,
@@ -240,7 +216,7 @@ impl Auth {
     ) -> Result<Session, AuthError> {
         match presented(headers)? {
             Some(token) => self.check_native(token).await.map(Session::Native),
-            None if front == Front::Local => Err(AuthError::NoToken),
+            None if node_lane == NodeLane::Refused => Err(AuthError::NoToken),
             None => {
                 self.check_node(method, headers, upgrade, login, allow_unenrolled)
                     .await
@@ -365,10 +341,10 @@ impl Auth {
         }
     }
 
-    async fn whois(&self, address: IpAddr) -> Result<identity::Whois, AuthError> {
+    async fn whois(&self, address: IpAddr) -> Result<localapi::Whois, AuthError> {
         self.api.whois(address).await.map_err(|error| match error {
-            identity::LocalApiError::Busy => AuthError::Busy,
-            identity::LocalApiError::NoPeer => AuthError::NodeRefused(node::Reason::UnknownNode),
+            localapi::LocalApiError::Busy => AuthError::Busy,
+            localapi::LocalApiError::NoPeer => AuthError::NodeRefused(node::Reason::UnknownNode),
             other => AuthError::IdentityUnavailable(other.to_string()),
         })
     }
@@ -377,15 +353,8 @@ impl Auth {
         &self,
         state: &identity::TailnetState,
     ) -> Result<CanonicalOrigin, AuthError> {
-        let socket = self.serve_socket.ok_or(AuthError::BadOrigin)?;
-        let path = self
-            .serve_path
-            .as_deref()
-            .unwrap_or(Path::new("serve.sock"));
-        let result = state
-            .serve
-            .canonical_origin(socket, path)
-            .map_err(|refusal| {
+        let result =
+            identity::origin(self.serve_target.as_ref(), &state.serve).map_err(|refusal| {
                 log_origin(&self.logged_origin, Err(refusal.clone()));
                 AuthError::BadOrigin
             });
