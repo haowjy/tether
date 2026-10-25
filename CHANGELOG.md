@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- The "Update ready" and "Reload" banners now sit inside the app shell, so showing one no longer
+  makes the page scroll or pushes the bottom of the screen out of view.
 - `tether setup` publishes tether on your tailnet and prints its link, a QR code of it and
   an enrolment code. On Linux it runs tether in the terminal until Ctrl-C, leaving the
   Serve entry in place; `tether setup --background` installs the systemd user service, or

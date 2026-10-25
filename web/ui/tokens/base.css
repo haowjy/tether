@@ -1,10 +1,10 @@
 /* The reset and the few global rules every screen shares. */
 *, *::before, *::after { box-sizing: border-box; }
 
-html, body, #app { height: 100%; }
+html, body { height: 100%; overflow: hidden; }
 /* The app root is `100svh` tall: the small viewport, so Safari's toolbars and the keyboard
    never change the box tmux is sized from (client-architecture.md §5.4). */
-#app { height: 100svh; }
+#app { height: 100svh; overflow: hidden; }
 
 body {
   margin: 0;

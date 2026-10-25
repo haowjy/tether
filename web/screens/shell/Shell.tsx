@@ -10,6 +10,7 @@ import { Picker } from "../picker/Picker";
 import { Settings } from "../settings/Settings";
 import { Switcher } from "../switcher/Switcher";
 import { TerminalScreen } from "../terminal/TerminalScreen";
+import { AppBanners } from "./AppBanners";
 import { HostBanner } from "./HostBanner";
 import { Rail } from "./Rail";
 import styles from "./Shell.module.css";
@@ -31,7 +32,10 @@ export function Shell() {
     <div class={styles.shell} data-layout={layout}>
       {!blocking && desktop && <Rail destination={destination} />}
       <div class={styles.column}>
-        {!blocking && <div class={styles.banners}>{hosts.map((h) => <HostBanner key={h.entry.handle} host={h} />)}</div>}
+        <div class={styles.banners}>
+          <AppBanners />
+          {!blocking && hosts.map((h) => <HostBanner key={h.entry.handle} host={h} />)}
+        </div>
         <main class={styles.screen}>
           {blocking ? (
             blocking.admission.kind === "notEnrolled" ? <Enrol host={blocking} /> : <HostProblem host={blocking} />
