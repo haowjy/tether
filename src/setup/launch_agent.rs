@@ -15,7 +15,7 @@ const LABEL: &str = "com.jimmyyao.tether";
 const UNLOAD_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const KIND: super::report::ServiceKind = super::report::ServiceKind {
     name: "LaunchAgent",
-    startup: "started when you log in",
+    startup: "starts when you log in",
 };
 pub(super) const STOPPED: &str = "Stopped tether's LaunchAgent.";
 

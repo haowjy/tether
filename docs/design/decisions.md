@@ -3985,3 +3985,22 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Rejected:** a setup-only lock or PID check; granting the operator before daemon
   startup checks complete; a post-bind publication hook; mapping daemon configuration
   failures to exit 78 for setup; unconditional linger advice.
+
+### Setup's report prints only what Jimmy acts on
+
+- **Decided:** 2026-10-25, Jimmy ("really verbose", first Linux run).
+- **What:** the success report is the mode line (with "starts at boot" or "starts when
+  you log in" for a service), one line per change, any notes, the link, its QR code and
+  "Enrolment code: <code> (one device, 10 minutes)". A terminal run logs at `warn`
+  unless `RUST_LOG` is set. An unenrolled node reaching the enrolment page logs at
+  `debug`; one refused elsewhere still logs at `warn`.
+- **Why:** each dropped line repeated another one or explained something a second run
+  doesn't need: "Nothing else to change" (no change lines says it), "Published on your
+  tailnet", per-client enrolment steps (the phone page asks for the code; the iOS host
+  name is the link's), the `enroll`/`teardown` banner (in running.md), the clipboard
+  sentence (setup can't tell whether OSC 52 landed), the daemon's "listening" line
+  under a report that already says tether is running, and a warning for the expected
+  enrol-after-opening order.
+- **Rejected:** a `--quiet` flag (two output formats to keep correct); keeping the
+  banner for the foreground Serve entry that outlives Ctrl-C (running.md says so, and
+  the phone shows 502, not someone else's page).

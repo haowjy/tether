@@ -13,7 +13,7 @@ use crate::auth::identity::ServeTargetMatcher;
 
 pub(super) const KIND: super::report::ServiceKind = super::report::ServiceKind {
     name: "systemd user service",
-    startup: "started at boot",
+    startup: "starts at boot",
 };
 pub(super) const STOPPED: &str = "Stopped the running tether service.";
 

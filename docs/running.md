@@ -29,12 +29,13 @@ cargo install --path .          # puts tether in ~/.cargo/bin
 Plain Linux `tether setup` runs tether in this terminal, publishes it on your tailnet,
 and prints the link to open on your phone, a QR code of it, and an enrolment code. It
 serves until Ctrl-C or SIGTERM; the Serve entry stays while tether is stopped, so the
-phone sees 502 until you run it again. Daemon logs follow the report on stderr. Use
+phone sees 502 until you run it again. Warnings and errors follow the report on stderr
+(`RUST_LOG=info` shows the rest). Use
 `tether setup --background` to install the systemd user service or Mac LaunchAgent
 instead. Plain `tether setup` on a Mac refuses without changing anything and tells you
 to use `--background`. To use Safari or the home-screen app, scan the QR code with the
 iPhone camera or open the link, then enter the code. To use the iOS app, tap Add host
-and enter the printed host name and the same code. A code works for one device; `tether
+and enter the link's host name and the same code. A code works for one device; `tether
 enroll` prints another ([Enrol more devices](#enrol-more-devices)). The design is
 [setup.md](design/setup.md).
 

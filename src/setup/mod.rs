@@ -242,7 +242,8 @@ async fn setup_foreground_async(
         origin,
         opened.auth().store(),
     )?;
-    daemon::init_tracing();
+    // The report already says tether is running; a terminal run logs only problems.
+    daemon::init_tracing(tracing_subscriber::filter::LevelFilter::WARN);
     opened.run().await
 }
 

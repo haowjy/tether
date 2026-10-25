@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::http::{HeaderMap, Method, header};
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::blocking::{Busy, Lane};
 
@@ -346,10 +346,12 @@ impl Auth {
             })
             .cloned();
         let Some(device) = device else {
-            warn!(stable_id = %node.id, "Tailscale node is not enrolled");
             return if allow_unenrolled {
+                // A phone opening the link before entering its code: the expected order.
+                debug!(stable_id = %node.id, "Tailscale node is not enrolled yet");
                 Ok(Session::NodeUnenrolled { node, origin })
             } else {
+                warn!(stable_id = %node.id, "Tailscale node is not enrolled");
                 Err(AuthError::NotEnrolled {
                     node_name: node.name,
                 })

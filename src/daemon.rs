@@ -49,7 +49,7 @@ pub fn serve(
     if publish && !cfg!(target_os = "macos") {
         return Err(config::ConfigError::PublishOnLinux.into());
     }
-    init_tracing();
+    init_tracing(LevelFilter::INFO);
     crate::blocking::runtime()?.block_on(async move {
         let opened = match open(config, file, allow_login, publish).await {
             Ok(opened) => opened,
@@ -311,12 +311,12 @@ async fn start_file_api(config: &Config, home: &Path, lanes: &Lanes) {
 }
 
 /// Logs to stderr, which systemd puts in the journal (with its own timestamps).
-/// `RUST_LOG` takes targets, as `info` or `tether=debug`.
-pub(crate) fn init_tracing() {
+/// `RUST_LOG` takes targets, as `info` or `tether=debug`, and overrides `default`.
+pub(crate) fn init_tracing(default: LevelFilter) {
     let filter = std::env::var("RUST_LOG")
         .ok()
         .and_then(|spec| spec.parse::<Targets>().ok())
-        .unwrap_or_else(|| Targets::new().with_default(LevelFilter::INFO));
+        .unwrap_or_else(|| Targets::new().with_default(default));
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_target(false);

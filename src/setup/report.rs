@@ -34,12 +34,12 @@ pub(crate) fn render_success(
 ) -> Result<String, qrcode::types::QrError> {
     let mut output = match report.mode {
         Mode::Service(service) => format!(
-            "tether {} is running as your {}, {}",
+            "tether {} is running as your {} and {}",
             report.version, service.name, service.startup
         ),
         #[cfg(target_os = "linux")]
         Mode::Foreground => format!(
-            "tether {} is running in this terminal; Ctrl-C stops it",
+            "tether {} is running in this terminal. Ctrl-C stops it",
             report.version
         ),
     };
@@ -47,13 +47,9 @@ pub(crate) fn render_success(
         output.push_str(&format!(" (was {previous})"));
     }
     output.push_str(".\n");
-    if report.changes.is_empty() {
-        output.push_str("Nothing else to change.\n");
-    } else {
-        for change in report.changes {
-            output.push_str(change);
-            output.push('\n');
-        }
+    for change in report.changes {
+        output.push_str(change);
+        output.push('\n');
     }
     if !report.notes.is_empty() {
         output.push_str("Notes:\n");
@@ -63,27 +59,17 @@ pub(crate) fn render_success(
             output.push('\n');
         }
     }
-    output.push_str(&format!(
-        "Published on your tailnet:\n\n  {}\n",
-        report.origin
-    ));
+    output.push_str(&format!("\n  {}\n", report.origin));
     if terminal {
+        // The render carries its own quiet zone: blank rows above and below.
         let code = qrcode::QrCode::new(report.origin.as_bytes())?;
-        output.push('\n');
         output.push_str(&code.render::<Dense1x2>().build());
         output.push('\n');
-    }
-    let cleanup = if matches!(report.mode, Mode::Service(_)) {
-        "`tether enroll` prints a new code. `tether teardown` removes all of this."
     } else {
-        "`tether enroll` prints a new code. The Serve entry stays when you stop tether; `tether teardown` removes it."
-    };
+        output.push('\n');
+    }
     output.push_str(&format!(
-        "\nEnrolment code: {}, for one device, valid for 10 minutes.\n  Phone browser: scan the QR code or open the link, then enter the code.\n  iOS app: Add host, {}, code {}.\n{cleanup}\n",
-        report.code,
-        report.origin
-            .strip_prefix("https://")
-            .unwrap_or(report.origin),
+        "Enrolment code: {} (one device, 10 minutes)\n",
         report.code
     ));
     Ok(output)
@@ -96,8 +82,8 @@ pub(crate) fn print_success(report: &Success<'_>) -> io::Result<()> {
     stdout.write_all(output.as_bytes())?;
     if terminal {
         let encoded = base64::engine::general_purpose::STANDARD.encode(report.origin);
+        // OSC 52: copies the link where the terminal allows it; others ignore it.
         write!(stdout, "\x1b]52;c;{encoded}\x07")?;
-        stdout.write_all(b"Copied the link to your clipboard (if your terminal allows it).\n")?;
     }
     stdout.flush()
 }

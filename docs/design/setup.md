@@ -285,12 +285,13 @@ diagnostic. It is always false on Linux. A final refusal is printed and setup ex
 ## Output
 
 On success either path issues a new enrolment code (`Store::set_pending`, 10 minutes,
-replacing any earlier code, as `tether enroll` does). Background setup prints, here on Linux:
+replacing any earlier code, as `tether enroll` does). The report says only what Jimmy
+acts on: how tether runs, what setup changed, the link, its QR code and the code.
+Background setup prints, here on Linux after an upgrade:
 
 ```text
-tether 0.0.2 is running as your systemd user service, started at boot (was 0.0.1).
-Nothing else to change.
-Published on your tailnet:
+tether 0.0.2 is running as your systemd user service and starts at boot (was 0.0.1).
+Replaced tether.service, which differed from this tether's; the old copy is <path>.
 
   https://pop-os.tail852a76.ts.net
 
@@ -298,22 +299,21 @@ Published on your tailnet:
   █ ▄▄▄ █ ▀█▄▀ █ ▄▄▄ █      (QR code of the link)
   ...
 
-Enrolment code: 7KQ4-XM2P, for one device, valid for 10 minutes.
-  Phone browser: scan the QR code or open the link, then enter the code.
-  iOS app: Add host, pop-os.tail852a76.ts.net, code 7KQ4-XM2P.
-`tether enroll` prints a new code. `tether teardown` removes all of this.
+Enrolment code: 7KQ4-XM2P (one device, 10 minutes)
 ```
 
-On a Mac the first line reads "running as your LaunchAgent, started when you log
+On a Mac the first line reads "running as your LaunchAgent and starts when you log
 in". "(was …)" appears when a daemon answered before the restart. Below that line
 setup lists what it changed ("Enabled linger", "Replaced tether.service…",
-"Removed tether's old handler…"), or "Nothing else to change." That line depends
-only on changes; drop-in notices and "No tmux server yet…" appear separately under
-"Notes:". The link is on a line of its own, for copying. A failed run prints no code.
+"Removed tether's old handler…"), one per line, and nothing when it changed nothing.
+Drop-in notices and "No tmux server yet…" appear separately under "Notes:". The link
+is on a line of its own, for copying. A failed run prints no code. How to enrol (the
+phone page asks for the code; the iOS app takes the host name from the link), `tether
+enroll` and `tether teardown` are in [running.md](../running.md), not the report.
 
-Foreground Linux's first line is "tether <v> is running in this terminal; Ctrl-C stops
-it." The QR, clipboard copy and code follow the same report format. Its final banner
-says that the Serve entry stays when tether stops and `tether teardown` removes it.
+Foreground Linux's first line is "tether <v> is running in this terminal. Ctrl-C stops
+it." The rest follows the same format. Its daemon logs only warnings and errors unless
+`RUST_LOG` says otherwise: the report already says tether is running.
 
 **The QR code** uses the `qrcode` crate (0.14, MIT or Apache-2.0, MSRV 1.67) with
 `default-features = false`. Without its `image` feature it pulls in no other crate
@@ -325,8 +325,8 @@ link, and prints only when stdout is a terminal. It encodes the link alone.
 **The clipboard.** When stdout is a terminal, setup also writes the link to the
 clipboard with OSC 52 (`ESC ] 52 ; c ; <base64> BEL`). Over SSH this reaches the
 local machine's clipboard where the terminal allows it, and terminals that don't are
-expected to ignore it. Setup prints "Copied the link to your clipboard (if your
-terminal allows it)." It can't tell whether the copy landed.
+expected to ignore it. Setup can't tell whether the copy landed, so it doesn't mention
+it.
 
 ## Teardown
 
@@ -457,7 +457,7 @@ findings are also covered by S12 on the target host.
 | Gate | On | Check |
 |---|---|---|
 | S1 | pop-os | From a fresh state (no unit, linger off, no operator), `tether setup --background` over SSH asks for at most two passwords, publishes, prints link, QR and code. The iPhone camera opens the link; Safari enrols with the code; the iOS app adds the host |
-| S2 | pop-os | A rerun with `--background`: same link, new code, one restart, "Nothing else to change". `tailscale serve status --json` before and after differ only in tether's handler; another app's entry on another port survives byte for byte |
+| S2 | pop-os | A rerun with `--background`: same link, new code, one restart, no change lines. `tailscale serve status --json` before and after differ only in tether's handler; another app's entry on another port survives byte for byte |
 | S3 | pop-os | Background refusals without writing: another app at `/` of `<name>:443`, Funnel on, a TCP forward on 443. Without a terminal, `tether setup --background` prints the grant commands and exits 1 |
 | S4 | pop-os and a container | Tailscale 1.94–1.98 and 1.100 or later: `tether setup --background` writes as operator; an operator who may not `sudo tailscale` gets the `401` message on 1.100+ and succeeds on 1.98; a non-operator gets the `403` message; teardown with another app's Unix handler present, on 1.100+ |
 | S5 | pop-os | Upgrade from the loopback-TCP daemon and from a current one: `cargo install` a newer build, rerun `tether setup --background`; `/auth/info` reports the new version, the 7850 handler is replaced, a `MemoryMax` drop-in survives, an edited unit is backed up and replaced |
