@@ -2,7 +2,7 @@
   "name": "tether-web",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.23.0",
+  "packageManager": "pnpm@12.11.2",
   "scripts": {
     "dev": "vite --configLoader runner",
     "build": "tsc --noEmit && vite build --configLoader runner",
