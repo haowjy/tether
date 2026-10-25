@@ -422,7 +422,6 @@ impl State {
             .map(|session| SessionListing {
                 id: session.id.0,
                 name: cut(session.name),
-                attached_elsewhere: session.attached_elsewhere,
                 windows: session
                     .windows
                     .into_iter()

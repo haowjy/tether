@@ -64,7 +64,7 @@ export async function startShellServer(first: string): Promise<ShellServer> {
       res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(body));
     };
     if (path === "/auth/info") {
-      json({ hostId: "h-pwa", name: "pop-os", daemonVersion: "0", protocol: { min: 1, max: 1 }, browserOrigin: `http://localhost:${String(port)}`, browserRefused: null });
+      json({ hostId: "h-pwa", name: "pop-os", daemonVersion: "0", protocol: { min: 1, max: 2 }, browserOrigin: `http://localhost:${String(port)}`, browserRefused: null });
       return;
     }
     if (path === "/auth/node/session") {

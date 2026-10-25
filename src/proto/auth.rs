@@ -45,7 +45,7 @@ mod fixtures {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::proto::{ErrorBody, ErrorNode, HttpError};
+    use crate::proto::{ErrorBody, ErrorNode, HttpError, MIN_PROTOCOL, PROTOCOL_VERSION};
 
     fn fixtures() -> Vec<(&'static str, serde_json::Value)> {
         vec![
@@ -55,7 +55,10 @@ mod fixtures {
                     host_id: "a234567bcdefghjk".into(),
                     name: "pop-os".into(),
                     daemon_version: "0.0.1".into(),
-                    protocol: ProtocolRange { min: 1, max: 1 },
+                    protocol: ProtocolRange {
+                        min: MIN_PROTOCOL,
+                        max: PROTOCOL_VERSION,
+                    },
                     browser_origin: None,
                     browser_refused: None,
                     browser_pending: false,

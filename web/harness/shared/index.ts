@@ -13,13 +13,12 @@ export const LISTING: TmuxListing = {
     {
       id: 1,
       name: "tether",
-      attachedElsewhere: true,
       windows: [
         { id: 1, index: 0, name: "agent", active: true, activity: 0 },
         { id: 2, index: 1, name: "shell", active: false, activity: 0 },
       ],
     },
-    { id: 2, name: "notes", attachedElsewhere: false, windows: [{ id: 3, index: 0, name: "shell", active: true, activity: 0 }] },
+    { id: 2, name: "notes", windows: [{ id: 3, index: 0, name: "shell", active: true, activity: 0 }] },
   ],
 };
 

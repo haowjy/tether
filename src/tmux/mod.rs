@@ -427,8 +427,6 @@ pub struct Listing {
 pub struct ListedSession {
     pub id: SessionId,
     pub name: String,
-    /// A client other than a control client is attached: someone's terminal.
-    pub attached_elsewhere: bool,
     pub windows: Vec<ListedWindow>,
 }
 

@@ -1,7 +1,7 @@
 // Generated from src/proto by `UPDATE_PROTO_TYPES=1 cargo test --lib proto::typescript`. Do not edit.
 
 /** The protocol this build speaks (daemon-core.md §5.2). */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** WebSocket close codes (daemon-core.md §5.2). */
 export const CloseCode = {
@@ -129,11 +129,7 @@ export type SessionListing = {
 /**
  * `$N`.
  */
-id: number, name: string,
-/**
- * A client that isn't a control client (someone's terminal) is attached.
- */
-attachedElsewhere: boolean, windows: Array<WindowListing>, };
+id: number, name: string, windows: Array<WindowListing>, };
 
 export type WindowListing = {
 /**

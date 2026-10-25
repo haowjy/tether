@@ -5,7 +5,7 @@ import { expect, test, type Page } from "@playwright/test";
 // real admission, real viewport and real IndexedDB run.
 // The harness server playwright.config.ts starts: the same port variable.
 const ORIGIN = `http://localhost:${process.env["TETHER_E2E_PORT"] ?? "5199"}`;
-const INFO = { hostId: "h-real", name: "pop-os", daemonVersion: "0", protocol: { min: 1, max: 1 }, browserOrigin: ORIGIN, browserRefused: null };
+const INFO = { hostId: "h-real", name: "pop-os", daemonVersion: "0", protocol: { min: 1, max: 2 }, browserOrigin: ORIGIN, browserRefused: null };
 
 async function fakeDaemon(page: Page, node: { enrolled: boolean }): Promise<{ hellos: unknown[] }> {
   const seen = { hellos: [] as unknown[] };
@@ -21,7 +21,7 @@ async function fakeDaemon(page: Page, node: { enrolled: boolean }): Promise<{ he
     ws.onMessage((raw) => {
       const msg = JSON.parse(String(raw)) as { type: string; data?: { req?: number } };
       seen.hellos.push(msg);
-      if (msg.type === "hello") ws.send(JSON.stringify({ type: "welcome", data: { protocol: 1, daemon: { version: "0", completion: false }, host: { id: "h-real", name: "pop-os" } } }));
+      if (msg.type === "hello") ws.send(JSON.stringify({ type: "welcome", data: { protocol: 2, daemon: { version: "0", completion: false }, host: { id: "h-real", name: "pop-os" } } }));
       if (msg.type === "listSessions") ws.send(JSON.stringify({ type: "sessions", data: { req: msg.data?.req, tmux: null } }));
     });
   });

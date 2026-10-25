@@ -73,17 +73,6 @@ for (const version of VERSIONS) {
       await expect(page.getByRole("button", { name: "New session" })).toBeFocused();
     });
 
-    test("warns that another terminal is attached", async ({ page }) => {
-      const laptop = await stack.attach("alpha");
-      try {
-        await page.goto(`${stack.url}/#/`);
-        await sessionRow(page, "alpha").click();
-        await expect(page.getByText("Another terminal is attached. Opening may resize it.")).toBeVisible();
-      } finally {
-        laptop.detach();
-      }
-    });
-
     test("a tab under an off-screen Home is pruned when its window is killed", async ({ page }) => {
       stack.tmux("new-session", "-d", "-s", "doomed", "-n", "only");
       stack.tmux("new-window", "-t", "doomed", "-n", "keep");

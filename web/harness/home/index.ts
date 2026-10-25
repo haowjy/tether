@@ -12,7 +12,6 @@ const MANY: TmuxListing = {
   sessions: Array.from({ length: 30 }, (_, i) => ({
     id: i + 1,
     name: i === 7 ? "a-session-with-a-very-long-name-that-has-to-truncate-instead-of-pushing-the-row-wider" : `project-${String(i + 1).padStart(2, "0")}`,
-    attachedElsewhere: i % 11 === 0,
     windows: [win((i + 1) * 10, 0, "editor"), win((i + 1) * 10 + 1, 1, i % 2 ? "server" : "shell")],
   })),
 };

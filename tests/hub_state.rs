@@ -744,11 +744,7 @@ fn history_and_listings_need_a_capture_slot_and_credit() {
     let listing = json!({"type": "listSessions", "data": {"req": 5}});
     hub.send(conn, listing.clone());
     hub.settle();
-    let sessions = hub.take_json(conn);
-    assert_eq!(
-        sessions[0]["data"]["tmux"]["sessions"][0]["attachedElsewhere"],
-        true
-    );
+    hub.take_json(conn);
     // Without credit for their reservations, both are refused.
     let flood = "z".repeat(60_000);
     for _ in 0..32 {

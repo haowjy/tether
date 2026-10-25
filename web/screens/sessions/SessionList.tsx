@@ -115,7 +115,6 @@ export function SessionList(props: SessionListProps) {
               expanded={g.expanded}
               onToggle={() => { onToggle(g.key); }}
             >
-              {g.session.attachedElsewhere && <p class={styles.attached}>Another terminal is attached. Opening may resize it.</p>}
               {g.windows.map((w) => {
                 const id = tabIdOf(w);
                 const isOpen = id !== null && open.has(id);

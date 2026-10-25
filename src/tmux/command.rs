@@ -7,8 +7,8 @@ use std::path::Path;
 
 use super::history::STATE_FORMAT as HISTORY_STATE_FORMAT;
 use super::reply::{
-    CREATED_FORMAT, LISTING_CLIENT_FORMAT, LISTING_SERVER_FORMAT, LISTING_WINDOW_FORMAT,
-    LOCATE_FORMAT, LOCATE_SESSION_FORMAT, STARTUP_FORMAT,
+    CREATED_FORMAT, LISTING_SERVER_FORMAT, LISTING_WINDOW_FORMAT, LOCATE_FORMAT,
+    LOCATE_SESSION_FORMAT, STARTUP_FORMAT,
 };
 use super::snapshot::STATE_FORMAT;
 use super::{
@@ -200,16 +200,11 @@ pub fn attach(session: SessionId) -> Vec<String> {
 /// argument as it is, with no quoting, except that one ending in `;` ends a command.
 pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
     Ok(match cmd {
-        // Clients before windows: a window name with a line break in it can then only
-        // garble window lines.
+        // The server identity comes first; each remaining line is a window.
         OneShotCmd::List => owned(&[
             "display-message",
             "-p",
             LISTING_SERVER_FORMAT,
-            ";",
-            "list-clients",
-            "-F",
-            LISTING_CLIENT_FORMAT,
             ";",
             "list-windows",
             "-a",

@@ -7,9 +7,9 @@ const LISTING: TmuxListing = {
   server: "main:1-1",
   version: "3.4",
   sessions: [
-    { id: 1, name: "Tether", attachedElsewhere: false, windows: [win(1, "agent"), win(2, "shell")] },
-    { id: 2, name: "notes", attachedElsewhere: false, windows: [win(3, "Shell"), win(4, "todo")] },
-    { id: 3, name: "web", attachedElsewhere: false, windows: [win(5, "dev")] },
+    { id: 1, name: "Tether", windows: [win(1, "agent"), win(2, "shell")] },
+    { id: 2, name: "notes", windows: [win(3, "Shell"), win(4, "todo")] },
+    { id: 3, name: "web", windows: [win(5, "dev")] },
   ],
 };
 const first = <T,>(items: T[], i = 0): T => {
@@ -56,7 +56,7 @@ describe("groups", () => {
     const many: TmuxListing = {
       server: "main:1-1",
       version: "3.4",
-      sessions: Array.from({ length: 30 }, (_, i) => ({ id: i, name: `s${String(i).padStart(2, "0")}`, attachedElsewhere: false, windows: [win(i * 10, i % 2 ? "odd" : "even"), win(i * 10 + 1, "shell")] })),
+      sessions: Array.from({ length: 30 }, (_, i) => ({ id: i, name: `s${String(i).padStart(2, "0")}`, windows: [win(i * 10, i % 2 ? "odd" : "even"), win(i * 10 + 1, "shell")] })),
     };
     const open = new Set([sessionKey(many.server, first(many.sessions, 27))]);
     expect(groups(many, "", open)).toHaveLength(30);

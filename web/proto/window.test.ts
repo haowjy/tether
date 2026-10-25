@@ -6,7 +6,7 @@ const win = (id: number) => ({ id, index: id, name: "w", active: false, activity
 const listing = (server: string, ids: number[]): TmuxListing => ({
   server,
   version: "3.4",
-  sessions: [{ id: 1, name: "s", attachedElsewhere: false, windows: ids.map(win) }],
+  sessions: [{ id: 1, name: "s", windows: ids.map(win) }],
 });
 
 describe("listed", () => {

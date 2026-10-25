@@ -164,7 +164,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
   const front = http.createServer((req, res) => {
     if (req.url?.split("?")[0] === "/auth/info") {
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ hostId, name: "pop-os", protocol: { min: 1, max: 1 }, browserOrigin: `http://${req.headers.host ?? ""}`, browserRefused: null }));
+      res.end(JSON.stringify({ hostId, name: "pop-os", protocol: { min: 1, max: 2 }, browserOrigin: `http://${req.headers.host ?? ""}`, browserRefused: null }));
       return;
     }
     const up = http.request({ host: "127.0.0.1", port: vitePort, path: req.url ?? "/", method: req.method, headers: { ...req.headers, "tailscale-user-login": "e2e", "x-forwarded-proto": "http" } }, (reply) => {

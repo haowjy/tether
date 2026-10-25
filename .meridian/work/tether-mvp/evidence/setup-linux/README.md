@@ -27,3 +27,16 @@
 Jimmy found the report "really verbose" (mode line, "Published on your tailnet",
 per-client enrolment steps, enroll/teardown banner, clipboard sentence, INFO listening
 line, WARN for an unenrolled node opening the page). Trimmed in 35df7dd; review p210.
+
+## Browser after enrolment: WebSocket refused (fixed 03c3af0)
+
+- After enrolling (14:09:30), every `/ws` from Jimmy's desktop browser logged
+  `device check refused request refused=browser origin is not admitted path="/ws"`;
+  the picker showed "Couldn't load sessions".
+- Cause: `node::admission` applied the GET rule (`Sec-Fetch-Site: same-origin`
+  required) to WebSocket handshakes, against auth.md's rule (optional on upgrades).
+  The browser's own headers were not captured; the inference rests on the code and on
+  the fix working.
+- After 03c3af0 on homebox, curl over HTTP/1.1: right Origin without fetch metadata
+  -> 101; wrong Origin -> 403 either way. (An HTTP/2 curl drops the upgrade headers and
+  tests nothing.) Jimmy: "the browser is now properly working".

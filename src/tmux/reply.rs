@@ -3,8 +3,6 @@
 //! and `oneshot.rs` parse the answers. The snapshot's `STATE_FORMAT` lives with its
 //! parser in `snapshot.rs`.
 
-use std::collections::BTreeSet;
-
 use super::{
     Created, Found, ListedSession, ListedWindow, Listing, Location, PaneId, ServerInstance,
     SessionId, SessionLocation, Size, TmuxVersion, WindowId,
@@ -78,15 +76,13 @@ pub(super) fn session_location(row: &[u8]) -> Option<SessionLocation> {
 
 /// The listing's first line.
 pub(super) const LISTING_SERVER_FORMAT: &str = "#{version}\t#{pid}\t#{start_time}";
-/// One line per client: its session and whether it is a control client.
-pub(super) const LISTING_CLIENT_FORMAT: &str = "#{session_id}\t#{client_control_mode}";
 /// One line per window. A window name can hold a tab, so it goes last; a session name
 /// can't (tmux escapes it).
 pub(super) const LISTING_WINDOW_FORMAT: &str = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{window_name}";
 
-/// The server line, then a line per client, then a line per window, sessions in order
-/// (`command::oneshot`). A line that fits neither shape comes from a window name with a
-/// line break in it, and is skipped.
+/// The server line, then a line per window, sessions in order (`command::oneshot`). A
+/// line that fits neither shape comes from a window name with a line break in it, and
+/// is skipped.
 pub(super) fn listing(stdout: &[u8]) -> Option<Listing> {
     let text = String::from_utf8_lossy(stdout);
     let mut lines = text.split('\n');
@@ -98,44 +94,39 @@ pub(super) fn listing(stdout: &[u8]) -> Option<Listing> {
         version: TmuxVersion::parse(version),
         sessions: Vec::new(),
     };
-    let mut attached = BTreeSet::new();
     for line in lines {
-        match line.splitn(7, '\t').collect::<Vec<_>>()[..] {
-            [session, "0"] if listing.sessions.is_empty() => {
-                attached.extend(SessionId::parse(session.as_bytes()));
-            }
-            [session, window, index, active, activity, session_name, name] => {
-                let (Some(session), Some(id), Ok(index), Ok(activity)) = (
-                    SessionId::parse(session.as_bytes()),
-                    WindowId::parse(window.as_bytes()),
-                    index.parse(),
-                    activity.parse(),
-                ) else {
-                    continue;
-                };
-                if listing
-                    .sessions
-                    .last()
-                    .is_none_or(|last| last.id != session)
-                {
-                    listing.sessions.push(ListedSession {
-                        id: session,
-                        name: session_name.to_owned(),
-                        attached_elsewhere: attached.contains(&session),
-                        windows: Vec::new(),
-                    });
-                }
-                if let Some(last) = listing.sessions.last_mut() {
-                    last.windows.push(ListedWindow {
-                        id,
-                        index,
-                        name: name.to_owned(),
-                        active: active == "1",
-                        activity,
-                    });
-                }
-            }
-            _ => {}
+        let [session, window, index, active, activity, session_name, name] =
+            line.splitn(7, '\t').collect::<Vec<_>>()[..]
+        else {
+            continue;
+        };
+        let (Some(session), Some(id), Ok(index), Ok(activity)) = (
+            SessionId::parse(session.as_bytes()),
+            WindowId::parse(window.as_bytes()),
+            index.parse(),
+            activity.parse(),
+        ) else {
+            continue;
+        };
+        if listing
+            .sessions
+            .last()
+            .is_none_or(|last| last.id != session)
+        {
+            listing.sessions.push(ListedSession {
+                id: session,
+                name: session_name.to_owned(),
+                windows: Vec::new(),
+            });
+        }
+        if let Some(last) = listing.sessions.last_mut() {
+            last.windows.push(ListedWindow {
+                id,
+                index,
+                name: name.to_owned(),
+                active: active == "1",
+                activity,
+            });
         }
     }
     Some(listing)

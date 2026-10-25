@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 // The production entry on the real browser adapter, with only the daemon faked at the network:
 // the real hidden file input and upload queue (platform/browser/uploads.ts) and the real /fs client.
 const ORIGIN = `http://localhost:${process.env["TETHER_E2E_PORT"] ?? "5199"}`;
-const INFO = { hostId: "h-real", name: "pop-os", daemonVersion: "0", protocol: { min: 1, max: 1 }, browserOrigin: ORIGIN, browserRefused: null };
+const INFO = { hostId: "h-real", name: "pop-os", daemonVersion: "0", protocol: { min: 1, max: 2 }, browserOrigin: ORIGIN, browserRefused: null };
 const ROOTS = {
   home: "/home/jimmy",
   roots: [{ path: "/home/jimmy/tether", canonical: "/home/jimmy/tether", ok: true }],
@@ -25,7 +25,7 @@ async function fakeDaemon(page: Page): Promise<Daemon> {
   await page.routeWebSocket("**/ws", (ws) => {
     ws.onMessage((raw) => {
       const msg = JSON.parse(String(raw)) as { type: string; data?: { req?: number } };
-      if (msg.type === "hello") ws.send(JSON.stringify({ type: "welcome", data: { protocol: 1, daemon: { version: "0", completion: false }, host: { id: "h-real", name: "pop-os" } } }));
+      if (msg.type === "hello") ws.send(JSON.stringify({ type: "welcome", data: { protocol: 2, daemon: { version: "0", completion: false }, host: { id: "h-real", name: "pop-os" } } }));
       if (msg.type === "listSessions") ws.send(JSON.stringify({ type: "sessions", data: { req: msg.data?.req, tmux: null } }));
     });
   });

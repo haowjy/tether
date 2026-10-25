@@ -6,7 +6,7 @@ import { sessionKey } from "./groups";
 const listing = (...ids: number[]): TmuxListing => ({
   server: "main:1-1",
   version: "3.4",
-  sessions: ids.map((id) => ({ id, name: `s${String(id)}`, attachedElsewhere: false, windows: [{ id: id * 10, index: 0, name: "shell", active: true, activity: 0 }] })),
+  sessions: ids.map((id) => ({ id, name: `s${String(id)}`, windows: [{ id: id * 10, index: 0, name: "shell", active: true, activity: 0 }] })),
 });
 const key = (id: number) => sessionKey("main:1-1", (listing(id).sessions[0] as TmuxListing["sessions"][number]));
 

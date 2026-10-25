@@ -127,7 +127,7 @@ async fn only_the_auth_routes_skip_the_device_check() {
     let login = [("Tailscale-User-Login", LOGIN)];
     let (status, body) = request(port, "GET", "/auth/info", &login, "").await;
     assert_eq!(status, 200, "{body}");
-    assert!(body.contains(r#""protocol":{"min":1,"max":1}"#), "{body}");
+    assert!(body.contains(r#""protocol":{"min":1,"max":2}"#), "{body}");
     // No code is pending: the handler, not a layer, refuses it.
     let wrong = r#"{"code":"AAAA-AAAA","deviceName":"phone"}"#;
     let (status, body) = request(port, "POST", "/auth/enroll", &login, wrong).await;

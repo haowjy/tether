@@ -4024,3 +4024,14 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   the whole GECOS field); a narrower teardown command with `--set-path` (unverified);
   naming tailscaled's `PATH` lacking `tailscale`, the other cause reported on #21204
   (seen with Homebrew's launchd tailscaled; a Linux tailscaled finds `/usr/bin`).
+
+### Session listings omit client-attachment state
+
+- **Decided:** 2026-10-25, Jimmy.
+- **What:** Remove `attachedElsewhere` / `attached_elsewhere` from session listings and
+  stop querying tmux clients just to compute that value. Bump the wire protocol version.
+- **Why:** Jimmy said the note is not useful; acted-last sizing makes a switch between
+  his laptop terminal and tether's resize harmless, and removing the value saves one
+  field per listed session.
+- **Rejected:** keeping the field for a possible future use; it would retain listing and
+  wire cost without a current reader.

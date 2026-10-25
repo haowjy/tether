@@ -376,8 +376,6 @@ pub struct SessionListing {
     /// `$N`.
     pub id: u32,
     pub name: String,
-    /// A client that isn't a control client (someone's terminal) is attached.
-    pub attached_elsewhere: bool,
     pub windows: Vec<WindowListing>,
 }
 

@@ -13,7 +13,7 @@ const run = (events: WorkspaceEvent[], from: WorkspaceState = initialWorkspace) 
 const listing = (server: string, ids: number[]): TmuxListing => ({
   server,
   version: "3.4",
-  sessions: [{ id: 1, name: "s", attachedElsewhere: false, windows: ids.map((id) => ({ id, index: id, name: `w${String(id)}`, active: false, activity: 0 })) }],
+  sessions: [{ id: 1, name: "s", windows: ids.map((id) => ({ id, index: id, name: `w${String(id)}`, active: false, activity: 0 })) }],
 });
 const saved = (ids: number[], active: number): SavedWorkspace => ({
   version: 1,
@@ -110,7 +110,7 @@ describe("what is on screen", () => {
     const restored = reduce(initialWorkspace, { type: "restored", saved: saved([1], 1) }).state;
     const proven = reduce(restored, { type: "watching", id: tabId(key(1)) });
     expect(proven.effects.some((e) => e.type === "save")).toBe(false);
-    const moved = reduce(proven.state, { type: "listing", hostId: "h1", listing: { ...listing("main:1-1", [1]), sessions: [{ id: 1, name: "s", attachedElsewhere: false, windows: [{ id: 1, index: 7, name: "w1", active: false, activity: 0 }] }] } });
+    const moved = reduce(proven.state, { type: "listing", hostId: "h1", listing: { ...listing("main:1-1", [1]), sessions: [{ id: 1, name: "s", windows: [{ id: 1, index: 7, name: "w1", active: false, activity: 0 }] }] } });
     expect(moved.state.tabs[0]?.index).toBe(7);
     expect(moved.effects.some((e) => e.type === "save")).toBe(false);
   });

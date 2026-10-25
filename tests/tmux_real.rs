@@ -1573,7 +1573,7 @@ async fn with_no_server_neither_the_pump_nor_a_one_shot_starts_one() {
 }
 
 #[tokio::test]
-async fn the_listing_names_sessions_windows_and_terminal_clients() {
+async fn the_listing_names_sessions_and_windows() {
     let Some((_serial, server)) = setup("list").await else {
         return;
     };
@@ -1598,15 +1598,10 @@ async fn the_listing_names_sessions_windows_and_terminal_clients() {
     server
         .run(&["new-window", "-d", "-t", "watched", "-n", "second"])
         .expect("new-window");
-    let mut laptop = server.attach_terminal().expect("attach a terminal client");
-    let mut client = Client::attach(&server, SessionId(1)).await;
     let reply = oneshot::run(&endpoint, &OneShotCmd::List).await;
-    let _ = laptop.kill();
-    let _ = laptop.wait();
     let Ok(Reply::Listing(listing)) = reply else {
         panic!("{reply:?}");
     };
-    assert_eq!(listing.server, client.server());
     assert!(listing.version.is_supported());
     let sessions: Vec<_> = listing
         .sessions
@@ -1615,7 +1610,6 @@ async fn the_listing_names_sessions_windows_and_terminal_clients() {
             (
                 session.id,
                 session.name.as_str(),
-                session.attached_elsewhere,
                 session
                     .windows
                     .iter()
@@ -1627,16 +1621,14 @@ async fn the_listing_names_sessions_windows_and_terminal_clients() {
     assert_eq!(sessions.len(), 2);
     assert_eq!(sessions[0].0, SessionId(0));
     assert_eq!(sessions[0].1, SESSION);
-    assert!(sessions[0].2);
-    assert_eq!(sessions[0].3.len(), 1);
-    assert_eq!(sessions[0].3[0].0, 0);
-    assert!(sessions[0].3[0].2);
+    assert_eq!(sessions[0].2.len(), 1);
+    assert_eq!(sessions[0].2[0].0, 0);
+    assert!(sessions[0].2[0].2);
     assert_eq!(
         sessions[1],
         (
             SessionId(1),
             "watched",
-            false,
             vec![(0, tab_name, true), (1, "second", false)]
         )
     );
@@ -1645,8 +1637,6 @@ async fn the_listing_names_sessions_windows_and_terminal_clients() {
         .expect("clock")
         .as_secs();
     assert!(listing.sessions[1].windows[0].activity.abs_diff(now) < 60);
-    client.lines = None;
-    client.exit().await;
 }
 
 #[tokio::test]

@@ -319,7 +319,6 @@ impl Hub {
                     sessions: vec![ListedSession {
                         id: SessionId(0),
                         name: "fixture".into(),
-                        attached_elsewhere: true,
                         windows: Vec::new(),
                     }],
                 }),

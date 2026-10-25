@@ -74,7 +74,7 @@ describe("admission, read from the daemon at launch", () => {
   });
 
   it("calls a protocol outside the daemon's range incompatible, and stays", async () => {
-    const t = await boot((p) => { if (p.daemon.info !== "down") p.daemon.info = { ...p.daemon.info, protocol: { min: 2, max: 2 } }; });
+    const t = await boot((p) => { if (p.daemon.info !== "down") p.daemon.info = { ...p.daemon.info, protocol: { min: 3, max: 3 } }; });
     expect(t.host()?.admission).toEqual({ kind: "incompatible" });
   });
 });

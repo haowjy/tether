@@ -602,13 +602,12 @@ so the hub handles a Locate answer the same from either source. Stdin is closed,
 child dropped at the timeout is killed.
 
 - `List` (session sheet) answers `Reply::Listing { server, version, sessions }`:
-  `display-message -p '#{version}\t#{pid}\t#{start_time}' ; list-clients -F
-  '#{session_id}\t#{client_control_mode}' ; list-windows -a -F '#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{window_name}'`.
-  "Attached elsewhere" is a client line with mode 0 (not a control client) for the
-  session. Clients come before windows, and the window name is last and split with
-  `splitn`: tmux 3.4 allows raw tabs and line breaks in a name set with `-n`, so a
-  window name with a line break garbles only window lines, and a line that fits
-  neither shape is skipped. A session name can't hold either (tmux escapes it).
+  `display-message -p '#{version}\t#{pid}\t#{start_time}' ; list-windows -a -F
+  '#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{window_name}'`.
+  The server line comes first, then windows in session order. The window name is last
+  and split with `splitn`: tmux 3.4 allows raw tabs and line breaks in a name set with
+  `-n`, so a window name with a line break garbles only window lines, and a line that
+  fits neither shape is skipped. A session name can't hold either (tmux escapes it).
 - `Locate`, `LocateSession`: the ops' commands (§3.4) with `-t` set to the id, when the
   endpoint has no `Ready` control client. They answer `Reply::Location` and
   `Reply::SessionLocation`.
@@ -710,8 +709,7 @@ pub enum TmuxError {
     NoServer, Timeout, Spawn(String),
 }
 pub struct Listing { server: ServerInstance, version: TmuxVersion, sessions: Vec<ListedSession> }
-pub struct ListedSession { id: SessionId, name: String, attached_elsewhere: bool,
-                           windows: Vec<ListedWindow> }
+pub struct ListedSession { id: SessionId, name: String, windows: Vec<ListedWindow> }
 pub struct ListedWindow { id: WindowId, index: u32, name: String, active: bool, activity: u64 }
 pub struct Created { server: ServerInstance, session: SessionId, window: WindowId }
 
@@ -1251,7 +1249,7 @@ credential and retries with the usual backoff
 ([auth.md](auth.md#carrying-the-token)).
 
 - **The client speaks one version; the daemon holds a range,**
-  `MIN_PROTOCOL..=PROTOCOL_VERSION` (both 1 now). `hello { protocol, client: { kind:
+  `MIN_PROTOCOL..=PROTOCOL_VERSION` (1 through 2 now). `hello { protocol, client: { kind:
   "ios" | "web", build } }`. In range: `welcome { protocol, daemon: { version }, host:
   { id, name } }`; `daemon.completion` says whether this tier offers suggestions. Out
   of range: `incompatible { min, max, daemonVersion }`, close
@@ -1312,7 +1310,7 @@ Adjacently tagged, `{"type": "<name>", "data": {...}}`, camelCase.
 | `serverExited` | `server` | closes every tab on that server |
 | `windowRenamed` | `window, name` | |
 | `sessionsChanged` | | the listing changed: tmux reported a session created, closed or renamed, or a window nobody watches was closed or moved. At most one per input the hub handles, however many changes it brought (§4.5). The web refetches the listing, debounced, which also prunes its tabs ([plan.md](plan.md#reconnect)) |
-| `sessions` | `req, tmux: TmuxListing \| null` | `null` when no tmux server is running. `TmuxListing` is `{ server, version, sessions: [{ id, name, attachedElsewhere, windows: [{ id, index, name, active, activity }] }] }`; `activity` in unix seconds |
+| `sessions` | `req, tmux: TmuxListing \| null` | `null` when no tmux server is running. `TmuxListing` is `{ server, version, sessions: [{ id, name, windows: [{ id, index, name, active, activity }] }] }`; `activity` in unix seconds |
 | `historyChunk` | `req, watch, start, historySize?, lines: [base64], wraps: base64` | `capture-pane -e` bytes per physical row; `start` is the true tmux line number of `lines[0]`. Bit `i` of the packed bitmap says row `i` wraps to the next row. May hold fewer rows than asked (§4.6); the client follows the returned `start`, including an empty range that advanced to the retained-history top, and joins wrapped rows for copy only while `historySize` stays unchanged |
 | `created` | `req, window, session` | |
 | `pasted` | `req, watch` | tmux ran the paste (and its Enter, if asked) |
