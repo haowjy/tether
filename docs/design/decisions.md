@@ -3,7 +3,7 @@
 Every design decision behind tether's specs: what was decided, why, the alternatives
 rejected, when, and who decided. The specs ([plan.md](plan.md),
 [daemon-core.md](daemon-core.md), [ios-shell.md](ios-shell.md), [auth.md](auth.md),
-[fs.md](fs.md), [complete.md](complete.md))
+[fs.md](fs.md), [complete.md](complete.md), [setup.md](setup.md))
 state only the current rule; this log keeps the reasoning and the history.
 
 **Who decides.** *Jimmy* owns product calls, and his decisions are marked as his.
@@ -1379,7 +1379,7 @@ found each point while running the daemon.
   spec. The check lands with `src/fs/`.
 - **Rejected:** none recorded.
 
-### `tether serve` is Linux-only for now
+### `tether serve` is Linux-only for now (superseded)
 
 - **What:** the daemon needs tailscaled's LocalAPI unix socket for the login allowlist
   and the Funnel check. The macOS Tailscale apps (App Store and standalone) have no
@@ -1387,6 +1387,8 @@ found each point while running the daemon.
   fixtures and building the iOS app ([plan.md](plan.md#product-rules)).
 - **Rejected:** a macOS daemon that skips the LocalAPI checks: it would run with no
   login allowlist and no Funnel check.
+- **Superseded:** by "A Mac can host tether, behind a path secret" (2026-10-24): a Mac
+  daemon reads LocalAPI through the proof-token transport.
 
 ### Shutdown waits for the hub's pumps
 
@@ -3837,3 +3839,25 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
     publish write, and a deadline, for no account that needs it.
   - `tether unpublish [--port]` as the stop's second step: duplicates `tailscale serve
     --https=443 off` for an entry that is tether's alone.
+- **Changed:** by "Teardown removes tether's Serve handlers" (2026-10-24): the daemon
+  still never removes its entry, and `tether teardown` does the whole stop.
+
+## tether setup
+
+### Setup's prompts, clipboard and QR
+
+- **Decided:** 2026-10-24, lead, on the design's open questions.
+- **What:**
+  - Setup prints each privileged command before it runs it, with no `[y/N]`; `sudo`'s
+    own prompt is the consent.
+  - It copies the link with OSC 52 when stdout is a terminal.
+  - The QR encodes the link alone.
+- **Why:**
+  - Jimmy asked to run setup and "copy the link". Every run of setup is a deliberate
+    act, so a confirmation adds a step and blocks no mistake.
+  - OSC 52 costs one escape sequence and reaches the clipboard over SSH.
+  - A code in the link needs web and iOS work, and leaves the code in browser history.
+- **Rejected:**
+  - A `[y/N]` before `sudo`.
+  - Shelling out to `pbcopy`, `wl-copy` or `xclip`: over SSH they copy on the server.
+  - A code in the QR.

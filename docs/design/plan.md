@@ -23,6 +23,7 @@ and record decisions in decisions.md.
 | [ios-shell.md](ios-shell.md) | The native iOS app: keyboard, focus, bridge, scheme handler, lifecycle, media |
 | [auth.md](auth.md) | Native device tokens, enrolled-node browser admission, enrolment and auth routes |
 | [fs.md](fs.md) | `src/fs/`: roots, path resolution, the `/fs/*` routes, uploads, their limits |
+| [setup.md](setup.md) | `src/setup/`: `tether setup` and `tether teardown`, installing the service, publishing on the tailnet, the checks and their messages |
 | [complete.md](complete.md) | `src/complete/`: `POST /complete`, the history, PATH, carapace and path sources, the shell snippet, how they stay inside the budget |
 | [decisions.md](decisions.md) | The decision log: what, why, alternatives rejected, who, when |
 | [plan-review.md](plan-review.md) | The first review of this plan, kept as a record |
@@ -585,12 +586,12 @@ load as they scroll into view; upload has a "resize / send original" toggle.
 attaches to his tmux server directly.
 
 **Tailnet only.** The daemon binds `serve.sock` and `local.sock` in
-`$XDG_RUNTIME_DIR/tether/`, a private `0700` directory. Publish only
-`serve.sock` with `sudo tailscale serve --bg --https=443
-unix:/run/user/<uid>/tether/serve.sock` (Tailscale 1.94 or later). The daemon starts
+`$XDG_RUNTIME_DIR/tether/`, a private `0700` directory. `tether setup` publishes only
+`serve.sock` (Tailscale 1.94 or later), as Tailscale's operator
+([setup.md](setup.md)). The daemon starts
 without LocalAPI and refuses Funnel traffic per request; it does not make Funnel a
 startup gate. On Tailscale 1.100 and later changing Serve after publishing a Unix
-socket needs root. See [running.md](../running.md).
+socket needs root, or an operator who may run `sudo tailscale`. See [running.md](../running.md).
 
 **Identity and device lanes.** Every request requires an allowed
 `Tailscale-User-Login` and no Funnel marker. The native iOS app presents its device
@@ -662,6 +663,7 @@ src/auth/      LocalAPI identity, native/node devices, admission and enrolment (
 src/runtime.rs private runtime directory, single-instance lock, serve/local Unix sockets
 src/fs/        the only place paths are resolved and checked against roots
 src/complete/  /complete: history, PATH index, carapace runner (bounded, cached; complete.md)
+src/setup/     tether setup and teardown: checks, service install, publication (setup.md)
 web/           one Preact app embedded by the daemon and bundled into the iOS app:
   main.tsx, index.html pick the Platform, boot it and render App
   platform/

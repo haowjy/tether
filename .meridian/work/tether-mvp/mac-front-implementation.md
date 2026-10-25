@@ -32,3 +32,14 @@ review and Jimmy's log-upload opt-out, the Mac probe gates remain necessary.
   - Fix auth.md ~420 and gate M7 (M7 becomes: confirm the secret rotates per start).
   - Rewrite the decisions.md log-upload entry.
 - **Side effect:** the lead ran `tailscale bugreport` twice without the opt-out in effect, which uploaded two bug reports.
+
+## 2026-10-24: tether setup (new task)
+- **Jimmy's ask:** one command that runs tether as a background service, publishes it on the tailnet, and prints the link. The name is `tether setup`.
+- **Sharing:** asked whether "others" means Jimmy's own devices or other people. Not answered yet; the default is his own devices. Multi-user would need its own design.
+- **Status:** p190 is researching whether a Linux Tailscale operator can POST serve-config without root.
+- **Next:** a design spec in docs/design, review, then build.
+- **Lead's leanings:**
+  - Embed `contrib/tether.service` and the plist with `include_str!`, so there is one source.
+  - Reuse the publish plan with a `ServeTarget::Unix` target.
+  - Make it idempotent.
+  - Print the enrol URL and code, plus a terminal QR.

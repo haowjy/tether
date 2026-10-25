@@ -112,8 +112,9 @@ So the Mac host also trusts:
   requests, among them the iOS app's device token, which it can replay through Serve
   from the Mac's own node on the native lane: code execution as Jimmy. While Jimmy is
   logged out only root, the role accounts and processes of his that survive logout run,
-  all trusted. While he is logged in, the window lasts from an unload until he runs
-  `tailscale serve --https=443 off`, which every documented stop includes. At the
+  all trusted. While he is logged in, the window lasts from an unload until tether's
+  entry is removed: `tether teardown` removes it straight after the unload, and so
+  does every documented stop. At the
   next load, if something already holds the port, launchd's bind fails silently and
   hands tether an unbound socket (probed, p177); the daemon then withdraws its old
   handler and exits ([The listener](#the-mac-front)), so the window lasts from that
@@ -316,8 +317,8 @@ plan and compare-and-swap, so Serve stops sending the phone's requests to that
 process. The entry is tether's alone by the publication rule, so this removes nothing
 of another app's. launchd restarts the daemon every 10 s, and each start tries again. Without `--publish` a Mac daemon has no
 Serve front, only `local.sock`; the e2e stack and dev runs use that, and never touch
-the serve config. On Linux `--publish` is a configuration error (exit 78): Linux
-publishes with `tailscale serve`.
+the serve config. On Linux `--publish` is a configuration error (exit 78): on Linux
+`tether setup` writes the publication, once ([setup.md](setup.md#publication)).
 
 **The path secret check runs before routing.** It runs in the accept loop's
 per-request service, before the router, because axum routes before any
@@ -381,7 +382,7 @@ Once LocalAPI answers, it:
 The canonical-origin refusal carries a typed cause and is rendered for the serve
 target. It names the actual conflict (including Funnel, the incompatible TCP entry,
 or a sibling handler's mount), never its proxy URL, and explains how to clear it. On
-Linux it includes the `sudo tailscale serve` command below; on a Mac it tells Jimmy
+Linux it names `tether setup` as the fix; on a Mac it tells Jimmy
 which handler or TCP forward to remove, or that Funnel must be turned off, then to
 restart tether to retry publication. A refused plan is logged once and reported in
 `/auth/info`'s `browserRefused`; the daemon doesn't publish again until it restarts.
@@ -398,10 +399,13 @@ daemon never removes its Serve entry, on any exit. A crash or
 restart leaves the socket with launchd, and the next start replaces the stale handler
 with one carrying a new secret. Logout, or unloading the agent, leaves the entry
 pointing at a closed port, and Serve answers `502` until Jimmy logs in again; the next
-start replaces it the same way. To stop tether, Jimmy unloads the agent and runs
-`tailscale serve --https=443 off`, which removes the whole entry: tether refuses to
-share it, so the entry is tether's alone ([Threat model](#threat-model)). To stop it
-for good he also removes the plist, which launchd otherwise loads at the next login.
+start replaces it the same way. To stop tether, Jimmy runs `tether teardown`, which
+unloads the agent, removes tether's handlers and the entries and plain-HTTPS ports
+they leave unused, and removes the plist ([setup.md](setup.md#teardown)). By hand he
+unloads the agent and runs `tailscale serve --https=443 off`, which removes the whole
+entry: tether refuses to share it, so the entry is tether's alone ([Threat
+model](#threat-model)); to stop it for good he also removes the plist, which launchd
+otherwise loads at the next login.
 
 **WebSockets.** An upgrade is an HTTP request like any other, so the path secret,
 the `Host` rule and the lanes judge the upgrade request; Serve gives each upgrade its
@@ -514,9 +518,9 @@ Otherwise there is no canonical origin and every node-lane request is `403
 bad_origin`. The typed refusal names the actual cause—such as the second reference,
 the TCP entry, Funnel, a non-root mount, or the sibling handler's mount—without
 printing a proxy URL, which may contain the Mac path secret. Each serve target gets
-its own repair instruction: on Linux the `sudo tailscale serve` command below; on a
-Mac, remove the named handler or TCP forward (or turn Funnel off), then restart tether
-to retry publication.
+its own repair instruction: on Linux, fix the named conflict and run `tether setup`;
+on a Mac, remove the named handler or TCP forward (or turn Funnel off), then restart
+tether to retry publication.
 
 | Rule | Why |
 |---|---|
@@ -534,17 +538,19 @@ within 10 s, by new requests and by live sockets alike. Request headers (`Host`,
 publication itself, and this rule still judges it: a handler Jimmy adds beside tether,
 or Funnel turned on, refuses browsers within 10 s as on Linux.
 
-**Upgrading from loopback TCP (Linux).** When there is no canonical origin and some entry
-proxies to `http://127.0.0.1:7850`, today's default publication, the message names
-that entry and gives the one command, `sudo tailscale serve --bg --https=443
-unix:/run/user/<uid>/tether/serve.sock`, which replaces the `/` handler of the
-entry it names. Any other loopback target is someone else's app and gets the plain
+**Upgrading from loopback TCP (Linux).** When there is no canonical origin and the
+`/` handler of a `:443` Web entry proxies to `http://127.0.0.1:7850`, the old
+daemon's publication, the message names that entry and names `tether setup`, whose
+publication plan removes that handler and publishes `serve.sock` in its place. A
+7850 handler anywhere else gets the plain refusal. Any other loopback target is someone else's app and gets the plain
 refusal. The daemon logs the message, `tether enroll` prints it, and `GET
 /auth/info` carries it in `browserRefused`. Only the Unix serve target looks for
 this.
 
 `GET /auth/info` reports `browserOrigin` (or `null`, with `browserRefused` set to
-the message). The shell compares it with `location.origin` before connecting, and
+the message). `browserPending` is true while a Mac publication is still waiting or
+retrying, so `browserRefused` holds its last error rather than a final refusal;
+`tether setup` keeps waiting while it is set. It is always false on Linux. The shell compares it with `location.origin` before connecting, and
 on a mismatch shows "Open tether at `<browserOrigin>`" and opens no socket; with
 `null` it shows the message.
 
@@ -736,6 +742,8 @@ enrolled_by = "jimmy@github"
 
 | Command | Effect |
 |---|---|
+| `tether setup` | Install the service, publish it, and print the link, its QR code and a new code ([setup.md](setup.md)) |
+| `tether teardown` | Stop and remove the service and remove tether's Serve handlers; devices and config stay |
 | `tether enroll [--ttl 10m]` | Print a new code, the host URL for the app, and the browser URL (`browserOrigin`, or the refusal message with its fix). The code works for either kind |
 | `tether device list` | Devices with name, kind, enrolled date and `enrolled_by`; for nodes, the stored stable ID; named refused rows are marked `refused` |
 | `tether device remove <name>` | Remove a device of either kind; its requests are refused at once and its sockets close at the next re-check |
@@ -753,7 +761,7 @@ unknown path under them, for any method, is a JSON 404, never the shell.
 | Route | Native lane | Node lane (a Serve front) | Request → response |
 |---|---|---|---|
 | shell paths, `GET`/`HEAD` | not judged | not judged | the packaged files, under the shell caps ([daemon-core.md](daemon-core.md#static-shell)) |
-| `GET /auth/info` | not judged | not judged | `{hostId, name, daemonVersion, protocol, browserOrigin, browserRefused}` |
+| `GET /auth/info` | not judged | not judged | `{hostId, name, daemonVersion, protocol, browserOrigin, browserRefused, browserPending}` |
 | `POST /auth/enroll` | redeems the code | refused: any `Origin` or `Sec-Fetch-Site` is `403 bad_origin` | `{code, deviceName}` → `{token, deviceName}` |
 | `POST /auth/node/enroll` | a token is `400 bad_request` | canonical origin, admission (mutation), whois, node rules | `{code, deviceName}` → `200 {deviceName}`; `403 bad_code`, `bad_origin`, `node_refused`; `503` |
 | `GET /auth/node/session` | a token is `400 bad_request` | canonical origin, admission (GET), whois, node rules, lookup | `200 {deviceName}`; `401 {error, node: {name}}`; `403 bad_origin`, `node_refused`; `503` |
@@ -795,9 +803,11 @@ pass through it.
   `tether enroll`. Cell fills and retries log changes in origin or availability.
 - `mac_front.rs`: the Mac front identity and its proxy URL, strict tether-shaped
   matcher, and assembly into the target, publication and request gate.
-- `publish.rs`: the Mac publication. A pure plan from the serve config's JSON, the
-  MagicDNS name and target to the new JSON or a refusal; the plan is judged with the
-  canonical-origin rule before a POST. It also owns the withdrawal plan for a socket
+- `publish.rs`: the publication plans. A pure plan from the serve config's JSON, the
+  MagicDNS name and serve target (Unix or Mac) to the new JSON or a refusal; the plan
+  is judged with the canonical-origin rule before a POST. The Mac daemon's task and
+  `tether setup` on Linux share it, and the withdrawal plan serves `tether teardown`
+  on both. It also owns the withdrawal plan for a socket
   launchd couldn't bind, and one task owns the publication state and retries with the
   cell's 2–30 s backoff. The serve-config types redact proxy URLs in `Debug`.
 - `store.rs`: `auth.toml` read-modify-write, native and node devices, and pending
@@ -968,7 +978,7 @@ LocalAPI do not replace them. `browser-setup.md` links here for the complete che
 
 | Gate | Check on the real system | Settles |
 |---|---|---|
-| G1 | On the dev box with Tailscale 1.104.1, publish `serve.sock` with `sudo tailscale serve --https=443 unix:<serve.sock>`; confirm sudo is required, later Serve changes need root, and another Unix user gets `EACCES` on the socket | Unix Serve publication and runtime-directory boundary |
+| G1 | On the dev box with Tailscale 1.104.1, publish `serve.sock` with `tether setup` as the operator, and once by hand with `sudo tailscale serve --https=443 unix:<serve.sock>`; confirm a non-operator's write is refused, later Serve changes need root or an operator who may `sudo tailscale`, and another Unix user gets `EACCES` on the socket. The setup gates S1–S11 ([setup.md](setup.md#probe-gates)) cover the rest | Unix Serve publication and runtime-directory boundary |
 | G2 | Through Serve from laptop, phone browser and PWA, inspect Host, forwarded host/address and identity headers on GET, POST and WebSocket upgrade; try forged identity headers and Safari HTTP/2 WebSocket | Serve header trust and browser authority |
 | G3 | Check real whois fields and refusals for tagged, shared, subnet-router, self and login-mismatch nodes; admit only a plain owner node and an exit-node route; confirm `/status?peers=false` includes self ID and owner | Node rules and tailnet-state parsing |
 | G4 | Measure whois latency, tailscaled CPU and response sizes for 1,000 calls over new and keep-alive connections and for 20 concurrent calls; measure status and Serve-config answers | Per-request whois and bounded keep-alive pools |
