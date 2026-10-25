@@ -156,8 +156,10 @@ pub fn admission(
         }
     }
 
+    // Required on reads only. A WebSocket handshake is a GET, but WebKit sends it without
+    // fetch metadata, and its exact `Origin` (checked above) decides it.
     let fetch_site = unique(headers, "sec-fetch-site")?;
-    if get_or_head {
+    if get_or_head && !upgrade {
         if fetch_site.and_then(|value| value.to_str().ok()) != Some("same-origin") {
             return Err(Error::BadOrigin);
         }
