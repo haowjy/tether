@@ -8,9 +8,11 @@ allowlisted Tailscale login. Past that, a request is admitted on one of two
 Keychain behind Face ID and sent as a bearer token or a WebSocket subprotocol. A
 browser or PWA presents nothing: it is admitted as an **enrolled node**, because
 the tailnet node it runs on, which the daemon learns from tailscaled, is in
-`auth.toml`. Both kinds of device are enrolled with the same one-time code from
-`tether enroll` and revoked with `tether device remove`. tether never authenticates
-with a cookie.
+`auth.toml`. Browser nodes are enrolled with the one-time code from `tether enroll`;
+the native app normally gets its token with that code too, but the app on an already
+enrolled node can mint a node-bound token without redeeming another code. The node's
+removal route revokes its browser admission and any native token minted from it.
+tether never authenticates with a cookie.
 
 Serve reaches the daemon through a **front**, which differs by host. On Linux it is
 `serve.sock`, a Unix socket in a `0700` directory that only root and Jimmy can open.
@@ -62,7 +64,9 @@ holding the 64 connection permits; other Unix users on a Linux box can't.
 - **An enrolled node is trusted whole.** Every browser profile, app and OS account
   on it reaches the daemon as that node, with no further check, until `tether
   device remove`. On a phone whose node is enrolled, Safari and the PWA reach the
-  host without Face ID.
+  host without Face ID. A native token minted from that node lets the app use the
+  native lane too, but does not grant access the node didn't already have; removing
+  the node also removes that token.
 - Anyone holding Jimmy's unlocked laptop or phone can use the browser client. A lock
   screen drawn by the page would protect nothing the node isn't already sending.
 - An HTTP response already streaming when its device is removed runs to its end
@@ -619,6 +623,16 @@ so it refuses any request carrying `Origin` or `Sec-Fetch-Site` with `403
 bad_origin`. A browser never needs a portable token, and refusing keeps script on
 tether's origin that sees a typed code from trading it for one.
 
+`POST /auth/node/enroll` can also return a native token, but only for an already
+enrolled node and only when `code` is empty. It reaches that branch after the node
+lane has checked the canonical HTTPS `Origin`, the `X-Forwarded-Host` for this
+daemon, and tailscaled's whois identity and node rules. The node is already admitted
+to the HTTP routes without a token; this response gives its app a native token for
+the native lane, including a terminal WebSocket opened from the app's custom scheme.
+The empty-code branch does not redeem a code, and an unenrolled node gets the same
+`401 not_enrolled` refusal as `/auth/node/session`. A token never substitutes for a
+code to enroll a node.
+
 **Statuses and close codes for browsers:**
 
 | Answer | Meaning | The browser client |
@@ -656,11 +670,25 @@ node enrols at its own route:
 
 4b. The page sends `POST /auth/node/enroll {code, deviceName}`. It passes the
    node lane up to the device lookup: front, canonical origin, admission (mutation),
-   whois, node rules. On the auth lane, `Store::enroll` runs with `kind = Node`, the
-   stable ID and the node's login, and `enrolled_by` = the login. If the node is
-   already enrolled, it answers `200` with the existing name and leaves the code
-   unconsumed. The answer is `200 {deviceName}`, `Cache-Control: no-store`. Nothing
-   secret is issued: the node is the credential.
+   whois, node rules. With a non-empty code, the auth lane runs `Store::enroll_node`
+   with `kind = Node`, the stable ID and the node's login, and `enrolled_by` = the
+   login. If the node is already enrolled, it answers `200` with the existing name
+   and leaves the code unconsumed. The answer is `200 {deviceName}`,
+   `Cache-Control: no-store`. Nothing secret is issued: the node is the credential.
+
+4c. The native app on that already enrolled node sends
+   `POST /auth/node/enroll {code: "", deviceName}`. The route follows the same
+   node-lane checks, then on the auth lane stores a `kind = Native` token hash with
+   that node's stable ID and login, and `enrolled_by` = the login. It returns
+   `200 {token, deviceName}`, `Cache-Control: no-store`; the raw token is returned
+   once and is never stored. The row's node ID is a revocation link, not an
+   authentication restriction: the token uses the native lane from any node, but
+   `POST /auth/node/remove {}` and `tether device remove <node-name>` remove it with
+   its node; `tether device remove <token-name>` can also revoke it individually. An
+   empty-code request from `Session::NodeUnenrolled` returns `401
+   {error: "not_enrolled", node: {name}}` without reading or changing the code. A
+   non-empty code still follows the node-enrolment path above; the token path never
+   enrols a node.
 
 ## Live sockets and revocation
 
@@ -714,7 +742,9 @@ at boot, 401 or 4401 afterwards. It stores no enrolment state of its own.
 `native`, so files written before nodes parse unchanged), `enrolled_at`,
 `enrolled_by` (the Tailscale login, or `cli`), and per kind: `token_sha256` for
 native; `node_id` (the stable ID) and `login` (the node's owner at enrolment) for
-node. Optional `[pending]` as today.
+node. A native token minted by an enrolled node also has that `node_id` and `login`
+so removing the node revokes the token; native authentication otherwise uses only
+the token hash. Optional `[pending]` as today.
 
 **A device row with a field the daemon doesn't know is refused, alone**, and logged
 by name; other rows keep working. New device names avoid names in both admitted and
@@ -748,7 +778,7 @@ enrolled_by = "jimmy@github"
 | `tether teardown` | Stop an installed service if present, remove it, and remove tether's Serve handlers; devices and config stay |
 | `tether enroll [--ttl 10m]` | Print a new code, the host URL for the app, and the browser URL (`browserOrigin`, or the refusal message with its fix). The code works for either kind |
 | `tether device list` | Devices with name, kind, enrolled date and `enrolled_by`; for nodes, the stored stable ID; named refused rows are marked `refused` |
-| `tether device remove <name>` | Remove a device of either kind; its requests are refused at once and its sockets close at the next re-check |
+| `tether device remove <name>` | Remove a device of either kind; removing a node also removes its bound native tokens; requests are refused at once and sockets close at the next re-check |
 | `tether device add <name>` | Add a **native** device and print its token once, for the dev shim or Playwright against a real daemon |
 
 ## Endpoints
@@ -765,7 +795,7 @@ unknown path under them, for any method, is a JSON 404, never the shell.
 | shell paths, `GET`/`HEAD` | not judged | not judged | the packaged files, under the shell caps ([daemon-core.md](daemon-core.md#static-shell)) |
 | `GET /auth/info` | not judged | not judged | `{hostId, name, daemonVersion, protocol, browserOrigin, browserRefused, browserPending}` |
 | `POST /auth/enroll` | redeems the code | refused: any `Origin` or `Sec-Fetch-Site` is `403 bad_origin` | `{code, deviceName}` → `{token, deviceName}` |
-| `POST /auth/node/enroll` | a token is `400 bad_request` | canonical origin, admission (mutation), whois, node rules | `{code, deviceName}` → `200 {deviceName}`; `403 bad_code`, `bad_origin`, `node_refused`; `503` |
+| `POST /auth/node/enroll` | a token is `400 bad_request` | canonical origin, admission (mutation), whois, node rules | non-empty `{code, deviceName}` → `200 {deviceName}`; empty `{code: "", deviceName}` → enrolled node: `200 {token, deviceName}`; unenrolled node: `401 {error, node: {name}}`; `403 bad_code`, `bad_origin`, `node_refused`; `503` |
 | `GET /auth/node/session` | a token is `400 bad_request` | canonical origin, admission (GET), whois, node rules, lookup | `200 {deviceName}`; `401 {error, node: {name}}`; `403 bad_origin`, `node_refused`; `503` |
 | `POST /auth/node/remove` | a token is `400 bad_request` | canonical origin, admission (mutation), whois, node rules | `{}` → `204` |
 | `GET /ws` | subprotocol token | only `tether.v1` offered; canonical origin, admission (upgrade), whois, node rules, lookup | upgrade; not enrolled → close 4401; can't decide → 4503; bad origin → plain 403 |

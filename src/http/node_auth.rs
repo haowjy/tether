@@ -13,8 +13,8 @@ use serde::Deserialize;
 use tracing::{error, info, warn};
 
 use super::{Ctx, Login, Refusal};
-use crate::auth::Session;
 use crate::auth::store::EnrollError;
+use crate::auth::{AuthError, Session};
 use crate::proto::HttpError;
 
 #[derive(Debug, Deserialize)]
@@ -42,8 +42,9 @@ pub(super) async fn enroll(
     Extension(Login(login)): Extension<Login>,
     body: Result<Json<EnrollRequest>, JsonRejection>,
 ) -> Response {
-    let (node_id, name) = match session {
-        Session::Node { node, .. } | Session::NodeUnenrolled { node, .. } => (node.id, node.name),
+    let (node_id, name, enrolled) = match session {
+        Session::Node { node, .. } => (node.id, node.name, true),
+        Session::NodeUnenrolled { node, .. } => (node.id, node.name, false),
         Session::Native(_) => return Refusal::from(HttpError::BadRequest).into_response(),
     };
     let Json(request) = match body {
@@ -52,10 +53,46 @@ pub(super) async fn enroll(
     };
     let store = ctx.app.auth.store().clone();
     let requested_name = if request.device_name.trim().is_empty() {
-        name
+        name.clone()
     } else {
         request.device_name
     };
+    if request.code.is_empty() {
+        if !enrolled {
+            return Refusal::from(&AuthError::NotEnrolled { node_name: name }).into_response();
+        }
+        let by = login.clone();
+        return match ctx
+            .app
+            .lanes
+            .auth
+            .run(move || {
+                store.add_native_for_node(&requested_name, &node_id, &by, SystemTime::now())
+            })
+            .await
+        {
+            Ok(Ok(Some(added))) => {
+                info!(device = %added.name, by = %login, "minted a native token for an enrolled node");
+                (
+                    StatusCode::OK,
+                    [(axum::http::header::CACHE_CONTROL, "no-store")],
+                    Json(serde_json::json!({
+                        "token": added.token,
+                        "deviceName": added.name
+                    })),
+                )
+                    .into_response()
+            }
+            Ok(Ok(None)) => {
+                Refusal::from(&AuthError::NotEnrolled { node_name: name }).into_response()
+            }
+            Ok(Err(cause)) => {
+                error!(%cause, "can't mint a native token for a node");
+                Refusal::from(HttpError::Internal).into_response()
+            }
+            Err(_) => Refusal::from(HttpError::Busy).into_response(),
+        };
+    }
     let by = login.clone();
     let enrolled = ctx
         .app

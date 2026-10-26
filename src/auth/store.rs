@@ -235,7 +235,7 @@ impl Store {
         let token_hash = token::hash(&token);
         self.update(|file| {
             redeem(file, code, now)?;
-            let name = add_native(file, device_name, &token_hash, by, now);
+            let name = add_native(file, device_name, &token_hash, by, now, None);
             Ok(Added { name, token })
         })?
     }
@@ -268,13 +268,49 @@ impl Store {
     pub fn add_device(&self, name: &str, now: SystemTime) -> Result<Added, StoreError> {
         let token = token::generate()?;
         let token_hash = token::hash(&token);
-        let name = self.update(|file| add_native(file, name, &token_hash, "cli", now))?;
+        let name = self.update(|file| add_native(file, name, &token_hash, "cli", now, None))?;
         Ok(Added { name, token })
     }
 
-    /// `tether device remove`: false if no device has that name.
+    /// `POST /auth/node/enroll` with an empty code. The caller must already have
+    /// admitted this node; rechecking under the write lock prevents a concurrent
+    /// removal from leaving behind a token. The token is bound to the node so removal
+    /// revokes both credentials. Returns `None` if the node was removed meanwhile.
+    pub fn add_native_for_node(
+        &self,
+        name: &str,
+        node_id: &str,
+        login: &str,
+        now: SystemTime,
+    ) -> Result<Option<Added>, StoreError> {
+        let token = token::generate()?;
+        let token_hash = token::hash(&token);
+        let name = self.update(|file| {
+            let still_enrolled = file.devices.iter().any(|device| {
+                device.kind == DeviceKind::Node
+                    && device.node_id.as_deref() == Some(node_id)
+                    && device.login.as_deref() == Some(login)
+            });
+            still_enrolled
+                .then(|| add_native(file, name, &token_hash, login, now, Some((node_id, login))))
+        })?;
+        Ok(name.map(|name| Added { name, token }))
+    }
+
+    /// `tether device remove`: false if no device has that name. Removing a node row
+    /// also removes native tokens bound to that node.
     pub fn remove_device(&self, name: &str) -> Result<bool, StoreError> {
         self.update(|file| {
+            let node_id = file
+                .devices
+                .iter()
+                .find(|device| device.name == name && device.kind == DeviceKind::Node)
+                .and_then(|device| device.node_id.as_deref())
+                .map(str::to_owned);
+            if let Some(node_id) = node_id {
+                return remove_node_rows(file, &node_id);
+            }
+
             let before = file.devices.len();
             file.devices.retain(|device| device.name != name);
             let removed = file.devices.len() < before;
@@ -285,15 +321,9 @@ impl Store {
         })
     }
 
-    /// Removes the enrolled node and any accidentally duplicated row for the same ID.
+    /// Removes the enrolled node, native tokens bound to it, and duplicate rows.
     pub fn remove_node(&self, node_id: &str) -> Result<bool, StoreError> {
-        self.update(|file| {
-            let before = file.devices.len();
-            file.devices.retain(|device| {
-                device.kind != DeviceKind::Node || device.node_id.as_deref() != Some(node_id)
-            });
-            file.devices.len() < before
-        })
+        self.update(|file| remove_node_rows(file, node_id))
     }
 
     /// Read, change and write the file under the lock. Nothing is written when `change`
@@ -371,14 +401,19 @@ fn add_native(
     token_hash: &Hash,
     by: &str,
     now: SystemTime,
+    node: Option<(&str, &str)>,
 ) -> String {
     let name = unique_name(file, name);
+    let (node_id, login) = match node {
+        Some((node_id, login)) => (Some(node_id.to_owned()), Some(login.to_owned())),
+        None => (None, None),
+    };
     file.devices.push(Device {
         name: name.clone(),
         kind: DeviceKind::Native,
         token_sha256: Some(token::hex(token_hash)),
-        node_id: None,
-        login: None,
+        node_id,
+        login,
         enrolled_at: rfc3339(now),
         enrolled_by: by.to_owned(),
     });
@@ -406,11 +441,18 @@ fn add_node(
     name
 }
 
+fn remove_node_rows(file: &mut AuthFile, node_id: &str) -> bool {
+    let before = file.devices.len();
+    file.devices
+        .retain(|device| device.node_id.as_deref() != Some(node_id));
+    file.devices.len() < before
+}
+
 impl Device {
     pub(crate) fn valid(&self) -> bool {
         match self.kind {
             DeviceKind::Native => {
-                self.token_sha256.is_some() && self.node_id.is_none() && self.login.is_none()
+                self.token_sha256.is_some() && self.node_id.is_some() == self.login.is_some()
             }
             DeviceKind::Node => {
                 self.token_sha256.is_none() && self.node_id.is_some() && self.login.is_some()

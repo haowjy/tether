@@ -343,7 +343,8 @@ is admitted as its machine's Tailscale node ([auth.md](design/auth.md)).
 ```bash
 tether device list              # native devices and enrolled tailnet nodes
 tether device add playwright    # a native token for local dev/Playwright, printed once
-tether device remove laptop     # revokes its token or node; live sockets close within 10 s
+tether device remove laptop     # revokes a token, or a node and its bound tokens
+                                # live sockets close within 10 s
 ```
 
 These commands only edit files under `~/.local/state/tether/`, so they work whether or
