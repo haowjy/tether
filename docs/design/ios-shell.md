@@ -405,8 +405,11 @@ Native sizes the web view, so the web never measures the keyboard.
 - On every change native sends the v2 `viewport` object: `layout`, `density`,
   `directInput`, `scheme`, `width`, `stableHeight`, `visibleHeight`, `keyboardInset`,
   `safeArea` and `keyboard`. Heights and insets are CSS-pixel-equivalent points. The
-  native view moves above a docked keyboard; `keyboardInset` is the bottom obstruction
-  between stable and visible height and remains required even when the view is resized.
+  native view moves above a docked keyboard, so the keyboard covers none of the web
+  view: `keyboardInset` is 0 there, and the dock and sheets sit at the bottom of the
+  resized view without rising. Only the browser reports a nonzero value, the part of
+  the page the keyboard hides; the web rises by exactly that. `keyboard` is how the
+  keyboard-up chrome knows the frame it took was at least 120 pt.
 - **Every `viewport` carries the full-screen layout's `safeArea`, including while the
   keyboard is up.** The web view that ends above the keyboard has no bottom inset of its own
   (its `env(safe-area-inset-bottom)` is 0), but the web sizes tmux from `stableHeight`

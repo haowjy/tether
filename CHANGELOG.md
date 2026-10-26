@@ -5,6 +5,9 @@ version section on release.
 
 ## [Unreleased]
 
+- The app no longer leaves a keyboard-height gap under the dock: the native shell moves
+  its web view above the keyboard, so it reports no covered page and the web stops
+  rising by the keyboard a second time. Sheets and toasts sat in the same gap.
 - Setup's link, QR code and terminal clipboard now include the one-time enrolment code
   in the URL fragment, so scanning or opening the link enrols a browser without typing
   the code. `tether enroll` prints the bare MagicDNS name for the iOS app and a

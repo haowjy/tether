@@ -3997,6 +3997,27 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   - Shelling out to `pbcopy`, `wl-copy` or `xclip`: over SSH they copy on the server.
   - A code in the QR.
 
+### The app reports no keyboard inset, because its view moves
+
+- **Decided:** 2026-10-26, lead, from a phone screenshot with the keyboard up.
+- **What:** `keyboardInset` in the v2 `viewport` object means how far the keyboard covers
+  the page the web can see. The browser reports the covered strip; the app reports 0,
+  because the native shell moves its web view's bottom edge above the keyboard.
+  `keyboard` (the frame taken, at least 120 pt) still says the keyboard is up.
+- **Why:** both platforms were describing the keyboard, so the app's dock, sheets and
+  toasts rose by the keyboard height inside a view that had already shrunk, leaving a
+  keyboard-height gap under them. Measured in a real-daemon browser run at phone size:
+  a 593 px view with `--keyboard-inset: 259px` leaves the dock with 259 px of blank
+  space under it; with 0 the dock's bottom sits on the view's bottom.
+- **Rejected:**
+  - Stopping the native resize and letting the web rise by the inset everywhere (the
+    design's documented fallback). It keeps one number but gives up the frame animation
+    and reopens WebKit scrolling the focused line field.
+  - A web-side check of whether the page height already excludes the keyboard. The
+    platform knows what it did; the page would have to measure it back.
+  - Making the dock's lift depend on `keyboard` instead of the inset: the strip shows on
+    the same flag, and the gap is the inset's job in the browser.
+
 ### Setup links carry enrolment codes in fragments
 
 - **Decided:** 2026-10-26, Jimmy.

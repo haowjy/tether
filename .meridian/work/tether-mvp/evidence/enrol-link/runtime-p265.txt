@@ -1,0 +1,15 @@
+Builds:
+  cargo build --locked -> success, Finished dev profile, 5.90s
+  pnpm --dir web build -> success; Vite production bundle; large-chunk advisory for 687.92 kB index JS.
+
+Browser run:
+  node /tmp/enrol-probe-p265.cjs
+  Chromium headless; viewport 390x844; UA Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1.
+  Served production web/dist at a temporary loopback HTTP origin. Companion server answered /auth/info and /auth/node/session as a scratch-daemon stand-in; it did not run the Rust daemon. No persistent or deployed state was touched.
+  Opened #code=GOOD-CODE and #code=BAD-CODE. GOOD-CODE rewrote URL fragment to #/, but rendered Home rather than Enrol. No POST /auth/node/enroll was sent; reload also sent none; Back navigated to about:blank, no POST. No Code field rendered. BAD-CODE similarly rendered Home and sent no POST, so the wrong-code error was not reached.
+  Observed HTTP requests: GET /auth/info; GET /auth/node/session. This standalone browser fixture did not automatically create/pair a browser host.
+  Screenshots: good-code-p265.png and bad-code-p265.png.
+
+Safety / environment:
+  Did not run tether setup; did not access XDG_STATE_HOME/XDG_CONFIG_HOME/TMPDIR deployed tether state; did not touch 127.0.0.1:7851. That listener was already occupied by the LaunchAgent; left it untouched.
+  No scratch Rust daemon launched. The HTTP origin was an app+API stand-in, so it cannot establish Rust daemon enrolment semantics or satisfy the requested real-daemon portion.

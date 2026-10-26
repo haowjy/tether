@@ -36,8 +36,10 @@ export interface Viewport {
   visibleHeight: number;
   /**
    * How far the keyboard, or Safari's form bar with a hardware keyboard, covers the bottom of
-   * the stable box; 0 with none. It is the one number the dock, sheets and toasts rise by
-   * (CSS reads it as `--keyboard-inset`). Smaller than the `keyboard` threshold for the bar.
+   * the page the web can see; 0 with none. The dock, sheets and toasts rise by this much (CSS
+   * reads it as `--keyboard-inset`). The app's shell moves its web view above a docked
+   * keyboard instead, so it reports 0 and nothing rises. Smaller than the `keyboard` threshold
+   * for the bar.
    */
   keyboardInset: number;
   /** Of the keyboard-hidden layout. */

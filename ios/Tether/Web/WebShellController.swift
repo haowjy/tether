@@ -465,7 +465,11 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
     private func viewport() -> Viewport {
         let stable = max(0, view.bounds.height)
         let visible = max(0, webView?.bounds.height ?? stable)
-        let inset = max(0, stable - visible)
+        // A docked keyboard moves the web view's bottom edge up, so the keyboard covers none of
+        // the page: the dock and sheets sit at the bottom of the resized view, and the web lifts
+        // nothing (ios-shell.md, "Keyboard geometry"). `covered` is the frame the keyboard took,
+        // which is what the keyboard-dependent chrome keys on.
+        let covered = max(0, stable - visible)
         let width = max(0, view.bounds.width)
         let safe = view.safeAreaInsets
         return Viewport(
@@ -475,9 +479,9 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
             width: width,
             stableHeight: stable,
             visibleHeight: visible,
-            keyboardInset: inset,
+            keyboardInset: 0,
             safeArea: SafeArea(top: safe.top, right: safe.right, bottom: safe.bottom, left: safe.left),
-            keyboard: inset >= 120
+            keyboard: covered >= 120
         )
     }
 
