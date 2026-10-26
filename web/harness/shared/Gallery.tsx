@@ -10,6 +10,7 @@ import { Row } from "../../ui/primitives/Row";
 import { Spinner } from "../../ui/primitives/Spinner";
 import { StatusBand } from "../../ui/primitives/StatusBand";
 import { TabStrip, type Pill } from "../../ui/primitives/TabStrip";
+import { CodeField } from "../../ui/primitives/CodeField";
 import { SearchField, TextField } from "../../ui/primitives/TextField";
 import { Toast } from "../../ui/primitives/Toast";
 import { NavButton } from "../../ui/primitives/NavButton";
@@ -39,6 +40,7 @@ export function Gallery() {
   const [dialog, setDialog] = useState<"dialog" | "sheet" | null>(null);
   const [active, setActive] = useState("a");
   const [query, setQuery] = useState("");
+  const [code, setCode] = useState("7KQ4");
   const [name, setName] = useState("");
   return (
     <main class={styles.gallery}>
@@ -66,6 +68,7 @@ export function Gallery() {
       <Section title="Fields">
         <TextField label="Name (optional)" value={name} onInput={setName} hint="Leave blank to let tmux choose." />
         <TextField label="Start directory" value="relative/path" onInput={() => undefined} error="Use an absolute directory path, or leave blank." />
+        <CodeField label="Code" value={code} onInput={setCode} />
         <SearchField label="Find a session or window" placeholder="Find a session or window" value={query} onInput={setQuery} />
       </Section>
       <Section title="Rows">

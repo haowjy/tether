@@ -12,13 +12,27 @@ enum TokenAccess {
     case notEnrolled
 }
 
+struct AddHostRequest: Identifiable {
+    let id: UUID
+    let server: String
+    let code: String
+    let error: String?
+
+    init(server: String, code: String = "", error: String? = nil) {
+        id = UUID()
+        self.server = server
+        self.code = code
+        self.error = error
+    }
+}
+
 @MainActor
 final class TetherAppModel: ObservableObject {
     private static let backgroundLockDelay: TimeInterval = 5 * 60
 
     @Published private(set) var hosts: [HostEntry]
     @Published private(set) var isLocked: Bool
-    @Published private(set) var pendingAddServer: String?
+    @Published private(set) var pendingAddRequest: AddHostRequest?
     @Published var showingServers = false
     @Published var errorMessage: String?
 
@@ -182,17 +196,29 @@ final class TetherAppModel: ObservableObject {
               components.port == nil,
               components.fragment == nil,
               let queryItems = components.queryItems,
-              queryItems.count == 1,
-              queryItems[0].name == "host",
-              let origin = queryItems[0].value,
-              let server = try? AuthClient.serverURL(origin) else { return }
-        pendingAddServer = server.absoluteString
-        showingServers = true
+              queryItems.allSatisfy({ $0.name == "host" || $0.name == "code" }),
+              queryItems.filter({ $0.name == "host" }).count == 1,
+              queryItems.filter({ $0.name == "code" }).count <= 1,
+              let origin = queryItems.first(where: { $0.name == "host" })?.value else { return }
+
+        let code = queryItems.first(where: { $0.name == "code" })?.value ?? ""
+
+        do {
+            let server = try AuthClient.serverURL(origin).absoluteString
+            showAddHost(server: server, code: code)
+        } catch {
+            showAddHost(server: origin, code: code, error: error.localizedDescription)
+        }
     }
 
-    func takePendingAddServer() -> String? {
-        defer { pendingAddServer = nil }
-        return pendingAddServer
+    func takePendingAddRequest() -> AddHostRequest? {
+        defer { pendingAddRequest = nil }
+        return pendingAddRequest
+    }
+
+    private func showAddHost(server: String, code: String = "", error: String? = nil) {
+        pendingAddRequest = AddHostRequest(server: server, code: code, error: error)
+        showingServers = true
     }
 
     func removeHost(_ host: HostEntry) async {

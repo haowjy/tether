@@ -5,10 +5,12 @@ version section on release.
 
 ## [Unreleased]
 
+- Enrolling in the browser asks for the code as eight cells, `▢▢▢▢ – ▢▢▢▢`, with the
+  dash drawn rather than typed, and asks for the device name on the next screen.
 - An enrolled phone can mint the app's native token without spending another code;
   removing the node revokes that token too.
 - After the browser enrols, the page offers "Open in the tether app", which opens Add
-  server with the host already filled: one code sets up the phone, browser and app.
+  server with the host and code filled; phone enrolment waits for Next and Add.
 - The phone's line field no longer offers autocorrection or the predictive strip: a
   line is a command or a prompt, and the strip took the row above the keyboard.
 - Sending a line clears the field and keeps it clear. iOS delivered the Return key's

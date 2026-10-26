@@ -14,7 +14,7 @@ struct AuthClient {
             case .invalidServer: "Enter a valid HTTPS server address."
             case .incompatible: "This server does not support this client protocol."
             case .response: "The server returned an unreadable response."
-            case .phoneNotEnrolled: "This phone is not enrolled for this server yet. Run `tether enroll` on the server to get a code, then add the server with that code."
+            case .phoneNotEnrolled: "This phone is not enrolled yet. Run `tether enroll` on the server for a code."
             case .server(let message): message
             }
         }

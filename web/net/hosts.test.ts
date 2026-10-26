@@ -89,17 +89,17 @@ describe("enrolment", () => {
     expect(t.host()?.admission).toEqual({ kind: "notEnrolled", nodeName: "laptop" });
     expect(await t.registry.enrol("h1", "000000", "laptop")).toEqual({ kind: "badCode" });
     expect(t.host()?.admission.kind).toBe("notEnrolled");
-    expect(await t.registry.enrol("h1", "123456", "my laptop")).toEqual({ kind: "enrolled" });
+    expect(await t.registry.enrol("h1", "7KQ4XM2P", "my laptop")).toEqual({ kind: "enrolled" });
     await vi.advanceTimersByTimeAsync(0);
     expect(t.host()?.admission).toEqual({ kind: "admitted", deviceName: "laptop" });
   });
 
   it("reports a busy daemon as tryAgain, and a refused node on the refusal screen", async () => {
     const busy = await boot((p) => { p.daemon.node = "busy"; });
-    expect(await busy.registry.enrol("h1", "123456", "x")).toEqual({ kind: "tryAgain" });
+    expect(await busy.registry.enrol("h1", "7KQ4XM2P", "x")).toEqual({ kind: "tryAgain" });
     const refused = await boot((p) => { p.daemon.node = "notEnrolled"; });
     refused.platform.daemon.node = "refused";
-    expect(await refused.registry.enrol("h1", "123456", "x")).toEqual({ kind: "nodeRefused", reason: "routes" });
+    expect(await refused.registry.enrol("h1", "7KQ4XM2P", "x")).toEqual({ kind: "nodeRefused", reason: "routes" });
     expect(refused.host()?.admission).toEqual({ kind: "nodeRefused", reason: "routes" });
   });
 

@@ -44,9 +44,9 @@ export function destinationFromHash(hash: string): Destination {
   return hash === HASHES.files ? "files" : hash === HASHES.terminal ? "terminal" : "home";
 }
 
-/** The enrolment code in a setup link's fragment (`#code=7KQ4-XM2P`), or null. The server normalises the code, so it is passed on as written. */
+/** The enrolment code in a setup link's fragment (`#code=7KQ4-XM2P`), or null. Normalised to the bare characters the code field holds. */
 export function enrolCodeFromHash(hash: string): string | null {
-  const code = hash.startsWith("#code=") ? hash.slice("#code=".length).trim() : "";
+  const code = hash.startsWith("#code=") ? hash.slice("#code=".length).replace(/[^A-Za-z0-9]/g, "").toUpperCase() : "";
   return code === "" ? null : code;
 }
 

@@ -677,9 +677,13 @@ node enrols at its own route:
 3b. **In a browser**, the shell calls `GET /auth/node/session`. For a node that
    isn't enrolled it answers `401 {error: "not_enrolled", node: {name}}`, `name`
    being the node's MagicDNS machine name, and the shell shows the enrolment screen:
-   the host's name from `GET /auth/info`, a code field, and the device name,
-   prefilled with the node's name, which Jimmy can edit. The screen says "This
-   lets every browser and app on <node> use tether on <host>." A refused node gets
+   the host's name from `GET /auth/info`, then two steps — the code as eight cells in
+   two groups of four, whose separator is drawn and never typed, then the device name,
+   prefilled with the node's name, which Jimmy can edit. A setup link's `#code=` fills
+   the cells and waits for a tap; it never enrols by itself. Each step also offers
+   "Open in the tether app", which hands the host and the code the page holds to the
+   app as `tether://add?host=<origin>&code=<code>`. The screen says "This lets every
+   browser and app on <node> use tether on <host>." A refused node gets
    `403 node_refused` and no code field.
 
 4b. The page sends `POST /auth/node/enroll {code, deviceName}`. It passes the

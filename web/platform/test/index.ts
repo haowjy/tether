@@ -110,7 +110,7 @@ export function defaultDaemon(): FakeDaemon {
     node: "enrolled",
     nodeName: "laptop",
     refusedReason: "routes",
-    code: "123456",
+    code: "7KQ4XM2P",
     listing: null,
     requests: [],
   };

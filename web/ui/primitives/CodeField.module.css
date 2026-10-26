@@ -1,0 +1,35 @@
+.field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.label { font-size: var(--text-small); font-weight: var(--weight-medium); color: var(--color-text-muted); }
+.cells { position: relative; display: flex; align-items: center; gap: var(--space-1); }
+.cell {
+  display: grid;
+  flex: 1 1 0;
+  min-width: 0;
+  place-items: center;
+  height: calc(var(--size-target) + var(--space-2));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-bg-sunken);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-heading);
+  font-weight: var(--weight-medium);
+  transition: border-color var(--duration-1) var(--ease-out);
+}
+.active { border-color: var(--color-accent); }
+.dash { flex: 0 0 var(--space-3); height: 2px; margin-inline: var(--space-1); border-radius: 1px; background: var(--color-text-muted); }
+/* Covers the cells; invisible text and caret, since the cells draw both. 16px or more: Safari zooms into a smaller focused field. */
+.input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-size: 16px;
+  opacity: 0.01;
+}
+.input:focus { outline: none; }
+.cells:has(.input:focus-visible) .active { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }

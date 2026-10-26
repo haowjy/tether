@@ -3199,6 +3199,50 @@ variations canvas.
   - Allowlisting `tether-app://ui` as a node-lane origin. It widens the auth surface, and
     the app still needs a token for its lock screen and uploads.
 
+### Add server separates the code and device name; the app handoff finishes itself (superseded)
+
+- **Decided:** 2026-10-26, Jimmy.
+- **What:** manual Add server is two steps: server and optional code, then the device
+  name and Add. The code is eight native one-character fields grouped four-and-four,
+  with a drawn separator; typing advances, Backspace on an empty cell clears the prior
+  cell, and pasting a whole code fills all eight. The browser's `tether://add` link
+  validates the host and immediately mints with empty code plus `UIDevice.current.name`;
+  after success it saves the host/token and dismisses server management. A locked app
+  queues the link until Face ID succeeds; an unlock failure is visible, `not_enrolled`
+  opens manual step 1 with the host and `tether enroll` instruction, and other failures
+  open the same step with the error. Manual Add errors stay with the name step, and Back
+  preserves the entered fields. Success dismisses the native sheet but does not select a
+  tmux session; the web still owns the route and active tab.
+- **Why:** the code is already available from the browser-enrolled node, so making its
+  app handoff stop at a form wastes the path Jimmy uses. Separating the device name
+  makes each step about one task. Eight real native fields give each cell its own tap
+  target and native editing boundary; the delegate can handle whole-code paste and
+  empty-cell Backspace without synthesizing a cursor over a single text field.
+- **Rejected:** one text field with a drawn overlay, which would need custom mapping from
+  cell taps to cursor positions and more cursor/selection state; keeping the device name
+  beside the server/code; making the app handoff wait for a manual Add tap.
+- **Supersedes:** the custom-scheme portion of "One code per phone: the browser enrols
+  the node, the app mints a token" above, which opened the host-filled Add form instead
+  of completing the mint.
+- **Superseded:** the app-handoff behavior by "The app handoff prefills the form and
+  waits" below.
+
+### The app handoff prefills the form and waits
+
+- **Decided:** 2026-10-26, Jimmy, after using the flow.
+- **What:** `tether://add?host=<origin>&code=<code>` opens Add server at step 1 with
+  the HTTPS host and optional code filled in. It sends no request until the user taps
+  Next and then Add. A code goes through `POST /auth/enroll`; no code keeps the
+  already-enrolled node-mint path through `POST /auth/node/enroll` with `Origin` only.
+  Wrong or expired codes and `not_enrolled` remain visible on the device-name step.
+  Manual two-step entry, the segmented code field, Back preserving both fields, and
+  `UIDevice.current.name` stay unchanged.
+- **Why:** the link must prepare the form, not make an enrolment decision or send a
+  credential before Jimmy confirms it. Sharing the manual Add path also keeps both
+  enrolment lanes behind the same explicit Next and Add taps.
+- **Rejected:** automatically minting or enrolling when the deep link opens; the app
+  would submit before Jimmy reaches the form and the link would not wait for confirmation.
+
 ### No predictions on the line field
 
 - **Decided:** 2026-10-26, Jimmy, from the phone.

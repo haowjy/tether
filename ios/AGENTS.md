@@ -10,6 +10,10 @@ phone dock is web. Spec: [ios-shell.md](../docs/design/ios-shell.md).
   bridge) ask it for a mode. Its four modes and their transitions are in ios-shell.md,
   "Focus: one controller, native"; a second caller puts the keyboard in a state none of
   them describes.
+- **Add server is native.** Manual enrolment and the browser's `tether://add` handoff
+  use the same two-step host/code then device-name form; a link prefills its host and
+  optional code but never enrols until Next and Add are tapped. Empty code keeps the
+  node-mint path. The full input and failure rules are in ios-shell.md, "Hosts".
 - **The bridge contract has one copy:** the fixtures in `TetherKit/Tests/Fixtures/bridge/`.
   The Swift DTOs and `web/platform/native/` both decode them, so a message change
   edits all three in one commit.

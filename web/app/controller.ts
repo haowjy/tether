@@ -27,7 +27,7 @@ export interface AppView {
   hosts: HostClient[];
   /** One message at a time, for the polite live region. */
   notice: string | null;
-  /** The origin to hand to the tether app after the browser enrols; null when no offer is showing. Held in memory: it only follows an enrolment. */
+  /** The origin to hand to the tether app; null when no offer is showing. The handoff adds the setup link's code while this page still holds it. Held in memory. */
   appOffer: string | null;
   /** The database was closed for a newer build's schema upgrade: later writes stay in memory. */
   storageClosed: boolean;
@@ -63,9 +63,10 @@ export class AppController extends Store<AppView> {
 
   private readonly applyViewport: (viewport: Viewport) => void;
 
-  /** A setup link's enrolment code, kept until this page's own admission is first known. */
-  private enrolCode: string | null;
-  private enrolCodeSettled: boolean;
+  /** A setup link's unspent enrolment code: kept for the life of the page and dropped only when this page's own enrolment spends it. The enrolment screen prefills with it and waits for a tap. Read-only outside `enrolled`. */
+  enrolCode: string | null;
+  /** The banner offer for an already-enrolled device with a link code is made once, so a dismissal stays dismissed. */
+  private linkOfferPending: boolean;
 
   private constructor(readonly platform: Platform, boot: BootResult, options: StartOptions) {
     const history = options.history ?? browserHistory();
@@ -85,7 +86,7 @@ export class AppController extends Store<AppView> {
     });
     this.router = router;
     this.enrolCode = enrolCode;
-    this.enrolCodeSettled = enrolCode === null;
+    this.linkOfferPending = enrolCode !== null;
     this.applyViewport = options.applyViewport ?? (() => undefined);
     this.focus = new FocusController(platform.input, () => this.snapshot.viewport);
     this.hosts = new HostRegistry({
@@ -125,14 +126,6 @@ export class AppController extends Store<AppView> {
     void this.checkUpdates();
   }
 
-  /** The setup link's code, once, while this page still needs it. */
-  takeEnrolCode(): string | null {
-    const code = this.enrolCode;
-    this.enrolCode = null;
-    this.enrolCodeSettled = true;
-    return code;
-  }
-
   /** Runs the reducer and its effects. Effects run in the caller's stack, so a focus made inside a tap stays inside the tap. */
   dispatch(event: WorkspaceEvent): void {
     const { state, effects } = reduce(this.snapshot.workspace, event);
@@ -163,9 +156,14 @@ export class AppController extends Store<AppView> {
     this.update({ notice: null });
   }
 
-  /** The browser just enrolled this host: offer to hand it to the tether app. Only platforms that can reach the app offer it. */
-  offerApp(handle: string): void {
-    const origin = this.hosts.get(handle)?.entry.pageOrigin;
+  /** This page's enrolment just spent the link's code: the app mints from the node enrolment, so the handoff carries no code. */
+  enrolled(origin: string | null): void {
+    this.enrolCode = null;
+    this.offerApp(origin);
+  }
+
+  private offerApp(origin: string | null): void {
+    this.linkOfferPending = false;
     if (this.platform.openInApp && origin) this.update({ appOffer: origin });
   }
 
@@ -209,16 +207,10 @@ export class AppController extends Store<AppView> {
   private hostsChanged(): void {
     const hosts = this.hosts.all();
     this.update({ hosts });
-    // The link's code is for a device that still needs enrolling. Once this page's own host has
-    // settled, an enrolled or refused device drops it: otherwise removing the device later in
-    // the same page would spend a code the page kept from the link.
-    if (!this.enrolCodeSettled) {
-      const own = hosts.find((h) => h.entry.pageOrigin !== null)?.admission.kind;
-      if (own !== undefined && own !== "deciding" && own !== "unreachable") {
-        this.enrolCodeSettled = true;
-        if (own !== "notEnrolled") this.enrolCode = null;
-      }
-    }
+    // A device already enrolled when the link opened never spent its code: hand it to the app.
+    // Nothing here enrols by itself, so holding the code past this point is safe.
+    const own = hosts.find((h) => h.entry.pageOrigin !== null);
+    if (this.linkOfferPending && own?.admission.kind === "admitted") this.offerApp(own.entry.pageOrigin);
     this.listing.setHosts(hosts.map((h) => ({ handle: h.entry.handle, host: h.socket })));
     const ids = hosts.flatMap((h) => (h.hostId === null ? [] : [h.hostId]));
     this.dispatch({ type: "hostsKnown", ids, complete: hosts.length > 0 && ids.length === hosts.length });

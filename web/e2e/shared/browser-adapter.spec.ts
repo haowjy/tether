@@ -48,7 +48,8 @@ test("enrols through the real client: code, device name, then Home", async ({ pa
   await fakeDaemon(page, { enrolled: false });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Set up pop-os" })).toBeVisible();
-  await page.getByLabel("Code").fill("123456");
+  await page.getByLabel("Code").fill("7KQ4XM2P");
+  await page.getByRole("button", { name: "Next" }).click();
   await page.getByRole("button", { name: "Enrol this device" }).click();
   await expect(page.getByRole("heading", { name: "tether" })).toBeVisible();
 });

@@ -9,16 +9,23 @@ test.describe("Enrol", () => {
     await openFixture(page, "enrol", desktop);
     await expect(page.getByRole("heading", { name: "Set up pop-os" })).toBeVisible();
     await expect(page.getByText("This lets every browser and app on laptop use tether on pop-os.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Next" })).toHaveAttribute("aria-disabled", "true");
+    await page.getByLabel("Code").fill("7kq4-xm2p");
+    await expect(page.getByLabel("Code")).toHaveValue("7KQ4XM2P");
+    await page.getByRole("button", { name: "Next" }).click();
     await expect(page.getByLabel("Device name")).toHaveValue("laptop");
-    await expect(page.getByRole("button", { name: "Enrol this device" })).toHaveAttribute("aria-disabled", "true");
   });
 
-  test("a wrong code is explained under the field; the right one opens Home", async ({ page }) => {
+  test("a wrong code is explained on the name step; Back keeps it, and the right one opens Home", async ({ page }) => {
     await openFixture(page, "enrol", phone);
-    await page.getByLabel("Code").fill("000000");
+    await page.getByLabel("Code").fill("00000000");
+    await page.getByRole("button", { name: "Next" }).click();
     await page.getByRole("button", { name: "Enrol this device" }).click();
     await expect(page.getByRole("alert")).toHaveText("That code is wrong or has expired");
-    await page.getByLabel("Code").fill("123456");
+    await page.getByRole("button", { name: "Back" }).click();
+    await expect(page.getByLabel("Code")).toHaveValue("00000000");
+    await page.getByLabel("Code").fill("7KQ4XM2P");
+    await page.getByRole("button", { name: "Next" }).click();
     await page.getByRole("button", { name: "Enrol this device" }).click();
     await expect(page.getByRole("heading", { name: "tether" })).toBeVisible();
     expect(await page.evaluate(() => window.__harness?.platform.daemon.requests.filter((r) => r.startsWith("POST")))).toEqual(["POST /auth/node/enroll", "POST /auth/node/enroll"]);

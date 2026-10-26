@@ -181,8 +181,8 @@ export interface Platform {
   restart(reason: "stuck" | "update"): void;
   /** Opens the platform's own screen for adding, pairing and removing servers. Native only. */
   manageHosts?: () => void;
-  /** Hands a server's https origin to the tether app installed on this device. Offered only where the app can exist (iPhone, iPad) and this is not the app. */
-  openInApp?: (origin: string) => void;
+  /** Hands a server's https origin, and the unspent enrolment code if the page holds one, to the tether app installed on this device. Offered only where the app can exist (iPhone, iPad) and this is not the app. */
+  openInApp?: (origin: string, code: string | null) => void;
   updates?: Updates;
   install?: { installed(): boolean };
 }

@@ -13,6 +13,7 @@ export function canOpenApp(): boolean {
   return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
-export function openInApp(origin: string): void {
-  location.assign(`tether://add?host=${encodeURIComponent(origin)}`);
+/** The one place that knows the app's scheme: `tether://add?host=<origin>[&code=<code>]`. With a code the app enrols itself; without one it mints from this device's node enrolment. */
+export function openInApp(origin: string, code: string | null): void {
+  location.assign(`tether://add?host=${encodeURIComponent(origin)}${code === null ? "" : `&code=${encodeURIComponent(code)}`}`);
 }

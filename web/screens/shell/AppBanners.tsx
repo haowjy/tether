@@ -20,8 +20,8 @@ export function AppBanners() {
         <Banner title="Update ready" action={{ label: "Update", onAction: () => { app.applyUpdate(); } }} />
       )}
       {appOffer && destination !== "terminal" && (
-        <Banner title="Open in the tether app" action={{ label: "Open", onAction: () => { app.platform.openInApp?.(appOffer); } }} onDismiss={() => { app.dismissAppOffer(); }}>
-          If it does not open, add {appOffer} in the app and leave the code empty.
+        <Banner title="Open in the tether app" action={{ label: "Open", onAction: () => { app.platform.openInApp?.(appOffer, app.enrolCode); } }} onDismiss={() => { app.dismissAppOffer(); }}>
+          If it does not open, add {appOffer} in the app with no code.
         </Banner>
       )}
     </>
