@@ -18,6 +18,7 @@ final class TetherAppModel: ObservableObject {
 
     @Published private(set) var hosts: [HostEntry]
     @Published private(set) var isLocked: Bool
+    @Published private(set) var pendingAddServer: String?
     @Published var showingServers = false
     @Published var errorMessage: String?
 
@@ -169,6 +170,29 @@ final class TetherAppModel: ObservableObject {
         hosts = nextHosts
         errorMessage = nil
         shell?.send(.hosts(platformHosts))
+    }
+
+    func openAddServerURL(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "tether",
+              components.host?.lowercased() == "add",
+              components.path.isEmpty,
+              components.user == nil,
+              components.password == nil,
+              components.port == nil,
+              components.fragment == nil,
+              let queryItems = components.queryItems,
+              queryItems.count == 1,
+              queryItems[0].name == "host",
+              let origin = queryItems[0].value,
+              let server = try? AuthClient.serverURL(origin) else { return }
+        pendingAddServer = server.absoluteString
+        showingServers = true
+    }
+
+    func takePendingAddServer() -> String? {
+        defer { pendingAddServer = nil }
+        return pendingAddServer
     }
 
     func removeHost(_ host: HostEntry) async {

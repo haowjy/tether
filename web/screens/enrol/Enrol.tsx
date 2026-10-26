@@ -30,6 +30,7 @@ export function Enrol({ host }: { host: HostClient }) {
     setBusy(false);
     if (result.kind === "badCode") setError("That code is wrong or has expired");
     else if (result.kind === "tryAgain") setError("tether is busy, try again");
+    if (result.kind === "enrolled") app.offerApp(host.entry.handle);
     // `enrolled` and `nodeRefused` change the host's admission, which swaps this screen out.
   };
 

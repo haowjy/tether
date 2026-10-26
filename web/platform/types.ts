@@ -174,13 +174,15 @@ export interface Platform {
   storage: PlatformStorage;
   uploads: Uploads;
   clipboard: Clipboard;
-  /** http(s) only. */
+  /** http(s) and mailto: only. */
   openURL(url: string): void;
   playVideo(handle: string, path: string): "handled" | "inline";
   haptic(kind: HapticKind): void;
   restart(reason: "stuck" | "update"): void;
   /** Opens the platform's own screen for adding, pairing and removing servers. Native only. */
   manageHosts?: () => void;
+  /** Hands a server's https origin to the tether app installed on this device. Offered only where the app can exist (iPhone, iPad) and this is not the app. */
+  openInApp?: (origin: string) => void;
   updates?: Updates;
   install?: { installed(): boolean };
 }

@@ -27,6 +27,8 @@ export interface AppView {
   hosts: HostClient[];
   /** One message at a time, for the polite live region. */
   notice: string | null;
+  /** The origin to hand to the tether app after the browser enrols; null when no offer is showing. Held in memory: it only follows an enrolment. */
+  appOffer: string | null;
   /** The database was closed for a newer build's schema upgrade: later writes stay in memory. */
   storageClosed: boolean;
   update: UpdateState;
@@ -77,6 +79,7 @@ export class AppController extends Store<AppView> {
       nav: { destination: router.entry.destination, entry: router.entry },
       hosts: [],
       notice: null,
+      appOffer: null,
       storageClosed: false,
       update: "none",
     });
@@ -158,6 +161,16 @@ export class AppController extends Store<AppView> {
   dismissNotice(): void {
     clearTimeout(this.noticeTimer);
     this.update({ notice: null });
+  }
+
+  /** The browser just enrolled this host: offer to hand it to the tether app. Only platforms that can reach the app offer it. */
+  offerApp(handle: string): void {
+    const origin = this.hosts.get(handle)?.entry.pageOrigin;
+    if (this.platform.openInApp && origin) this.update({ appOffer: origin });
+  }
+
+  dismissAppOffer(): void {
+    this.update({ appOffer: null });
   }
 
   /** "Update": persist now, then the waiting worker takes over and this page reloads. */

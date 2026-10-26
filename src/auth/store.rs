@@ -98,7 +98,7 @@ pub struct Device {
     /// sha256 of a native device's token, hex. The token itself is never stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_sha256: Option<String>,
-    /// Stable node ID and owner login for a browser device.
+    /// Stable node ID and owner login for a node device or a native token minted from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -274,8 +274,10 @@ impl Store {
 
     /// `POST /auth/node/enroll` with an empty code. The caller must already have
     /// admitted this node; rechecking under the write lock prevents a concurrent
-    /// removal from leaving behind a token. The token is bound to the node so removal
-    /// revokes both credentials. Returns `None` if the node was removed meanwhile.
+    /// removal from leaving behind a token. Rotate the node's one native app token in
+    /// the same update, so re-adding does not leave an older live token behind. The
+    /// token is bound to the node so removal revokes both credentials. Returns `None`
+    /// if the node was removed meanwhile.
     pub fn add_native_for_node(
         &self,
         name: &str,
@@ -291,15 +293,27 @@ impl Store {
                     && device.node_id.as_deref() == Some(node_id)
                     && device.login.as_deref() == Some(login)
             });
-            still_enrolled
-                .then(|| add_native(file, name, &token_hash, login, now, Some((node_id, login))))
+            if !still_enrolled {
+                return None;
+            }
+            file.devices.retain(|device| {
+                device.kind != DeviceKind::Native || device.node_id.as_deref() != Some(node_id)
+            });
+            Some(add_native(
+                file,
+                name,
+                &token_hash,
+                login,
+                now,
+                Some((node_id, login)),
+            ))
         })?;
         Ok(name.map(|name| Added { name, token }))
     }
 
-    /// `tether device remove`: false if no device has that name. Removing a node row
-    /// also removes native tokens bound to that node.
-    pub fn remove_device(&self, name: &str) -> Result<bool, StoreError> {
+    /// `tether device remove`: `None` if no device has that name, otherwise the
+    /// number of bound native tokens removed with a node (zero for other rows).
+    pub fn remove_device(&self, name: &str) -> Result<Option<usize>, StoreError> {
         self.update(|file| {
             let node_id = file
                 .devices
@@ -308,7 +322,15 @@ impl Store {
                 .and_then(|device| device.node_id.as_deref())
                 .map(str::to_owned);
             if let Some(node_id) = node_id {
-                return remove_node_rows(file, &node_id);
+                let tokens = file
+                    .devices
+                    .iter()
+                    .filter(|device| {
+                        device.kind == DeviceKind::Native
+                            && device.node_id.as_deref() == Some(&node_id)
+                    })
+                    .count();
+                return remove_node_rows(file, &node_id).then_some(tokens);
             }
 
             let before = file.devices.len();
@@ -317,7 +339,7 @@ impl Store {
             let before = file.refused_devices.len();
             file.refused_devices
                 .retain(|row| row.get("name").and_then(toml::Value::as_str) != Some(name));
-            removed || file.refused_devices.len() < before
+            (removed || file.refused_devices.len() < before).then_some(0)
         })
     }
 
@@ -660,8 +682,8 @@ mod tests {
             writer.join().expect("a writer");
         }
         assert_eq!(store.read().expect("the file").devices.len(), 40);
-        assert!(store.remove_device("d3-4").expect("removed"));
-        assert!(!store.remove_device("d3-4").expect("gone already"));
+        assert_eq!(store.remove_device("d3-4").expect("removed"), Some(0));
+        assert_eq!(store.remove_device("d3-4").expect("gone already"), None);
         assert_eq!(store.read().expect("the file").devices.len(), 39);
     }
 
@@ -717,7 +739,10 @@ mod tests {
             Some("read-only")
         );
 
-        assert!(store.remove_device("old").expect("remove the native row"));
+        assert_eq!(
+            store.remove_device("old").expect("remove the native row"),
+            Some(0)
+        );
         assert_eq!(
             device_rows(&store)
                 .iter()
@@ -726,19 +751,21 @@ mod tests {
             1,
             "removing a typed row must preserve the refused row"
         );
-        assert!(
+        assert_eq!(
             store
                 .remove_device("future")
-                .expect("remove the refused row by name")
+                .expect("remove the refused row by name"),
+            Some(0)
         );
         assert_eq!(
             store.read().expect("typed row remains").devices[0].name,
             "future-2"
         );
-        assert!(
+        assert_eq!(
             store
                 .remove_device("future-2")
-                .expect("remove added device")
+                .expect("remove added device"),
+            Some(0)
         );
         assert!(device_rows(&store).is_empty());
     }

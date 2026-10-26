@@ -4,6 +4,7 @@ import UIKit
 struct ServerListSheet: View {
     @ObservedObject var model: TetherAppModel
     @State private var adding = false
+    @State private var prefilledServer = ""
 
     var body: some View {
         NavigationStack {
@@ -36,21 +37,38 @@ struct ServerListSheet: View {
                     Button("Add", systemImage: "plus") { adding = true }
                 }
             }
-            .sheet(isPresented: $adding) { AddHostView(model: model) }
+            .sheet(isPresented: $adding) { AddHostView(model: model, initialServer: prefilledServer) }
         }
         .presentationDetents([.medium, .large])
-        .onAppear { model.setCovered(true) }
+        .onAppear {
+            model.setCovered(true)
+            presentPendingAdd()
+        }
+        .onChange(of: model.pendingAddServer) { _, _ in presentPendingAdd() }
+    }
+
+    private func presentPendingAdd() {
+        guard let server = model.takePendingAddServer() else { return }
+        prefilledServer = server
+        adding = true
     }
 }
 
 struct AddHostView: View {
     @ObservedObject var model: TetherAppModel
     @Environment(\.dismiss) private var dismiss
+    private let initialServer: String
     @State private var server = ""
     @State private var code = ""
     @State private var deviceName = UIDevice.current.name
     @State private var error: String?
     @State private var sending = false
+
+    init(model: TetherAppModel, initialServer: String = "") {
+        self.model = model
+        self.initialServer = initialServer
+        _server = State(initialValue: initialServer)
+    }
 
     var body: some View {
         NavigationStack {
@@ -79,25 +97,29 @@ struct AddHostView: View {
             }
             .navigationTitle("Add server")
             .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: initialServer) { _, value in
+                server = value
+                code = ""
+                error = nil
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(sending ? "Adding…" : "Add") { Task { await submit() } }
-                        .disabled(sending || !filled)
+                        .disabled(sending || !canSubmit)
                 }
             }
         }
     }
 
-    private var filled: Bool {
+    private var canSubmit: Bool {
         !server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// A setup link's host and code: `tether setup` prints `https://<MagicDNS name>/#code=7KQ4-XM2P`.
     private static func link(_ text: String) -> (host: String, code: String)? {
-        guard var parts = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+        guard let parts = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
               let fragment = parts.fragment, fragment.hasPrefix("code="),
               let host = parts.host, !host.isEmpty else { return nil }
         let code = String(fragment.dropFirst("code=".count))
@@ -106,7 +128,7 @@ struct AddHostView: View {
     }
 
     private func submit() async {
-        guard filled else { return }
+        guard canSubmit else { return }
         let host = server.trimmingCharacters(in: .whitespacesAndNewlines)
         let secret = code.trimmingCharacters(in: .whitespacesAndNewlines)
         sending = true

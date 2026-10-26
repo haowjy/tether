@@ -21,6 +21,13 @@ targets:
       - path: Tether
     dependencies:
       - package: TetherKit
+    info:
+      path: build/Info.plist
+      properties:
+        CFBundleURLTypes:
+          - CFBundleURLName: com.jimmyyao.tether
+            CFBundleURLSchemes:
+              - tether
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jimmyyao.tether

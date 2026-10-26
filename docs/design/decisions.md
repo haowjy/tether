@@ -3173,6 +3173,32 @@ variations canvas.
 - **Rejected:** the field as the only opener (loses live keys); a live mode toggled
   inside the field (an extra tap for the same two modes).
 
+### One code per phone: the browser enrols the node, the app mints a token
+
+- **Decided:** 2026-10-26, Jimmy (custom scheme, handed over after the browser enrols).
+- **What:** the enrolment screen, once the browser has enrolled, offers "Open in the
+  tether app" with `tether://add?host=<origin>`. The app opens Add server with the host
+  filled and the code empty; Add posts `POST /auth/node/enroll` with an empty code. An
+  already-enrolled node answers with a native device token bound to that node, and
+  removing the node revokes it. A node that is not enrolled gets `not_enrolled`, and the
+  app asks for a code as before. The mint refuses any request carrying browser fetch
+  metadata, so page script on tether's origin cannot trade a same-origin request for a
+  portable token; it also replaces the node's earlier app token rather than adding
+  another, and a bound token stops working when its node row is gone.
+- **Why:** enrolment is per node (`/auth/node/enroll`), so one code covers the phone; the
+  app then needs a credential, not a code. It needs *a* credential because the terminal
+  WebSocket is created by the page, whose origin inside the app is `tether-app://ui`,
+  which the node lane refuses (`src/auth/node.rs`): a tokenless app cannot open a
+  terminal.
+- **Rejected:**
+  - Universal Links. The origin is a per-machine tailnet host that Apple's CDN cannot
+    reach to fetch the association file, and the wildcard development profile cannot
+    carry `com.apple.developer.associated-domains` without an explicit App ID.
+  - Handing off before the browser enrols, carrying the code. It spends the code on the
+    app and leaves the browser unenrolled — two codes per phone again.
+  - Allowlisting `tether-app://ui` as a node-lane origin. It widens the auth surface, and
+    the app still needs a token for its lock screen and uploads.
+
 ### No predictions on the line field
 
 - **Decided:** 2026-10-26, Jimmy, from the phone.

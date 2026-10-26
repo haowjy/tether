@@ -604,7 +604,10 @@ in the Keychain ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)). The 
 maps these to `PlatformHost` and never sends `baseURL`. Add host takes the MagicDNS
 name and enrolment code, or a setup link pasted whole (`https://<name>/#code=<code>`
 fills both fields), validates `/auth/info`, enrolls, and stores the daemon's
-`host_id` and `https://<that name>`. The web Home/Settings host-management entry sends
+`host_id` and `https://<that name>`. With the code empty it asks
+`POST /auth/node/enroll`, which mints a native token when this phone's node is already
+enrolled and refuses with `not_enrolled` when it is not; the browser's enrolment screen
+hands the host over as `tether://add?host=<origin>`, which opens Add host filled in. The web Home/Settings host-management entry sends
 `manageHosts` to present the native sheet (Settings > Servers, and "Add a server" when
 there are none). There is no floating native control.
 

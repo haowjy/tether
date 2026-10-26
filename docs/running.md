@@ -339,11 +339,13 @@ is a link with the code in its fragment for Safari. The code is also printed sep
 A code works once, for 10 minutes (`--ttl` changes that), and 5 wrong tries delete it.
 The iOS app holds a device token from then on; a browser or home-screen app
 is admitted as its machine's Tailscale node ([auth.md](design/auth.md)).
+Adding a host again from the iOS app on an enrolled node rotates that node's one
+native app token; browser script cannot perform this mint.
 
 ```bash
-tether device list              # native devices and enrolled tailnet nodes
+tether device list              # bound tokens show as "native (node laptop)"
 tether device add playwright    # a native token for local dev/Playwright, printed once
-tether device remove laptop     # revokes a token, or a node and its bound tokens
+tether device remove laptop     # also reports/removes the node's bound app token(s)
                                 # live sockets close within 10 s
 ```
 

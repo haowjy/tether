@@ -6,6 +6,7 @@ struct AuthClient {
         case invalidServer
         case incompatible
         case response
+        case phoneNotEnrolled
         case server(String)
 
         var errorDescription: String? {
@@ -13,6 +14,7 @@ struct AuthClient {
             case .invalidServer: "Enter a valid HTTPS server address."
             case .incompatible: "This server does not support this client protocol."
             case .response: "The server returned an unreadable response."
+            case .phoneNotEnrolled: "This phone is not enrolled for this server yet. Run `tether enroll` on the server to get a code, then add the server with that code."
             case .server(let message): message
             }
         }
@@ -41,12 +43,23 @@ struct AuthClient {
         guard AuthInfo.validHostID(info.hostId), !info.name.isEmpty else { throw Failure.response }
         guard info.protocolRange.contains(DaemonProtocol.version) else { throw Failure.incompatible }
 
-        var request = URLRequest(url: baseURL.appending(path: "auth/enroll"))
+        let nodeEnrollment = code.isEmpty
+        var request = URLRequest(url: baseURL.appending(path: nodeEnrollment ? "auth/node/enroll" : "auth/enroll"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(EnrollRequest(code: code, deviceName: deviceName))
+        if nodeEnrollment {
+            // `Origin` is what the node lane checks. No `Sec-Fetch-*`: the daemon refuses the
+            // mint to anything carrying browser fetch metadata, which is how browser script on
+            // tether's own origin is kept out of it (auth.md, "minting").
+            request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Origin")
+        }
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw Failure.response }
+        if nodeEnrollment, response.statusCode == 401,
+           let body = try? decoder.decode(ErrorBody.self, from: data), body.error == "not_enrolled" {
+            throw Failure.phoneNotEnrolled
+        }
         guard response.statusCode == 200 else { throw errorMessage(from: data) }
         let enrolled = try decoder.decode(EnrollResponse.self, from: data)
         return EnrolledHost(entry: HostEntry(id: info.hostId, name: info.name, baseURL: baseURL.absoluteString), token: enrolled.token)
@@ -72,6 +85,8 @@ struct AuthClient {
               components.user == nil, components.password == nil,
               components.query == nil, components.fragment == nil,
               components.path.isEmpty || components.path == "/" else { throw Failure.invalidServer }
+        components.scheme = "https"
+        if components.port == 443 { components.port = nil }
         components.path = ""
         guard let url = components.url else { throw Failure.invalidServer }
         return url

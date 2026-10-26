@@ -14,8 +14,11 @@ thin route handlers over their subsystems, and `ws.rs` drives the hub. Nothing h
 names a tmux type.
 
 `POST /auth/node/enroll` keeps non-empty-code node enrolment separate from the empty-
-code path: only an already enrolled node may mint a native token, and that native row
-is bound to the node so `/auth/node/remove` revokes it too.
+code path: only an already enrolled node may mint a native token. The empty-code mint
+is for the native client only: refuse any `Sec-Fetch-Site`, `Sec-Fetch-Mode` or
+`Sec-Fetch-Dest` header so browser script cannot reach it. Keep the non-empty-code
+browser enrolment path unchanged. The native row is bound to the node so removing the
+node revokes it too.
 
 Rules the code relies on, which are easy to break:
 

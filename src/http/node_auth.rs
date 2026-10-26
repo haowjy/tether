@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse as _, Response};
 use serde::Deserialize;
 use tracing::{error, info, warn};
@@ -40,6 +40,7 @@ pub(super) async fn enroll(
     State(ctx): State<Arc<Ctx>>,
     Extension(session): Extension<Session>,
     Extension(Login(login)): Extension<Login>,
+    headers: HeaderMap,
     body: Result<Json<EnrollRequest>, JsonRejection>,
 ) -> Response {
     let (node_id, name, enrolled) = match session {
@@ -58,6 +59,13 @@ pub(super) async fn enroll(
         request.device_name
     };
     if request.code.is_empty() {
+        if ["sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest"]
+            .iter()
+            .any(|header| headers.contains_key(*header))
+        {
+            warn!(by = %login, "refused a native token mint with browser fetch metadata");
+            return Refusal::from(HttpError::BadOrigin).into_response();
+        }
         if !enrolled {
             return Refusal::from(&AuthError::NotEnrolled { node_name: name }).into_response();
         }

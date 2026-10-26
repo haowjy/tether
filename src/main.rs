@@ -63,7 +63,7 @@ enum DeviceCommand {
     List,
     /// Add a native device for the dev shim or Playwright and print its token once.
     Add { name: String },
-    /// Remove a device: its token stops working, its sockets close within 10 s.
+    /// Remove a device; a node's bound native tokens are removed with it.
     Remove { name: String },
 }
 
@@ -245,9 +245,22 @@ fn device(command: DeviceCommand) -> Result<()> {
                 .chain(refused.iter().map(|name| name.chars().count()))
                 .max()
                 .unwrap_or(0);
-            for device in devices {
+            for device in &devices {
                 let kind = match device.kind {
-                    DeviceKind::Native => "native".to_owned(),
+                    DeviceKind::Native => match device.node_id.as_deref() {
+                        Some(node_id) => {
+                            let node_name = devices
+                                .iter()
+                                .find(|node| {
+                                    node.kind == DeviceKind::Node
+                                        && node.node_id.as_deref() == Some(node_id)
+                                        && node.login.as_deref() == device.login.as_deref()
+                                })
+                                .map_or(node_id, |node| node.name.as_str());
+                            format!("native (node {node_name})")
+                        }
+                        None => "native".to_owned(),
+                    },
                     DeviceKind::Node => {
                         let id = device.node_id.as_deref().unwrap_or("?");
                         format!("node {id}")
@@ -268,10 +281,15 @@ fn device(command: DeviceCommand) -> Result<()> {
             println!("{}", added.token);
         }
         DeviceCommand::Remove { name } => {
-            if !store.remove_device(&name)? {
+            let Some(tokens) = store.remove_device(&name)? else {
                 return Err(format!("no device named {name:?}").into());
+            };
+            if tokens > 0 {
+                let noun = if tokens == 1 { "token" } else { "tokens" };
+                println!("Removed {name} and {tokens} {noun}. Its sockets close within 10 s.");
+            } else {
+                println!("Removed {name}. Its sockets close within 10 s.");
             }
-            println!("Removed {name}. Its sockets close within 10 s.");
         }
     }
     Ok(())

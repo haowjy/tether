@@ -29,12 +29,14 @@ Rules the code relies on, which are easy to break:
 - Checks re-read `auth.toml`, so `tether device remove` reaches a running daemon with
   no IPC and closes a live socket at its next 10 s check. Don't add a device cache.
 - Only native token hashes are stored. Browser nodes store the stable node ID and
-  owner login; a native token minted by an enrolled node also stores that binding so
-  removing the node revokes the token. The node lane has no cookie or portable
-  credential. Never log tokens, path secrets, codes, or file contents. On Mac the path
-  secret lives in the Serve proxy target; `ServeTarget` and handler `Debug`
-  implementations redact it, while the logged canonical browser origin contains only
-  the public authority.
+  owner login; a native token minted by an enrolled node also stores that binding.
+  Every native check and live-socket re-check must find a node row with the same ID
+  and login in the same `auth.toml` read. Removing the node revokes the token by this
+  invariant; delete-path removal of bound rows is cleanup, not the security boundary.
+  The node lane has no cookie or portable credential. Never log tokens, path secrets,
+  codes, or file contents. On Mac the path secret lives in the Serve proxy target;
+  `ServeTarget` and handler `Debug` implementations redact it, while the logged
+  canonical browser origin contains only the public authority.
 - Whois is never cached between requests. Same-address requests share one in-flight
   result; two LocalAPI clients run at once and at most 16 distinct addresses wait.
   Keep the address-family, node eligibility and login-match decisions in `node.rs`.

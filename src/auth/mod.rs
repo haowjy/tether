@@ -305,10 +305,12 @@ impl Auth {
         let file = self.read().await?;
         let device = token::find(&file.devices, &hash)
             .filter(|device| device.kind == DeviceKind::Native)
-            .cloned()
             .ok_or(AuthError::Unknown)?;
-        admit(&device, std::time::SystemTime::now())?;
-        Ok(device)
+        admit(device, std::time::SystemTime::now())?;
+        if !native_binding_exists(&file, device) {
+            return Err(AuthError::Unknown);
+        }
+        Ok(device.clone())
     }
 
     async fn check_node(
@@ -375,7 +377,12 @@ impl Auth {
                     .and_then(token::unhex)
                     .ok_or(AuthError::Unknown)?;
                 let file = self.read().await?;
-                let current = token::find(&file.devices, &hash).ok_or(AuthError::Unknown)?;
+                let current = token::find(&file.devices, &hash)
+                    .filter(|current| current.kind == DeviceKind::Native)
+                    .ok_or(AuthError::Unknown)?;
+                if !native_binding_exists(&file, current) {
+                    return Err(AuthError::Unknown);
+                }
                 admit(current, std::time::SystemTime::now())?;
                 Ok(())
             }
@@ -446,6 +453,20 @@ impl Auth {
     async fn read(&self) -> Result<AuthFile, AuthError> {
         let store = self.store.clone();
         Ok(self.lane.run(move || store.read()).await??)
+    }
+}
+
+/// A node-bound native token remains usable only while its enrolled node row does.
+/// Both lookups use the same snapshot of `auth.toml`.
+fn native_binding_exists(file: &AuthFile, device: &Device) -> bool {
+    match (device.node_id.as_deref(), device.login.as_deref()) {
+        (Some(node_id), Some(login)) => file.devices.iter().any(|candidate| {
+            candidate.kind == DeviceKind::Node
+                && candidate.node_id.as_deref() == Some(node_id)
+                && candidate.login.as_deref() == Some(login)
+        }),
+        (None, None) => true,
+        _ => false,
     }
 }
 
