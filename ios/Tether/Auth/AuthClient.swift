@@ -43,26 +43,43 @@ struct AuthClient {
         guard AuthInfo.validHostID(info.hostId), !info.name.isEmpty else { throw Failure.response }
         guard info.protocolRange.contains(DaemonProtocol.version) else { throw Failure.incompatible }
 
-        let nodeEnrollment = code.isEmpty
-        var request = URLRequest(url: baseURL.appending(path: nodeEnrollment ? "auth/node/enroll" : "auth/enroll"))
+        let token: String
+        if code.isEmpty {
+            token = try await mintNodeToken(from: baseURL, deviceName: deviceName)
+        } else {
+            _ = try await postNodeEnrollment(code: code, deviceName: deviceName, to: baseURL)
+            do {
+                token = try await mintNodeToken(from: baseURL, deviceName: deviceName)
+            } catch {
+                // The code request already enrolled the node; retry only the mint, never the code.
+                token = try await mintNodeToken(from: baseURL, deviceName: deviceName)
+            }
+        }
+
+        return EnrolledHost(entry: HostEntry(id: info.hostId, name: info.name, baseURL: baseURL.absoluteString), token: token)
+    }
+
+    private func mintNodeToken(from baseURL: URL, deviceName: String) async throws -> String {
+        let data = try await postNodeEnrollment(code: "", deviceName: deviceName, to: baseURL)
+        return try decoder.decode(EnrollResponse.self, from: data).token
+    }
+
+    private func postNodeEnrollment(code: String, deviceName: String, to baseURL: URL) async throws -> Data {
+        var request = URLRequest(url: baseURL.appending(path: "auth/node/enroll"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(EnrollRequest(code: code, deviceName: deviceName))
-        if nodeEnrollment {
-            // `Origin` is what the node lane checks. No `Sec-Fetch-*`: the daemon refuses the
-            // mint to anything carrying browser fetch metadata, which is how browser script on
-            // tether's own origin is kept out of it (auth.md, "minting").
-            request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Origin")
-        }
+        // `Origin` is what the node lane checks. Native URLSession adds no fetch metadata;
+        // the empty-code branch refuses it to keep browser script from minting a token.
+        request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Origin")
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw Failure.response }
-        if nodeEnrollment, response.statusCode == 401,
+        if code.isEmpty, response.statusCode == 401,
            let body = try? decoder.decode(ErrorBody.self, from: data), body.error == "not_enrolled" {
             throw Failure.phoneNotEnrolled
         }
         guard response.statusCode == 200 else { throw errorMessage(from: data) }
-        let enrolled = try decoder.decode(EnrollResponse.self, from: data)
-        return EnrolledHost(entry: HostEntry(id: info.hostId, name: info.name, baseURL: baseURL.absoluteString), token: enrolled.token)
+        return data
     }
 
     private func request<T: Decodable>(_ path: String, from baseURL: URL) async throws -> T {
@@ -73,8 +90,16 @@ struct AuthClient {
     }
 
     private func errorMessage(from data: Data) -> Failure {
-        if let body = try? decoder.decode(ErrorBody.self, from: data) { return .server(body.error) }
-        return .response
+        guard let body = try? decoder.decode(ErrorBody.self, from: data) else { return .response }
+        // The body names an error code, not a sentence: the two a reader can act on get one.
+        switch body.error {
+        case "bad_code":
+            return .server("That code is wrong or has expired.")
+        case "node_refused":
+            return .server(["This device can't use tether on this server.", body.reason].compactMap { $0 }.joined(separator: " "))
+        default:
+            return .server(body.error)
+        }
     }
 
     static func serverURL(_ input: String) throws -> URL {

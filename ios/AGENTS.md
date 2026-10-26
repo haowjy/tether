@@ -12,8 +12,10 @@ phone dock is web. Spec: [ios-shell.md](../docs/design/ios-shell.md).
   them describes.
 - **Add server is native.** Manual enrolment and the browser's `tether://add` handoff
   use the same two-step host/code then device-name form; a link prefills its host and
-  optional code but never enrols until Next and Add are tapped. Empty code keeps the
-  node-mint path. The full input and failure rules are in ios-shell.md, "Hosts".
+  optional code but never enrols until Next and Add are tapped. With a code, Add first
+  enrols the phone's node and then mints its native token; one code also admits Safari
+  and the PWA on that phone. Empty code keeps the single node-mint path. The full input
+  and failure rules are in ios-shell.md, "Hosts".
 - **The bridge contract has one copy:** the fixtures in `TetherKit/Tests/Fixtures/bridge/`.
   The Swift DTOs and `web/platform/native/` both decode them, so a message change
   edits all three in one commit.

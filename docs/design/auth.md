@@ -8,10 +8,13 @@ allowlisted Tailscale login. Past that, a request is admitted on one of two
 Keychain behind Face ID and sent as a bearer token or a WebSocket subprotocol. A
 browser or PWA presents nothing: it is admitted as an **enrolled node**, because
 the tailnet node it runs on, which the daemon learns from tailscaled, is in
-`auth.toml`. Browser nodes are enrolled with the one-time code from `tether enroll`;
-the native app normally gets its token with that code too, but the app on an already
-enrolled node can mint a node-bound token without redeeming another code. The node's
-removal route revokes its browser admission and any native token minted from it.
+`auth.toml`. Browser nodes are enrolled with the one-time code from `tether enroll`.
+When an iPhone setup link is opened in Safari, Safari hands the code to the native
+app without spending it; the app enrols the phone's node and then mints its token.
+One code admits the phone, so Safari and the PWA on it need no separate code. The app
+on an already enrolled node can mint a node-bound token without redeeming another
+code. The node's removal route revokes its browser admission and any native token
+minted from it.
 tether never authenticates with a cookie.
 
 Serve reaches the daemon through a **front**, which differs by host. On Linux it is
@@ -680,34 +683,51 @@ node enrols at its own route:
    the host's name from `GET /auth/info`, then two steps — the code as eight cells in
    two groups of four, whose separator is drawn and never typed, then the device name,
    prefilled with the node's name, which Jimmy can edit. A setup link's `#code=` fills
-   the cells and waits for a tap; it never enrols by itself. Each step also offers
-   "Open in the tether app", which hands the host and the code the page holds to the
-   app as `tether://add?host=<origin>&code=<code>`. The screen says "This lets every
-   browser and app on <node> use tether on <host>." A refused node gets
+   the cells and waits for a tap; it never enrols by itself. The screen says "This lets
+   every browser and app on <node> use tether on <host>." A refused node gets
    `403 node_refused` and no code field.
 
-4b. The page sends `POST /auth/node/enroll {code, deviceName}`. It passes the
-   node lane up to the device lookup: front, canonical origin, admission (mutation),
-   whois, node rules. With a non-empty code, the auth lane runs `Store::enroll_node`
-   with `kind = Node`, the stable ID and the node's login, and `enrolled_by` = the
-   login. If the node is already enrolled, it answers `200` with the existing name
-   and leaves the code unconsumed. The answer is `200 {deviceName}`,
-   `Cache-Control: no-store`. Nothing secret is issued: the node is the credential.
+   On a phone that has the app, the page does not get this far: as soon as it knows the
+   host's origin it fires `tether://add?host=<origin>&code=<code>` and leaves the prefilled
+   screen and its "Open in the tether app" action as the fallback for when nothing handles
+   the scheme. The link belongs to the app, which spends the code; Safari never enrols.
 
-4c. The native app on that already enrolled node sends
-   `POST /auth/node/enroll {code: "", deviceName}`. The route follows the same
-   node-lane checks, then on the auth lane stores a `kind = Native` token hash with
-   that node's stable ID and login, and `enrolled_by` = the login. It returns
+   On an iPhone, opening the setup link in Safari hands the code to the app; the
+   browser does not spend it. The app's Add flow waits for Next and Add before making
+   the requests below. This admits the phone's node for Safari and the PWA as well as
+   obtaining the app's token.
+
+   On an iPhone, opening the setup link in Safari hands the code to the app; the
+   browser does not spend it. The app's Add flow waits for Next and Add before making
+   the requests below. This admits the phone's node for Safari and the PWA as well as
+   obtaining the app's token.
+
+4b. With a non-empty code, the native app first sends
+   `POST /auth/node/enroll {code, deviceName}` with `Origin` and no `Sec-Fetch-*`.
+   It passes the node lane up to the device lookup: front, canonical origin, admission
+   (mutation), whois, node rules. On the auth lane, `Store::enroll_node` uses
+   `kind = Node`, the stable ID and the node's login, and `enrolled_by` = the login.
+   If the node is already enrolled, it answers `200` with the existing name and leaves
+   the code unconsumed. The answer is `200 {deviceName}`, `Cache-Control: no-store`.
+   Nothing secret is issued: the node is the credential. A wrong or expired code is
+   `403 {error: "bad_code"}`; a policy refusal is `403 {error: "node_refused",
+   reason}`, and the Add form shows that refusal rather than trying another route.
+
+4c. After 4b succeeds, the native app sends the same route with
+   `{code: "", deviceName}`. With no code, the route follows the same node-lane
+   checks, then on the auth lane stores a `kind = Native` token hash with that node's
+   stable ID and login, and `enrolled_by` = the login. It returns
    `200 {token, deviceName}`, `Cache-Control: no-store`; the raw token is returned
-   once and is never stored. The row's node ID is a revocation binding, not a
-   restriction to requests from that node: the token uses the native lane from any
-   node while its source node row remains. `POST /auth/node/remove {}` and
+   once and is never stored. The app retries this mint once if it fails. If both
+   attempts fail, the user can clear the code and Add again through the already-enrolled
+   node's empty-code path. The row's node ID is a revocation binding, not a restriction
+   to requests from that node: the token uses the native lane from any node while its
+   source node row remains. `POST /auth/node/remove {}` and
    `tether device remove <node-name>` remove it with its node;
    `tether device remove <token-name>` can also revoke it individually. An empty-code
    request from `Session::NodeUnenrolled` returns `401
-   {error: "not_enrolled", node: {name}}` without reading or changing the code. A
-   non-empty code still follows the node-enrolment path above; the token path never
-   enrols a node.
+   {error: "not_enrolled", node: {name}}` without reading or changing the code. The
+   token path never enrols a node.
 
 ## Live sockets and revocation
 
@@ -1029,8 +1049,9 @@ On the Swift side, Security and LocalAuthentication cover everything.
 
 - `TokenStore`: read the item with an `LAContext`, rewrite it, delete it.
 - `AppModel`: owns the lock state and holds the token map in memory while unlocked.
-- `AuthClient`: `/auth/info` and `/auth/enroll` for one host, on an ephemeral
-  `URLSession`.
+- `AuthClient`: `/auth/info` and `/auth/node/enroll` for one host, on an ephemeral
+  `URLSession`. With a code it enrols the phone's node, then mints its native token;
+  without a code it makes only the empty-code mint request.
 
 ## Probe gates
 
@@ -1044,7 +1065,7 @@ LocalAPI do not replace them. `browser-setup.md` links here for the complete che
 | G3 | Check real whois fields and refusals for tagged, shared, subnet-router, self and login-mismatch nodes; admit only a plain owner node and an exit-node route; confirm `/status?peers=false` includes self ID and owner | Node rules and tailnet-state parsing |
 | G4 | Measure whois latency, tailscaled CPU and response sizes for 1,000 calls over new and keep-alive connections and for 20 concurrent calls; measure status and Serve-config answers | Per-request whois and bounded keep-alive pools |
 | G5 | With Private Relay on, use iOS Safari and the PWA to reach the tailnet hostname and confirm requests arrive with the phone's node address | Phone browser networking |
-| G6 | Confirm the app's `URLSession` sends no Origin or `Sec-Fetch-*` on `POST /auth/enroll` | Native enrolment compatibility |
+| G6 | Confirm the app's `URLSession` sends `Origin` and no `Sec-Fetch-*` on both `POST /auth/node/enroll` requests in the code path and on the single empty-code mint | Native enrolment compatibility |
 | G7 | Compare canonical-origin results with `tailscale serve status` across Unix target, Service, path/text handlers, duplicate publications, TCP forwards, non-root mount, HTTP, Funnel and symlink spellings | Serve-config origin classification |
 | G8 | Open raw `.svg` and `.html` files top-level and verify scripts are sandboxed; verify raw `.js` is refused as a script and service worker | Same-origin file content isolation |
 | G9 | From another tailnet machine, another host port, another user's tether and the internet, exercise WebSocket hijack, POST, forms and raw media; add a co-resident handler while a tab is open | Cross-origin defence and live revocation |

@@ -3243,6 +3243,32 @@ variations canvas.
 - **Rejected:** automatically minting or enrolling when the deep link opens; the app
   would submit before Jimmy reaches the form and the link would not wait for confirmation.
 
+### A setup link belongs to the app, so Safari never enrols
+
+- **Decided:** 2026-10-26, Jimmy, on the phone: "when u open in browser, try to open
+  tether first", "with that code", "so we don't login via safari".
+- **What:** a page that arrives with a `#code=` fires
+  `tether://add?host=<origin>&code=<code>` as soon as it knows the host's origin, on a
+  platform where the app can exist and never inside the native shell. Safari shows the
+  page only long enough to hand over; the prefilled screen and its "Open in the tether
+  app" action remain the fallback when nothing handles the scheme. The app's Add with a
+  code posts `POST /auth/node/enroll {code}` — which enrols the phone's **node** — then
+  mints its own token with an empty code. One code therefore admits the phone: Safari
+  and the PWA on it need none, and the app has its token.
+- **Why:** Jimmy does not want to enrol the browser. Making the app spend the code
+  removes the Safari login entirely while keeping the design's one-code-per-phone
+  property, because the code is redeemed on the node rather than on a device.
+- **Rejected:**
+  - The browser enrols the node and the app only mints (the previous shape). It works,
+    but it requires completing an enrolment in Safari first, which is the thing he does
+    not want.
+  - The app keeps posting `POST /auth/enroll`: it mints a device token and leaves the
+    phone's node unenrolled, so Safari on the phone would ask for a code already spent.
+  - Having the daemon answer a code request from any tailnet node: that removes the
+    code as the gate. An approval on the server would keep the gate and remove the
+    copy-paste; left out of this change because the app path already needs no code on an
+    enrolled node.
+
 ### No predictions on the line field
 
 - **Decided:** 2026-10-26, Jimmy, from the phone.

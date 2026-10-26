@@ -1,5 +1,10 @@
 Must-do (client-architecture.md §11):
 
+- Initial JS: raised from 190 KB to 192 KB gzipped (measured 190.0 KB when the app handoff
+  landed). The screens are not code-split — only the heavy libraries are — so every feature
+  ratchets the initial bundle. Split the screens so the first paint stops paying for the
+  terminal and the file manager, then bring the budget back down.
+
 - L4 (daemon): an `input` refusal (`busy`, `inputTooLarge`) names no request, so the client cannot
   report which typed characters were refused. Paste refusals now carry their request id; the
   terminal's short input batch remains necessary until input has its own result contract.

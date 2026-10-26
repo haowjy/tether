@@ -616,12 +616,16 @@ The browser's enrolment screen hands the host over as
 `tether://add?host=<origin>&code=<code>` (the code is optional). Native validates the
 HTTPS origin and opens Add host at step 1 with the host and, when present, code
 prefilled. The link never sends a request: the user taps Next, then Add. With a code,
-Add requests `/auth/info` and posts `POST /auth/enroll` with that code and
-`UIDevice.current.name`; without a code, it posts `POST /auth/node/enroll` with an empty
-code and the same device name. The node mint sends `Origin` only (no `Sec-Fetch-*`).
-Both paths store the returned token and host on success. Wrong or expired codes and
-`401 not_enrolled` stay on the device-name step with their error, as in manual Add; Back
-returns to step 1 without losing either field. The link doesn't choose a tmux session:
+Add requests `/auth/info`, posts `POST /auth/node/enroll` with that code and
+`UIDevice.current.name`, then posts the same route with an empty code to mint the
+token. Both requests send `Origin` and no `Sec-Fetch-*`; the second mint is retried
+once if it fails. This one code enrols the phone's node, so Safari and the PWA on it
+need no code of their own. Without a code, Add makes only the empty-code mint request.
+Both paths store the returned token and host on success. A wrong or expired code shows
+"That code is wrong or has expired", and a node policy refusal says this device can't use
+tether on this server, with the server's reason, on the device-name step; an empty-code
+`401 not_enrolled` stays there with its existing error.
+Back returns to step 1 without losing either field. The link doesn't choose a tmux session:
 the web owns the route and active tab, and native has no host/session-open bridge
 operation, so dismissing the sheet reveals the web's existing screen and workspace.
 The web Home/Settings host-management entry sends `manageHosts` to present the native

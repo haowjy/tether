@@ -65,6 +65,8 @@ export class AppController extends Store<AppView> {
 
   /** A setup link's unspent enrolment code: kept for the life of the page and dropped only when this page's own enrolment spends it. The enrolment screen prefills with it and waits for a tap. Read-only outside `enrolled`. */
   enrolCode: string | null;
+  /** A setup link has not been handed to the app yet: it is fired at the app as soon as the page knows its origin. */
+  private linkHandoffPending: boolean;
   /** The banner offer for an already-enrolled device with a link code is made once, so a dismissal stays dismissed. */
   private linkOfferPending: boolean;
 
@@ -86,6 +88,7 @@ export class AppController extends Store<AppView> {
     });
     this.router = router;
     this.enrolCode = enrolCode;
+    this.linkHandoffPending = enrolCode !== null;
     this.linkOfferPending = enrolCode !== null;
     this.applyViewport = options.applyViewport ?? (() => undefined);
     this.focus = new FocusController(platform.input, () => this.snapshot.viewport);
@@ -207,9 +210,16 @@ export class AppController extends Store<AppView> {
   private hostsChanged(): void {
     const hosts = this.hosts.all();
     this.update({ hosts });
+    const own = hosts.find((h) => h.entry.pageOrigin !== null);
+    // A setup link on a phone that has the app belongs to the app: fire the scheme as soon as the
+    // page knows the host's origin, and leave the page usable when nothing handles it. The browser
+    // never spends the code — the app redeems it, so the phone is set up once, in the app.
+    if (this.linkHandoffPending && own?.entry.pageOrigin) {
+      this.linkHandoffPending = false;
+      this.platform.openInApp?.(own.entry.pageOrigin, this.enrolCode);
+    }
     // A device already enrolled when the link opened never spent its code: hand it to the app.
     // Nothing here enrols by itself, so holding the code past this point is safe.
-    const own = hosts.find((h) => h.entry.pageOrigin !== null);
     if (this.linkOfferPending && own?.admission.kind === "admitted") this.offerApp(own.entry.pageOrigin);
     this.listing.setHosts(hosts.map((h) => ({ handle: h.entry.handle, host: h.socket })));
     const ids = hosts.flatMap((h) => (h.hostId === null ? [] : [h.hostId]));
