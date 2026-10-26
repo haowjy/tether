@@ -85,3 +85,27 @@ command line rather than failing fast; use the device destination once it is bac
 Enrolment code `1D8K-4WX6` (2 h TTL, one device), host
 `jimmys-macbook-air.tail852a76.ts.net`. Device checklist rows in ios-shell.md are his to
 run; the Simulator still cannot verify keyboard, focus or geometry.
+
+## Signing and the keychain
+
+Device builds sign with the Apple Development identity through the login keychain. While
+the console is locked, `codesign` fails with `errSecInternalComponent`; with the console
+unlocked, macOS raises "codesign wants to access key … enter the login keychain
+password". Jimmy answered **Always Allow**, so later builds do not prompt. A cold agent
+that sees `errSecInternalComponent` should check `IOConsoleLocked` before looking for a
+provisioning problem.
+
+## Phone fixes after the first device use
+
+Same afternoon, from Jimmy using the app:
+
+- The dock floated a keyboard height above the keyboard (see `keyboard-gap.md`), fixed in
+  `380d445`.
+- Predictions and autocorrection came off the line field: HTML attributes plus
+  `autocorrectionType`/`spellCheckingType` answered with `.no` on the web view's content
+  view (`1338bb6`). Attributes alone stop autocorrection, not the predictive strip.
+- A sent line stayed in the field: iOS delivered the Return key's own edit after the
+  send, re-creating the cleared draft. The field now drops exactly that echo
+  (`174c2e8`), checked in the harness.
+- Still Jimmy's to run: the device checklist rows in ios-shell.md — geometry, paste,
+  hardware keys, keychain unlock, latency.
