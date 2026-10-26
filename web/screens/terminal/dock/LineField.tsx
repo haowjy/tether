@@ -1,7 +1,8 @@
 // The dock's line field (client-architecture.md §7.4): a one-line field with the platform's
-// autocorrect and dictation. Return sends its line and then Enter, as one paste the daemon
-// runs in a single tmux group; the line leaves the field and comes back, marked, if the
-// daemon refuses it. Each tab keeps its own draft.
+// dictation and IME, and no autocorrection or predictions. Return sends its line and then
+// Enter, as one paste the daemon runs in a single tmux group; the line leaves the field and
+// comes back, marked, if the daemon refuses it. Each tab keeps its own draft.
+import { useRef } from "preact/hooks";
 import type { Ref } from "preact";
 import { useApp } from "../../../app/context";
 import { LineInput } from "../../../ui/primitives/LineInput";
@@ -31,9 +32,21 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
   const { modifiers } = terminals;
   const drafts = lineDraftsOf(app);
   const text = useStore(drafts, (s) => (tab ? (s.drafts[tab.id]?.text ?? "") : ""));
+  /** The line just sent: iOS can deliver the Return key's own edit after the send, which would put it back. */
+  const echo = useRef<string | null>(null);
 
   const edit = (value: string, el: HTMLInputElement): void => {
     if (!tab) return;
+    if (echo.current !== null) {
+      const sent = echo.current;
+      echo.current = null;
+      // The platform's edit is the line coming back with the Return's break stripped; a real
+      // keystroke in the same tick is a different value and goes through.
+      if (value.replace(/[\r\n]+$/, "") === sent) {
+        el.value = "";
+        return;
+      }
+    }
     const result = drafts.edit(tab.key, value);
     if (result === "ok") {
       onNote(null);
@@ -57,6 +70,7 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
       onNote({ tone: "error", text: "Not connected" });
       return;
     }
+    echo.current = text;
     drafts.sent(key, text, req);
     onNote(null);
   };
