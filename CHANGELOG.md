@@ -5,6 +5,10 @@ version section on release.
 
 ## [Unreleased]
 
+- Setup's link, QR code and terminal clipboard now include the one-time enrolment code
+  in the URL fragment, so scanning or opening the link enrols a browser without typing
+  the code. `tether enroll` prints the bare MagicDNS name for the iOS app and a
+  code-bearing browser link.
 - Tabs follow tmux sessions. Home and pickers list sessions; the window switcher selects
   or creates a window, and laptop window changes move the tab too. Typing, pasting or
   Fit takes the window at tether's size, even when the laptop is smaller. The sizing

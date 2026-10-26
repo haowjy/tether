@@ -12,6 +12,8 @@ interface FieldProps {
   placeholder?: string;
   name?: string;
   inputMode?: "text" | "numeric" | "url";
+  /** Starts the shift key on for the whole field; off unless a field's values are uppercase. */
+  autocapitalize?: "off" | "characters";
   disabled?: boolean;
   hint?: string | undefined;
   /** Shown under the field and announced; also marks the field invalid. */
@@ -22,7 +24,7 @@ interface FieldProps {
 }
 
 /** A labelled single-line field. With SearchField, the only place an `<input>` lives for screens (lint rule 1). */
-export function TextField({ label, value, onInput, hint, error, focusTarget, class: className, ...rest }: FieldProps) {
+export function TextField({ label, value, onInput, hint, error, focusTarget, autocapitalize = "off", class: className, ...rest }: FieldProps) {
   const id = useId();
   const focusRef = useFocusRef(focusTarget);
   const note = error ?? hint;
@@ -31,7 +33,7 @@ export function TextField({ label, value, onInput, hint, error, focusTarget, cla
       <label for={id} class={styles.label}>{label}</label>
       <input
         type="text"
-        autocapitalize="off"
+        autocapitalize={autocapitalize}
         autocomplete="off"
         spellcheck={false}
         {...rest}

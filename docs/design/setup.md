@@ -1,8 +1,8 @@
 # Setup: `tether setup` and `tether teardown`
 
 On Linux, plain `tether setup` runs tether in the terminal, publishes it on Jimmy's
-tailnet, and prints the link to open on his phone, its QR code, and a fresh enrolment
-code. Ctrl-C or SIGTERM stops that process; the Serve entry remains. `tether setup
+tailnet, and prints a link to open on his phone with a fresh enrolment code in its
+fragment, its QR code, and the code separately. Ctrl-C or SIGTERM stops that process; the Serve entry remains. `tether setup
 --background` instead installs the systemd user service and runs it beyond the
 terminal. On a Mac, plain `tether setup` refuses without changing anything; use
 `--background` to install the LaunchAgent, which owns the port phones can reach.
@@ -25,7 +25,7 @@ flowchart LR
   P -.->|"Linux, if Serve changed"| R["Restart again"]
   P --> V["Verify through the new daemon"]
   R --> V
-  V --> O["Print link, QR, code"]
+  V --> O["Print coded link, QR, code"]
 ```
 
 The diagram is the background-service path. Before its grants or install, background
@@ -38,8 +38,8 @@ prints the report, then initializes logging and serves until signalled. The repo
 to stdout; daemon logs start on stderr after the report. SIGINT and SIGTERM handlers are
 installed when serving starts, so a signal during a grant or LocalAPI write exits the
 process without starting the daemon.
-The link comes from the daemon's own canonical-origin calculation, not a separately
-constructed URL or a `local.sock` poll.
+The origin comes from the daemon's own canonical-origin calculation, not a separately
+constructed host URL or a `local.sock` poll; setup appends the enrolment-code fragment.
 
 Each step either succeeds or stops setup with one message that names the cause and
 the fix. A failed background step leaves everything before it in place, and a rerun
@@ -286,17 +286,18 @@ diagnostic. It is always false on Linux. A final refusal is printed and setup ex
 
 On success either path issues a new enrolment code (`Store::set_pending`, 10 minutes,
 replacing any earlier code, as `tether enroll` does). The report says only what Jimmy
-acts on: how tether runs, what setup changed, the link, its QR code and the code.
+acts on: how tether runs, what setup changed, the link with the code in its fragment,
+its QR code and the code separately.
 Background setup prints, here on Linux after an upgrade:
 
 ```text
 tether 0.0.2 is running as your systemd user service and starts at boot (was 0.0.1).
 Replaced tether.service, which differed from this tether's; the old copy is <path>.
 
-  https://pop-os.tail852a76.ts.net
+  https://pop-os.tail852a76.ts.net/#code=7KQ4-XM2P
 
   ▄▄▄▄▄▄▄ ▄ ▄▄ ▄▄▄▄▄▄▄
-  █ ▄▄▄ █ ▀█▄▀ █ ▄▄▄ █      (QR code of the link)
+  █ ▄▄▄ █ ▀█▄▀ █ ▄▄▄ █      (QR code of the link, including its code)
   ...
 
 Enrolment code: 7KQ4-XM2P (one device, 10 minutes)
@@ -307,11 +308,13 @@ On a Mac the first line reads "running as your LaunchAgent and starts when you l
 in". "(was …)" appears when a daemon answered before the restart. Below that line
 setup lists what it changed ("Enabled linger", "Replaced tether.service…",
 "Removed tether's old handler…"), one per line, and nothing when it changed nothing.
-Drop-in notices and "No tmux server yet…" appear separately under "Notes:". The link
-is on a line of its own, for copying. A failed run prints no code. How to enrol (the
-phone page asks for the code; the iOS app takes the host name from the link) and `tether
-teardown` are in [running.md](../running.md), not the report; the line after the code names `tether
-enroll`, the one next step a reader can't guess.
+Drop-in notices and "No tmux server yet…" appear separately under "Notes:". The coded
+link is on a line of its own, for copying. The QR and OSC 52 clipboard carry that same
+link; there is no plain-link alternative on screen. The browser reads the code from
+the fragment, and the separately printed code is for the iOS app's Add host. A failed
+run prints no code. How to enrol and `tether teardown` are in [running.md](../running.md),
+not the report; the line after the code names `tether enroll`, the one next step a
+reader can't guess.
 
 Foreground Linux's first line is "tether <v> is running in this terminal. Ctrl-C stops
 it." The rest follows the same format. Its daemon logs only warnings and errors unless
@@ -321,14 +324,15 @@ it." The rest follows the same format. Its daemon logs only warnings and errors 
 `default-features = false`. Without its `image` feature it pulls in no other crate
 and adds about 50 KB to a stripped release binary (measured on macOS arm64: 387 KB
 against 337 KB for an empty program). It renders with `Dense1x2` half-block
-characters, two modules per character cell, about 37 by 19 cells for a 35-character
-link, and prints only when stdout is a terminal. It encodes the link alone.
+characters, two modules per character cell, and prints only when stdout is a terminal.
+It encodes the same fragment-bearing link shown in the report; the code makes the QR
+larger than the former origin-only link.
 
-**The clipboard.** When stdout is a terminal, setup also writes the link to the
-clipboard with OSC 52 (`ESC ] 52 ; c ; <base64> BEL`). Over SSH this reaches the
-local machine's clipboard where the terminal allows it, and terminals that don't are
-expected to ignore it. Setup can't tell whether the copy landed, so it doesn't mention
-it.
+**The clipboard.** When stdout is a terminal, setup also writes the same code-bearing
+link to the clipboard with OSC 52 (`ESC ] 52 ; c ; <base64> BEL`). Over SSH this
+reaches the local machine's clipboard where the terminal allows it, and terminals that
+don't are expected to ignore it. Setup can't tell whether the copy landed, so it
+doesn't mention it.
 
 ## Teardown
 
@@ -457,8 +461,8 @@ findings are also covered by S12 on the target host.
 
 | Gate | On | Check |
 |---|---|---|
-| S1 | pop-os | From a fresh state (no unit, linger off, no operator), `tether setup --background` over SSH asks for at most two passwords, publishes, prints link, QR and code. The iPhone camera opens the link; Safari enrols with the code; the iOS app adds the host |
-| S2 | pop-os | A rerun with `--background`: same link, new code, one restart, no change lines. `tailscale serve status --json` before and after differ only in tether's handler; another app's entry on another port survives byte for byte |
+| S1 | pop-os | From a fresh state (no unit, linger off, no operator), `tether setup --background` over SSH asks for at most two passwords, publishes, prints a code-bearing link, QR and code. The iPhone camera opens the link; Safari enrols from its fragment; the iOS app adds the host with its name and code |
+| S2 | pop-os | A rerun with `--background`: same origin, a new code-bearing link, one restart, no change lines. `tailscale serve status --json` before and after differ only in tether's handler; another app's entry on another port survives byte for byte |
 | S3 | pop-os | Background refusals without writing: another app at `/` of `<name>:443`, Funnel on, a TCP forward on 443. Without a terminal, `tether setup --background` prints the grant commands and exits 1 |
 | S4 | pop-os and a container | Tailscale 1.94–1.98.8 and 1.98.9 or later: `tether setup --background` writes as operator; an operator who may not `sudo tailscale`, or whose full name differs from the login name, gets the `401` message on 1.98.9+ and succeeds on 1.98.8; a non-operator gets the `403` message; teardown with another app's Unix handler present, on 1.98.9+ |
 | S5 | pop-os | Upgrade from the loopback-TCP daemon and from a current one: `cargo install` a newer build, rerun `tether setup --background`; `/auth/info` reports the new version, the 7850 handler is replaced, a `MemoryMax` drop-in survives, an edited unit is backed up and replaced |
@@ -476,8 +480,6 @@ one, the fake-LocalAPI tests cover its messages.
 
 ## Not in setup
 
-- **A code in the QR.** The QR encodes the link alone. A link that carries the code
-  needs web and iOS work, and leaves the code in browser history.
 - **Other install locations.** Setup accepts only `~/.cargo/bin/tether`. A release
   binary installed elsewhere would need an `ExecStart=` drop-in on Linux and a third
   plist placeholder on a Mac.

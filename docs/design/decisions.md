@@ -3981,6 +3981,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 ### Setup's prompts, clipboard and QR
 
 - **Decided:** 2026-10-24, lead, on the design's open questions.
+- **Status:** The QR and code-in-link choices below supersede the QR decision here.
 - **What:**
   - Setup prints each privileged command before it runs it, with no `[y/N]`; `sudo`'s
     own prompt is the consent.
@@ -3995,6 +3996,25 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   - A `[y/N]` before `sudo`.
   - Shelling out to `pbcopy`, `wl-copy` or `xclip`: over SSH they copy on the server.
   - A code in the QR.
+
+### Setup links carry enrolment codes in fragments
+
+- **Decided:** 2026-10-26, Jimmy.
+- **What:** Setup prints one link, `<origin>/#code=<CODE>`, and encodes that exact
+  link in its QR and terminal clipboard. The browser reads the code from the fragment;
+  the daemon does not parse it. `tether enroll` prints the bare MagicDNS name on
+  `Host:` and the same code-bearing URL on `Browser:`.
+- **Why:** Scanning or opening the link can enrol a browser without transcribing the
+  code. Unlike the earlier decision, the web and iOS flows now consume the fragment.
+  Fragments do not reach the daemon or appear in `Referer` headers. Browser history
+  still retains the URL, including its fragment; that remaining exposure is accepted
+  for a one-use code that expires after 10 minutes.
+- **Rejected:**
+  - A query string, which would reach the daemon and could be forwarded as a referrer.
+  - A deep link into the iOS app, which would not cover Safari and would require the
+    app to be installed.
+  - Keeping the plain link and separate code as the only browser path, which still
+    requires entering the code on the phone and leaves the screen with multiple links.
 
 ### Setup keeps platform policy behind one boundary
 

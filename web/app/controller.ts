@@ -12,7 +12,7 @@ import { reduce, initialWorkspace, savedTabs, type WorkspaceEffect, type Workspa
 import { FocusController } from "./focus";
 import { ListingFetcher } from "./listing";
 import { Persist } from "./persist";
-import { browserHistory, Router, type HistoryPort, type Navigated, type Overlay } from "./router";
+import { browserHistory, enrolCodeFromHash, Router, type HistoryPort, type Navigated, type Overlay } from "./router";
 
 const NOTICE_MS = 5_000;
 /** The update check on becoming visible runs at most this often. */
@@ -61,8 +61,14 @@ export class AppController extends Store<AppView> {
 
   private readonly applyViewport: (viewport: Viewport) => void;
 
+  /** A setup link's enrolment code, kept until the Enrol screen takes it. */
+  private enrolCode: string | null;
+
   private constructor(readonly platform: Platform, boot: BootResult, options: StartOptions) {
-    const router = new Router(options.history ?? browserHistory(), boot.workspace?.files?.place ?? null);
+    const history = options.history ?? browserHistory();
+    // Read before the Router: it replaces the link's `#code=…` with the entry hash, so a reload or Back cannot replay the code.
+    const enrolCode = enrolCodeFromHash(history.current().hash);
+    const router = new Router(history, boot.workspace?.files?.place ?? null);
     super({
       viewport: boot.viewport,
       lifecycle: boot.lifecycle,
@@ -74,6 +80,7 @@ export class AppController extends Store<AppView> {
       update: "none",
     });
     this.router = router;
+    this.enrolCode = enrolCode;
     this.applyViewport = options.applyViewport ?? (() => undefined);
     this.focus = new FocusController(platform.input, () => this.snapshot.viewport);
     this.hosts = new HostRegistry({
@@ -111,6 +118,13 @@ export class AppController extends Store<AppView> {
     platform.subscribe((event) => { this.platformEvent(event); });
     this.focus.screenChanged(router.entry.destination, router.entry.overlay !== null);
     void this.checkUpdates();
+  }
+
+  /** The setup link's code, once: only a device that needs enrolling asks, so an enrolled device never uses it. */
+  takeEnrolCode(): string | null {
+    const code = this.enrolCode;
+    this.enrolCode = null;
+    return code;
   }
 
   /** Runs the reducer and its effects. Effects run in the caller's stack, so a focus made inside a tap stays inside the tap. */

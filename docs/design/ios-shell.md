@@ -594,7 +594,8 @@ through `readPasteboard`.
 `HostStore` keeps native entries `{id, name, baseURL}` in `UserDefaults`; tokens live
 in the Keychain ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)). The bridge
 maps these to `PlatformHost` and never sends `baseURL`. Add host takes the MagicDNS
-name and enrolment code, validates `/auth/info`, enrolls, and stores the daemon's
+name and enrolment code, or a setup link pasted whole (`https://<name>/#code=<code>`
+fills both fields), validates `/auth/info`, enrolls, and stores the daemon's
 `host_id` and `https://<that name>`. The web Home/Settings host-management entry sends
 `manageHosts` to present the native sheet (Settings > Servers, and "Add a server" when
 there are none). There is no floating native control.

@@ -4,9 +4,10 @@ tether runs on your dev box and shows your tmux sessions on your phone, over Tai
 On Linux, plain `tether setup` runs it in the terminal; Ctrl-C stops it. Use
 `tether setup --background` to install a service that outlives the terminal. On a Mac,
 use `--background`: plain setup refuses because phones reach the daemon through the
-LaunchAgent's socket. Build it, run setup, scan the QR code it prints, and enter the
-code. tether attaches to your tmux server and never starts one, so start tmux the way
-you always do.
+LaunchAgent's socket. Build it, run setup, and scan the QR code it prints. The link
+contains the enrolment code for the browser; the code is also printed separately for
+the iOS app. tether attaches to your tmux server and never starts one, so start tmux
+the way you always do.
 
 A Linux box is the usual host. A Mac can host tether too, under weaker local
 guarantees, if your account is its only one ([Host on a Mac](#host-on-a-mac)).
@@ -27,16 +28,18 @@ cargo install --path .          # puts tether in ~/.cargo/bin
 ```
 
 Plain Linux `tether setup` runs tether in this terminal, publishes it on your tailnet,
-and prints the link to open on your phone, a QR code of it, and an enrolment code. It
+and prints one link to open on your phone with the enrolment code in its fragment, a
+QR code of that link, and the code separately. It
 serves until Ctrl-C or SIGTERM; the Serve entry stays while tether is stopped, so the
 phone sees 502 until you run it again. Warnings and errors follow the report on stderr
 (`RUST_LOG=info` shows the rest). Use
 `tether setup --background` to install the systemd user service or Mac LaunchAgent
 instead. Plain `tether setup` on a Mac refuses without changing anything and tells you
 to use `--background`. To use Safari or the home-screen app, scan the QR code with the
-iPhone camera or open the link, then enter the code. To use the iOS app, tap Add host
-and enter the link's host name and the same code. A code works for one device; `tether
-enroll` prints another ([Enrol more devices](#enrol-more-devices)). The design is
+iPhone camera or open the link; the browser reads the code from the fragment. To use
+the iOS app, tap Add host and enter the bare MagicDNS name from `Host:` and the same
+separately printed code. A code works for one device; `tether enroll` prints another
+([Enrol more devices](#enrol-more-devices)). The design is
 [setup.md](design/setup.md).
 
 All supported setup paths check that you are not root. Linux paths also check that
@@ -326,12 +329,14 @@ sizes the counts.
 ## Enrol more devices
 
 ```bash
-tether enroll                   # prints a code and the canonical browser URL when available
+tether enroll                   # prints Host and a code-bearing browser link when available
 ```
 
 `tether setup` prints a code for your first device. For each later one, run `tether
-enroll`. A code works once, for 10 minutes (`--ttl` changes that), and 5 wrong tries
-delete it. The iOS app holds a device token from then on; a browser or home-screen app
+enroll`: `Host:` is the bare MagicDNS name for the iOS app's Add host, and `Browser:`
+is a link with the code in its fragment for Safari. The code is also printed separately.
+A code works once, for 10 minutes (`--ttl` changes that), and 5 wrong tries delete it.
+The iOS app holds a device token from then on; a browser or home-screen app
 is admitted as its machine's Tailscale node ([auth.md](design/auth.md)).
 
 ```bash

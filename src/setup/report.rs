@@ -28,10 +28,15 @@ pub(crate) struct Success<'a> {
     pub code: &'a str,
 }
 
+fn enrolment_link(report: &Success<'_>) -> String {
+    format!("{}/#code={}", report.origin, report.code)
+}
+
 pub(crate) fn render_success(
     report: &Success<'_>,
     terminal: bool,
 ) -> Result<String, qrcode::types::QrError> {
+    let link = enrolment_link(report);
     let mut output = match report.mode {
         Mode::Service(service) => format!(
             "tether {} is running as your {} and {}",
@@ -59,10 +64,10 @@ pub(crate) fn render_success(
             output.push('\n');
         }
     }
-    output.push_str(&format!("\n  {}\n", report.origin));
+    output.push_str(&format!("\n  {link}\n"));
     if terminal {
         // The render carries its own quiet zone: blank rows above and below.
-        let code = qrcode::QrCode::new(report.origin.as_bytes())?;
+        let code = qrcode::QrCode::new(link.as_bytes())?;
         output.push_str(&code.render::<Dense1x2>().build());
         output.push('\n');
     } else {
@@ -81,7 +86,7 @@ pub(crate) fn print_success(report: &Success<'_>) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     stdout.write_all(output.as_bytes())?;
     if terminal {
-        let encoded = base64::engine::general_purpose::STANDARD.encode(report.origin);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(enrolment_link(report));
         // OSC 52: copies the link where the terminal allows it; others ignore it.
         write!(stdout, "\x1b]52;c;{encoded}\x07")?;
     }

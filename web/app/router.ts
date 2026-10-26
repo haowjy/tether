@@ -44,6 +44,12 @@ export function destinationFromHash(hash: string): Destination {
   return hash === HASHES.files ? "files" : hash === HASHES.terminal ? "terminal" : "home";
 }
 
+/** The enrolment code in a setup link's fragment (`#code=7KQ4-XM2P`), or null. The server normalises the code, so it is passed on as written. */
+export function enrolCodeFromHash(hash: string): string | null {
+  const code = hash.startsWith("#code=") ? hash.slice("#code=".length).trim() : "";
+  return code === "" ? null : code;
+}
+
 function isEntry(state: unknown): state is Entry {
   const e = state as Partial<Entry> | null;
   return typeof e?.id === "number" && (e.destination === "home" || e.destination === "files" || e.destination === "terminal");

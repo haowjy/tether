@@ -56,7 +56,7 @@ struct AddHostView: View {
         NavigationStack {
             Form {
                 Section("Server") {
-                    TextField("MagicDNS name", text: $server)
+                    TextField("MagicDNS name or setup link", text: $server)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -76,17 +76,44 @@ struct AddHostView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(sending ? "Adding…" : "Add") { Task { await submit() } }
-                        .disabled(sending || server.isEmpty || code.isEmpty || deviceName.isEmpty)
+                        .disabled(sending || target == nil || deviceName.isEmpty)
                 }
             }
         }
     }
 
+    /// What Add will send. `tether setup` prints a link that carries the code
+    /// (`https://<MagicDNS name>/#code=7KQ4-XM2P`), so a pasted link fills both fields; a
+    /// bare MagicDNS name still takes the separately typed code.
+    private var target: (server: String, code: String)? {
+        var host = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        var secret = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let link = Self.link(host) {
+            host = link.host
+            if !link.code.isEmpty { secret = link.code }
+        }
+        return host.isEmpty || secret.isEmpty ? nil : (host, secret)
+    }
+
+    private static func link(_ text: String) -> (host: String, code: String)? {
+        guard text.contains("://") || text.contains("#code=") else { return nil }
+        var rest = text
+        if let scheme = rest.range(of: "://") { rest = String(rest[scheme.upperBound...]) }
+        var code = ""
+        if let fragment = rest.range(of: "#code=") {
+            code = String(rest[fragment.upperBound...])
+            rest = String(rest[..<fragment.lowerBound])
+        }
+        if let path = rest.firstIndex(of: "/") { rest = String(rest[..<path]) }
+        return rest.isEmpty ? nil : (rest, code)
+    }
+
     private func submit() async {
+        guard let target = target else { return }
         sending = true
         defer { sending = false }
         do {
-            try await model.enroll(server: server, code: code, deviceName: deviceName)
+            try await model.enroll(server: target.server, code: target.code, deviceName: deviceName)
             dismiss()
         } catch {
             self.error = error.localizedDescription

@@ -38,7 +38,7 @@ enum Command {
         #[arg(long = "allow-login", value_name = "LOGIN")]
         allow_login: Vec<String>,
     },
-    /// Print a one-time code for the app's Add host. Replaces any earlier code.
+    /// Print a one-time code and browser link for the app's Add host. Replaces any earlier code.
     Enroll {
         /// How long the code works
         #[arg(long, default_value = "10m", value_parser = humantime::parse_duration)]
@@ -93,7 +93,7 @@ fn main() -> ExitCode {
             (result, error_exit)
         }
         Command::Enroll { ttl } => (
-            load_config(config_path.as_deref()).and_then(|(config, _file)| enroll(&config, ttl)),
+            load_config(config_path.as_deref()).and_then(|_| enroll(ttl)),
             ExitCode::FAILURE,
         ),
         Command::Device(command) => (
@@ -139,7 +139,7 @@ fn serve_error_exit(cause: &(dyn Error + 'static)) -> ExitCode {
     }
 }
 
-fn enroll(config: &Config, ttl: Duration) -> Result<()> {
+fn enroll(ttl: Duration) -> Result<()> {
     let store = Store::open(config::state_dir()?)?;
     store.host_id()?;
     let code = store.set_pending(ttl, SystemTime::now())?;
@@ -149,14 +149,20 @@ fn enroll(config: &Config, ttl: Duration) -> Result<()> {
         humantime::format_duration(Duration::from_secs(ttl.as_secs()))
     );
     #[cfg(target_os = "macos")]
-    enroll_on_mac(config)?;
+    enroll_on_mac(&code)?;
     #[cfg(not(target_os = "macos"))]
-    enroll_on_linux(config)?;
+    enroll_on_linux(&code)?;
     Ok(())
 }
 
+fn print_host_and_browser(origin: &str, code: &str) {
+    let host = origin.strip_prefix("https://").unwrap_or(origin);
+    println!("Host: {host}");
+    println!("Browser: {origin}/#code={code}");
+}
+
 #[cfg(not(target_os = "macos"))]
-fn enroll_on_linux(config: &Config) -> Result<()> {
+fn enroll_on_linux(code: &str) -> Result<()> {
     let api = LocalApi::system();
     let publication = tether::blocking::runtime()?.block_on(identity::tailnet_state(&api));
     match publication {
@@ -173,13 +179,7 @@ fn enroll_on_linux(config: &Config) -> Result<()> {
                 });
             match origin {
                 Ok(origin) => {
-                    let label = config
-                        .name
-                        .clone()
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or_else(|| state.machine_name().to_owned());
-                    println!("Host: {origin} ({label})");
-                    println!("Browser: {origin}");
+                    print_host_and_browser(&origin, code);
                 }
                 Err(refusal) => {
                     println!("Host: unavailable");
@@ -196,21 +196,14 @@ fn enroll_on_linux(config: &Config) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn enroll_on_mac(config: &Config) -> Result<()> {
+fn enroll_on_mac(code: &str) -> Result<()> {
     let api = LocalApi::system();
     let socket = config::runtime_dir()?.join("local.sock");
     let info = tether::blocking::runtime()?.block_on(identity::read_auth_info(&socket, &api));
     match info {
         Ok(info) => {
-            let name = config
-                .name
-                .clone()
-                .filter(|name| !name.is_empty())
-                .or_else(|| info["name"].as_str().map(str::to_owned))
-                .unwrap_or_else(|| "tether".to_owned());
             if let Some(origin) = info["browserOrigin"].as_str() {
-                println!("Host: {origin} ({name})");
-                println!("Browser: {origin}");
+                print_host_and_browser(origin, code);
             } else {
                 println!("Host: unavailable");
                 println!(

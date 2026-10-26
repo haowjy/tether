@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { useApp } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
 import { Button } from "../../ui/primitives/Button";
@@ -14,13 +14,14 @@ export function Enrol({ host }: { host: HostClient }) {
   const app = useApp();
   const nodeName = host.admission.kind === "notEnrolled" ? (host.admission.nodeName ?? "this device") : "this device";
   const hostName = host.name ?? "the server";
-  const [code, setCode] = useState("");
+  // A setup link's code, taken once: this form fills and submits itself with it.
+  const [linkCode] = useState(() => app.takeEnrolCode());
+  const [code, setCode] = useState(linkCode ?? "");
   const [deviceName, setDeviceName] = useState(nodeName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async (e: Event): Promise<void> => {
-    e.preventDefault();
+  const submit = async (): Promise<void> => {
     // Enter in a field submits too, whatever the button says.
     if (busy || code.trim() === "") return;
     setBusy(true);
@@ -32,16 +33,20 @@ export function Enrol({ host }: { host: HostClient }) {
     // `enrolled` and `nodeRefused` change the host's admission, which swaps this screen out.
   };
 
+  useEffect(() => {
+    if (linkCode !== null) void submit();
+  }, []);
+
   return (
     <div class={styles.page}>
-      <form class={styles.form} onSubmit={(e) => { void submit(e); }}>
+      <form class={styles.form} onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <h1 class={styles.title}>Set up {hostName}</h1>
         <p>
           This lets every browser and app on <strong>{nodeName}</strong> use tether on <strong>{hostName}</strong>.
           Safari and the installed app keep their own drafts and tabs.
         </p>
         <p class={styles.step}>On the server, run <code>tether enroll</code> and enter the code it prints.</p>
-        <TextField label="Code" value={code} onInput={setCode} inputMode="numeric" error={error} />
+        <TextField label="Code" value={code} onInput={setCode} autocapitalize="characters" error={error} />
         <TextField label="Device name" value={deviceName} onInput={setDeviceName} hint="Shown in the server's device list." />
         <Button variant="primary" type="submit" disabledReason={busy ? "Enrolling" : code.trim() === "" ? "Enter the code from the server" : undefined}>
           {busy ? "Enrolling…" : "Enrol this device"}
