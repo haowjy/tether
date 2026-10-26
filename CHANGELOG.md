@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- The phone's line field no longer offers autocorrection or the predictive strip: a
+  line is a command or a prompt, and the strip took the row above the keyboard.
 - The app no longer leaves a keyboard-height gap under the dock: the native shell moves
   its web view above the keyboard, so it reports no covered page and the web stops
   rising by the keyboard a second time. Sheets and toasts sat in the same gap.

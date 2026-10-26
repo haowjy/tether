@@ -24,10 +24,12 @@ interface LineInputProps {
 }
 
 /**
- * The dock's one-line field: the platform's own editing, autocorrect and dictation, and a
- * blue send key on the keyboard (`enterkeyhint="send"`, the focus cue that says Return sends).
- * Its font is 16 px, below which Safari zooms into a focused field. What Return and a paste
- * mean is the dock's (`screens/terminal/dock/`), not this element's.
+ * The dock's one-line field: the platform's own editing and dictation, and a blue send key on
+ * the keyboard (`enterkeyhint="send"`, the focus cue that says Return sends). Autocorrection
+ * and spell checking are off, which is also what takes the predictive bar off the keyboard: a
+ * line is a command or a prompt for a shell or an agent, not prose to be corrected. Its font
+ * is 16 px, below which Safari zooms into a focused field. What Return and a paste mean is the
+ * dock's (`screens/terminal/dock/`), not this element's.
  */
 export function LineInput({ label, value, onInput, focusTarget, inputRef, class: className, ...rest }: LineInputProps) {
   const registered = useFocusRef(focusTarget);
@@ -46,8 +48,8 @@ export function LineInput({ label, value, onInput, focusTarget, inputRef, class:
       enterkeyhint="send"
       autocapitalize="off"
       autocomplete="off"
-      autocorrect="on"
-      spellcheck
+      autocorrect="off"
+      spellcheck={false}
       {...rest}
       value={value}
       onInput={(e) => { onInput(e.currentTarget.value, e.currentTarget); }}

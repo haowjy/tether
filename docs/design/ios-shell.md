@@ -257,6 +257,11 @@ taking it. Native lends it by place, not by message:
   web confirms: the field's `focusin` sends `focus webText`, and `FocusController`
   enters `webText`. If no confirmation arrives within 500 ms of the touch ending (a
   drag, a cancelled tap), the guard comes back up.
+- The field carries `autocorrect="off"` and `spellcheck="false"`, and the web view's
+  content view answers `autocorrectionType` and `spellCheckingType` with `.no`, which is
+  what takes the predictive strip off the keyboard: a line is a command, not prose.
+  Dictation and IME stay. The trait override is the same private-content-view hook as
+  the accessory-bar one below and fails the same way.
 - The field is `enterkeyhint="send"`, so its keyboard shows the blue send key, while
   `TerminalInputView` keeps `returnKeyType = .default`: the Return key is one of the
   focus cues ([browser-behaviors.md](client/browser-behaviors.md#phone-dock)).
@@ -674,7 +679,7 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 | Selection | WebKit's handles and Copy over the selection layer with the guard on; otherwise the `focus select` path |
 | Keyboard toggle (web) | The dock's toggle raises the keyboard (`focus terminal`) and lowers it (`focus hidden`), the key row following; toggling from the line field lowers it; the system dismissing the keyboard resets the toggle; selection (`focus select`) and back restores it |
 | Geometry | The dock rides the keyboard without a jump, in both geometry variants; WebKit does not also scroll for the keyboard; tmux's size changes only on rotation, including a rotation with the keyboard up |
-| Terminal input | Is there a QuickType bar? `hello world. it's "fine" -- ok` arrives exactly; two spaces stay two spaces; Backspace on an empty line sends BSpace; swipe typing and dictation (record what happens) |
+| Terminal input | No QuickType or predictive strip on the line field's keyboard; `hello world. it's "fine" -- ok` arrives exactly; two spaces stay two spaces; Backspace on an empty line sends BSpace; swipe typing and dictation (record what happens) |
 | Hardware keys | Esc; Ctrl+C, D, R, A, Z, B, Space, `[` `/` `\\`; Option+B, `.`, `<`, `>`, `=`, `` ` ``, `|`, Space and Enter; Cmd+V; verify warning haptic on ^C/^D; held keys stop on release and app deactivation |
 | Latency | Keystroke round trip native → page → `ack`, p99 under a 1 MB/s output flood: at most 16 ms |
 | Paste | The edit menu's Paste with text and with an image, with "Allow Paste" set to Ask and to Allow; the line field's paste menu with one line, two lines and an image |

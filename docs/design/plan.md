@@ -372,9 +372,10 @@ click-to-focus is unchanged. The native mechanics are in
   predictions: keystrokes go as typed, so there is no text for iOS to correct after
   it's sent. In the app it is a bare `UIKeyInput`; in the browser, the owned input
   with those features off.
-- Dictation, CJK input and autocorrect belong to the dock's line field, with
-  auto-capitalization off. Return sends its line as one paste with Enter after it, in
-  one tmux command group.
+- Dictation, CJK input and IME belong to the dock's line field, with
+  auto-capitalization, autocorrection and predictions off: a line is a command or a
+  prompt for a shell or an agent, not prose to correct. Return sends its line as one
+  paste with Enter after it, in one tmux command group.
 
 ### Suggestion strip
 

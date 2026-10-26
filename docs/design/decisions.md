@@ -3173,6 +3173,23 @@ variations canvas.
 - **Rejected:** the field as the only opener (loses live keys); a live mode toggled
   inside the field (an extra tap for the same two modes).
 
+### No predictions on the line field
+
+- **Decided:** 2026-10-26, Jimmy, from the phone.
+- **What:** the dock's line field turns autocorrection and spell checking off, in the
+  HTML (`autocorrect="off"`, `spellcheck="false"`) and on the web view's content view
+  (`autocorrectionType` and `spellCheckingType` answered with `.no`), which takes the
+  predictive strip off the keyboard. Dictation, IME and the blue send key stay.
+- **Why:** a line is a command or a prompt for a shell or an agent. The predictions
+  corrected it as prose and took the row above the keyboard. Jimmy saw the strip on
+  his phone, which is what the checklist row was there to catch.
+- **Rejected:** attributes alone. They stop autocorrection but not the predictive bar
+  ([plan-review.md](plan-review.md) noted it), and WebKit consults the content view for
+  the traits the strip reads.
+- **Supersedes:** the "autocorrect and dictation stay on" half of
+  [Line field auto-capitalization is off](#line-field-auto-capitalization-is-off);
+  dictation stays.
+
 ### Line field auto-capitalization is off
 
 - **Decided:** 2026-10-24, tech lead, confirmed by Jimmy.
