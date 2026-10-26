@@ -21,3 +21,21 @@ install -m 755 tether-linux-x64 ~/.local/bin/tether
 ```
 
 Prereleases (`vX.Y.Z-rc.N`) are not "latest"; pick them from the Releases page.
+
+## Build from source
+
+The web UI is compiled into the binary, so a change under `web/` needs this too:
+
+```bash
+git pull
+cargo install --path . --locked --force
+tether setup --background
+```
+
+`cargo install` replaces `~/.cargo/bin/tether` but leaves a running daemon on the old
+build; `tether setup --background` restarts it and prints a fresh enrolment code. (On
+Linux, plain `tether setup` runs it in the foreground; macOS refuses that in favour of
+`--background`.)
+
+`scripts/preflight.sh full` is the gate before pushing: fmt, clippy with warnings denied,
+tests, the release build and the web checks.
