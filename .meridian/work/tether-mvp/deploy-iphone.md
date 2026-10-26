@@ -68,6 +68,18 @@ Lane 1 (tmux baseline decision, issue #2) deliberately not taken here.
   library pages, so it is not comparable to the Linux PSS figure (5.09 MiB); the honest
   statement is that the real service is above the target on this host too.
 
+## Second install (after the keyboard-gap fix) blocked
+
+The build that carries the keyboard fix and the Add-server link parse cannot be signed:
+`CodeSign … errSecInternalComponent`, because the Mac's console is locked
+(`ioreg -n Root -d1 -a` → `IOConsoleLocked = true`). The phone also reported
+`unavailable` to `devicectl` for the whole window. Both clear when Jimmy unlocks the Mac
+with the phone awake nearby; the command is the Release device build from
+`ios/AGENTS.md` plus `xcrun devicectl device install app`.
+
+A `generic/platform=iOS` build without a reachable device hangs after the `codesign`
+command line rather than failing fast; use the device destination once it is back.
+
 ## Handed to Jimmy
 
 Enrolment code `1D8K-4WX6` (2 h TTL, one device), host
