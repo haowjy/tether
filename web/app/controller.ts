@@ -61,8 +61,9 @@ export class AppController extends Store<AppView> {
 
   private readonly applyViewport: (viewport: Viewport) => void;
 
-  /** A setup link's enrolment code, kept until the Enrol screen takes it. */
+  /** A setup link's enrolment code, kept until this page's own admission is first known. */
   private enrolCode: string | null;
+  private enrolCodeSettled: boolean;
 
   private constructor(readonly platform: Platform, boot: BootResult, options: StartOptions) {
     const history = options.history ?? browserHistory();
@@ -81,6 +82,7 @@ export class AppController extends Store<AppView> {
     });
     this.router = router;
     this.enrolCode = enrolCode;
+    this.enrolCodeSettled = enrolCode === null;
     this.applyViewport = options.applyViewport ?? (() => undefined);
     this.focus = new FocusController(platform.input, () => this.snapshot.viewport);
     this.hosts = new HostRegistry({
@@ -120,10 +122,11 @@ export class AppController extends Store<AppView> {
     void this.checkUpdates();
   }
 
-  /** The setup link's code, once: only a device that needs enrolling asks, so an enrolled device never uses it. */
+  /** The setup link's code, once, while this page still needs it. */
   takeEnrolCode(): string | null {
     const code = this.enrolCode;
     this.enrolCode = null;
+    this.enrolCodeSettled = true;
     return code;
   }
 
@@ -193,6 +196,16 @@ export class AppController extends Store<AppView> {
   private hostsChanged(): void {
     const hosts = this.hosts.all();
     this.update({ hosts });
+    // The link's code is for a device that still needs enrolling. Once this page's own host has
+    // settled, an enrolled or refused device drops it: otherwise removing the device later in
+    // the same page would spend a code the page kept from the link.
+    if (!this.enrolCodeSettled) {
+      const own = hosts.find((h) => h.entry.pageOrigin !== null)?.admission.kind;
+      if (own !== undefined && own !== "deciding" && own !== "unreachable") {
+        this.enrolCodeSettled = true;
+        if (own !== "notEnrolled") this.enrolCode = null;
+      }
+    }
     this.listing.setHosts(hosts.map((h) => ({ handle: h.entry.handle, host: h.socket })));
     const ids = hosts.flatMap((h) => (h.hostId === null ? [] : [h.hostId]));
     this.dispatch({ type: "hostsKnown", ids, complete: hosts.length > 0 && ids.length === hosts.length });

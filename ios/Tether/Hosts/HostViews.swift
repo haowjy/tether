@@ -60,6 +60,13 @@ struct AddHostView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
+                        .onChange(of: server) { _, text in
+                            // A pasted setup link carries both: take it apart so the fields say
+                            // what Add will send, instead of hiding a value behind the text.
+                            guard let link = Self.link(text) else { return }
+                            server = link.host
+                            code = link.code
+                        }
                     TextField("One-time enrolment code", text: $code)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -76,44 +83,36 @@ struct AddHostView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(sending ? "Adding…" : "Add") { Task { await submit() } }
-                        .disabled(sending || target == nil || deviceName.isEmpty)
+                        .disabled(sending || !filled)
                 }
             }
         }
     }
 
-    /// What Add will send. `tether setup` prints a link that carries the code
-    /// (`https://<MagicDNS name>/#code=7KQ4-XM2P`), so a pasted link fills both fields; a
-    /// bare MagicDNS name still takes the separately typed code.
-    private var target: (server: String, code: String)? {
-        var host = server.trimmingCharacters(in: .whitespacesAndNewlines)
-        var secret = code.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let link = Self.link(host) {
-            host = link.host
-            if !link.code.isEmpty { secret = link.code }
-        }
-        return host.isEmpty || secret.isEmpty ? nil : (host, secret)
+    private var filled: Bool {
+        !server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// A setup link's host and code: `tether setup` prints `https://<MagicDNS name>/#code=7KQ4-XM2P`.
     private static func link(_ text: String) -> (host: String, code: String)? {
-        guard text.contains("://") || text.contains("#code=") else { return nil }
-        var rest = text
-        if let scheme = rest.range(of: "://") { rest = String(rest[scheme.upperBound...]) }
-        var code = ""
-        if let fragment = rest.range(of: "#code=") {
-            code = String(rest[fragment.upperBound...])
-            rest = String(rest[..<fragment.lowerBound])
-        }
-        if let path = rest.firstIndex(of: "/") { rest = String(rest[..<path]) }
-        return rest.isEmpty ? nil : (rest, code)
+        guard var parts = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let fragment = parts.fragment, fragment.hasPrefix("code="),
+              let host = parts.host, !host.isEmpty else { return nil }
+        let code = String(fragment.dropFirst("code=".count))
+        guard !code.isEmpty else { return nil }
+        return (parts.port.map { "\(host):\(String($0))" } ?? host, code)
     }
 
     private func submit() async {
-        guard let target = target else { return }
+        guard filled else { return }
+        let host = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secret = code.trimmingCharacters(in: .whitespacesAndNewlines)
         sending = true
         defer { sending = false }
         do {
-            try await model.enroll(server: target.server, code: target.code, deviceName: deviceName)
+            try await model.enroll(server: host, code: secret, deviceName: deviceName)
             dismiss()
         } catch {
             self.error = error.localizedDescription

@@ -37,8 +37,9 @@ phone sees 502 until you run it again. Warnings and errors follow the report on 
 instead. Plain `tether setup` on a Mac refuses without changing anything and tells you
 to use `--background`. To use Safari or the home-screen app, scan the QR code with the
 iPhone camera or open the link; the browser reads the code from the fragment. To use
-the iOS app, tap Add host and enter the bare MagicDNS name from `Host:` and the same
-separately printed code. A code works for one device; `tether enroll` prints another
+the iOS app, tap Add host and paste the link into its first field, which fills the
+host and the code, or type the MagicDNS name and the same code it printed. A code
+works for one device; `tether enroll` prints another
 ([Enrol more devices](#enrol-more-devices)). The design is
 [setup.md](design/setup.md).
 
