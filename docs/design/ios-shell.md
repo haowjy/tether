@@ -643,9 +643,12 @@ fixture. If the socket ever moves native, the WebSocket messages get the same tr
 
 ## Distribution
 
-- **Now:** Xcode on Jimmy's Mac, free Personal Team. Profiles last 7 days, so he
-  reinstalls from Xcode weekly; at most 3 apps on the device; no App Groups, so no
-  share extension. Developer Mode must be on.
+- **Now:** Jimmy's individual team `D4K9ZT557F`, wildcard development profile
+  (`iOS Team Provisioning Profile: *`, expiry 2027-10-24) against the paired iPhone, so
+  an install lasts a year instead of a free team's seven days. The wildcard profile has
+  no App Groups, so no share extension. Builds come from `xcodebuild` on the Mac (or
+  Xcode); the team stays out of `project.yml` and is passed on the command line.
+  Developer Mode must be on.
 - **Later:** paid account, TestFlight internal testing (builds last 90 days), App
   Groups and the share extension.
 

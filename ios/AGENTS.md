@@ -18,6 +18,19 @@ phone dock is web. Spec: [ios-shell.md](../docs/design/ios-shell.md).
   Jimmy picks it in Xcode.
 - **Builds and tests run on the Mac:** `ios/scripts/check.sh` (XcodeGen, `swift test`,
   a Simulator build). Preflight doesn't build iOS.
+- **Installing on the phone:** build for the device with the team on the command line,
+  then install the Release app. `DQK9XRFMG4` in `security find-identity` is a
+  certificate ID, not a team: using it fails with "No Account for Team". The team Xcode
+  is signed into is `D4K9ZT557F`.
+
+  ```bash
+  cd ios && xcodegen generate --spec project.yml
+  xcodebuild -project Tether.xcodeproj -scheme Tether -configuration Release \
+    -destination "id=<phone udid>" -derivedDataPath "$TMPDIR/tether-ios-device" \
+    -allowProvisioningUpdates DEVELOPMENT_TEAM=D4K9ZT557F CODE_SIGN_STYLE=Automatic build
+  xcrun devicectl device install app --device <phone udid> \
+    "$TMPDIR/tether-ios-device/Build/Products/Release-iphoneos/tether.app"
+  ```
 - **The Simulator can't verify input.** From an agent shell it shows no software
   keyboard, and `simctl` can't tap or type. Keyboard, focus, geometry and rotation are
   verified only by the device checklist in ios-shell.md, which Jimmy runs on his
