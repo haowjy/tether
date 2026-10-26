@@ -156,7 +156,13 @@ impl State {
         let needed = self
             .views
             .iter()
-            .filter(|(_, view)| view.locate.needed && view.locate.in_flight.is_none())
+            .filter(|(_, view)| {
+                // The ExitCheck owns an orphan's Locate and must gate respawn; a parallel
+                // view Locate could spawn a client before the crash count is evaluated.
+                view.locate.needed
+                    && view.locate.in_flight.is_none()
+                    && !matches!(view.phase, ViewPhase::Orphaned { .. })
+            })
             .map(|(key, view)| (*key, view.client()))
             .collect::<Vec<_>>();
         for (key, known_owner) in needed {

@@ -47,7 +47,7 @@ impl State {
         };
         let endpoint = record.endpoint;
         info!(client = client.0, session = %record.session, %server, "tmux control client ready");
-        self.learned(endpoint, server);
+        self.learned_version(endpoint, server, version);
     }
 
     /// The current window shown by an owner's session.
@@ -133,15 +133,13 @@ impl State {
         }
         let Some(owner) = self.client_for(key.endpoint, key.session) else {
             let session_name = found.session_name.clone();
-            if self
-                .spawn_client(key.endpoint, key.session, session_name, None)
-                .is_none()
-            {
+            let Some(owner) = self.spawn_client(key.endpoint, key.session, session_name, None)
+            else {
                 let message = self.session_limit_message();
                 return self.end_view(key, WatchEndReason::Limit, Some(message));
-            }
+            };
             if let Some(view) = self.views.get_mut(&key) {
-                view.phase = ViewPhase::Checking;
+                view.phase = ViewPhase::Locating { owner };
                 view.locate.needed = true;
             }
             return;
@@ -207,13 +205,10 @@ impl State {
     }
 
     pub(super) fn owner_moved(&mut self, client: ClientId) {
-        if let Some(record) = self.clients.get_mut(&client) {
-            record.moved = true;
-        }
         self.client_exited(
             client,
             "tmux moved the control client to another session".to_owned(),
-            false,
+            true,
         );
     }
 
@@ -250,7 +245,6 @@ impl State {
                 progress: self.now,
                 linger: None,
                 last_crash: respawn.map(|(_, crash)| crash),
-                moved: false,
             },
         );
         match respawn {
@@ -350,12 +344,12 @@ impl State {
         }
     }
 
-    pub(super) fn client_exited(&mut self, client: ClientId, reason: String, killed: bool) {
+    pub(super) fn client_exited(&mut self, client: ClientId, reason: String, detached: bool) {
         let Some(record) = self.clients.remove(&client) else {
             return;
         };
         self.effects.push(Effect::CloseClient { client });
-        let detached = !killed && (record.moved || record.tmux().is_some_and(Session::exit_seen));
+        let startup_failure = matches!(&record.phase, ClientPhase::Starting(_));
         info!(client = client.0, session = %record.session, detached, %reason, "tmux control client ended");
         let server = record.server().or(self.endpoints[record.endpoint].live);
         self.release_views(client, |view| {
@@ -370,6 +364,7 @@ impl State {
             session: record.session,
             session_name: record.session_name,
             detached,
+            startup_failure,
             at: self.now,
             last_crash: record.last_crash,
             reason,
@@ -452,10 +447,20 @@ impl State {
             .last_crash
             .is_some_and(|first| exit.at.saturating_duration_since(first) < CRASH_WINDOW);
         if crash_twice {
-            let message = cut(format!(
-                "the tmux control client failed twice: {}",
-                exit.reason
-            ));
+            let message = if exit.startup_failure {
+                self.startup_mismatch_message(exit.endpoint)
+                    .unwrap_or_else(|| {
+                        cut(format!(
+                            "the tmux control client failed twice: {}",
+                            exit.reason
+                        ))
+                    })
+            } else {
+                cut(format!(
+                    "the tmux control client failed twice: {}",
+                    exit.reason
+                ))
+            };
             for key in orphans {
                 self.end_view(key, WatchEndReason::Error, Some(message.clone()));
             }
@@ -497,6 +502,44 @@ impl State {
         self.endpoints[endpoint].live = Some(server);
     }
 
+    pub(super) fn learned_version(
+        &mut self,
+        endpoint: usize,
+        server: ServerInstance,
+        version: &TmuxVersion,
+    ) {
+        self.learned(endpoint, server);
+        let state = &mut self.endpoints[endpoint];
+        let first_version = state.server_version.is_none();
+        state.server_version = Some(version.clone());
+        let Some(program_version) = state.program_version.as_ref() else {
+            return;
+        };
+        if !first_version || program_version == version {
+            return;
+        }
+        warn!(
+            %server,
+            program_version = %program_version,
+            server_version = %version,
+            program = %state.endpoint.program.display(),
+            "tmux client version differs from server version"
+        );
+    }
+
+    fn startup_mismatch_message(&self, endpoint: usize) -> Option<String> {
+        let state = &self.endpoints[endpoint];
+        let server_version = state.server_version.as_ref()?;
+        let program_version = state.program_version.as_ref()?;
+        if program_version == server_version {
+            return None;
+        }
+        Some(cut(format!(
+            "tmux {program_version} ({}) can't attach to the running tmux {server_version} server; set tmux.program to that server's tmux",
+            state.endpoint.program.display()
+        )))
+    }
+
     pub(super) fn server_gone(&mut self, endpoint: usize, server: ServerInstance) {
         info!(endpoint = self.endpoints[endpoint].name, %server, "tmux server gone");
         let name = self.server_name(endpoint, server);
@@ -521,8 +564,10 @@ impl State {
         }
         self.exits
             .retain(|_, check| !(check.exit.endpoint == endpoint && check.server == Some(server)));
-        if self.endpoints[endpoint].live == Some(server) {
-            self.endpoints[endpoint].live = None;
+        let state = &mut self.endpoints[endpoint];
+        if state.live == Some(server) {
+            state.live = None;
+            state.server_version = None;
         }
     }
 }

@@ -222,9 +222,16 @@ pub fn spawn(
     endpoints: Endpoints,
     max_clients: usize,
     host_name: String,
+    program_version: Option<crate::tmux::TmuxVersion>,
 ) -> (HubHandle, JoinHandle<()>) {
     let (inbox, receiver) = mpsc::channel(INBOX);
-    let state = State::new(endpoints, std::time::Instant::now(), max_clients, host_name);
+    let state = State::new(
+        endpoints,
+        std::time::Instant::now(),
+        max_clients,
+        host_name,
+        program_version,
+    );
     let task = tokio::spawn(run::run(state, receiver, inbox.downgrade()));
     (HubHandle { inbox }, task)
 }

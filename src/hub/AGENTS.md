@@ -21,6 +21,8 @@ Rules the code relies on, which are easy to break:
   not across them. Once bound, it stays bound to its shown pane while a window-change
   Locate runs; only the target changes until the answer coherently updates the shown
   window and pane.
+- An orphan's Locate belongs to its exit check. Do not run a parallel view Locate while
+  the view is `Orphaned`: the exit check must decide whether to respawn the owner first.
 - `View` (view.rs) is the one owner of a view's shown window, reported window,
   selection and claim. The claim stores no window: its window is `View::target()`,
   and every change to what `target()` returns goes through `retarget`, which drops a

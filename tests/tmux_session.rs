@@ -504,7 +504,7 @@ fn notifications_become_events() {
     assert_eq!(acts, 4, "arrival, typing, returning and resizing are acts");
 
     for name in ["detach", "kill-server", "startup"] {
-        assert!(whole(name).session.exit_seen(), "{name}");
+        assert!(whole(name).events.contains(&Event::Exit), "{name}");
     }
 }
 

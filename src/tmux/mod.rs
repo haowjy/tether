@@ -384,6 +384,9 @@ pub enum Event {
     SessionChanged,
     /// The control client can't continue; the caller closes it.
     Fatal(SessionError),
+    /// tmux sent `%exit` after the client was ready; the caller closes it and checks
+    /// whether the session or server ended, or the client was detached.
+    Exit,
 }
 
 /// What tmux answered for an `Op` or a `OneShotCmd`.
@@ -515,6 +518,8 @@ pub enum SessionError {
     TmuxTooOld(TmuxVersion),
     #[error("tmux control-client startup failed")]
     Startup,
+    #[error("tmux control client exited during startup")]
+    StartupExit,
     #[error("tmux sent a reply with no command pending")]
     UnexpectedReply,
 }

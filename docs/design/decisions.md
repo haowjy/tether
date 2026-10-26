@@ -358,6 +358,32 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ## Daemon core
 
+### Fail fast on `%exit`; diagnose tmux version mismatches
+
+- **Decided:** 2026-10-26, tech lead.
+- **What:** `%exit` closes a control client immediately. Before `Ready` it is a startup
+  crash subject to the existing one-respawn/60 s rule; after `Ready`, the one-shot check
+  still distinguishes a detach from a gone session or server. The daemon reads
+  `tmux.program -V` once, compares it with the server version, warns once per server
+  instance, and includes both versions and the configured path when repeated startup
+  failures end watches. It uses the normal 10 s reply timeout for both startup attempts;
+  after a second startup failure, a known mismatch supplies the error instead of the
+  generic failure reason. A view whose first owner is still starting is
+  `Locating { owner }`, not `Checking`, so that owner's startup failure orphans the view
+  and the crash rule applies; before, the view re-ran its own Locate and spawned a fresh
+  client with no crash history, forever ("Connecting..." on the phone).
+- **Rejected:** auto-selecting the server's binary: that binary can have been deleted by
+  a package upgrade, and tether must not assume another executable's ownership. Waiting
+  for the reply timeout after receiving `%exit`: the event is terminal and should close
+  immediately; the normal timeout remains for a silent client. Refusing to attach on a
+  mismatch: a newer client can work with an older server. A mismatch-only short startup
+  deadline: it adds a special mode for a misconfiguration that is fixed once. One short
+  startup deadline for every client: it is unprobed on a busy host.
+- **Implementation finding:** on pop-os, the mismatched `tmux -C` process stayed silent
+  while the daemon's stdin pipe remained open; `%exit` arrived only after the process was
+  signalled. Handling `%exit` immediately did not by itself fix the observed hang, so
+  startup still uses the ordinary 10 s reply timeout and one-respawn rule.
+
 ### Snapshot boundary: one atomic command list
 
 - **Decided:** 2026-10-21, design (daemon core), from probes p3 and p5.

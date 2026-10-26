@@ -165,6 +165,7 @@ impl Opened {
 
         let name = config.name.clone().unwrap_or_else(|| "tether".to_owned());
         let endpoint = config.endpoint();
+        let program_version = crate::tmux::oneshot::program_version(&endpoint.program).await;
         let mut shutdown = signal(SignalKind::terminate())?;
         let mut interrupt = signal(SignalKind::interrupt())?;
 
@@ -175,6 +176,7 @@ impl Opened {
             },
             tier.caps.control_clients,
             name.clone(),
+            program_version,
         );
         let hub_stop = hub.clone();
         let app = App {

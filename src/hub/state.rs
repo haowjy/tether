@@ -23,7 +23,7 @@ use super::{
 use crate::proto::{self, ErrorCode, ServerMsg, ShownWindow as ProtoShownWindow, WatchEndReason};
 use crate::tmux::{
     ClientId, Endpoint, Event, OneShotCmd, Op, PaneId, PumpMsg, Reply, ServerInstance, Session,
-    SessionId, Size, Step, Tag, TmuxError, WindowId,
+    SessionId, Size, Step, Tag, TmuxError, TmuxVersion, WindowId,
 };
 
 /// The endpoint the session sheet lists and new sessions start on.
@@ -108,6 +108,10 @@ pub(super) struct EndpointState {
     pub(super) endpoint: Endpoint,
     /// The server instance last seen running; ids from any other are dead.
     pub(super) live: Option<ServerInstance>,
+    /// Version expanded by the live server, if a listing or startup reply identified it.
+    pub(super) server_version: Option<TmuxVersion>,
+    /// The configured binary's version, read once when the daemon starts.
+    pub(super) program_version: Option<TmuxVersion>,
 }
 
 #[derive(Default)]
@@ -159,7 +163,6 @@ pub(super) struct Client {
     pub(super) progress: Instant,
     pub(super) linger: Option<Instant>,
     pub(super) last_crash: Option<Instant>,
-    pub(super) moved: bool,
 }
 
 pub(super) enum ClientPhase {
@@ -243,8 +246,10 @@ pub(super) struct Exit {
     pub(super) endpoint: usize,
     pub(super) session: SessionId,
     pub(super) session_name: String,
-    /// tmux said `%exit` and the hub didn't kill it.
+    /// The control client was detached or moved, not crashed.
     pub(super) detached: bool,
+    /// The client never reached `Ready`; it is a startup crash even if tmux sent `%exit`.
+    pub(super) startup_failure: bool,
     pub(super) at: Instant,
     pub(super) last_crash: Option<Instant>,
     pub(super) reason: String,
@@ -257,12 +262,20 @@ pub(super) struct ExitCheck {
 }
 
 impl State {
-    pub fn new(endpoints: Endpoints, now: Instant, max_clients: usize, host_name: String) -> Self {
+    pub fn new(
+        endpoints: Endpoints,
+        now: Instant,
+        max_clients: usize,
+        host_name: String,
+        program_version: Option<TmuxVersion>,
+    ) -> Self {
         Self {
             endpoints: vec![EndpointState {
                 name: "main",
                 endpoint: endpoints.main,
                 live: None,
+                server_version: None,
+                program_version,
             }],
             host_name,
             max_clients,
@@ -490,8 +503,9 @@ impl State {
             }
             Event::Fatal(error) => {
                 warn!(client = client.0, %error, "tmux control client failed");
-                self.client_exited(client, error.to_string(), true);
+                self.client_exited(client, error.to_string(), false);
             }
+            Event::Exit => self.client_exited(client, "tmux sent %exit".to_owned(), true),
         }
     }
 

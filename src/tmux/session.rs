@@ -40,7 +40,6 @@ pub struct Session {
     subscriptions: BTreeMap<WindowId, Subscription>,
     /// Pauses of unwanted panes waiting for room under `MAX_IN_FLIGHT`.
     deferred_pauses: VecDeque<PaneId>,
-    exit_seen: bool,
 }
 
 /// The reply block open in the stream, if any.
@@ -152,7 +151,6 @@ impl Session {
             wanted: BTreeSet::new(),
             subscriptions: BTreeMap::new(),
             deferred_pauses: VecDeque::new(),
-            exit_seen: false,
         };
         let mut step = Step::default();
         this.send(command::startup(), Purpose::Startup, &mut step);
@@ -172,12 +170,6 @@ impl Session {
     /// The latest subscribed path for this window, absent until its first value.
     pub fn cwd(&self, window: WindowId) -> Option<&str> {
         self.subscriptions.get(&window)?.path.as_deref()
-    }
-
-    /// Whether tmux said `%exit`. A client that ends without it crashed or was killed;
-    /// with it, it was detached, or its session or server ended.
-    pub fn exit_seen(&self) -> bool {
-        self.exit_seen
     }
 
     /// Bytes from the control client's stdout, in order.
@@ -418,7 +410,12 @@ impl Session {
                 return;
             }
             NotificationKind::Exit => {
-                self.exit_seen = true;
+                if matches!(self.phase, Phase::Ready) {
+                    self.phase = Phase::Dead;
+                    step.events.push(Event::Exit);
+                } else {
+                    self.fatal(SessionError::StartupExit, step);
+                }
                 return;
             }
         };

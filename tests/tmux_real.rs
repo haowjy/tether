@@ -1328,7 +1328,7 @@ async fn kill_server_ends_the_client_with_exit_and_then_there_is_no_server() {
     let mut client = Client::attach(&server, SessionId(0)).await;
     server.run(&["kill-server"]).expect("kill-server");
     client.exit().await;
-    assert!(client.session.exit_seen());
+    assert!(client.events.contains(&Event::Exit));
     assert_eq!(
         locate_session(&server.endpoint(), SessionId(0)).await,
         Err(TmuxError::NoServer)
@@ -1348,7 +1348,7 @@ async fn kill_session_ends_the_client_with_exit_and_the_session_is_gone() {
         .run(&["kill-session", "-t", SESSION])
         .expect("kill-session");
     client.exit().await;
-    assert!(client.session.exit_seen());
+    assert!(client.events.contains(&Event::Exit));
     assert_eq!(
         locate_session(&server.endpoint(), SessionId(0)).await,
         Ok(Reply::Location(Location {
@@ -1368,7 +1368,7 @@ async fn a_detached_client_ends_with_exit_and_its_session_lives() {
         .run(&["detach-client", "-s", SESSION])
         .expect("detach-client");
     client.exit().await;
-    assert!(client.session.exit_seen());
+    assert!(client.events.contains(&Event::Exit));
     assert!(matches!(
         locate_session(&server.endpoint(), SessionId(0)).await,
         Ok(Reply::Location(Location {
@@ -1397,7 +1397,10 @@ async fn a_killed_control_client_ends_without_exit_and_its_session_lives() {
         .expect("kill");
     assert!(killed.success());
     client.exit().await;
-    assert!(!client.session.exit_seen(), "a crash has no %exit");
+    assert!(
+        !client.events.contains(&Event::Exit),
+        "a crash has no %exit"
+    );
     assert!(matches!(
         locate_session(&server.endpoint(), SessionId(0)).await,
         Ok(Reply::Location(Location {
@@ -1493,7 +1496,7 @@ async fn locate_is_session_scoped() {
         .run(&["move-window", "-s", &solo.to_string(), "-t", "other:"])
         .expect("move-window");
     solo_client.exit().await;
-    assert!(solo_client.session.exit_seen());
+    assert!(solo_client.events.contains(&Event::Exit));
     assert_eq!(
         locate_session(&endpoint, SessionId(2)).await,
         Ok(Reply::Location(Location {

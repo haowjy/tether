@@ -94,6 +94,7 @@ impl Hub {
                 now,
                 max_clients,
                 "devbox".to_owned(),
+                None,
             ),
             now,
             alive: true,

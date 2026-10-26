@@ -253,6 +253,7 @@ pub async fn start_loopback_with_serve_config(
         Endpoints { main: endpoint },
         DEFAULT_CAPS.control_clients,
         "test".to_owned(),
+        None,
     );
     let lanes = Lanes::default();
     let api = LocalApi::at_tcp(fake_api_address, FAKE_LOCALAPI_TOKEN);
@@ -405,6 +406,7 @@ async fn start_as_with_allowlist(
         Endpoints { main: endpoint },
         DEFAULT_CAPS.control_clients,
         "test".to_owned(),
+        None,
     );
     let lanes = Lanes::default();
     let app = App {

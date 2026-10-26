@@ -2,17 +2,21 @@
 //! Locates when no control client is ready, and new windows and sessions. Each is one
 //! short process that never attaches, killed at the timeout.
 
-use std::process::ExitStatus;
+use std::path::Path;
+use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
-use tokio::process::{ChildStderr, ChildStdout};
+use tokio::process::{ChildStderr, ChildStdout, Command};
+use tracing::warn;
 
 use super::session::MAX_REPLY;
-use super::{Endpoint, OneShotCmd, Reply, TmuxError, command, reply};
+use super::{Endpoint, OneShotCmd, Reply, TmuxError, TmuxVersion, command, reply};
 
 /// How long a one-shot may run before it is killed.
 pub const TIMEOUT: Duration = Duration::from_secs(2);
+/// `tmux -V` is one line; reject unexpectedly large output from a configured program.
+const MAX_VERSION_OUTPUT: usize = 128;
 /// How much of tmux's stderr is kept for the error message.
 const MAX_ERROR: u64 = 4 * 1024;
 
@@ -49,6 +53,53 @@ pub async fn run(endpoint: &Endpoint, cmd: &OneShotCmd) -> Result<Reply, TmuxErr
         }
     }
     .ok_or(TmuxError::BadReply)
+}
+
+/// Reads the configured binary's version once at daemon startup. A failed or malformed
+/// query leaves version diagnostics unavailable, but must not stop the daemon serving.
+pub async fn program_version(program: &Path) -> Option<TmuxVersion> {
+    let mut command = Command::new(program);
+    command
+        .arg("-V")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(TIMEOUT, async {
+        let mut child = command.spawn().ok()?;
+        let stdout = child.stdout.take()?;
+        let mut bytes = Vec::new();
+        stdout
+            .take((MAX_VERSION_OUTPUT + 1) as u64)
+            .read_to_end(&mut bytes)
+            .await
+            .ok()?;
+        if bytes.len() > MAX_VERSION_OUTPUT {
+            let _ = child.kill().await;
+            return None;
+        }
+        let status = child.wait().await.ok()?;
+        status.success().then_some(bytes)
+    })
+    .await
+    .ok()
+    .flatten();
+    let version = output
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|output| {
+            let version = output.trim().strip_prefix("tmux ").unwrap_or(output.trim());
+            if version.is_empty() {
+                return None;
+            }
+            match TmuxVersion::parse(version) {
+                version @ TmuxVersion::Known { .. } => Some(version),
+                TmuxVersion::Unrecognised(_) => None,
+            }
+        });
+    if version.is_none() {
+        warn!(program = %program.display(), "could not read configured tmux program version");
+    }
+    version
 }
 
 fn spawn_error(error: std::io::Error) -> TmuxError {

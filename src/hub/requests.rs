@@ -605,7 +605,7 @@ impl State {
             Err(error) => return self.refuse_tmux(conn, Some(req), None, &error),
             Ok(_) => return self.refuse_tmux(conn, Some(req), None, &TmuxError::BadReply),
         };
-        self.learned(MAIN, listing.server);
+        self.learned_version(MAIN, listing.server, &listing.version);
         let sessions = listing
             .sessions
             .into_iter()

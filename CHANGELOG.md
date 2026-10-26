@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- A tab whose tmux client can't start no longer sits on `Connecting...`: after one retry
+  it ends with an error naming the cause, including a version mismatch when known.
 - Enrolling in the browser asks for the code as eight cells, `▢▢▢▢ – ▢▢▢▢`, with the
   dash drawn rather than typed, and asks for the device name on the next screen.
 - An enrolled phone can mint the app's native token without spending another code;

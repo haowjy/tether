@@ -481,6 +481,7 @@ points at a free port that any process could take.
 | tether exits with “already running” | another daemon holds the runtime lock; do not delete its sockets or paste files |
 | tether exits at start with status 78 naming a runtime directory variable | `XDG_RUNTIME_DIR` on Linux or `TMPDIR` on macOS is absent or unsafe; use the user's private runtime directory |
 | the app shows no sessions | no tmux server on the configured socket |
+| a tab reports that the configured tmux can't attach to the running server | `tmux.program` names a different tmux version; set it to the binary that runs the server (for example `/usr/bin/tmux`), then restart tether |
 | tether exits at start with status 78 | configuration is invalid or the effective budget is below 42 MiB; fix the journal's named cause, then start tether again |
 | the journal says "no cgroup memory limit is in force" | the user manager lacks the memory controller or the host uses cgroup v1/hybrid; `MemoryMax` isn't enforced |
 | the journal warns that `MemoryHigh` is below what tether holds at its caps | remove `MemoryHigh` from the unit and restart; don't set a soft limit below the unreclaimable ceiling |

@@ -73,7 +73,7 @@ impl State {
                 Due::Timeout => {
                     let reason = format!("tmux didn't answer for {} s", REPLY_TIMEOUT.as_secs());
                     warn!(client = client.0, "{reason}");
-                    self.client_exited(client, reason, true);
+                    self.client_exited(client, reason, false);
                 }
             }
         }

@@ -133,10 +133,12 @@ integration tests in `tests/` need it).
 
 ### 3.1 Invoking tmux
 
-- **Every invocation is `tmux -u -N [-L socket | -S path] …`**, built in one place
-  (`Endpoint::command`, from an `Endpoint` of executable plus `Socket`: default, `-L`
-  name or `-S` path), with `TMUX` removed from the environment (it would choose the
-  socket when none is configured). The socket comes from config; tests use `-L`.
+- **Every server invocation is `tmux -u -N [-L socket | -S path] …`**, built in one
+  place (`Endpoint::command`, from an `Endpoint` of executable plus `Socket`: default,
+  `-L` name or `-S` path), with `TMUX` removed from the environment (it would choose the
+  socket when none is configured). The socket comes from config; tests use `-L`. The
+  separate startup version query is `<program> -V` and does not select or contact a
+  server.
   - `-N`: with no server running, every command fails instead of starting one,
     `attach-session` and `new-session` included, with one of two no-server messages
     (§3.8) ([probe](research/probe-locate-subscriptions.md)).
@@ -147,6 +149,14 @@ integration tests in `tests/` need it).
 - **Control client:** `tmux -u -N … -C attach-session -t '$S' -f pause-after=3` over
   pipes (3.4 needs no pty; [probe-control-client.md](research/probe-control-client.md)),
   the last 4 KiB of stderr kept, `kill_on_drop(true)`.
+- **Program version:** the daemon runs the configured `<program> -V` once at startup,
+  with a 2 s timeout and a 128-byte output cap. A failed or malformed query warns once,
+  leaves version diagnostics unavailable and does not prevent serving. The version is
+  stale until the daemon restarts if the executable is replaced. The server version
+  comes from `#{version}` in a listing or a control client's startup reply. When both
+  versions are known and differ, the hub warns once for that server instance, naming
+  both versions and the configured program path; it never selects another binary
+  automatically.
 - **Startup:** the first line is `display-message -p '<version, pid, start_time,
   window_width, window_height, client_name>'`. Its reply gives the version, the **server instance**
   `"<pid>-<start_time>"`, the size of the session's current window and the control
@@ -209,7 +219,6 @@ impl Session {
     pub fn request(&mut self, tag: Tag, op: Op) -> Step;   // caller checked capacity
     pub fn in_flight(&self) -> usize;
     pub fn wanted(&self) -> impl Iterator<Item = PaneId> + '_;
-    pub fn exit_seen(&self) -> bool;                       // tmux sent %exit
 }
 ```
 
@@ -291,7 +300,11 @@ Its rules:
   tmux first. `%subscription-changed` for a `w<W>` subscription becomes `Acted`, `Cwd`,
   both or neither (§3.7).
 - **`%exit`** ends a control client whether tmux detached it, the server was killed
-  or its stdin closed, so `exit_seen()` alone doesn't say why it ended (§4.5).
+  or its stdin closed. `Session` emits `Exit` after `Ready`, and a pre-`Ready` `%exit`
+  is `Fatal(StartupExit)`: either way the hub closes the line sender immediately instead
+  of waiting for the reply timeout. The hub still uses a one-shot Locate to distinguish
+  detach from a gone session or server (§4.5); a pre-`Ready` exit is a startup crash,
+  never a detach.
 
 ### 3.4 Commands (`command.rs`)
 
@@ -978,7 +991,13 @@ pub enum Effect {
     RemoveFile { file: PasteFile },
 }
 impl State {
-    pub fn new(endpoints: Endpoints, now: Instant) -> State;
+    pub fn new(
+        endpoints: Endpoints,
+        now: Instant,
+        max_clients: usize,
+        host_name: String,
+        program_version: Option<TmuxVersion>,
+    ) -> State;
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect>;
     pub fn next_deadline(&self) -> Option<Instant>;
 }
@@ -1033,18 +1052,20 @@ owner is the control client attached to that session, so finding the owner needs
 question to tmux; sessions don't move, so a view keeps its owner for life (respawned
 after a crash, §4.5). What the hub asks the owner is which window the session shows.
 
-A view's phase is `Checking` (no control client for its session yet: the session is
-being checked, or its client is starting), `Locating` (the owner is `Ready`; the first
-or recovery Locate is needed or in flight), `Bound` (the shown window, its index and
-name, pane and size are coherent) or `Orphaned` (the owner exited; waiting for the
-session check, §4.5). A bound view stays bound, with its shown pane stream live, while
-a re-Locate runs; the target may already be a different window.
+A view's phase is `Checking` (a one-shot is checking whether the session still exists),
+`Locating { owner }` (the owner is starting or `Ready`; the first or recovery Locate is
+needed or in flight), `Bound` (the shown window, its index and name, pane and size are
+coherent) or `Orphaned` (the owner exited; waiting for the session check, §4.5). A
+first watch starts in `Checking` when no owner exists. Once the session is found, the
+hub spawns its owner and records that owner in `Locating` immediately, while it starts.
+A bound view stays bound, with its shown pane stream live, while a re-Locate runs; the
+target may already be a different window.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Checking: first watch, no client for the session
-  [*] --> Locating: first watch, the session's client is Ready
-  Checking --> Locating: client Ready
+  [*] --> Checking: first watch, no owner; one-shot checks the session
+  [*] --> Locating: first watch, owner is starting or Ready
+  Checking --> Locating: session found; owner exists or is spawned
   Locating --> Bound: the owner answered the Locate
   Bound --> Bound: CurrentWindow, then the re-Locate's answer
   Bound --> Orphaned: owner exited
@@ -1252,10 +1273,14 @@ nothing.
 - **Reply timeout.** A control client with groups in flight that completes none for
   10 s (§6) is killed. It is a progress deadline for the client, not a deadline per
   group, so it also covers `Session`'s own groups (the startup line, pauses), which
-  the hub never tags.
-- **Exit** (the pump reports `Exited`, its task panics, the hub kills it for the reply
-  timeout or a `Fatal` error, or closes it on `SessionChanged`): its streams stop being
-  live, its views (including those waiting for it to start) wait, and a one-shot
+  the hub never tags. A known version mismatch uses the same 10 s deadline; after one
+  respawn, a repeated startup failure reports the mismatch rather than waiting forever.
+- **Exit** (tmux sends `%exit`, the pump reports `Exited`, its task panics, the hub kills
+  it for the reply timeout or a `Fatal` error, or closes it on `SessionChanged`): a
+  `%exit` becomes `Event::Exit` after `Ready` or `Fatal(StartupExit)` before it. Both
+  events drop the line sender immediately; the pump closes stdin, waits up to 1 s and
+  kills if needed (§3.1). The other exits follow the same lifecycle. Its streams stop
+  being live, its views (including those waiting for it to start) wait, and a one-shot
   Locate checks its session first. The check runs for every exit the hub didn't cause
   itself (a linger or cap close needs none), whether or not any tab was watched, so
   `serverExited` and `sessionClosed` go out regardless. Then:
@@ -1265,17 +1290,22 @@ nothing.
     default `detach-on-destroy on`, destroying the session ends its control client with
     `%exit`; with `off`, tmux moves the client to another session instead and the hub
     closes it on `SessionChanged` (§4.2). Both land here.
-  - *The session is alive:* it depends on how the client ended. `%exit` ends a client
-    after a detach, `kill-server` and a closed stdin alike, which is why the check runs
-    first. With `%exit` seen and the session alive it was **detached** by another client
-    (`attach -d`, `detach-client`): its watches get `watchEnded { detached }` and
-    nothing reattaches. (A `systemctl stop` must not look like this: under the default
-    kill mode systemd signals the `tmux -C` clients itself, and they exit as if
-    detached while the sockets close. The unit's `KillMode=mixed` signals tether alone,
-    [plan.md](plan.md#resource-budget).) Without it the client **crashed**, and so does
-    one the hub killed for a `Fatal` error or the reply timeout: the hub respawns it
-    after 1 s, kept only if the server instance is unchanged, and its views locate
-    again; a second crash within 60 s ends the watches with `watchEnded { error }`.
+  - *The session is alive:* `Event::Exit` after `Ready` or `SessionChanged` means
+    another client detached or moved this control client (`attach -d`, `detach-client`):
+    its watches get `watchEnded { detached }` and nothing reattaches. The hub closes it
+    immediately, without waiting for a reply timeout. `kill-server` and destroying the
+    session also send `%exit`, which is why Locate runs first. A `%exit` before `Ready`
+    is a startup failure, not a detach. Both it and a client that exits without `%exit`
+    are **crashes**: the hub
+    respawns after 1 s, kept only if the server instance is unchanged, and its views
+    locate again; a second crash within 60 s ends the watches with `watchEnded { error }`.
+    When a server and the configured tmux program have different known versions and
+    startup keeps failing, the hub warns once per server instance and the final error
+    names both versions and the program path, and recommends setting `tmux.program` to
+    that server's tmux. Matching versions keep the generic repeated-failure message.
+    (A `systemctl stop` must not look like a detach: under the default kill mode systemd
+    signals the `tmux -C` clients itself while sockets close. The unit's `KillMode=mixed`
+    signals tether alone, [plan.md](plan.md#resource-budget).)
 - **One reporter per endpoint.** Every control client receives `%sessions-changed` and
   the window add and close notifications, so the hub turns them into `sessionsChanged`
   only from the endpoint's lowest-id `Ready` client; otherwise each would be broadcast
@@ -1726,6 +1756,7 @@ at construction.
 | snapshot spacing for a starved watch | 250 ms | |
 | output coalescing | 33 ms, frames ≤ 64 KiB | |
 | one-shots | 1 at a time, 2 s timeout | user one-shots: `busy` |
+| configured tmux program version query | 2 s once at startup; 128 B output | version diagnostics unavailable; serving continues |
 | crash respawn | after 1 s; a second crash in 60 s ends the watches | |
 | inbound WebSocket message | 512 KiB | close 4009 |
 | input / paste per message | 4 KiB / 256 KiB | `error { inputTooLarge }` |
