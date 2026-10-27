@@ -5,6 +5,7 @@ version section on release.
 
 ## [Unreleased]
 
+- In the browser, Send no longer sends a line while an IME is still composing it, as in the app.
 - Home is now a card per server: its name and status, the tabs you have open on it, "All N
   sessions" (a full-height list with its own search and +) and Files. A server that can't be
   reached says when it was last reached and offers Retry; one where tmux isn't running says so.

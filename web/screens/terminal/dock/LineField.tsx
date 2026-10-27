@@ -1,6 +1,5 @@
 // The dock's line field is an editable browser control or a renderer for the app's native editor.
-import { useRef } from "preact/hooks";
-import type { Ref } from "preact";
+import { useEffect, useMemo, useRef } from "preact/hooks";
 import { useApp, useAppView } from "../../../app/context";
 import type { TextRange } from "../../../platform/types";
 import { DockButton } from "../../../ui/primitives/DockButton";
@@ -9,6 +8,7 @@ import { useStore } from "../../../ui/store";
 import type { TerminalTab } from "../../../workspace/state";
 import { readPaste } from "../paste";
 import { terminalsOf } from "../terminals";
+import { browserLineEditor } from "./lineEditor";
 import { LineMirror } from "./LineMirror";
 import { lineDraftsOf } from "./lineDrafts";
 import { nativeLineOf } from "./nativeLine";
@@ -20,16 +20,13 @@ interface LineFieldProps {
   tab: TerminalTab | null;
   label: string;
   onNote: (note: LocalNote | null) => void;
-  inputRef: Ref<HTMLTextAreaElement>;
-  /** Whether the textarea's IME is composing; the key row's caret step waits for it (the browser's twin of native's marked text). */
-  composing: { current: boolean };
 }
 
 /** The line is one logical line. One trailing paste break is dropped; multiple lines go to tmux. */
 const withoutTrailingBreak = (text: string): string => text.replace(/\r?\n$/, "").replace(/\r$/, "");
 const hasInnerBreak = (text: string): boolean => /[\r\n]/.test(withoutTrailingBreak(text));
 
-export function LineField({ tab, label, onNote, inputRef, composing }: LineFieldProps) {
+export function LineField({ tab, label, onNote }: LineFieldProps) {
   const app = useApp();
   const terminals = terminalsOf(app);
   const drafts = lineDraftsOf(app);
@@ -44,6 +41,15 @@ export function LineField({ tab, label, onNote, inputRef, composing }: LineField
   const currentTab = useRef(tab);
   const currentOwner = useRef(owner);
   const suppressImeReturn = useRef(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Whether the textarea's IME is composing: the caret step and Send wait for it (the browser's twin of native's marked text).
+  const composing = useRef(false);
+  const editor = useMemo(() => browserLineEditor(inputRef, composing), []);
+  // The key row edits this box through the controller.
+  useEffect(() => {
+    terminals.browserLine = editor;
+    return () => { terminals.browserLine = null; };
+  }, [terminals, editor]);
   inputText.current = text;
   currentTab.current = tab;
   currentOwner.current = owner;
@@ -77,7 +83,7 @@ export function LineField({ tab, label, onNote, inputRef, composing }: LineField
       disabled={!tab}
       onClick={() => {
         if (native) app.platform.input.submitLine();
-        else if (tab) send(tab, inputText.current);
+        else if (tab && !composing.current) send(tab, inputText.current);
       }}
     >
       Send
@@ -141,7 +147,7 @@ export function LineField({ tab, label, onNote, inputRef, composing }: LineField
         // eslint-disable-next-line @typescript-eslint/no-deprecated
         if (event.key === "Escape" && !event.isComposing && event.keyCode !== 229) {
           event.preventDefault();
-          if (modifiers.route({ name: "Escape" }, "line").to === "focusTerminal") app.focus.focusTarget("terminal", true);
+          terminals.key({ name: "Escape" });
           return;
         }
         // Return confirming an IME candidate is the IME's, not a send. Safari reports it after

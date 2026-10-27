@@ -3757,6 +3757,25 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 - **Rejected:** a tap that both returns typing and clicks (an unintended click in vim or htop
   mid-line is worse than one extra tap).
 
+## The dock's key dispatch is one controller method; a sheet no longer returns the keyboard
+
+- **Decided:** 2026-10-27, lead (from re-check p350).
+- **What:** `TerminalsController.key(key)` reads the live owner, routes through
+  `ArmedModifiers.route` and carries out every route kind: terminal, `focusTerminal`, and the
+  compose box's insert and caret step through one `LineEditor` (`dock/lineEditor.ts`):
+  `nativeLineEditor(platform)` in the app, the browser one the mounted `LineField` registers on
+  the controller beside its textarea and IME flag. The key row, the browser Esc and the native
+  text path are each one call; Dock holds no editor, ref or composition flag. Browser Send drops
+  while the IME composes, as native's does. (The browser `beforeinput` stays on `route`: it
+  only decides whether to cancel the insert.)
+- **Dropped behaviour:** "the keyboard comes back to the input that held it after a sheet" no
+  longer applies. The phone's key row replaces the sessions button while typing, so the sessions
+  sheet cannot open with the keyboard up, and the wide-screen picker returns focus to `+`. The
+  spec lines in `browser-behaviors.md` and `plan.md` say so; the e2e test for it was removed
+  in slice 3.
+- **Rejected:** `key(key, editor)` with the caller passing the editor (every caller would pick
+  the platform's editor again).
+
 ## Slice 4 fixes: one tab state, one card state, variants mean placement
 
 - **Decided:** 2026-10-27, tech lead (slice 4, from reviews p347 and p348).

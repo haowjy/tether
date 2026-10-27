@@ -303,8 +303,9 @@ bottom safe area                           esc ← ↑ ↓ → ⇧tab tab ^C ^R 
   it gives typing back to the terminal (no click, no cursor move; the next tap acts as usual). Otherwise mouse-mode taps send a click; OSC 133 prompt-row cursor placement may
   move the cursor while terminal input already owns the keyboard. Scroll and selection
   do not toggle it. Opening a sheet or dialog lowers it, as does leaving Terminal for
-  Home or Files. On sheet close, native restores the held target; the browser refocuses
-  inside a closing tap and leaves the keyboard down after Back or Escape.
+  Home or Files. A sheet's close does not bring the keyboard back: on the phone the key row
+  replaces the sessions button while typing, so the sessions sheet cannot open with the keyboard
+  up, and the wide-screen picker returns focus to its `+`.
 - **Safari's form accessory bar.** The phone browser/PWA may put its own ⌃ ⌄ Done bar
   between tether's key row and the keyboard; the page cannot remove it. Done lowers the
   keyboard and the toggle follows. The native terminal/line responder is not a WebKit

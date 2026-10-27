@@ -12,10 +12,9 @@ import { useStore } from "../../../ui/store";
 import { terminalTabOf } from "../../../workspace/state";
 import { terminalsOf } from "../terminals";
 import { CurrentTabButton } from "./CurrentTabButton";
-import { KeyRow, type LineEditor } from "./KeyRow";
+import { KeyRow } from "./KeyRow";
 import { LineField, type LocalNote } from "./LineField";
 import { lineDraftsOf } from "./lineDrafts";
-import { stepGrapheme } from "./caret";
 import { nativeLineOf } from "./nativeLine";
 import styles from "./Dock.module.css";
 
@@ -57,8 +56,6 @@ export function Dock({ active }: { active: boolean }) {
 
   const above = useRef<HTMLDivElement>(null);
   const row = useRef<HTMLDivElement>(null);
-  const line = useRef<HTMLTextAreaElement>(null);
-  const composing = useRef(false);
   const [local, setLocal] = useState<LocalNote | null>(null);
 
   const tab = terminalTabOf(workspace, workspace.active);
@@ -114,33 +111,6 @@ export function Dock({ active }: { active: boolean }) {
     };
   }, [active, viewport.keyboardInset, viewport.visibleHeight, terminals]);
 
-  // One editing path for the key row on both platforms. Native owns its text and caret, so a step is
-  // its own to take (UIKit's positions, marked text included); the browser's textarea steps by grapheme.
-  const editor: LineEditor = {
-    insert: (text) => {
-      if (native) {
-        app.platform.input.insertLine(text);
-        return;
-      }
-      const field = line.current;
-      if (!field) return;
-      field.setRangeText(text, field.selectionStart, field.selectionEnd, "end");
-      field.dispatchEvent(new Event("input", { bubbles: true }));
-    },
-    step: (step) => {
-      if (native) {
-        app.platform.input.stepLineCaret(step);
-        return;
-      }
-      const field = line.current;
-      // Moving the selection mid-composition commits or garbles it: the keyboard's until it commits, as in native.
-      if (!field || composing.current) return;
-      const { selectionStart: start, selectionEnd: end, value } = field;
-      const to = start !== end ? (step < 0 ? start : end) : stepGrapheme(value, start, step);
-      field.setSelectionRange(to, to);
-    },
-  };
-
   return (
     <div class={styles.slot} data-keyboard={typing ? "" : undefined}>
       <div class={styles.lift}>
@@ -148,11 +118,11 @@ export function Dock({ active }: { active: boolean }) {
           <p class={styles.note} data-tone={note?.tone} role="status">{note?.text}</p>
           {/* Mounted at rest too, so the draft and the field's refs outlive the keyboard; hidden, so nothing can focus it. */}
           <div class={styles.compose} hidden={!typing}>
-            <LineField tab={tab} label={label ? `Line for ${label.full}` : "Line"} onNote={setLocal} inputRef={line} composing={composing} />
+            <LineField tab={tab} label={label ? `Line for ${label.full}` : "Line"} onNote={setLocal} />
           </div>
         </div>
         <div class={styles.row} ref={row}>
-          {typing ? <KeyRow editor={editor} /> : phone && <CurrentTabButton />}
+          {typing ? <KeyRow /> : phone && <CurrentTabButton />}
           <DockButton
             kind="control"
             class={styles.toggle}

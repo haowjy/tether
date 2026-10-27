@@ -14,10 +14,13 @@ import type { SessionRef, ShownWindow } from "../../proto/generated/messages";
 import { createXtermRenderer, type PromptLine, type TerminalRenderer } from "../../term";
 import { TerminalSizer } from "../../term/size";
 import { ArmedModifiers } from "../../touch/armed";
+import type { RowKey } from "../../touch/keyRoute";
 import { createOwnedInput } from "../../touch/owned-input";
 import { Store } from "../../ui/store";
 import { terminalTheme } from "../../ui/theme";
 import { screenOf, shownTab } from "../../workspace/state";
+import type { LineEditor } from "./dock/lineEditor";
+import { nativeLineEditor } from "./dock/lineEditor";
 import { interceptClipboard, Pastes } from "./paste";
 import type { MenuState } from "./selection/control";
 import styles from "./Terminal.module.css";
@@ -102,6 +105,8 @@ export class Terminals extends Store<TerminalsView> {
   readonly pastes: Pastes;
   /** The armed ctrl or alt of the touch sources; it types through this surface. */
   readonly modifiers = new ArmedModifiers((events) => { this.type(events); });
+  /** The browser's compose-box editor, set by the mounted LineField; the app's is native. */
+  browserLine: LineEditor | null = null;
 
   constructor(private readonly app: AppController) {
     super({ tabs: {}, ready: false, scrolled: false, menu: null });
@@ -152,19 +157,32 @@ export class Terminals extends Store<TerminalsView> {
         for (const input of event.events) {
           // While the box owns typing, a character or key goes by the same rule as the key row's.
           const key = "text" in input ? { text: input.text } : "key" in input ? { name: input.key } : null;
-          if (!line || !key) {
-            this.modifiers.input([input]);
-            continue;
-          }
-          const route = this.modifiers.route(key, "line");
-          if (route.to === "line") this.app.platform.input.insertLine(route.text);
-          else if (route.to === "caret") this.app.platform.input.stepLineCaret(route.step);
-          else if (route.to === "focusTerminal") this.app.focus.focusTarget("terminal", true);
+          if (!line || !key) this.modifiers.input([input]);
+          else this.key(key);
         }
       } else this.drivers.get(id)?.input(event.events);
     });
     this.sizer.setViewport(this.viewport);
     this.sync();
+  }
+
+  /**
+   * A key from the key row, a hardware key or the native field while the dock holds the keyboard:
+   * route it against the live owner and armed state, then carry out the route (`ArmedModifiers.route`
+   * sends the terminal ones).
+   */
+  key(key: RowKey): void {
+    const owner = this.app.focus.snapshot.owner;
+    if (owner === "none") return;
+    const route = this.modifiers.route(key, owner);
+    if (route.to === "focusTerminal") {
+      this.app.focus.focusTarget("terminal", true);
+      return;
+    }
+    if (route.to === "terminal") return;
+    const editor = this.viewport.directInput === "native" ? nativeLineEditor(this.app.platform) : this.browserLine;
+    if (route.to === "line") editor?.insert(route.text);
+    else editor?.step(route.step);
   }
 
   /** Places the surface in `slot`. The renderer is created once the surface has a size. */

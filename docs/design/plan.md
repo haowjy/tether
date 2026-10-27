@@ -396,8 +396,8 @@ scrolled into history. Mouse-mode taps still send a click; OSC 133 prompt-row cu
 placement may move the cursor while terminal input already has the keyboard. Scroll,
 selection and reconnects do not toggle it.
 
-Opening a sheet lowers the keyboard; native restores the held owner when it closes. The
-browser refocuses inside the closing tap; Escape or Back leaves the keyboard down. An
+Opening a sheet lowers the keyboard, and closing it does not raise it again (the phone's
+sessions sheet cannot open with the keyboard up; the wide-screen picker returns focus to `+`). An
 interruption restores the native target, including `line`. Desktop click-to-focus is
 unchanged. Native mechanics are in [ios-shell.md](ios-shell.md#keyboard), touch rules in
 [terminal interaction](client/terminal-interaction-design.md).

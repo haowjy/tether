@@ -38,15 +38,7 @@ const KEYS: Spec[] = [
 const REPEAT_AFTER_MS = 400;
 const REPEAT_EVERY_MS = 33;
 
-/** What the compose box does for the keys routed to it. The editor that holds the text and caret decides how. */
-export interface LineEditor {
-  /** Insert a character at the caret. */
-  insert: (text: string) => void;
-  /** Move the caret one character. */
-  step: (step: -1 | 1) => void;
-}
-
-export function KeyRow({ editor }: { editor: LineEditor }) {
+export function KeyRow() {
   const app = useApp();
   const terminals = terminalsOf(app);
   const { modifiers } = terminals;
@@ -58,21 +50,13 @@ export function KeyRow({ editor }: { editor: LineEditor }) {
     if (native && owner === "line") app.platform.input.setArmedModifier(armed);
   }, [app, armed, native, owner]);
 
-  // Routed against the live owner and armed state, not this render's: a held key fires from the render it was pressed in.
+  // `terminals.key` routes against the live owner and armed state, not this render's: a held key fires from the render it was pressed in.
   const send = (spec: Spec): void => {
     if ("modifier" in spec) {
       modifiers.toggle(spec.modifier);
       return;
     }
-    const keyOwner = app.focus.snapshot.owner;
-    if (keyOwner === "none") return;
-    const route = modifiers.route(spec.key, keyOwner);
-    switch (route.to) {
-      case "terminal": break;
-      case "caret": editor.step(route.step); break;
-      case "focusTerminal": app.focus.focusTarget("terminal", true); break;
-      case "line": editor.insert(route.text); break;
-    }
+    terminals.key(spec.key);
   };
 
   if (owner === "none") return null; // the row is mounted only while typing
