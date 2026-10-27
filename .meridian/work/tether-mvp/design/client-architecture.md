@@ -1467,11 +1467,14 @@ while held. No row that changes with the pane's program.
 and "Hide keyboard" otherwise, from the focus owner rather than keyboard geometry, so it
 works with a hardware keyboard too.
 
-**The sessions overlay** (`screens/sessions/Sessions.tsx`) is the one router overlay
-`{ screen: "sessions", name: "open" }`, opened by the current-tab button and the desktop
-`+`; it replaces the P3a `picker` and `switcher` overlays. Its presentation follows the
-layout, over one `HostSessionLists` (the same session rows as Home) and one search box
-that resets on close. Contract:
+**The sessions overlay** (`screens/sessions/Sessions.tsx`) is one router overlay,
+`{ screen: "sessions", name }`, whose form is its name, chosen by the control that opens
+it: the current-tab button asks for `sheet`, the desktop `+` for `picker`. `Sessions`
+renders by `name` and never reads the layout, so the sheet cannot open on Home and a
+resize cannot swap one form for the other under an open overlay (a full-height form for
+Home is a third name). It replaces the P3a `picker` and `switcher` overlays. Both forms
+sit over one `HostSessionLists` (the same session rows as Home) and one search box that
+resets on close. Contract:
 [session picker and switcher](../../../../docs/design/client/browser-behaviors.md#session-picker-desktop-and-session-switcher-phone).
 
 - *Phone: the half-height `Dialog` sheet* (`variant="sheet"`, `header` for its top row)
@@ -1484,7 +1487,8 @@ that resets on close. Contract:
   sheet stays: the tab opens behind it. The footer, `SheetTabs.tsx`, is the open tabs
   of both kinds as a `TabStrip` (tap switches the tab behind the sheet, × on the active
   tab only, closing never touches tmux) and `+` (New session; Browse files, a new Files
-  tab at the server's roots), both for the active tab's server, else the first. Dismissal
+  tab at the server's roots), both for the active tab's server, else the first when no
+  tab is open; a tab whose server is unknown or unreachable disables them. Dismissal
   is the backdrop, Back or Escape (Escape closes the `+` menu first).
 - *Desktop: the centred picker dialog,* today's content: search focused, sessions, a
   choice closes the overlay and then opens the tab. The windows menu (`WindowsMenu`)

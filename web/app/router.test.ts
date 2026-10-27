@@ -84,7 +84,7 @@ describe("Router", () => {
     for (const close of [(r: Router) => { r.closeOverlay(); }, (_: Router, back: () => void) => { back(); }]) {
       const { router, state, open, h } = setup();
       open("t1");
-      router.openOverlay({ screen: "sessions", name: "open" });
+      router.openOverlay({ screen: "sessions", name: "sheet" });
       state.active = "t2";
       router.switchTab("t2", null);
       expect(router.entry).toMatchObject({ tab: "t2", overlay: { screen: "sessions" } });
@@ -120,7 +120,7 @@ describe("Router", () => {
   it("closing an overlay by an action is history.back()", () => {
     const { router, open, h } = setup();
     open("t1");
-    router.openOverlay({ screen: "sessions", name: "open" });
+    router.openOverlay({ screen: "sessions", name: "sheet" });
     expect(h.entries).toHaveLength(3);
     router.closeOverlay();
     expect(router.entry.overlay).toBeNull();
@@ -131,7 +131,7 @@ describe("Router", () => {
     const { router } = setup();
     const ran: (string | null)[] = [];
     router.closeOverlay(() => ran.push("none open"));
-    router.openOverlay({ screen: "sessions", name: "open" });
+    router.openOverlay({ screen: "sessions", name: "sheet" });
     router.closeOverlay(() => ran.push(router.entry.overlay?.name ?? null));
     expect(ran).toEqual(["none open", null]);
   });

@@ -3625,3 +3625,18 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   below it (`Router.popped`) so Back leaves the sheet in place and the next Back goes Home.
 - **Rejected:** a grid; closing the sheet on a row tap; keeping the base entry in step
   (browser history can only replace the current entry); a window disclosure chevron.
+
+## The opener chooses the sessions overlay's form
+
+- **Decided:** 2026-10-27, tech lead, from review of the sessions sheet.
+- **What:** the current-tab button opens `{ screen: "sessions", name: "sheet" }` and the
+  top row's + opens `name: "picker"`; `Sessions` renders by name and never reads the layout.
+  The sheet's New session and Browse files use the active tab's own server, else the first
+  server when no tab is open, and are disabled with the reason when that server is unknown
+  or unreachable; they never fall back to another server. An empty server's list says "No
+  sessions on X" and no hint, since the controls that create one sit beside or below it.
+- **Why:** "which button opened it" and "which form it takes" were two rules for one fact:
+  a narrow desktop window (mouse, top row) got the phone sheet, opened it on Home, and Back
+  later reopened it.
+- **Rejected:** one viewport-derived value read by both (the form would still change under
+  an open overlay).

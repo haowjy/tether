@@ -15,7 +15,7 @@ export function CurrentTabButton() {
       kind="control"
       class={styles.chip}
       aria-label={label ? `${label.full}, ${String(count)} ${count === 1 ? "tab" : "tabs"}, open sessions` : undefined}
-      onClick={(e) => { app.openOverlay({ screen: "sessions", name: "open" }, e.currentTarget); }}
+      onClick={(e) => { app.openOverlay({ screen: "sessions", name: "sheet" }, e.currentTarget); }}
     >
       {label ? (
         <>

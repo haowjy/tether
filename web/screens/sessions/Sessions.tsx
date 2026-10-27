@@ -1,9 +1,10 @@
 // The one sessions overlay (client-architecture.md §7.4, browser-behaviors.md "Session picker
-// (desktop) and session switcher (phone)"): every session on every server, searchable. Its
-// presentation follows the layout. On the phone it is a half-height sheet over the current tab,
-// and a tap on a row or a tab switches the tab behind it while the sheet stays; on the desktop
-// it is the + picker, which closes on a choice. The router owns when it is open, so Back,
-// Escape and the backdrop all close it the same way, leaving the active tab as it is.
+// (desktop) and session switcher (phone)"): every session on every server, searchable. Its form is
+// the overlay's name, chosen by the control that opens it: the current-tab button asks for the
+// half-height `sheet` over the tab, in which a tap on a row or a tab switches the tab behind it
+// while the sheet stays; the top row's + asks for the `picker`, which closes on a choice. The
+// router owns when it is open, so Back, Escape and the backdrop all close it the same way,
+// leaving the active tab as it is.
 import { useEffect, useState } from "preact/hooks";
 import { useApp, useAppView, useOverlay } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
@@ -27,9 +28,14 @@ function useQuery(open: boolean): [string, (query: string) => void] {
 }
 
 export function Sessions() {
-  const phone = useAppView((v) => v.viewport.layout === "phone");
-  const { open, close } = useOverlay("sessions");
-  return phone ? <Sheet open={open} close={close} /> : <Picker open={open} close={close} />;
+  const sheet = useOverlay("sessions", "sheet");
+  const picker = useOverlay("sessions", "picker");
+  return (
+    <>
+      <Sheet {...sheet} />
+      <Picker {...picker} />
+    </>
+  );
 }
 
 interface PresentationProps {

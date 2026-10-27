@@ -107,7 +107,7 @@ export function SessionList(props: SessionListProps) {
       </EmptyState>
     );
   } else if (listing.sessions.length === 0) {
-    body = <EmptyState icon="sessions" title={`No sessions on ${hostName}`}>{creation ? "Create one with New session." : "Create one from Home."}</EmptyState>;
+    body = <EmptyState icon="sessions" title={`No sessions on ${hostName}`} />;
   } else {
     const shown = matching(listing, query);
     body =

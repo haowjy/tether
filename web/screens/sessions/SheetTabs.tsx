@@ -34,12 +34,14 @@ export function SheetTabs() {
   );
 }
 
-/** + : New session and Browse files, both on the active tab's server (the first one when no tab is open). */
+/** + : New session and Browse files, both on the active tab's server (the first one when no tab is open). A tab whose server is unknown or unreachable disables them: they never act on another server. */
 function NewMenu() {
   const app = useApp();
-  const hosts = useAppView((v) => v.hosts);
-  const tab = useAppView((v) => activeTab(v.workspace));
-  const host = (tab && hosts.find((h) => h.hostId === tab.host)) ?? hosts[0];
+  const host = useAppView((v) => {
+    const tab = activeTab(v.workspace);
+    return tab ? v.hosts.find((h) => h.hostId === tab.host) : v.hosts[0];
+  });
+  const reason = host === undefined ? "No server to use" : host.admission.kind === "unreachable" ? `${host.name ?? "The server"} can't be reached` : undefined;
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -71,9 +73,9 @@ function NewMenu() {
             variant="quiet"
             icon="plus"
             role="menuitem"
-            disabledReason={host ? undefined : "No server to create on"}
+            disabledReason={reason}
             onClick={(e) => {
-              if (!host) return;
+              if (!host || reason) return;
               setOpen(false);
               app.openOverlay({ screen: "home", name: "newSession", params: { handle: host.entry.handle } }, e.currentTarget);
             }}
@@ -84,9 +86,9 @@ function NewMenu() {
             variant="quiet"
             icon="folder"
             role="menuitem"
-            disabledReason={host?.hostId ? undefined : "No server to browse"}
+            disabledReason={reason}
             onClick={() => {
-              if (!host?.hostId) return;
+              if (!host?.hostId || reason) return;
               setOpen(false);
               app.openFiles(host.hostId);
             }}
