@@ -144,15 +144,41 @@ AGENTS.md); 6 touches only `web/files/render/` and can run beside 2b/3.
 
 ## Gates per slice
 
-Preflight (`scripts/preflight.sh full`) on a clean export; `pnpm --dir web run check`;
-Playwright harness both layouts; real e2e on tmux 3.4 and 3.8 for slices touching the
-terminal or listing; review lanes per `/agent-staffing` reviewers; CHANGELOG bullet;
-docs/design and `client-architecture.md` kept accurate in the same commit. Stale tests
-that pin the old layout are updated or deleted in the slice that changes the layout.
+Preflight (`scripts/preflight.sh full`) on a clean export, which runs
+`pnpm --dir web run check` (unit tests, no UI tests); review lanes per
+`/agent-staffing` reviewers; a prober looks at the result in the harness and, where the
+slice changes what the daemon or tmux sees, on the isolated real stack; CHANGELOG
+bullet; docs/design and `client-architecture.md` kept accurate in the same commit.
+No UI tests (Jimmy, 2026-10-27). The real-daemon e2e scripts are opt-in and never run on
+every slice ("it shouldn't be running all the time either"): run them only when a
+change alters the terminal stream, protocol or tmux interaction, or to record
+performance. Review findings get a structural fix before a guard.
 
 ## Staffing (Jimmy, 2026-10-27)
 
 "use sonnet coders btw, deepseek explorers, grok or terra proberss / browser use /
 checkers": spawn `@coder`/`@frontend-coder` with `-m sonnet`, `@explorer` with
 `-m deepseek`, `@prober` and browser/check lanes with `-m terra` (or `grok`). Reviewers
-keep their default (opus).
+keep their default (opus). Frontend: "probably sonnet is enough, maybe we need opus": Sonnet first; move a lane to Opus when review shows its work falling short.
+
+## Progress
+
+- Slice 1: `da1373b` (1a), `450b454` (1b) local. Review round 1: p322 correctness
+  (7 findings, all accepted), p324 probe (re-listing on tab switch/Back fails the
+  spotty-network rule). Lead call for p322 #3: the per-host cache holds real listings
+  (first pages of 32 recent folders), not per-tab browsers. Fixes: p325. Next: dead-code
+  explorer (p323 on deepseek failed, 401 invalid API key; rerun on default), then the
+  thermo lane, then preflight and push.
+- Round 1 fixes `a484cd1` (p325): zero requests on Files tab switches and Back. Strict
+  review p330: blocking, the router entry's `tab` copied the active tab and went stale
+  (Files taps lost after any tab switch). Move: the current entry always names the
+  active tab; deletes the stamp and `shownFiles`. Round 2: p331 (last round on this
+  concern; a third would go to root-cause and whole-system review). p330 proposes a
+  permanent harness spec "switch away and back, then drill and Back": put to Jimmy.
+- 443 on pop-os: see ../serve-443-coexistence.md (tether down there until
+  meridian-flow#1167 merges and portless restarts; restore needs Jimmy's sudo).
+- Jimmy, 2026-10-27, on the proposed spec: "we shouldn't have any ui tesets, u should
+  just make the code strong enough that it shouldn't happen or we shouldn't be able to
+  question it in the first place (code structure over if statements)". No new UI test;
+  review findings get a structural fix (make the state unrepresentable) before a guard.
+  Asked whether the existing Playwright suite should go too: pending.
