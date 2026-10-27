@@ -1,26 +1,26 @@
-// Every listable host's sessions, as Home and the sessions overlay draw them: the same rows
-// in both (client-architecture.md §6.3). It reads the cache and the open tabs and retries a
-// listing; what opening or creating does is the caller's.
+// Every listable host's sessions (or one host's), as the sessions overlay draws them
+// (client-architecture.md §6.3). It reads the cache and the open tabs and retries a listing; what
+// opening or creating does is the caller's.
 import { useApp, useAppView } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
 import { tabId } from "../../platform/tabKey";
 import type { SessionListing, TmuxListing } from "../../proto/generated/messages";
 import { useStore } from "../../ui/store";
-import { SessionList, type ActiveTab } from "./SessionList";
+import { SessionList, type ActiveWindows } from "./SessionList";
 
 /** Hosts whose sessions can be listed or are about to be; the others show a banner or the Enrol screen instead. */
 const LISTABLE = new Set(["admitted", "deciding", "unreachable"]);
 
 interface HostSessionListsProps {
   query: string;
-  /** The phone sheet: the active terminal tab, so its session says "here" and lists its windows. Home and the desktop picker pass none. */
-  active?: ActiveTab;
+  /** Only this host's list (a server's full-height sheet); every listable host's when absent. */
+  only?: string;
+  /** The terminal tab on screen: its session says "here" and lists its windows. None on Home. */
+  active?: ActiveWindows & { id: string };
   onOpen: (host: HostClient, listing: TmuxListing, session: SessionListing) => void;
-  /** Home: the actions beside each host's list. */
-  creation?: { onNewSession: (host: HostClient, opener: HTMLElement) => void; onFiles: (host: HostClient) => void };
 }
 
-export function HostSessionLists({ query, active, onOpen, creation }: HostSessionListsProps) {
+export function HostSessionLists({ query, only, active, onOpen }: HostSessionListsProps) {
   const app = useApp();
   const hosts = useAppView((v) => v.hosts);
   const tabs = useAppView((v) => v.workspace.tabs);
@@ -28,7 +28,7 @@ export function HostSessionLists({ query, active, onOpen, creation }: HostSessio
   const open = new Set(tabs.map((t) => t.id));
   return (
     <>
-      {hosts.filter((h) => LISTABLE.has(h.admission.kind)).map((h) => {
+      {hosts.filter((h) => LISTABLE.has(h.admission.kind) && (only === undefined || h.entry.handle === only)).map((h) => {
         const handle = h.entry.handle;
         const listing = state.hosts[handle]?.listing;
         return (
@@ -38,12 +38,13 @@ export function HostSessionLists({ query, active, onOpen, creation }: HostSessio
             unreachable={h.admission.kind === "unreachable"}
             sessions={state.hosts[handle]}
             query={query}
-            tabIdOf={(s) => (h.hostId !== null && listing != null ? tabId({ host: h.hostId, session: { server: listing.server, session: s.id } }) : null)}
-            open={open}
+            rowOf={(s) => {
+              const id = h.hostId !== null && listing != null ? tabId({ host: h.hostId, session: { server: listing.server, session: s.id } }) : null;
+              return { state: id === null || !open.has(id) ? null : id === active?.id ? "here" : "open" };
+            }}
             {...(active && { active })}
             onOpen={(l, session) => { onOpen(h, l, session); }}
             onRetry={() => { if (h.admission.kind === "unreachable") app.hosts.recheck(handle); else app.listing.refresh(handle); }}
-            {...(creation && { creation: { onNewSession: (el: HTMLElement) => { creation.onNewSession(h, el); }, onFiles: () => { creation.onFiles(h); } } })}
           />
         );
       })}

@@ -759,8 +759,7 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
   screens/
     shell/        destination frame, top navigation and host banner
     home/         server cards and settings entry
-    picker/       the desktop session picker
-    switcher/     the phone sessions sheet
+    sessions/     the sessions overlay: the phone sheet, the desktop picker, the + menu
     terminal/     tab strip, terminal surface, status band and the phone dock; terminals.ts
                   holds the renderer and every tab's driver outside Preact
     files/        folder list, preview, upload and path insertion
@@ -768,8 +767,8 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
     settings/     Remove this device, Clear local data, Add to Home Screen
   ui/
     tokens/       primitives.css, semantic.css, components.css, fonts.css
-    primitives/   Button, IconButton, Tooltip, TextField, SearchField, Dialog (sheet
-                  variant), Disclosure, Row, RovingList, TabStrip, Banner, Toast,
+    primitives/   Button, IconButton, Tooltip, TextField, SearchField, Dialog (sheet,
+                  popover and menu variants), Disclosure, Row, RovingList, TabStrip, Banner, Toast,
                   StatusBand, EmptyState, Spinner, Icon, LineInput
     store.ts, theme.ts, hostProblem.ts
   sw/             service worker and the Vite plugin that builds it, after the main bundle

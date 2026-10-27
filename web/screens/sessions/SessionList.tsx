@@ -12,9 +12,13 @@ import { Row } from "../../ui/primitives/Row";
 import { Spinner } from "../../ui/primitives/Spinner";
 import styles from "./SessionList.module.css";
 
-/** The active tab, when the list marks it: its session reads "here", and with several windows lists them beneath its row. */
-export interface ActiveTab {
-  id: string;
+/** What a session's row says about it: its tab is the one on screen ("here"), open ("open"), or neither. In words, never dots. */
+export interface RowState {
+  state: "here" | "open" | null;
+}
+
+/** The active tab's windows: the "here" session with several lists them beneath its row. */
+export interface ActiveWindows {
   /** The window the tab shows: its latest `watching`'s, which can be newer than the listing's `active`. */
   shownId: number | null;
   /** A window other than the shown one was chosen. */
@@ -27,41 +31,26 @@ export interface SessionListProps {
   unreachable: boolean;
   sessions: HostSessions | undefined;
   query: string;
-  /** The id of this session's tab, whether or not it is open. */
-  tabIdOf: (session: SessionListing) => string | null;
-  /** The ids of the open tabs. */
-  open: ReadonlySet<string>;
-  /** Its session reads "here" and other open sessions "open", in words and never dots. */
-  active?: ActiveTab;
+  rowOf: (session: SessionListing) => RowState;
+  active?: ActiveWindows;
   onOpen: (listing: TmuxListing, session: SessionListing) => void;
   /** A fresh listing, or admission again when the host is unreachable. */
   onRetry: () => void;
-  /** Home: "Files" (a new Files tab at this host's folder list) and "New session" beside the heading. */
-  creation?: { onNewSession: (opener: HTMLElement) => void; onFiles: () => void };
 }
 
-function Heading({ hostName, status, action }: { hostName: string; status: ComponentChildren; action: ComponentChildren }) {
+function Heading({ hostName, status }: { hostName: string; status: ComponentChildren }) {
   return (
     <div class={styles.heading}>
       <h2 class={styles.title}>On {hostName}</h2>
       <span class={styles.status} role="status">{status}</span>
-      {action && <div class={styles.action}>{action}</div>}
     </div>
   );
 }
 
 export function SessionList(props: SessionListProps) {
-  const { hostName, unreachable, sessions, query, tabIdOf, open, active, onOpen, onRetry, creation } = props;
+  const { hostName, unreachable, sessions, query, rowOf, active, onOpen, onRetry } = props;
   const listing = sessions?.listing;
   const failure = sessions?.failure ?? null;
-  const reason = unreachable ? `${hostName} can't be reached` : undefined;
-  const actions = creation && (
-    <>
-      <Button variant="secondary" icon="folder" disabledReason={reason} onClick={creation.onFiles}>Files</Button>
-      <Button variant="secondary" icon="plus" disabledReason={reason} onClick={(e) => { creation.onNewSession(e.currentTarget); }}>New session</Button>
-    </>
-  );
-
   let status: ComponentChildren = null;
   if (listing !== undefined && failure !== null) {
     status = (
@@ -116,9 +105,7 @@ export function SessionList(props: SessionListProps) {
       ) : (
         <RovingList label={`Sessions on ${hostName}`} class={styles.list}>
           {shown.map((session) => {
-            const id = tabIdOf(session);
-            const isOpen = id !== null && open.has(id);
-            const here = active !== undefined && id === active.id;
+            const { state } = rowOf(session);
             return (
               <Fragment key={session.id}>
                 <Row
@@ -128,13 +115,13 @@ export function SessionList(props: SessionListProps) {
                   meta={
                     <>
                       <span>{windowCount(session.windows.length)}</span>
-                      {isOpen && <span class={styles.state}>{here ? "here" : "open"}</span>}
+                      {state && <span class={styles.state}>{state}</span>}
                     </>
                   }
-                  selected={isOpen}
+                  selected={state !== null}
                   onClick={() => { onOpen(listing, session); }}
                 />
-                {here && session.windows.length > 1 && (
+                {state === "here" && active && session.windows.length > 1 && (
                   <div class={styles.windows} role="group" aria-label={`Windows in ${session.name}`}>
                     {session.windows.map((w) => {
                       const shown = w.id === active.shownId;
@@ -161,7 +148,7 @@ export function SessionList(props: SessionListProps) {
 
   return (
     <section class={styles.section} aria-label={`Sessions on ${hostName}`}>
-      <Heading hostName={hostName} status={status} action={actions} />
+      <Heading hostName={hostName} status={status} />
       {body}
     </section>
   );

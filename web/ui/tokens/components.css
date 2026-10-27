@@ -23,6 +23,9 @@
   --tab-bg: transparent;
   --tab-bg-active: var(--color-bg-hover);
   --dialog-width: 480px;
+  --popover-width: 28rem;
+  --menu-min-width: 11rem;
+  --sheet-height: 62svh;
   --dialog-bg: var(--color-bg-raised);
   /* The phone sheet follows the theme's raised surface, dark in dark mode and light in light mode. */
   --sheet-bg: var(--color-bg-raised);

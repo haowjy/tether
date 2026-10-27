@@ -1488,20 +1488,24 @@ resets on close. Contract:
   of both kinds as a `TabStrip` (tap switches the tab behind the sheet, × on the active
   tab only, closing never touches tmux) and `+` (New session; Browse files, a new Files
   tab at the server's roots), both for the active tab's server, else the first when no
-  tab is open; a tab whose server is unknown or unreachable disables them. Dismissal
-  is the backdrop, Back or Escape (Escape closes the `+` menu first).
-- *Desktop: the `picker` popover* (`Picker.tsx`, rendered by `TopRow` beside the `+` so it
-  has the `+` element to anchor to). A `Dialog` `variant="popover"` with `anchor`: modal, so
+  tab is open; a tab whose server is unknown or unreachable disables them. `+` is
+  `NewMenu`: a `Dialog` `variant={{ kind: "menu" }}` of plain buttons anchored to it (Escape,
+  a press outside and focus return are `Dialog`'s), local state the sheet's footer unmounts
+  with it. Dismissal is the backdrop, Back or Escape (Escape closes the `+` menu first).
+- *Desktop: the `picker` popover* (`Picker.tsx`, mounted in `Shell` beside `Sessions`, so
+  every overlay name has a renderer in every layout; it anchors to the focus registry's `plus`,
+  and sits centred when that is not on screen). A `Dialog` `variant={{ kind: "popover", to: "plus" }}`: modal, so
   Escape, focus containment and focus return come from `Dialog`, with a clear scrim that
   catches an outside press (a press on `+` itself closes it, so `+` toggles) and placed under
-  the `+`, left edges aligned and kept inside the window. Search is focused; the body is the
+  the `+`, left edges aligned, kept inside the window and re-placed when it resizes; an anchored
+  dialog goes above its anchor when there is more room there (the sheet's `+` menu). Search is focused; the body is the
   same `SessionPicks` as the sheet (sessions by server, the active session's windows under its
-  row); the footer is `NewActions` (New session, Browse files). Any pick runs through
+  row); the footer is `NewActions` for the active tab's server (New session, Browse files). Any pick, both actions included, runs through
   `commit`, which closes the overlay and then acts (the sheet's `commit` acts at once), so
   focus goes to the terminal that opened, or to `+` with no tab or on touch. `WindowsMenu`
   and `WindowChoices` are gone: the windows are rows of `SessionList`, one renderer for
   "index: name", "shown" and "choosing the shown window does nothing". Creating a window has
-  no button; the `newWindow` creation form is unreachable until one returns.
+  no button, and no client code for it.
 - *History.* Tabs switch under an open sheet by replacing its entry (`switchTab`), which
   leaves the entry below naming the earlier tab. Closing by Back lands on that entry;
   `Router.popped` then replaces it with the overlay entry's tab and place, instead of

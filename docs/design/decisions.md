@@ -3702,3 +3702,22 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   user did not end; revisit on device if dropping the step feels dead).
 - **Open:** "Send" as a visible button in the box is not built; the cue is Return labelled Send
   in both editors. A native Send button needs a web-to-native Return message the bridge does not have.
+
+## One mount per overlay name; one anchored dialog; row state as one callback
+
+- **Decided:** 2026-10-27, tech lead (slice 4, from review p342).
+- **What:** `Picker` is mounted in `Shell` beside `Sessions`, so a sessions overlay name has its
+  renderer whatever the layout (it was inside `TopRow`, which unmounts when a window narrows,
+  stranding the router entry). `Dialog`'s variant is `"dialog" | "sheet" | { kind: "popover" |
+  "menu", to }`: an anchored dialog goes under its anchor (an element or a registered focus
+  target; centred if absent), above it when there is more room there, and is re-placed on
+  resize. The sheet's `+` is `NewMenu`, a `menu` dialog of plain buttons; the full-height server
+  sheet reuses it. `HostSessionLists` hands `SessionList` one `rowOf(session)` ("here", "open" or
+  none; the bell joins it), and `NewActions(host)` is the one renderer of New session and Browse
+  files, both through `commit`, so a picker's New session now closes it first, like its other picks.
+- **Why:** a mount tied to layout reintroduced layout as a second fact deciding an overlay's
+  form; three copies of the `+` menu and two lists of the two actions were coming.
+- **Rejected:** a `role="menu"` with hand-rolled focus and arrow keys (a modal dialog gives
+  Escape, containment and focus return for free; plain buttons need no menu keys); making the menu
+  a router overlay (a `+` menu is not a place Back should land on, and the sheet unmounting it is
+  simpler).

@@ -87,6 +87,11 @@ export class FocusController extends Store<FocusView> implements FocusPort {
     if (this.snapshot.owner === target) this.update({ owner: "none" });
   }
 
+  /** A registered element, for placing something against it (a popover under the top row's +); focusing stays this controller's. */
+  elementOf(target: FocusTarget): HTMLElement | null {
+    return this.targets.get(target) ?? null;
+  }
+
   /** The toggle is the terminal opener and the closer for either target. */
   toggleKeyboard(): void {
     const { owner } = this.snapshot;

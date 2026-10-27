@@ -5,6 +5,8 @@ import { useApp, useAppView } from "../../app/context";
 import { Row } from "../../ui/primitives/Row";
 import { SearchField } from "../../ui/primitives/TextField";
 import { HostSessionLists } from "../sessions/HostSessionLists";
+import { NewActions } from "../sessions/NewActions";
+import { now } from "../sessions/SessionPicks";
 import { openSession } from "../sessions/openSession";
 import { OpenTabs } from "./OpenTabs";
 import styles from "./Home.module.css";
@@ -29,12 +31,8 @@ export function Home() {
           <HostSessionLists
             query={query}
             onOpen={(h, listing, session) => { openSession(app, h, listing, session); }}
-            creation={{
-              onNewSession: (h, el) => { app.openOverlay({ screen: "home", name: "newSession", params: { handle: h.entry.handle } }, el); },
-              // A listing came from a welcomed socket, so the id is known; before that the host has nothing to browse.
-              onFiles: (h) => { if (h.hostId !== null) app.openFiles(h.hostId); },
-            }}
           />
+          <div><NewActions host={host} commit={now} /></div>
           <Row icon="settings" label="Settings" trailing="chevron" onClick={(e) => { app.openOverlay({ screen: "settings", name: "settings" }, e.currentTarget); }} />
         </div>
       </div>

@@ -10,6 +10,8 @@ export type FocusTarget = "terminal" | "line" | "homeSearch" | "plus" | "addFold
 export interface FocusPort {
   register(target: FocusTarget, element: HTMLElement): void;
   withdraw(target: FocusTarget, element: HTMLElement): void;
+  /** A registered element, to place something against; null when it isn't on screen. */
+  elementOf(target: FocusTarget): HTMLElement | null;
   focusElement(element: HTMLElement): void;
   /** Lowers the keyboard: the field the user was typing in is done. */
   blurElement(element: HTMLElement): void;
@@ -26,6 +28,7 @@ const missing = (): never => {
 export const FocusContext = createContext<FocusPort>({
   register: missing,
   withdraw: missing,
+  elementOf: missing,
   focusElement: missing,
   blurElement: missing,
   openDialog: missing,

@@ -31,7 +31,7 @@ export const fixtures: Fixtures = {
   dock: { options: () => ({ workspace: SAVED }), openActive: true, daemon: (d) => { d.listing = LISTING; d.watch = "ok"; } },
   /** No tab open: the dock's chip reads "Sessions". */
   dockEmpty: { daemon: (d) => { d.listing = LISTING; } },
-  /** The sessions overlay over a live tab: several sessions, the active one with three windows ("here" and its windows), another open, a Files tab in the strip. Phone: the half-height sheet. Desktop: the + picker. */
+  /** The sessions overlay over a live tab: several sessions, the active one with three windows ("here" and its windows), another open, a Files tab in the strip. The overlay name picks the form, so this is the half-height sheet in either layout. */
   sessions: { options: () => ({ workspace: WITH_FILES }), openActive: true, overlay: SHEET, daemon: (d) => { d.listing = SEVERAL; d.watch = "ok"; serveTree(d); } },
   /** The overlay over a Files tab: no session reads "here". */
   sessionsOnFiles: {

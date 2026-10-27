@@ -3,19 +3,19 @@
 import type { ComponentChildren } from "preact";
 import type { HostSessions } from "../../sessions/cache";
 import { LISTING } from "../shared";
-import { SessionList, type ActiveTab } from "../../screens/sessions/SessionList";
+import { SessionList, type ActiveWindows } from "../../screens/sessions/SessionList";
 
 const NO_OP = (): void => undefined;
 const fresh = { failure: null, updating: false } as const;
 
-const STATES: { name: string; unreachable?: boolean; sessions?: HostSessions; query?: string; active?: ActiveTab }[] = [
+const STATES: { name: string; unreachable?: boolean; sessions?: HostSessions; query?: string; active?: ActiveWindows }[] = [
   { name: "Loading" },
   { name: "Unreachable", unreachable: true },
   { name: "Offline, nothing cached", sessions: { listing: undefined, failure: "offline", updating: false } },
   { name: "Refused, nothing cached", sessions: { listing: undefined, failure: "refused", updating: false } },
   { name: "No tmux server", sessions: { listing: null, ...fresh } },
   { name: "Empty server", sessions: { listing: { server: "main:1-1", version: "3.4", sessions: [] }, ...fresh } },
-  { name: "Updating", sessions: { listing: LISTING, ...fresh, updating: true }, active: { id: "1", shownId: 1, onWindow: NO_OP } },
+  { name: "Updating", sessions: { listing: LISTING, ...fresh, updating: true }, active: { shownId: 1, onWindow: NO_OP } },
   { name: "Stale, offline", sessions: { listing: LISTING, failure: "offline", updating: false } },
   { name: "Stale, refused", sessions: { listing: LISTING, failure: "refused", updating: false } },
   { name: "No match", sessions: { listing: LISTING, ...fresh }, query: "zzz" },
@@ -30,8 +30,8 @@ function Block({ title, children }: { title: string; children: ComponentChildren
   );
 }
 
-/** The one open tab, session 1. */
-const OPEN: ReadonlySet<string> = new Set(["1"]);
+/** The one open tab, session 1, is the one on screen. */
+const rowOf = (session: { id: number }): { state: "here" | "open" | null } => ({ state: session.id === 1 ? "here" : null });
 
 export function States() {
   return (
@@ -45,12 +45,10 @@ export function States() {
             unreachable={s.unreachable ?? false}
             sessions={s.sessions}
             query={s.query ?? ""}
-            tabIdOf={(session) => String(session.id)}
-            open={OPEN}
+            rowOf={rowOf}
             {...(s.active !== undefined && { active: s.active })}
             onOpen={NO_OP}
             onRetry={NO_OP}
-            creation={{ onNewSession: NO_OP, onFiles: NO_OP }}
           />
         </Block>
       ))}
