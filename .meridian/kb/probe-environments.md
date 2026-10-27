@@ -7,7 +7,7 @@ which place a result came from.
 
 | Place | Answers | Cannot answer |
 | --- | --- | --- |
-| Jimmy's Mac (the primary checkout) | builds, preflight, real-tmux tests on 3.4, 3.7b and Homebrew 3.8, web e2e against a real daemon, iOS builds and Simulator screenshots; a Mac host behind real Tailscale: the Mac gates M0–M8 in `docs/design/auth.md` and S9 and S13 in `docs/design/setup.md` | the Linux deployment (Serve to a Unix socket, the systemd service); software-keyboard and touch behavior |
+| Jimmy's Mac (the primary checkout) | builds, preflight, real-tmux tests on 3.4 and the newer Homebrew tmux, web e2e against a real daemon, iOS builds and Simulator screenshots; a Mac host behind real Tailscale: the Mac gates M0–M8 in `docs/design/auth.md` and S9 and S13 in `docs/design/setup.md` | the Linux deployment (Serve to a Unix socket, the systemd service); software-keyboard and touch behavior |
 | Docker Linux container on the Mac | Linux builds and tests, the systemd user unit, cgroup limits, Linux memory and CPU numbers, setup's refusals on hosts without systemd or on old Tailscale (S11) | tailnet behavior; Pop!_OS's own systemd and cgroup setup |
 | The Linux dev box (`pop-os`) | the Linux deployment: `tailscale serve` to `serve.sock`, LocalAPI whois, the auth gates G1–G12 and the setup gates S1–S8 and S12 | — (agents on the Mac can't reach it over SSH yet, because the Mac hasn't accepted its host key, so the Linux gates wait for Jimmy or a session on the box) |
 | Jimmy's iPhone | the device checklist in `docs/design/ios-shell.md`: keyboard, focus, geometry, selection, latency, Face ID | — (Jimmy runs it; agents can't drive the device) |
@@ -33,13 +33,14 @@ risk 4). So:
 - Leave the installed tmux binaries alone. Which tmux the dev box runs day to day is
   Jimmy's call ([issue #2](https://github.com/haowjy/tether/issues/2)).
 - 3.4 is the oldest supported tmux, and newer releases fixed crashes it still has. A
-  change to anything tether sends to tmux runs the real-tmux suite on both 3.4 and
-  3.7b before landing (`TETHER_TMUX_TESTS=1 TETHER_TMUX=<tmux binary> cargo test --test
-  tmux_real`; `src/tmux/AGENTS.md`); a pass on a newer tmux proves nothing about 3.4.
+  change to anything tether sends to tmux runs the real-tmux suite on 3.4 and on the
+  newer tmux the host runs, before landing (`TETHER_TMUX_TESTS=1 TETHER_TMUX=<tmux
+  binary> cargo test --test tmux_real`; `src/tmux/AGENTS.md`); a pass on a newer tmux
+  proves nothing about 3.4.
 - On the Mac, set a short `TMPDIR` for spawns and probes; the lead uses
   `/tmp/tether-meridian-501`. The default macOS `TMPDIR` is long enough to push the
   Unix socket paths tmux and tether create past the 104-byte limit. The private
-  tmux 3.4 and 3.7b builds live under that directory (`tmux/<version>/bin/tmux`).
+  tmux builds live under that directory (`tmux/<version>/bin/tmux`).
 
 ## Probing Tailscale on the Mac touches Jimmy's real tailnet
 

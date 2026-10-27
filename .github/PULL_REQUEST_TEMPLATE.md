@@ -111,7 +111,8 @@
 <!-- Describe how to exercise changed behavior, then record what was tested and
      observed. Include setup, steps, expected/actual results, and workflows a
      probe covered. Probe against an isolated tmux server (`tmux -L <name>`),
-     never the real sessions. Say which tmux versions (3.4, 3.7b) and which
+     never the real sessions. Say which tmux versions (3.4 and whatever newer
+     tmux the host runs) and which
      clients (iPhone installed app, Safari, desktop browser) were exercised
      live. If no manual path exists, say why. For anything on a hot path, report
      RSS and CPU on the dev box against the resource budget, with method and
