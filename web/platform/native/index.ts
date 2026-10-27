@@ -19,12 +19,14 @@ export function createNativePlatform(post: Post = webkitPost): Platform {
     for (const l of [...listeners]) l(event);
   };
 
-  // Registered before `ready`: native's first events can follow its reply at once.
+  // Install before `ready`; its reply snapshots the current line before the app owner subscribes.
   installReceiver((msg) => {
     switch (msg.type) {
       case "upload": uploads.receive(msg); break;
       // Before `ready` replies the page isn't listening, and the reply is newer than these.
       case "input": if (booted) emit({ type: "input", tab: msg.tab, events: msg.events }); break;
+      case "lineEdit": emit(msg); break;
+      case "lineReturn": emit(msg); break;
       default: if (booted) emit(msg); // hosts, viewport, lifecycle
     }
   });
@@ -42,7 +44,11 @@ export function createNativePlatform(post: Post = webkitPost): Platform {
     transport: createNativeTransport(bridge),
     input: {
       setFocus: (mode) => { bridge.setFocus(mode); },
-      setLineFieldRect: (rect) => { bridge.lineField(rect && { x: rect.x, y: rect.y, width: rect.width, height: rect.height }); },
+      setLine: (text, caret, tab) => bridge.setLine(text, caret, tab),
+      setLineCaret: (index) => { bridge.lineCaret(index); },
+      insertLine: (text) => { bridge.lineInsert(text); },
+      selectAllLine: () => { bridge.lineSelectAll(); },
+      setArmedModifier: (armed) => { bridge.modifiers(armed); },
       setActiveTab: (tab) => { bridge.activeTab(tab); },
     },
     storage: {

@@ -1,0 +1,7 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "lineSelectAll"
+  },
+  "reply": null
+}

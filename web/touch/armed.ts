@@ -1,7 +1,6 @@
 // The key row's armed ctrl or alt (client-architecture.md §7.4), as state the dock reads:
-// the pure rule is `modifiers.ts`. Every touch source (the owned input, the key row, the line
-// field's chords) types through here, so an armed modifier applies to the next thing typed
-// from any of them.
+// the pure rule is `modifiers.ts`. Terminal-targeted input uses `input`; line-editing sources
+// use `chord` so an unchordable insert can stay local.
 import { Store } from "../ui/store";
 import type { InputEvent } from "../platform/types";
 import { apply, toggle, type Armed } from "./modifiers";
@@ -19,15 +18,15 @@ export class ArmedModifiers extends Store<{ armed: Armed }> {
     this.type(result.events);
   }
 
-  /** Whether an armed modifier takes this one typed character (the line field cancels the edit and the chord goes to the terminal). Anything else typed disarms. */
-  chord(text: string): boolean {
-    const { armed } = this.snapshot;
-    if (armed === null) return false;
-    const result = apply(armed, [{ text }]);
+  /** Applies an armed modifier only when the web rule makes a chord; otherwise the caller keeps the input local. */
+  chord(events: InputEvent[]): boolean {
+    const armed = this.snapshot.armed;
+    if (!armed) return false;
+    const result = apply(armed, events);
     this.update({ armed: null });
-    const chorded = result.events[0] !== undefined && "key" in result.events[0];
-    if (chorded) this.type(result.events);
-    return chorded;
+    if (result.events === events) return false;
+    this.type(result.events);
+    return true;
   }
 
   /** A modifier key's tap. */

@@ -5,9 +5,11 @@
 import type { AppController } from "../../../app/controller";
 import { checkEdit, initialDrafts, pendingKey, reduce, type DraftsEffect, type DraftsEvent, type DraftsState, type EditResult } from "../../../drafts/state";
 import type { PasteResult } from "../../../net/host";
-import type { TabKey } from "../../../platform/types";
+import type { DraftRecord, TabKey } from "../../../platform/types";
+import { tabId } from "../../../platform/tabKey";
 import { Store } from "../../../ui/store";
 import { terminalsOf } from "../terminals";
+import type { Tab } from "../../../workspace/state";
 
 /** An edit settles this long after the last keystroke. */
 const DEBOUNCE_MS = 300;
@@ -32,11 +34,16 @@ function outcome(result: PasteResult): Extract<DraftsEvent, { type: "answered" }
 
 export class LineDrafts extends Store<DraftsState> {
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private claimedTerminal: boolean;
 
   constructor(private readonly app: AppController) {
     super(initialDrafts);
+    this.claimedTerminal = false;
     const { storage } = app.platform;
-    void storage.drafts.list().then((records) => { this.dispatch({ type: "listed", records }); });
+    void storage.drafts.list().then(
+      (records) => { this.listed(records); },
+      () => { this.listed([]); },
+    );
     app.persist.onFlush(() => { this.flush(); });
     app.platform.subscribe((event) => {
       if (event.type !== "draftChanged") return;
@@ -47,17 +54,29 @@ export class LineDrafts extends Store<DraftsState> {
       const open = this.openTabs();
       for (const line of Object.values(this.snapshot.pending)) if (!open.has(line.id)) this.dispatch({ type: "tabClosed", id: line.id, open });
     });
-    // The one sink for paste answers is the terminal's: what this has no pending line for falls through to its notice.
-    terminalsOf(app).pastes.claim((id, result) => this.claim(id, result));
   }
 
   private openTabs(): ReadonlySet<string> {
     return new Set(this.app.snapshot.workspace.tabs.map((t) => t.id));
   }
 
+  private listed(records: DraftRecord[]): void {
+    this.dispatch({ type: "listed", records });
+  }
+
   /** The user edited the field. A refused edit changes nothing; the caller puts the field back and says why. */
   edit(key: TabKey, text: string): EditResult {
-    const open = this.openTabs();
+    return this.editWithOpenTabs(key, text, this.openTabs());
+  }
+
+  /** A native edit can arrive after its tab closed; protect that just-edited draft from eviction. */
+  editNative(key: TabKey, text: string): EditResult {
+    const open = new Set(this.openTabs());
+    open.add(tabId(key));
+    return this.editWithOpenTabs(key, text, open);
+  }
+
+  private editWithOpenTabs(key: TabKey, text: string, open: ReadonlySet<string>): EditResult {
     const result = checkEdit(this.snapshot, key, text, open);
     if (result !== "ok") return result;
     this.dispatch({ type: "edit", key, text, now: Date.now(), open });
@@ -66,9 +85,22 @@ export class LineDrafts extends Store<DraftsState> {
     return "ok";
   }
 
-  /** Return sent `text` to tab `key` as paste `req` (the caller got it from `Terminals.sendLine`). */
-  sent(key: TabKey, text: string, req: number): void {
-    this.dispatch({ type: "submit", key, text, req, now: Date.now() });
+  /** Send the line and record its request before any paste answer can arrive. */
+  send(tab: Pick<Tab, "id" | "key">, text: string, continuation = ""): "sent" | "notConnected" {
+    const terminals = terminalsOf(this.app);
+    if (!this.claimedTerminal) {
+      this.claimedTerminal = true;
+      // This is the one claimant for line paste answers; other replies fall through to notices.
+      terminals.pastes.claim((id, result) => this.claim(id, result));
+    }
+    if (text === "") return terminals.sendKeys(tab.id, [{ key: "Enter" }]) ? "sent" : "notConnected";
+    const req = terminals.sendLine(tab.id, text);
+    if (req === null) {
+      this.edit(tab.key, text + continuation);
+      return "notConnected";
+    }
+    this.dispatch({ type: "submit", key: tab.key, text, req, now: Date.now(), continuation });
+    return "sent";
   }
 
   /** Whether `result` answers a line this sent, and so is not the terminal's to report. */

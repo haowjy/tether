@@ -7,6 +7,8 @@
   --toolbar-height: 44px;
   /* The phone dock's resting row: chip, line field and keyboard toggle. */
   --dock-height: 42px;
+  /* Dock reports its measured height when the one-line editor grows. */
+  --dock-row-height: var(--dock-height);
   --dock-control-height: 34px;
   --dock-key-height: 32px;
   /* The key row above the resting row. */
@@ -45,6 +47,6 @@
 }
 
 :root[data-layout="phone"] { --toast-offset: var(--toolbar-height); }
-:root[data-layout="phone"]:has([data-dock]) { --toast-offset: var(--dock-height); }
+:root[data-layout="phone"]:has([data-dock]) { --toast-offset: var(--dock-row-height); }
 /* The dock's key row, shown while an input holds the keyboard, is above its row. */
-:root[data-layout="phone"]:has([data-keyboard]) { --toast-offset: calc(var(--dock-height) + var(--dock-keys-height)); }
+:root[data-layout="phone"]:has([data-keyboard]) { --toast-offset: calc(var(--dock-row-height) + var(--dock-keys-height)); }

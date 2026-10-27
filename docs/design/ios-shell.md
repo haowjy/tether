@@ -5,8 +5,8 @@
 > UI rules below. Subsystem invariants remain in force; touch, clipboard and the phone
 > dock retain explicit device gates.
 
-P4a implements the native shell and the Swift side of the bridge (version 3 since tabs follow a session). The bridge's web
-adapter is P4b; the device-only checks below still need Jimmy's iPhone.
+The native shell and web adapter implement bridge v5; the device-only checks below still
+need Jimmy's iPhone.
 
 tether's phone client is a Swift app: a `WKWebView` runs the web UI (terminal, tabs,
 the phone dock, sheets, file manager), and native code owns the first responder,
@@ -24,7 +24,7 @@ and rejected alternatives are in [decisions.md](decisions.md).
 flowchart LR
   subgraph app["tether.app (iPhone)"]
     subgraph native["Native (UIKit, Swift)"]
-      input["TerminalInputView<br/>first responder"]
+      input["KeyboardInput: UITextField<br/>first responder"]
       focus["FocusController"]
       auth["AppModel + TokenStore"]
       scheme["AppSchemeHandler<br/>assets + host proxy"]
@@ -38,7 +38,7 @@ flowchart LR
   h1["host A daemon<br/>tailscale serve"]
   h2["host B daemon (v2)"]
   input -- "bridge: input events" --> ui
-  ui -- "bridge: focus, active tab, line field rect, haptics, socket" --> focus
+  ui -- "bridge: focus, line editing, active tab, haptics, socket" --> focus
   ui -- "tether-app://h-{host}/…" --> scheme
   scheme -- "HTTPS + Bearer" --> h1
   media -- "upload, Bearer" --> h1
@@ -56,8 +56,8 @@ rebuilding the app.
 | Native (Swift) | Web (`web/`, in the WKWebView) |
 |---|---|
 | Keyboard: the first responder, software and hardware keys | Terminal rendering (xterm.js), touch gestures, selection overlay |
-| Nothing drawn above the keyboard: no `inputAccessoryView`; a native terminal responder and system keyboard traits | The dock: one row at rest (tab chip, line field, toggle), and the fixed key row while the keyboard is up; the session switcher sheet; the terminal's edit menu (Copy, Paste) |
-| Focus: who holds the keyboard, and lending it to the line field and other web text inputs | File manager and viewers; the editor (v2) |
+| Nothing drawn above the keyboard: one native `UITextField` responder with terminal/line targets and system keyboard traits | The dock: one row at rest (tab chip, mirrored line, toggle), and the fixed key row while the keyboard is up; the session switcher sheet; the terminal's edit menu (Copy, Paste) |
+| Focus: who holds the keyboard; native owns terminal and line editing, WebKit owns sheet fields | File manager and viewers; the editor (v2) |
 | Keyboard geometry: sizing the web view | Host protocol: WebSocket per host, tabs, reconnect |
 | Auth: Face ID lock, tokens in the Keychain, lock screen | |
 | Hosts: host list, Add host and enrolment screens | Host picker in the session switcher (from the native host list) |
@@ -74,9 +74,9 @@ above the keyboard is the web view; native draws no accessory.
 │ last row visible unless cursor needs │  top of the keyboard
 │ the bottom edge)                     │
 │ esc ← ↑ ↓ → ^R ^C tab … [⌨]         │  web dock: fixed key row and toggle (keyboard up)
-│ [main 2] [ Type or dictate a line ]   │  web dock: tab chip and one-line field
+│ [main 2] [ Type or dictate a line ]   │  web dock: tab chip and line mirror
 ├──────────────────────────────────────┤
-│           iOS keyboard               │  system; WebKit's ⌃ ⌄ ✓ bar hidden
+│           iOS keyboard               │  system; Return label follows target
 └──────────────────────────────────────┘
 ```
 
@@ -84,7 +84,8 @@ With the keyboard down, the web view fills the screen and the dock, one row with
 key row, sits on the bottom safe area. The toggle is in the key row while the keyboard
 is up and in this dock row while it is down. The fixed row carries ← ↑ ↓ →. The dock's rules are in
 [browser-behaviors.md](client/browser-behaviors.md#phone-dock); native's part is to own
-the terminal input, lend the line field to WebKit, and size the web view.
+the terminal and line targets, keep WebKit first responder for sheet fields, and size the
+web view.
 
 ## Where the web UI comes from
 
@@ -213,88 +214,57 @@ under heavy output it only makes it worse. What decides is socket reliability:
 
 ### The input responder
 
-`TerminalInputView: UIView, UIKeyInput` is the first responder whenever the terminal
-has the keyboard. It is invisible and zero-size, and sits in the root view, not inside
-the web view.
+`KeyboardInput: UITextField` is the one first responder for the app's Terminal. It is
+hidden (alpha 0.01, non-interactive, zero-size) in the root view outside the web view;
+`FocusController` selects its target without transferring first responder.
 
-- `UIKeyInput`, not `UITextInput` or a hidden `UITextView`: terminal input is sent the
-  moment it's typed, so there is nothing for autocorrect, marked text or predictions
-  to edit afterwards.
-- Traits: `autocorrectionType = .no`, `autocapitalizationType = .none`,
-  `spellCheckingType = .no`, `smartQuotesType = .no`, `smartDashesType = .no`,
-  `smartInsertDeleteType = .no`, `inlinePredictionType = .no`,
-  `keyboardType = .asciiCapable`, `returnKeyType = .default`.
-- `hasText` always returns `true`, so Backspace reaches `deleteBackward` on an empty
-  line.
-- `insertText("\n")` sends Enter; `deleteBackward()` sends BSpace; other text goes as
-  literal text.
-- Dictation, CJK input and autocorrect belong to the dock's line field
-  ([plan.md](plan.md#autocorrect-and-text-input)). `UIKeyInput` conformers get "a small
-  subset of keyboards", which is fine for a terminal.
-- `UIKeyInput` loses iOS's long-press-space trackpad (it needs `UITextInput`). Arrows
-  on touch are the web key row's ← ↑ ↓ → ([plan.md](plan.md#cursor-movement)).
+- `autocorrectionType`, `autocapitalizationType`, `spellCheckingType`, `smartQuotesType`,
+  `smartDashesType`, `smartInsertDeleteType` and `inlinePredictionType` are all `.no`;
+  `keyboardType = .default` keeps locale IMEs and dictation available without enabling
+  suggestions. Public text-field traits remove predictions on the app's line without
+  WebKit swizzling.
+- In `terminal`, committed text is sent as typed; Backspace on an empty field sends
+  `BSpace`, and Return sends `Enter`. The field is cleared after each committed terminal
+  text so edits cannot arrive after they were sent.
+- In `line`, UITextField owns marked text, dictation, the spacebar caret trackpad and
+  selection; each edit is mirrored through `lineEdit`. Return is `.send` and sends
+  `lineReturn` unless IME composition is active. Native assigns generations for edits and
+  line loads; the app-started web line owner reconciles native edits with the draft store and
+  sends `lineSet` only when the bound draft differs from the last native text.
+- The web draws a non-editable `LineMirror`, with tap-to-place caret and a long-press
+  Paste / Select all / Clear menu. There are no selection handles. A line wraps and grows
+  to five visual lines, then scrolls inside; it is still one logical line.
+- WebKit remains first responder for search, rename, Files and other sheet fields. Those
+  fields keep WebKit's ordinary keyboard chrome; the app has no WebKit accessory hook.
 
-The [device checklist](#device-checklist) checks what this view really gets on iOS 26:
-the QuickType bar, Backspace on empty, the double-space period, swipe typing.
-
-### The line field: lending first responder to WebKit
-
-The dock's line field is a web `<input>`, so typing in it needs WebKit's content view
-as first responder, while the guard (below) keeps every other tap on the page from
-taking it. Native lends it by place, not by message:
-
-- The web reports the line field's rect, in web view coordinates, with bridge
-  `lineField { rect }` whenever the dock lays out, and `rect: null` when Terminal is
-  covered by an overlay or another destination.
-- A passive native recognizer on the web view (`cancelsTouchesInView = false`, never
-  recognizing, simultaneous with WebKit's) sees each touch-down before WebKit acts on
-  it. A touch that begins inside the rect lowers the guard.
-- WebKit focuses the field on the tap and takes first responder straight from
-  `TerminalInputView`, so a keyboard that was up stays up and only its traits change.
-  WebKit asks for first responder after the touch has ended (its tap recognizer fires
-  at touch end, then the page handles the click), so the guard stays down until the
-  web confirms: the field's `focusin` sends `focus webText`, and `FocusController`
-  enters `webText`. If no confirmation arrives within 500 ms of the touch ending (a
-  drag, a cancelled tap), the guard comes back up.
-- The field carries `autocorrect="off"` and `spellcheck="false"`, and the web view's
-  content view answers `autocorrectionType` and `spellCheckingType` with `.no`, which is
-  what takes the predictive strip off the keyboard: a line is a command, not prose.
-  Dictation and IME stay. The trait override is the same private-content-view hook as
-  the accessory-bar one below and fails the same way.
-- The field is `enterkeyhint="send"`, so its keyboard shows the blue send key, while
-  `TerminalInputView` keeps `returnKeyType = .default`: the Return key is one of the
-  focus cues ([browser-behaviors.md](client/browser-behaviors.md#phone-dock)).
-- The keyboard toggle from the line field: the web's focus controller blurs the field,
-  then sends `focus hidden`; native makes `TerminalInputView` first responder with the empty
-  `inputView`, so the keyboard goes down and hardware keys go to the terminal.
-- Native suppresses the WebKit form accessory bar (⌃ ⌄ ✓) by overriding
-  `inputAccessoryView` on the internal `WKContentView` subclass. This uses private
-  WebKit structure; if that class path is absent the app safely leaves the system bar
-  in place. Confirm the behavior on Jimmy's device.
-
-Standard user-driven paste remains required. In the line field it is WebKit's own paste
-menu. The terminal's edit menu (a long-press released, [plan.md](plan.md#select-copy-and-paste))
-has Paste, which asks native over the bridge (`readPasteboard`); native reads `UIPasteboard`, sending text back and
-uploading an image itself. iOS shows its "Allow Paste" prompt unless Jimmy sets
-tether's Paste from Other Apps to Allow.
+Standard user-driven paste remains required. The line mirror's Paste menu asks the web
+ to read the pasteboard; one line edits the buffer, text with line breaks is sent to the
+ terminal as one paste without Enter, and an image follows the existing image route. The
+ terminal's edit menu Paste asks native over the bridge (`readPasteboard`); native reads
+ `UIPasteboard`, sending text back and uploading an image itself. iOS shows its "Allow
+ Paste" prompt unless Jimmy sets tether's Paste from Other Apps to Allow.
 
 ### Hardware keyboard
 
 > Key delivery remains required. Custom application shortcuts below are deferred; do not add a shortcut system to the minimal client.
 
-- `pressesBegan`/`pressesEnded` on `TerminalInputView` handle keys that aren't plain
-  text: Esc, Tab, Shift+Tab, arrows, Home/End/PgUp/PgDn, F-keys, anything with Ctrl
-  or Option. Those presses are consumed. Plain printing keys go to `super` and arrive
-  through `insertText` in the active layout.
+- `pressesBegan`/`pressesEnded` on `KeyboardInput` handle hardware keys. In `terminal`,
+  the mapped special keys and chords go to tmux and plain printing keys arrive through
+  `UITextField`. In `line`, printable keys, ←/→, Backspace and ⌘V edit the buffer;
+  Return sends it; Esc, Tab, ↑/↓ and Ctrl chords go to tmux. With ctrl or alt armed,
+  native diverts only a one-grapheme insert at a collapsed caret. The web applies the
+  chord rule; a chordable character goes to tmux, while an unchordable one is disarmed
+  and inserted back into the line at the caret. Other insert shapes stay in UIKit and
+  clear native's armed state; their next `lineEdit` disarms the web state.
 - Key repeat for consumed keys: `pressesBegan` reports key-down once, so
-  `TerminalInputView` repeats (400 ms delay, then every 33 ms) until `pressesEnded`.
+  `KeyboardInput` repeats (400 ms delay, then every 33 ms) until `pressesEnded`.
   All repeat timers stop when the responder resigns or the app becomes inactive. If
   the device checklist shows iOS repeating `pressesBegan` itself, the timer goes. `UIKeyCommand`
   fires once per press, so it isn't used for terminal keys.
-- Option acts as Meta (`M-<key>`) for letters and digits; Option plus any printable
+- In `terminal`, Option acts as Meta (`M-<key>`) for letters and digits; Option plus any printable
   non-alphanumeric ASCII character sends ESC followed by that character, while
   Option+Space is the allowlisted `M-Space`. Option-typed accented characters are in
-  the line field only.
+  `line` only, where printable keys edit the draft.
 - `UIKeyCommand` covers app shortcuts only: Cmd+T new tab, Cmd+W close tab, Cmd+1…9
   switch tab, with `wantsPriorityOverSystemBehavior`.
 - A hardware keyboard changes nothing in the dock: the key row stays as it is.
@@ -305,11 +275,17 @@ unit-tested, and the only place the Swift side spells key names.
 
 ### How input reaches the terminal
 
-Native sends the terminal input's events to the web, which puts them on the active
-tab's watch: the software keyboard and hardware keys. The dock's key row and line
-field are web controls and reach the tab without crossing the bridge. The web applies
-an armed ctrl or alt from the key row to the next native event (`c` becomes `C-c`), so
-modifier arming has one owner for every source.
+In `terminal`, native sends keyboard and hardware events to the web, which puts them on
+the active tab's watch. In `line`, native owns text editing and reports `lineEdit` and
+`lineReturn`; one non-React line owner subscribes at app start, waits for draft storage,
+reconciles the boot snapshot, applies native events and sends `lineSet` only when the
+bound draft differs from native's last reported text. A `lineSet` advances the native
+generation and replies with it. Return captures the old generation, then native clears
+and advances before sending the event. If the page is not ready, Return stays in the
+native field and warns; it is not queued. The platform forwards line events to subscribers,
+and the app-started owner buffers them only until draft hydration. The dock key row sends
+line characters to the native field via `lineInsert`. The web tells native when ctrl or alt
+is armed, so a one-grapheme insert at a collapsed caret can be routed as a terminal chord.
 
 ```text
 InputEvent = { text: string }    // literal text
@@ -335,6 +311,13 @@ InputEvent = { text: string }    // literal text
   messages; bulk text goes as `paste`.
 - Native coalesces events from one run-loop turn (fast hardware typing, key repeat)
   into one bridge call, in order.
+- If the dock's ctrl or alt is armed, the web's `apply()` decides whether an input forms
+  a chord. In native `line`, only one grapheme inserted at a collapsed caret is diverted
+  to that rule; an unchordable character is disarmed and restored with `lineInsert` at
+  the caret. Any other insert shape clears native's armed state and stays in UIKit; its
+  next `lineEdit` disarms the web state. The browser line field uses the same rule. Key-row
+  text uses `chord()` too; an unchordable key inserts into the line only while line owns
+  the keyboard, and is never sent bare to tmux. IME composition disarms the one-shot modifier.
 - The web sends `activeTab { tab: TabKey | null }` whenever the active tab changes.
   Native caches that key, so each coalesced input batch needs one bridge call; the web
   still drops stale-tab batches before routing them.
@@ -342,65 +325,51 @@ InputEvent = { text: string }    // literal text
 ### Focus: one controller, native
 
 `FocusController` (Swift) is the only code that changes first responder. The web
-(`web/platform/native/`) asks for focus changes over the bridge and never focuses an element.
+(`web/platform/native/`) asks for focus over the bridge; it never focuses a native
+responder. Terminal's native responder stays the same object while its target changes.
 
 | State | First responder | Keyboard | Entered by |
 |---|---|---|---|
-| `hidden` | `TerminalInputView`, with an empty `inputView` | down | `focus hidden`: the keyboard toggle while an input holds the keyboard; a surface that needs the screen |
-| `terminal` | `TerminalInputView` | up | `focus terminal`: the keyboard toggle while the keyboard is down; a tap on the cursor's row or the row above or below it; restoration after an interruption. The tap's call runs from `pointerup` (the recognizer resolves a tap there); in the app native raises the keyboard, but whether Safari or the PWA raises WebKit's keyboard from `pointerup` is unverified (`research/ios-web.md` lists pointerdown, touchend and click as safe), on the device checklist |
-| `webText` | WebKit's content view, once the user taps a field | WebKit's own | a touch in the line field's rect while on Terminal (above); `focus webText` on any other destination or overlay |
-| `select` | WebKit's content view | down | `focus select`, only if selection needs it (below) |
+| `hidden` | `KeyboardInput`, with an empty `inputView` | down | `focus hidden`: the keyboard toggle while `terminal` or `line` owns it; a screen that needs the keyboard down |
+| `terminal` | `KeyboardInput` | up | `focus terminal`: toggle from `hidden`; a tap on the cursor row or the row above/below; restore after interruption |
+| `line` | `KeyboardInput` | up, Return labelled Send | `focus line`: tap the dock box; restore after interruption |
+| `webText` | WebKit content view | WebKit's | a sheet or Files screen needs its own field; overlay / destination opens |
+| `select` | WebKit content view | down | `focus select` when terminal selection needs WebKit |
 
-- **Hiding doesn't give up first responder.** `hidden` sets
-  `TerminalInputView.inputView` to an empty zero-height view,
-  then calls `reloadInputViews()`; showing restores it. Hardware keys still arrive,
-  and a terminal tap while hidden can't let WebKit take over or show the keyboard.
-- **The guard.** In `terminal` and `hidden`, `canResignFirstResponder` returns `false`
-  unless `FocusController` is moving focus or a touch began in the line field's rect.
-  Taps on web content then can't take first responder. Scrolling, tab-chip and key-row
-  taps do not change keyboard visibility; a terminal tap near the cursor raises it
-  (`focus terminal`), and none lowers it. A web sheet sends
-  `focus webText` (the resting mode off Terminal), which lowers the keyboard; closing
-  it sends the Terminal resting mode, which raises it again.
-- **Focus is owned separately from geometry.** A hardware keyboard can leave the
-  terminal responder active while `viewport.keyboard` is false; native does not infer
-  focus from that geometry. If iOS dismisses the software keyboard with no hardware
-  keyboard connected, native moves to `hidden`; the viewport reports keyboard false.
-- **Borrowing for web text inputs off Terminal.** The web sends `focus webText` when it
-  opens a surface with an editable element, before the user taps into it; `FocusController`
-  lowers the guard and resigns the terminal input, and WebKit focuses the editor on the
-  tap. On close the web sends `focus terminal`, and native makes `TerminalInputView`
-  first responder again with no tap needed. Accepted: the keyboard is down between
-  opening the editor and tapping into it.
-- **xterm.js's helper textarea** is made inert (`tabindex=-1`, `inert`,
-  `disableStdin`): the terminal input is native's.
-- **Selection** ([plan.md](plan.md#select-copy-and-paste)) relies on WebKit's
-  selection, handles and Copy menu, which may need WebKit's content view as first
-  responder. The device checklist checks it with the guard on. If they don't work,
-  selection mode sends `focus select`: the guard drops, WebKit selects, the keyboard
-  goes down, and native restores the earlier state when selection ends. Web sends
-  `focus select` when the finger lifts, not when the long-press fires: while it is down the
-  highlight is drawn and dragged by the web, over an inert layer (no pointer events, no
-  callout) so WebKit's own long-press cannot take the touch and cancel it.
+- **One responder, two targets.** Switching `terminal` ↔ `line` changes the mode and
+  Return label, then calls `reloadInputViews()` on the same field. Tapping the dock box
+  in `terminal` keeps the keyboard up and switches to editing; tapping it in `hidden`
+  opens the keyboard directly in `line`.
+- **Hidden keeps native ownership.** `hidden` sets `KeyboardInput.inputView` to the
+  empty view and reloads it. Hardware keys still arrive and route to the terminal; a page
+  tap cannot steal first responder.
+- **The guard.** In `hidden`, `terminal` and `line`, `canResignFirstResponder` refuses
+  WebKit's attempt to take the responder, unless `FocusController` is explicitly moving
+  to `webText` or `select`.
+- **Fields off Terminal.** Before a sheet or another destination's editable field is
+  used, the web asks for `webText`, which resigns `KeyboardInput`; WebKit then owns the
+  sheet field and its ordinary keyboard chrome. On close the held Terminal target is
+  restored synchronously; the app does not require a new tap to raise the keyboard.
+- **Selection** ([plan.md](plan.md#select-copy-and-paste)) still uses the web selection
+  layer and its `select` focus mode when it needs WebKit. The line mirror has its own
+  tap-to-place caret and Paste / Select all / Clear menu; it has no handles and does not
+  borrow WebKit focus.
 - **Native coverage gates focus and input.** While the lock screen or native server
-  sheet covers the app, `FocusController.set` records web focus requests into the
-  pre-cover state rather than changing the responder; uncovering applies the latest
-  requested destination. A queued terminal input batch is dropped while locked or
-  covered, so it cannot leak keys behind the cover.
-- **Restore after interruptions.** `FocusController` remembers the wanted state and
-  restores it on foreground, after a native sheet, and after a web content process
-  restart. A wanted `webText` from the line field comes back as `terminal`: WebKit
-  focuses a field only on a tap, and the keyboard coming back up is what matters.
-  `webText` from Files or a web sheet stays `webText`; it does not steal focus for the
-  terminal. The lock screen is a native cover: it lowers the keyboard, suppresses
-  hardware input until unlock, and restores the latest requested destination.
+  sheet covers the app, `FocusController.set` records requested state rather than
+  changing the responder; uncovering applies the latest requested destination. A queued
+  terminal input batch is dropped while locked or covered, so it cannot leak keys behind
+  the cover.
+- **Restore after interruptions.** Native restores its exact wanted mode after
+  foreground, a native sheet or a web content process restart. A wanted `line` returns as
+  `line`; Boot carries the native edit and its tab, and the web reconciles that snapshot
+  into the durable draft store after loading storage. A wanted `webText` from Files or a
+  sheet remains WebKit-owned. The lock screen is a native cover:
+  it lowers the keyboard, suppresses hardware input until unlock, and restores the latest
+  requested destination.
 - **System dismissal** of the software keyboard, with no hardware keyboard attached
-  (`GCKeyboard.coalesced` is nil): `FocusController` moves to `hidden` and sends a
-  `viewport` with `keyboard: false`. The web must reflect that dismissal in its focus
-  owner; one toggle press requests `focus terminal` and `reloadInputViews()` brings the
-  software keyboard back. With a hardware keyboard attached, native keeps `terminal`
-  because keys still go to the responder. v2 has no separate hardware-keyboard field,
-  so this distinction remains a device-gated behavior to verify.
+  (`GCKeyboard.coalesced` is nil), moves `terminal` or `line` to `hidden` and sends a
+  viewport with `keyboard: false`. The web clears the corresponding focus owner but keeps
+  the line draft. With a hardware keyboard attached, native keeps the current target.
 
 ### Keyboard geometry
 
@@ -456,7 +425,8 @@ Native sizes the web view, so the web never measures the keyboard.
 
 *Fallback, decided by the device checklist:* leave the web view full size and send
 only the keyboard height, if resizing the frame makes WebKit relayout badly or WebKit
-also adjusts for the keyboard itself (it may scroll a focused line field into view).
+also adjusts for the keyboard itself. The app's line mirror is non-editable, so it cannot
+be WebKit-scrolled as a focused field.
 
 ### Haptics
 
@@ -474,28 +444,32 @@ triggers it when the bridge request arrives.
 
 ## The bridge
 
-Bridge version 3 has one `tether` message handler
+Bridge version 5 has one `tether` message handler
 (`WKScriptMessageHandlerWithReply`) and a page entry point, invoked in the page
 content world: `window.__tether.receive(messages)` accepts an array of native events.
 The native shell does not query page state; web sends `activeTab` when selection changes,
-and native uses that cache for keyboard targeting. Uploads name their own host and id (below). Each bridge message is a
+and native uses that cache for terminal keyboard targeting. Uploads name their own host and id (below). Each bridge message is a
 flat JSON object with a `type`; request fields are beside `type`. Every message and
 representative reply has one shared fixture in
 `ios/TetherKit/Tests/Fixtures/bridge/`; the Swift tests decode and re-encode each one.
-P4b's tests should read those same files. The daemon never sees the bridge. The token
+The web and Swift tests read those same files. The daemon never sees the bridge. The token
 normally stays inside `HostLink`; on refusal, `hostRejected` echoes the exact presented
 token to native solely for comparison and revocation, never into storage or logs.
 
 | Web → native | Reply | Purpose |
 |---|---|---|
-| `ready` | `Boot { bridgeVersion: 3, hosts, workspace, viewport, lifecycle }` | Start and restore the `SavedWorkspace` |
+| `ready` | `Boot { bridgeVersion: 5, hosts, workspace, viewport, lifecycle, focusMode, lineSnapshot }` | Start and restore the `SavedWorkspace` and native keyboard target/editing copy if WebKit's content process restarted |
 | `socket { host }` | `{ url, token }`, `{ locked: true }` or `{ notEnrolled: true }` | Resolve the WebSocket endpoint and credential inside `HostLink`; keep both there except echoing the exact refused token to native for `hostRejected` |
 | `hostRejected { host, token }` | `null` | Clear that exact rejected token only, then re-publish `hosts` |
 | `recreateWebView` | `null` | Discard/reload the page after unrecoverable WebSocket connection failure |
 | `saveWorkspace { workspace }` | `null` | Persist the entire `SavedWorkspace` |
-| `focus { mode }` | `null` | `terminal`, `hidden`, `webText` or `select`; native alone changes first responder |
+| `focus { mode }` | `null` | `terminal`, `line`, `hidden`, `webText` or `select`; native alone changes first responder |
 | `activeTab { tab: TabKey | null }` | `null` | Update native's cached target for coalesced keyboard batches |
-| `lineField { rect }` | `null` | Update the line field's rect in web-view coordinates, or `null` when unavailable |
+| `lineSet { text, caret, tab }` | Native generation | Load the web-owned draft into native's editing copy and bind it to the tab atomically; native advances its generation and returns it to the web owner |
+| `lineCaret { index }` | `null` | Move the native editing caret to a UTF-16 offset |
+| `lineInsert { text }` | `null` | Insert a one-line key-row character or paste |
+| `lineSelectAll {}` | `null` | Select the native editing copy's full line for the mirror's menu |
+| `modifiers { armed }` | `null` | Keep native's one-shot ctrl/alt routing in step with the web's modifier owner |
 | `draftGet { key: TabKey }` | `DraftRecord` or `null` | Read the line-field draft |
 | `draftPut { record, baseRevision }` | `"ok"`, `"conflict"` or `"failed"` | Revision-checked draft write |
 | `draftDelete { key: TabKey }` | `null` | Delete one draft |
@@ -512,6 +486,8 @@ token to native solely for comparison and revocation, never into storage or logs
 | Native → web | Payload | Purpose |
 |---|---|---|
 | `input { tab: TabKey, events: InputEvent[] }` | The addressed terminal's native keyboard events | Web drops the batch if `tab` is no longer the active key |
+| `lineEdit { gen, text, tab, selection, marked }` | Native's line contents, owning tab and UTF-16 selection / marked ranges | Web ignores stale generations and updates the bound tab draft, even if focus has since moved |
+| `lineReturn { gen, text, tab }` | Return outside marked-text composition; captures the text and tab at the key press | Web sends that captured line and Enter even if later edits or a tab switch arrive before it is handled; if the page is not ready, native leaves the line in the field and warns rather than queueing Return |
 | `viewport { viewport: Viewport }` | Full v2 geometry; includes `keyboardInset` | Size terminal, dock and other viewport-relative UI |
 | `lifecycle { lifecycle: Lifecycle }` | `visible`, `online`, `locked`, `covered` | One state for app foreground, connectivity, app lock and native coverage |
 | `hosts { hosts: PlatformHost[] }` | Native host handles and labels; never base URLs or tokens | Refresh host admission / connection state |
@@ -534,17 +510,32 @@ TabKey = { host: string, session: { server: string, session: string } }
 SavedWorkspace = { version: 2, tabs: { key: TabKey, session: string,
                   window: string }[], active: string | null,
                   files: SavedFilesPlace | null, hostName?: string }
-Boot = { bridgeVersion: 3, hosts: PlatformHost[],
+Boot = { bridgeVersion: 5, hosts: PlatformHost[],
          workspace: SavedWorkspace | null, viewport: Viewport,
-         lifecycle: Lifecycle }
+         lifecycle: Lifecycle, focusMode: FocusMode,
+         lineSnapshot: NativeLineSnapshot | null }
+FocusMode = "hidden" | "terminal" | "line" | "webText" | "select"
+NativeLineSnapshot = { tab: TabKey, gen: number, text: string,
+                       selection: TextRange, marked: TextRange | null }
+TextRange = { start: number, end: number }  // UTF-16 offsets
 ```
+
+When WKWebView's content process restarts, the native shell keeps its first responder and
+route fragment. `Boot.focusMode` restores `terminal` or `line` as the web focus owner; if a
+native screen currently covers the web view, it reports the target saved for that screen's
+return. When that target is `line`, `lineSnapshot` carries the live native edit, caret,
+marked range, generation and owning tab. The app-started native line owner reconciles the
+snapshot after draft storage's initial list; `lineDrafts` remains the durable owner. The
+line owner buffers native events until drafts are ready, then applies them in order so
+hydration never replaces a newer native edit with stale storage. `LineField` only renders
+the resulting draft and native selection state.
 
 - `HostEntry` is native storage and includes the HTTPS `baseURL`; `PlatformHost` is the
   bridge-safe form (`handle` resolves `tether-app://h-{handle}`, `pageOrigin: null`
   means token admission). Never send the base URL or token to JS.
 - A tab is a tmux session, so `TabKey` names the session (server instance and `$N`);
   `session` and `window` in a saved tab are the last names shown, for the label while
-  restoring. Bridge version 3 carries this shape. Native stores the workspace
+  restoring. Bridge version 5 carries this shape. Native stores the workspace
   and the drafts under v2 keys and deletes the v1 keys (window tabs) at launch, so the app
   starts at Home with no tabs and no stale drafts. Nothing migrates; no id is guessed.
 - Native treats `SavedWorkspace` as an opaque snapshot and saves it as given. The web
@@ -647,13 +638,13 @@ ios/
   Tether/
     TetherApp.swift, AppModel.swift, App/RootView.swift
     Web/                 WebShellController, AppSchemeHandler
-    Input/               TerminalInputView, FocusController, LineFieldLender
+    Input/               KeyboardInput, FocusController
     Auth/                TokenStore, HostStore, DraftStore, AuthClient
     Hosts/               SwiftUI server list and enrolment form
     Media/               Uploader; picker and video presentation
     Support/             Haptics
   TetherKit/             Foundation-only Swift package and tests
-    Tests/Fixtures/bridge/ one flat fixture for each v2 message, shared with P4b
+    Tests/Fixtures/bridge/ one flat fixture for each v4 message, shared with web tests
     Tests/Fixtures/auth/   auth DTO fixtures emitted by src/proto/auth.rs
   scripts/check.sh       XcodeGen, `swift test`, simulator `xcodebuild`
   scripts/build-web.sh   Xcode build phase: pnpm build → bundled WebUI/
@@ -704,33 +695,35 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 |---|---|
 | Covered focus | While the lock screen and server sheet are up, send each focus destination from web; no keyboard or terminal input appears above the cover, and uncovering restores the most recently requested destination |
 | Keyboard stays as set | Guard on: scroll and fling the terminal, tap it, tap the tab chip and key-row keys. The keyboard never changes, and typing goes to the tab on screen |
-| Restored without a tap | A web sheet opened and closed, the native server sheet, 10 s in the background, Notification and Control Center, a killed web content process: verify the intended focus and keyboard return; a line field focus returns to the terminal responder |
+| Restored without a tap | A web sheet opened and closed, the native server sheet, 10 s in the background, Notification and Control Center, a killed web content process: verify the intended focus and keyboard return; a line target returns as `line`, not `terminal` |
 | Hidden keeps input | Hidden with the empty `inputView`: no blank keyboard area; hardware keys still reach the terminal; taps on the page don't show the keyboard |
-| Line field lending | Tap the field from `terminal` and from `hidden`: the keyboard switches without dropping and rising; a drag that starts on the field leaves the guard up afterwards; the toggle from the field lowers the keyboard and the field loses DOM focus. Record whether WebKit's ⌃ ⌄ ✓ bar appears. With the field focused: key-row taps and a terminal scroll keep the field and the keyboard; an image pasted through the field's paste menu reaches the page's `paste` event with its file (else the notice points to the edit menu and Files); Return (`enterkeyhint=send`) sends and keeps focus; rotation keeps the field focused |
-| Selection | WebKit's handles and Copy over the selection layer with the guard on; otherwise the `focus select` path |
-| Keyboard toggle (web) | The dock's toggle raises the keyboard (`focus terminal`) and lowers it (`focus hidden`), the key row following; toggling from the line field lowers it; the system dismissing the keyboard resets the toggle; selection (`focus select`) and back restores it |
+| One keyboard / line target | From `terminal` and `hidden`, one tap on the box selects `line`; the keyboard stays up when switching targets; the toggle closes either mode. Confirm Return says Send in `line` and Return in `terminal`, and no first-tap is lost. Long press opens Paste / Select all / Clear; tap places the caret and spacebar trackpad follows it. The line wraps to five visual lines and scrolls internally. |
+| Selection | With `line` holding the native keyboard, verify whether WebKit's selection handles and Copy work; when they need WebKit, `focus select` must release it and release restores `line` |
+| Keyboard toggle / restore | Toggle raises `terminal` from hidden and closes `terminal` or `line`; system dismissal resets the web owner; selection and sheet close restore the expected mode. Background, native server sheet, 10 s in background, Notification / Control Center, and web-process restart restore `line` as `line` without a new tap. |
 | Geometry | The dock rides the keyboard without a jump, in both geometry variants; WebKit does not also scroll for the keyboard; tmux's size changes only on rotation, including a rotation with the keyboard up |
-| Terminal input | No QuickType or predictive strip on the line field's keyboard; `hello world. it's "fine" -- ok` arrives exactly; two spaces stay two spaces; Backspace on an empty line sends BSpace; swipe typing and dictation (record what happens) |
-| Hardware keys | Esc; Ctrl+C, D, R, A, Z, B, Space, `[` `/` `\\`; Option+B, `.`, `<`, `>`, `=`, `` ` ``, `|`, Space and Enter; Cmd+V; verify warning haptic on ^C/^D; held keys stop on release and app deactivation |
-| Latency | Keystroke round trip native → page → `ack`, p99 under a 1 MB/s output flood: at most 16 ms |
-| Paste | The edit menu's Paste with text and with an image, with "Allow Paste" set to Ask and to Allow; the line field's paste menu with one line, two lines and an image |
+| Predictions / sheet fields | No predictive strip in the native `line` target. Search, rename and Files fields stay WebKit-owned with ordinary keyboard chrome. |
+| Line input | With ctrl armed, a single `c` sends `C-c`, a single `.` returns to the line at the caret, and a QuickType/autocorrection multi-character insert stays in the line and disarms. Dictation into the terminal target, including revisions that arrive after send-and-clear; Chinese/Korean composition and candidate Return (candidate acceptance must not send); spacebar trackpad; `lineEdit` latency per keystroke including held Backspace; 1→5-line growth and internal scroll. |
+| Hardware keys | In `line`, printable keys / ←/→ / Backspace / ⌘V edit; Return sends; Esc / Tab / ↑/↓ / Ctrl chords reach tmux. Verify terminal target still handles all existing keys, warning haptic on ^C/^D, and held-key repeat stops on release and deactivation. |
+| Paste | The terminal edit menu's Paste with text and image, with "Allow Paste" set to Ask and Allow; the line menu inserts one-line text and sends text containing line breaks as one terminal paste; image route remains available. |
 | Keychain unlock ([auth.md](auth.md#recovery)) | One item holds the token map; one read prompts once and subsequent requests use memory only; after more than five minutes in background, unlock once; Reset tokens deletes the item and leaves every saved host not enrolled; after adding an alternate Face ID appearance, record the read's exact `OSStatus` |
 | Keychain update | With an existing token item and a successful unlock, add or remove a host; `SecItemUpdate` reuses the unlock's `LAContext`, raises no second Face ID prompt and leaves the UI responsive |
 
 ## Open risks
 
-- **The guard vs WebKit's selection** (medium): if WebKit needs first responder to
-  select, selection briefly drops the keyboard. Device checklist.
-- **Lending the line field by touch location** (medium): relies on a passive recognizer
-  seeing the touch before WebKit focuses the field, and on WebKit taking first
-  responder straight from `TerminalInputView`. Device checklist.
-- **WebKit form accessory bar:** suppression uses an internal `WKContentView` subclass;
-  if that private class path is absent, the system bar remains. Verify that the hook
-  works on Jimmy's iPhone and still fails safely if a future WebKit changes it.
+- **Hidden UITextField behavior** (high): verify `.no` traits remove predictive strip in
+  `line`, and confirm terminal-target dictation revisions after send-and-clear, Chinese/Korean
+  composition, IME candidate Return and the spacebar trackpad on Jimmy's iOS version.
+- **Selection while the line target holds the keyboard** (medium): determine whether WebKit's
+  handles or Copy require `select`; if so, verify the selection target releases and restores
+  the same native line responder.
+- **Target switch continuity** (medium): `reloadInputViews()` may flicker or reset the
+  keyboard page when switching terminal ↔ line; phone check.
+- **Mirror latency and hit testing** (medium): `lineEdit` must keep up with typing and
+  the mirrored caret must track tap and spacebar movement; phone check.
 - **WKWebView adjusting for a keyboard it doesn't own**, fighting the frame resize.
   Device checklist, both geometry variants.
 - **Bridge latency under load**: unmeasured on iOS 26. Device checklist.
-- **Bridge web adapter** (bridge 3) (`web/platform/native/`, P4b) is built and decodes every
+- **Bridge web adapter** (bridge 5) (`web/platform/native/`) is built and decodes every
   shared fixture. Simulator-verified: boot, token socket to a real daemon, listing, Home
   safe area, background closes the socket and resume reconnects. Not verified (the
   Simulator takes no touch or key input from here): the keyboard toggle through

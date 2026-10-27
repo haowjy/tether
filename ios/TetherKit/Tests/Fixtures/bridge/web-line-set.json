@@ -1,0 +1,16 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "lineSet",
+    "text": "pinyin",
+    "caret": 6,
+    "tab": {
+      "host": "host-01",
+      "session": {
+        "server": "main:42-7",
+        "session": 2
+      }
+    }
+  },
+  "reply": 8
+}

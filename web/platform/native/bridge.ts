@@ -1,10 +1,10 @@
 // The only place the web UI talks to native (ios-shell.md "The bridge"). One method per
 // web → native request, each returning what native replies; `parseEvent` checks what native
 // sends. The shapes are pinned against ios/TetherKit/Tests/Fixtures/bridge/ by bridge.test.ts.
-import type { DraftRecord, HostEntry, InputEvent, Lifecycle, SavedWorkspace, TabKey, Viewport } from "../types";
+import type { DraftRecord, FocusMode, HostEntry, InputEvent, Lifecycle, NativeLineSnapshot, SavedWorkspace, TabKey, TextRange, Viewport } from "../types";
 
 /** Bumped with every incompatible change here and in ios/TetherKit/.../Bridge.swift. */
-export const BRIDGE_VERSION = 3;
+export const BRIDGE_VERSION = 5;
 
 export interface Boot {
   bridgeVersion: number;
@@ -12,20 +12,15 @@ export interface Boot {
   workspace: SavedWorkspace | null;
   viewport: Viewport;
   lifecycle: Lifecycle;
+  focusMode: FocusMode;
+  lineSnapshot: NativeLineSnapshot | null;
 }
 
 /** The reply to `socket`. The token never leaves the Link that asked. */
 export type SocketReply = { url: string; token: string } | { locked: true } | { notEnrolled: true };
 
-export type FocusMode = "terminal" | "hidden" | "webText" | "select";
+export type LineRange = TextRange;
 export type PasteboardReply = { text: string } | { uploading: string } | "empty" | "denied";
-
-export interface Rect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
 
 /** `id` is the one the page sent with `pickMedia` or `readPasteboard`. `cancelled` ends a pick whose picker was dismissed. */
 export interface UploadMsg {
@@ -38,12 +33,14 @@ export interface UploadMsg {
 
 export type NativeMsg =
   | { type: "input"; tab: TabKey; events: InputEvent[] }
+  | { type: "lineEdit"; gen: number; text: string; tab: TabKey; selection: LineRange; marked: LineRange | null }
+  | { type: "lineReturn"; gen: number; text: string; tab: TabKey }
   | { type: "viewport"; viewport: Viewport }
   | { type: "lifecycle"; lifecycle: Lifecycle }
   | { type: "hosts"; hosts: HostEntry[] }
   | ({ type: "upload" } & UploadMsg);
 
-const EVENT_TYPES: readonly string[] = ["input", "viewport", "lifecycle", "hosts", "upload"];
+const EVENT_TYPES: readonly string[] = ["input", "lineEdit", "lineReturn", "viewport", "lifecycle", "hosts", "upload"];
 
 /** Native's events are first-party, but the page is the trust boundary: an unknown or malformed one is dropped. */
 export function parseEvent(raw: unknown): NativeMsg | null {
@@ -53,6 +50,19 @@ export function parseEvent(raw: unknown): NativeMsg | null {
   const has = (...fields: string[]): boolean => fields.every((f) => typeof msg[f] === "object" && msg[f] !== null);
   switch (msg["type"]) {
     case "input": return has("tab") && Array.isArray(msg["events"]) ? (raw as NativeMsg) : null;
+    case "lineEdit": {
+      const range = (value: unknown): value is LineRange => typeof value === "object" && value !== null &&
+        Number.isSafeInteger((value as Record<string, unknown>)["start"]) && Number.isSafeInteger((value as Record<string, unknown>)["end"]);
+      if (!Number.isSafeInteger(msg["gen"]) || (msg["gen"] as number) < 0 || typeof msg["text"] !== "string" || !range(msg["selection"])) return null;
+      const selection = msg["selection"];
+      if (selection.start < 0 || selection.end < selection.start || selection.end > msg["text"].length) return null;
+      if (msg["marked"] !== null) {
+        if (!range(msg["marked"]) || msg["marked"].start < 0 || msg["marked"].end < msg["marked"].start || msg["marked"].end > msg["text"].length) return null;
+      }
+      if (!has("tab")) return null;
+      return raw as NativeMsg;
+    }
+    case "lineReturn": return Number.isSafeInteger(msg["gen"]) && (msg["gen"] as number) >= 0 && typeof msg["text"] === "string" && has("tab") ? (raw as NativeMsg) : null;
     case "viewport": return has("viewport") ? (raw as NativeMsg) : null;
     case "lifecycle": return has("lifecycle") ? (raw as NativeMsg) : null;
     case "hosts": return Array.isArray(msg["hosts"]) ? (raw as NativeMsg) : null;
@@ -124,13 +134,28 @@ export class Bridge {
     this.fire({ type: "focus", mode });
   }
 
-  activeTab(tab: TabKey | null): void {
-    this.fire({ type: "activeTab", tab });
+  setLine(text: string, caret: number, tab: TabKey): Promise<number> {
+    return this.post({ type: "lineSet", text, caret, tab }) as Promise<number>;
   }
 
-  /** The line field's rect in web-view coordinates, or null when it is unavailable or covered. */
-  lineField(rect: Rect | null): void {
-    this.fire({ type: "lineField", rect });
+  lineCaret(index: number): void {
+    this.fire({ type: "lineCaret", index });
+  }
+
+  lineInsert(text: string): void {
+    this.fire({ type: "lineInsert", text });
+  }
+
+  lineSelectAll(): void {
+    this.fire({ type: "lineSelectAll" });
+  }
+
+  modifiers(armed: "ctrl" | "alt" | null): void {
+    this.fire({ type: "modifiers", armed });
+  }
+
+  activeTab(tab: TabKey | null): void {
+    this.fire({ type: "activeTab", tab });
   }
 
   draftGet(key: TabKey): Promise<DraftRecord | null> {

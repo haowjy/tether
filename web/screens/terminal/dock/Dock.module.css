@@ -53,9 +53,9 @@
 
 .row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--space-2);
-  height: var(--dock-height);
+  min-height: var(--dock-height);
   padding: var(--space-1) var(--space-2);
 }
 .chip {

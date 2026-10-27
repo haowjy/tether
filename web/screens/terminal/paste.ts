@@ -131,7 +131,7 @@ export class Pastes {
   }
 
   /** The edit menu's Paste, inside its tap: the clipboard goes to the terminal as one paste, without Enter. */
-  pasteFromMenu(): void {
+  pasteFromMenu(onText?: (text: string, target: PasteTarget) => boolean): void {
     const { app } = this.deps;
     // Captured before the read: on iOS it can wait behind the paste prompt while the session changes windows or the tab closes.
     const target = this.target();
@@ -141,7 +141,9 @@ export class Pastes {
     void app.platform.clipboard.read(tab.key).then((result) => {
       if (result === "denied") app.notify("Couldn't paste: the browser refused clipboard access");
       else if (result === "empty") app.notify("Nothing to paste");
-      else if ("text" in result) this.paste({ kind: "text", text: result.text }, target);
+      else if ("text" in result) {
+        if (!onText?.(result.text, target)) this.paste({ kind: "text", text: result.text }, target);
+      }
       else if ("image" in result) this.paste({ kind: "image", file: result.image }, target);
       else if (app.platform.uploads.follow) {
         app.notify("Uploading image…");

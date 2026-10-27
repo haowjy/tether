@@ -95,8 +95,8 @@ final class TetherAppModel: ObservableObject {
         controller.coverNativeScreen(isLocked || covered)
     }
 
-    func boot(viewport: Viewport) -> Boot {
-        Boot(hosts: platformHosts, workspace: loadWorkspace(), viewport: viewport, lifecycle: lifecycle)
+    func boot(viewport: Viewport, focusMode: FocusMode, lineSnapshot: NativeLineSnapshot?) -> Boot {
+        Boot(hosts: platformHosts, workspace: loadWorkspace(), viewport: viewport, lifecycle: lifecycle, focusMode: focusMode, lineSnapshot: lineSnapshot)
     }
 
     var platformHosts: [PlatformHost] { hosts.map(\.platformHost) }

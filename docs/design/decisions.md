@@ -3298,10 +3298,12 @@ variations canvas.
 ### No predictions on the line field
 
 - **Decided:** 2026-10-26, Jimmy, from the phone.
-- **What:** the dock's line field turns autocorrection and spell checking off, in the
-  HTML (`autocorrect="off"`, `spellcheck="false"`) and on the web view's content view
-  (`autocorrectionType` and `spellCheckingType` answered with `.no`), which takes the
-  predictive strip off the keyboard. Dictation, IME and the blue send key stay.
+- **Superseded as a mechanism:** 2026-10-26 by
+  [One keyboard: native owns line editing, web mirrors it](#one-keyboard-native-owns-line-editing-web-mirrors-it).
+  The outcome remains, but no longer depends on WebKit content-view trait overrides.
+- **Historical mechanism:** the web field's autocorrect / spellcheck attributes and
+  private WebKit content-view trait overrides attempted to remove the strip. The hook
+  failed on Jimmy's phone; the settled mechanism is the app's native text-field traits.
 - **Why:** a line is a command or a prompt for a shell or an agent. The predictions
   corrected it as prose and took the row above the keyboard. Jimmy saw the strip on
   his phone, which is what the checklist row was there to catch.
@@ -3315,8 +3317,9 @@ variations canvas.
 ### Line field auto-capitalization is off
 
 - **Decided:** 2026-10-24, tech lead, confirmed by Jimmy.
-- **What:** `autocapitalize="off"` on the line field; autocorrect and dictation stay
-  on. Dictation's own capitalization is accepted, since no attribute controls it.
+- **What:** `autocapitalize="off"` remains on the line field. Its former rule that
+  autocorrect stays on is superseded by the 2026-10-26 one-keyboard decision. Dictation's
+  own capitalization is accepted, since no attribute controls it.
 - **Why:** most lines are commands, where a capital first letter breaks the command.
 - **Rejected:** sentence capitalization (it suits agent prompts, but they read
   lowercase fine).
@@ -3324,9 +3327,10 @@ variations canvas.
 ### Phone paste: the line field's menu and the terminal's edit menu
 
 - **Decided:** 2026-10-24, design (p112), following from the one-row dock.
-- **What:** the dock has no Paste button. In the line field, paste is the platform's
-  own menu: one line is inserted for editing, text with a line break goes to the
-  terminal as one paste without Enter, an image takes the image paste route. On the
+- **What:** the dock has no Paste button. In the browser/PWA line field, paste is the
+  platform's own menu; in the app mirror, the long-press menu has Paste / Select all /
+  Clear. One line is inserted for editing, text with a line break goes to the terminal
+  as one paste without Enter, and an image takes the image paste route. On the
   terminal, tether's edit menu, opened by a released long-press, has Paste (alone over
   a blank cell), which sends the clipboard to the terminal as one paste without Enter
   (`readPasteboard` in the app).
@@ -3340,9 +3344,11 @@ variations canvas.
 
 - **Decided:** 2026-10-24, Jimmy ("edit should be a single line editor"; Return sends
   the text and Enter and clears the box).
-- **What:** the dock's line field holds one line with the platform's autocorrect,
-  dictation and IME. Return sends its text to the active tab, then Enter, and clears
-  it; the field keeps the keyboard. An empty Return sends Enter. The unsent text is the
+- **What:** the dock's line field holds one logical line, visually wraps and grows from
+  one to five lines before scrolling inside. Browser/PWA uses its textarea; the app uses
+  a native editor with autocorrect, predictions, capitalization and spell checking off.
+  Return sends its text to the active tab, then Enter, and clears it; the line target
+  keeps the keyboard. An empty Return sends Enter. The unsent text is the
   tab's draft, saved per tab key; [Drafts of closed tabs are kept](#drafts-of-closed-tabs-are-kept)
   still applies to it.
 - **Changes:** replaces the multiline local draft editor whose Insert sent a paste
@@ -3355,13 +3361,13 @@ variations canvas.
 ### The dock is web, in every touch client
 
 - **Decided:** 2026-10-24, design (p110), confirming the tech lead's lean.
-- **What:** the web draws the whole dock, including the key row, the line field and the
-  toggle, in the browser, the PWA and the app. Native keeps `TerminalInputView` as the
-  terminal input's first responder, reports keyboard geometry and sizes the web view
-  so the dock rides the keyboard, and draws nothing above the keyboard: no
-  `inputAccessoryView`, no compose `UITextView`. `FocusController`'s `compose` state
-  goes. Armed ctrl and alt live in the web (`touch/modifiers.ts`) and apply to native
-  keystrokes too, so modifiers have one owner; key-row haptics go over `haptic`.
+- **What:** the web draws the whole dock, including the key row, the line mirror and the
+  toggle, in the browser, the PWA and the app. Native keeps one hidden
+  `KeyboardInput: UITextField` as first responder for terminal and line targets, reports
+  keyboard geometry and sizes the web view so the dock rides the keyboard, and draws
+  nothing above it. There is no compose field. Armed ctrl and alt live in the web
+  (`touch/modifiers.ts`) and reach native over the bridge; key-row haptics go over
+  `haptic`.
 - **Why:** the browser needs the dock anyway, so a native copy would be a second
   implementation of the same controls, with the drift and double review that brings.
   The web already owns everything else Jimmy looks at; iterating on the dock needs no
@@ -3373,9 +3379,109 @@ variations canvas.
 - **Cost:** a key-row haptic crosses the bridge, unmeasured; a native touch-down
   `prepare()` is no longer possible.
 
+### One keyboard: native owns line editing, web mirrors it
+
+- **Decided:** 2026-10-26, Jimmy, after the first real-phone use:
+  > "I still get predictions on the iphone app, and swapping between if i used the button or if i used the box is still really wonky (they do different things still)"
+  > "I have to press the box twice to open the keyboard sometimes"
+  > "it should just act like a text box / not be a text box / a local text box / and then also the predictions should go away"
+- **What:** one hidden `KeyboardInput: UITextField` owns first responder throughout Terminal.
+  The toggle selects `terminal`, where committed keys go directly to tmux; tapping the box
+  selects `line`, where native edits the line and the web mirrors its text, caret, selection
+  and marked composition. The toggle closes either target. The field disables autocorrection,
+  capitalization, spell checking, smart punctuation and inline prediction. Return is Send in
+  `line` and Return in `terminal`; sheet and Files fields remain WebKit-owned and keep their
+  ordinary keyboard. The mirror has tap-to-place, spacebar trackpad, and long-press Paste /
+  Select all / Clear; it has no selection handles. Both app and browser boxes wrap and grow
+  from one to five visual lines, then scroll inside, while remaining one logical line:
+  Return sends and paste with line breaks goes to tmux as one paste. Draft storage and send
+  outcomes remain web-owned. An interruption restores `line` as `line`.
+- **Restore after WebKit restart:** `Boot.focusMode` and the preserved route fragment
+  restore the target and screen. If the target is `line`, Boot also carries a tab-bound
+  `lineSnapshot` with native's current generation, text, selection and marked range.
+  `lineDrafts` reconciles that snapshot after its first list; events arriving before the
+  dock or store is ready are buffered and applied against the restored generation. This
+  keeps the web draft store authoritative without replacing newer unsaved native text.
+- **Bridge:** v4 adds `lineSet { gen, text, caret, tab }`, `lineEdit { gen, text, tab, selection, marked }`,
+  `lineReturn { gen, text, tab }`, `lineCaret { index }`, `lineInsert { text }` and `modifiers { armed }`;
+  it removes `lineField { rect }`. `lineSelectAll {}` is an additional request beyond the
+  proposal's listed contract: a menu action for native Select all needs an operation that
+  can select the text field's contents, which caret placement and setting text cannot express.
+- **Why:** both openers now reach the same keyboard and the same responder, so tap-to-edit
+  has no WebKit handoff or lending guard. Native's public text-field traits remove
+  predictions without a private WebKit swizzle; the web continues to own the buffer's
+  persistence, send path and error notes.
+- **Implementation choices:** the browser `LineInput` is a `<textarea>`, not an `<input>` as
+  the proposal assumed. An input cannot wrap into the required five-line box; a textarea
+  supports the visual growth while Return remains intercepted as Send and pasted newlines
+  retain the terminal-paste rule. `LineField` selects that browser editor or the native
+  mirror from `viewport.directInput`, the existing platform capability; `Platform` has no
+  environment-name switch to branch on.
+- **Bridge correction to the proposal:** `lineSet` also carries the owning `tab`. Native's
+  `activeTab` message arrives separately from `lineSet`; a WebKit restart between a tab
+  switch and its next buffer load could otherwise associate the old native copy with the
+  newly active tab. The snapshot uses the tab bound by the atomic line load, not whichever
+  `activeTab` message arrived last.
+- `lineEdit` carries the same tab binding so an edit delivered after a focus or tab change
+  updates its originating draft instead of being discarded by the new active target. The
+  web still rejects edits older than the most recently loaded generation for that tab.
+- **Return correction to the proposal:** `lineReturn` captures `text` and `tab` as well as
+  `gen`, then native clears into the next generation immediately. A buffered Return must send
+  the line present at the key press, not a later edit from the restored snapshot; the tab
+  makes a delayed Return independent of a subsequent switch. The web's same-generation
+  `lineSet` acknowledges the clear without overwriting native typing that arrived after it.
+- **Modifier routing:** the web's `apply()` is the only chord rule. With ctrl or alt armed,
+  native diverts only one grapheme inserted at a collapsed caret. The web sends it to tmux
+  if it forms a chord; otherwise it disarms and restores the character in the line via
+  `lineInsert` at the caret. Other insert shapes clear native's armed state and stay in
+  UIKit; their next `lineEdit` disarms the web-owned state. The browser field and key row
+  use the same `chord()` rule; a key-row character that is not chordable inserts into the
+  line only while line owns the keyboard and is never sent bare to tmux.
+- **Input layout and reload choice:** the hidden field uses `.default`, not `.asciiCapable`,
+  so locale IMEs and dictation remain available; explicit prediction, correction and
+  smart-edit traits stay `.no`. While the page is loading or reloading, Return remains in
+  the field and warns; native does not queue it for later delivery.
+- **Bundle cost:** the production check measured initial JS at 193.2 KiB gzipped after
+  adding the restore snapshot and event handoff. Raise the cap to 194 KiB rather than
+  code-splitting the dock-critical mirror into another request; this leaves 0.8 KiB of
+  measured headroom.
+- **Tech-lead corrections after reviews p304 and p306 (2026-10-26):** native is the sole
+  owner of line generations. `lineSet { text, caret, tab }` advances and returns the generation;
+  web never assigns it or echoes the native clear after Return. The app-started
+  `NativeLineInput` beside `LineDrafts` subscribes directly to platform events, waits for
+  draft hydration, reconciles the one boot snapshot and syncs any bound draft whose text
+  differs from native's last reported text. This replaces transition-specific loads and
+  removes the controller and component event queues/snapshot copies. If the page receiver
+  is not ready, Return remains in native and warns; Swift has no Return retry queue. The
+  web's `apply()` rule is the only chord authority. While armed, native diverts only a
+  one-grapheme insert at a collapsed caret; other insert shapes clear native's armed state
+  and go through UIKit, whose next `lineEdit` disarms the web state. A diverted character
+  becomes a tmux chord only when `apply()` recognizes it; otherwise the web disarms and
+  restores it with `lineInsert` at the caret. Browser inserts and key-row characters follow
+  that same rule; an unchordable key-row character inserts into the line only while line
+  owns the keyboard, never as bare terminal input.
+  Marked-text Backspace and Return stay with UIKit in either target. Selection mode takes
+  precedence over the native line resting mode and release restores the line target.
+- **Rejected:** JavaScript generation counters and same-generation acknowledgements;
+  per-send/per-clear/per-refusal sync calls; a line-event handler in React; separate
+  controller/component buffering and snapshot holders; a native character allowlist plus
+  web-side line-edit revert; diverting every committed insert to the terminal; routing an
+  unchordable insert as bare text; retrying a Return whose delivery cannot be known after the
+  page is ready.
+- **Rejected:** repairing two different responders and retaining the private swizzle; making
+  the box the only opener (which loses raw typing for vim, `less`, prompts and `y/n`); a
+  native field overlaid on the web dock; or a bare `UIKeyInput`, which cannot preserve IME
+  composition and text-field selection behavior.
+- **Supersedes:** [Native lends the line field to WebKit by touch location](#native-lends-the-line-field-to-webkit-by-touch-location)
+  and the mechanism of [No predictions on the line field](#no-predictions-on-the-line-field).
+  It refines [The dock is web, in every touch client](#the-dock-is-web-in-every-touch-client):
+  web still draws the dock, while native owns line editing in the app.
+
 ### Native lends the line field to WebKit by touch location
 
-- **Decided:** 2026-10-24, design (p110).
+- **Historical decision (superseded 2026-10-26):** design (p110).
+- The implementation below is deleted; its current replacement is the one-keyboard
+  decision above.
 - **What:** the web reports the line field's rect (`lineField { rect }`); a passive
   native recognizer sees each touch-down before WebKit does, and a touch that begins
   inside the rect lowers the guard, so WebKit takes first responder straight from
@@ -3399,10 +3505,10 @@ variations canvas.
   either input holding it, the toggle lowers it. Tapping the line field gives it the
   keyboard, as any text field. Key-row control keys (esc, ↑, ↓, ^R, ^C, tab) always go
   to the terminal; character keys (`/ | ~ -`) go where typing goes, into the field at its
-  caret when it has the keyboard. An armed modifier takes the next character from the
-  field and sends the chord to the terminal. A paste holding a line break into the
-  field goes to the terminal as one paste, without Enter. The toggle's state follows
-  the focus owner, not keyboard geometry.
+  caret when it has the keyboard. An armed modifier sends a chordable character to the
+  terminal; an unchordable character is disarmed and remains in the line. A paste holding
+  a line break into the field goes to the terminal as one paste, without Enter. The toggle's
+  state follows the focus owner, not keyboard geometry.
 - **Changes:** for the four character keys, the wording of Jimmy's two-openers choice,
   "the key row always sends to the terminal". Control keys still always do.
 - **Why:** the toggle stays a pure open/close control whose result never depends on a

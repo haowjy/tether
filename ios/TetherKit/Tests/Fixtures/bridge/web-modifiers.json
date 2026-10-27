@@ -1,0 +1,8 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "modifiers",
+    "armed": "ctrl"
+  },
+  "reply": null
+}

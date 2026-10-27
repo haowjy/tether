@@ -58,6 +58,12 @@ export interface Lifecycle {
 
 export type Unsubscribe = () => void;
 export type HapticKind = "selection" | "rigid" | "key" | "modifier";
+export type FocusMode = "terminal" | "line" | "hidden" | "webText" | "select";
+
+/** UTF-16 offsets into a line, matching the native text field's NSRange. */
+export interface TextRange { start: number; end: number }
+/** Native's retained in-progress edit, adopted into `lineDrafts` after a web-content-process restart. */
+export interface NativeLineSnapshot { tab: TabKey; gen: number; text: string; selection: TextRange; marked: TextRange | null }
 
 /** The files place `FileBrowser` holds, as saved across reloads. */
 export type FilesPlace = { kind: "roots" } | { kind: "dir"; path: string } | { kind: "file"; path: string };
@@ -104,9 +110,18 @@ export interface Transport {
 
 export interface InputPlatform {
   /** The focus mode the screen needs. Native: bridge `focus`. Browser: a no-op, because app/focus.ts already moved DOM focus. */
-  setFocus(mode: "terminal" | "hidden" | "webText" | "select"): void;
-  /** Where a touch may hand the keyboard to the line field (§7.4): its rect in page coordinates, or null when Terminal is covered. Native: bridge `lineField`. Browser and test: no-op. */
-  setLineFieldRect(rect: DOMRectReadOnly | null): void;
+  setFocus(mode: FocusMode): void;
+  /** The native text field's editing copy of the active tab's draft. Other platforms own their input element. */
+  /** Replace native's editing copy and bind it to a tab; native advances its own generation. */
+  setLine(text: string, caret: number, tab: TabKey): Promise<number>;
+  /** Move the native caret or selection to the mirror's UTF-16 offset. */
+  setLineCaret(index: number): void;
+  /** Insert one line at the native caret. */
+  insertLine(text: string): void;
+  /** Select the native editing copy's full text. */
+  selectAllLine(): void;
+  /** Keep the native responder in step with the web-owned armed modifier. */
+  setArmedModifier(armed: "ctrl" | "alt" | null): void;
   /** The tab that keyboard input batches target, whenever the active tab changes (null: none). Native: bridge `activeTab`. Browser: no-op. */
   setActiveTab(tab: TabKey | null): void;
 }
@@ -153,6 +168,10 @@ export interface BootResult {
   workspace: SavedWorkspace | null;
   viewport: Viewport;
   lifecycle: Lifecycle;
+  /** Native's focus target, retained if the web content process had to restart. */
+  focusMode: FocusMode | null;
+  /** Present only when native restored the `line` target; reconciled after draft storage loads. */
+  lineSnapshot: NativeLineSnapshot | null;
 }
 
 /** The one change channel. The controller in app/ routes each event to its owner. */
@@ -161,6 +180,8 @@ export type PlatformEvent =
   | { type: "viewport"; viewport: Viewport }
   | { type: "lifecycle"; lifecycle: Lifecycle }
   | { type: "input"; tab: TabKey; events: InputEvent[] }
+  | { type: "lineEdit"; gen: number; text: string; tab: TabKey; selection: TextRange; marked: TextRange | null }
+  | { type: "lineReturn"; gen: number; text: string; tab: TabKey }
   | { type: "draftChanged"; key: TabKey }
   | { type: "storage"; state: "closing" | "closed" }
   | { type: "update"; state: UpdateState };

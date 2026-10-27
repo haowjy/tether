@@ -44,13 +44,15 @@ export interface Pending {
 export const pendingKey = (id: string, req: number): string => `${id}#${String(req)}`;
 
 export interface DraftsState {
+  /** Storage's initial list answered. Native line hydration waits before applying edits. */
+  ready: boolean;
   /** Keyed by tab id. */
   drafts: Readonly<Record<string, Draft>>;
   /** Keyed by {@link pendingKey}. */
   pending: Readonly<Record<string, Pending>>;
 }
 
-export const initialDrafts: DraftsState = { drafts: {}, pending: {} };
+export const initialDrafts: DraftsState = { ready: false, drafts: {}, pending: {} };
 
 export type DraftsEvent =
   /** Every stored draft, read once at start. */
@@ -58,7 +60,7 @@ export type DraftsEvent =
   /** The user edited the field. `open` is the ids of the open tabs, which eviction spares. */
   | { type: "edit"; key: TabKey; text: string; now: number; open: ReadonlySet<string> }
   /** Return sent `text` as paste `req` of its tab: the draft is gone and the line is pending. */
-  | { type: "submit"; key: TabKey; text: string; req: number; now: number }
+  | { type: "submit"; key: TabKey; text: string; req: number; now: number; continuation?: string }
   | { type: "answered"; id: string; req: number; outcome: { kind: "pasted" } | { kind: "refused" | "maybe"; message: string }; open: ReadonlySet<string> }
   /** The tab closed: its unanswered lines come back, as possibly sent. */
   | { type: "tabClosed"; id: string; open: ReadonlySet<string> }
@@ -138,7 +140,7 @@ export function reduce(state: DraftsState, event: DraftsEvent): { state: DraftsS
         const have = drafts[id];
         drafts[id] = have ? { ...have, revision: r.revision, base: r.revision } : { key: r.key, text: r.text, revision: r.revision, base: r.revision, editedAt: r.editedAt, dirty: false, note: null };
       }
-      return { state: { ...state, drafts }, effects: [] };
+      return { state: { ...state, ready: true, drafts }, effects: [] };
     }
 
     case "edit": {
@@ -172,8 +174,20 @@ export function reduce(state: DraftsState, event: DraftsEvent): { state: DraftsS
       const id = tabId(event.key);
       const pending = { ...state.pending, [pendingKey(id, event.req)]: { id, req: event.req, key: event.key, text: event.text, at: event.now } };
       const had = state.drafts[id];
+      const drafts = without(state.drafts, id);
+      if (event.continuation) {
+        drafts[id] = {
+          key: event.key,
+          text: event.continuation,
+          revision: 0,
+          base: 0,
+          editedAt: event.now,
+          dirty: true,
+          note: null,
+        };
+      }
       return {
-        state: { drafts: without(state.drafts, id), pending },
+        state: { ready: state.ready, drafts, pending },
         // A stored draft goes at once: Return then killing the page must not bring the line back.
         effects: had && had.revision > 0 ? [{ type: "delete", key: event.key }] : [],
       };

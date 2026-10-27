@@ -2,7 +2,7 @@
   "direction": "webToNative",
   "message": {
     "type": "focus",
-    "mode": "terminal"
+    "mode": "line"
   },
   "reply": null
 }

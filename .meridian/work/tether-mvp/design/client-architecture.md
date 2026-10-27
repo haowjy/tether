@@ -1,9 +1,10 @@
 # Client architecture: the rebuilt web client
 
-Status: design for review, revision 4, 2026-10-23; the phone input sections (§5.3,
-§6.5, §7.3, §7.4, §11, §12) were rewritten on 2026-10-24 for the phone dock Jimmy chose
-after running the keyboard spike. W0–W4 are built (P2); P3 is next. Revision 2
-answered [review 1](client-architecture-review-1.md) and the
+Status: current client architecture, revision 6, 2026-10-26. Revision 6 settles the
+app-started native line owner, native-owned generations and draft-to-native sync rule for
+the one-keyboard flow. Revision 5 settles the native line editor, mirror and growing
+one-line box. Revision 4 answered
+[review 1](client-architecture-review-1.md) and the
 [alignment review](client-architecture-review-alignment.md); revision 3 applied
 [review 2](client-architecture-review-2.md); revision 4 applies
 [review 3](client-architecture-review-3.md), mostly by deleting mechanisms: the update
@@ -15,7 +16,7 @@ adapter, and the browser's second focus owner. The
 not a window; the current rules are in
 [design-session-follow-and-folder-find.md](../design-session-follow-and-folder-find.md) §1,
 `docs/design/daemon-core.md` (§3.6 sizing and claims, the protocol table) and
-`docs/design/ios-shell.md` (bridge 3). Where this spec says `WindowRef`, a window tab, a
+`docs/design/ios-shell.md` (bridge 5). Where this spec says `WindowRef`, a window tab, a
 window in a list, bridge 2 or saved workspace version 1, read session; the passages that
 carried the old rule are corrected in place (glossary, §5.4 band and re-watch, §6.1 tab
 key, labels and saved workspace, §6.2 restore). Sections about other subjects, and the
@@ -493,16 +494,28 @@ interface Transport {
 interface InputPlatform {
   /** The focus mode the screen needs (§6.5). Native: bridge `focus`. Browser: no-op,
    *  because app/focus.ts already moved DOM focus in the same dispatch. */
-  setFocus(mode: "terminal" | "hidden" | "webText" | "select"): void;
-  /** Where a touch may hand the keyboard to the line field (§7.4): its rect in page
-   *  coordinates, or null when Terminal is covered. Native: bridge `lineField`.
-   *  Browser and test: no-op. */
-  setLineFieldRect(rect: DOMRectReadOnly | null): void;
+  setFocus(mode: "terminal" | "line" | "hidden" | "webText" | "select"): void;
+  /** Replace native's editing copy; native advances and returns its own generation. */
+  setLine(text: string, caret: number, tab: TabKey): Promise<number>;
+  /** Native line editing controls. Browser and test adapters are no-ops. */
+  setLineCaret(index: number): void;
+  insertLine(text: string): void;
+  selectAllLine(): void;
+  setArmedModifier(armed: "ctrl" | "alt" | null): void;
 }
 ```
 
-Native's keystrokes arrive as `input` events on the one channel, each with the tab key
-native targeted.
+Native terminal keys arrive as `input` events; line edits arrive as `lineEdit` with a
+native generation, tab binding and UTF-16 selection ranges. The app-started, non-React
+native line owner waits for drafts, reconciles the boot snapshot, applies tab-bound edits
+and handles Return. A valid delayed edit still updates its bound draft after focus changes;
+an older generation is ignored. `lineReturn` captures its generation, text and tab at the
+key press; native clears and advances before sending it, so delayed handling cannot send
+later typing or retarget the Return. The web sends `lineSet` only when the bound draft
+differs from the last native-reported text, and native owns generation assignment. If the
+page is not ready, Return stays in the native field and warns instead of being queued. The
+adapter buffers startup events until the app-started owner subscribes; the owner buffers
+them only until draft hydration.
 
 `directInput` picks the terminal input source (§7). It is `xterm` when the primary
 pointer is fine and can hover (`(pointer: fine) and (hover: hover)`), `owned` when the
@@ -713,8 +726,11 @@ The saved workspace arrives in `BootResult`; a draft another page changed arrive
 **Native.** The workspace goes to native through `saveWorkspace`, because native's copy
 survives a crash of the web content process. Drafts go through the same `DraftStore`
 interface over the bridge (`draftGet`, `draftPut`, `draftDelete`, `draftList`), and
-native persists the records. The line field is a web control in both environments, so
-the web applies every draft rule (§7.4) beyond the write check. **The revision check runs
+native persists the records. The browser/PWA's line field is an editable web control; in
+the app, `LineMirror` shows the same web-owned draft while the native `UITextField` owns
+editing. The web applies every draft rule (§7.4) beyond the write check; the app-started
+native line owner reconciles native's retained line snapshot after the initial draft list
+and keeps the editing copy in step with changes in the bound draft. **The revision check runs
 natively:** `draftPut` returns `conflict` when the stored record's revision is greater than
 `baseRevision`, and writes otherwise. A put's base is the last revision the web *issued*, not
 the last stored, so a retry after a `failed` put is ahead of the store and still writes.
@@ -782,7 +798,7 @@ back as `uploading`, followed by `upload` events under the id `readPasteboard` c
 | events | viewport, lifecycle, `draftChanged`, `storage`, `update` | bridge `hosts`, `viewport`, `lifecycle`, `network`, lock, `input` | `emit(event)` |
 | transport | same-origin `/ws` offering `tether.v1` | `tether-app://h-<id>`, token subprotocol; `{ notEnrolled }` and `hostRejected` as token refusals | fake `Link` (`net/fakes.ts`); fake `/auth` replies, so the real `net/admission.ts` runs |
 | direct input | `xterm` or `owned` | `native` | scripted events |
-| focus | `setFocus` and `setLineFieldRect` are no-ops: `app/focus.ts` moves DOM focus | bridge `focus`, `lineField` | records requests |
+| focus / line editing | focus and line editing methods are no-ops: `app/focus.ts` moves DOM focus | bridge `focus` and line editing messages | records requests |
 | viewport | `visualViewport`, media queries, `100svh` | bridge `viewport` | settable |
 | lifecycle | page visibility, online; never locked | bridge `lifecycle`, `network`, app lock | settable |
 | storage | IndexedDB, `BroadcastChannel`, `versionchange` | bridge `saveWorkspace` and draft records | in memory; can be told to fail or to close |
@@ -795,17 +811,19 @@ back as `uploading`, followed by `upload` events under the id `readPasteboard` c
 | updates | the service worker (`pwa.ts`) | absent | scripted |
 | install | `display-mode: standalone` (`pwa.ts`) | absent | settable |
 
-### 5.10 Bridge version 2 and the ios-shell.md edits
+### 5.10 Bridge version 5 and the ios-shell.md edits
 
-The native lane (W5) lands these with ios-shell.md and `Bridge.swift`. `BRIDGE_VERSION`
-becomes 2.
+The native shell and web adapter keep the typed bridge contract and the fixtures in step.
+Bridge version 5 keeps native line editing and moves generation ownership to native; it
+also removes the old location-based handoff introduced in the prior contract.
 
 | ios-shell.md section | Change |
 |---|---|
-| "Boot and host payloads" | `boot { tabs, active }` and `SavedTab` become `workspace: SavedWorkspace`, which still carries each tab's last label, so restored pills have names before the listing |
+| "Boot and host payloads" | `boot { tabs, active }` and `SavedTab` become `workspace: SavedWorkspace`, which still carries each tab's last label, so restored pills have names before the listing; Bridge v5 carries `Boot.focusMode` and an optional tab-bound `lineSnapshot` so native focus and live line editing survive a web-content-process restart |
 | "The bridge": `saveTabs` | becomes `saveWorkspace { workspace }` |
 | "The bridge": `prompt` | removed. Web forms take the keyboard in `webText` (§3.3) |
-| "Focus: one controller, native" | Done in the spec (2026-10-24): `compose` is gone; the line field is lent by touch location (`lineField { rect }`); the web sends the resting mode on every destination or overlay change: `terminal` or `hidden` on Terminal with no overlay, and `webText` everywhere else. The `select` mode is entered by touch selection (§7.6); when selection ends the web sends the resting mode again |
+| "Focus: one controller, native" | One hidden native `UITextField` stays first responder for `terminal` and `line`; the web sends `focus line` on a box tap and exact target restoration after interruption. Only sheet fields and terminal selection give WebKit first responder. |
+| "The bridge": line field | `lineSet { text, caret, tab }` has no web generation; native advances and returns the generation. `lineEdit { gen, text, tab, selection, marked }` and `lineReturn { gen, text, tab }` carry native generations; `lineReturn` captures its text and tab and clears before delivery. `lineCaret { index }`, `lineInsert { text }`, `lineSelectAll {}` and `modifiers { armed }` remain. `lineSelectAll` is the small required addition for the mirror menu's Select all; tab bindings preserve the originating draft across focus/tab changes and prevent a restart from attaching old text to a new tab. |
 | "Keyboard geometry" | unchanged for native sizing. The new invariant (§5.4) is stated in the shared terms |
 | "The bridge": `input` | gains `tab` (the tab key native targeted). The web drops events whose tab key is no longer that tab's. the web sends `activeTab { tab }` whenever the active tab changes (native no longer calls the page); it serves keyboard batches only |
 | "The bridge": drafts | new. Web → native `draftGet`, `draftPut`, `draftDelete`, `draftList` back the `DraftStore` (§5.6). Native has no draft UI, so nothing flows back |
@@ -1034,63 +1052,83 @@ lost:
 
 ### 6.5 The focus controller
 
-There is one focus controller per environment. In the web it is `app/focus.ts`, the
-only code that calls `.focus()` or `.blur()` (lint rule 2). Elements that can hold
-focus register with it: each primitive's field or dialog on mount, the direct-input
+There is one focus controller per environment. In the web it is `app/focus.ts`, the only
+code that calls `.focus()` or `.blur()` (lint rule 2); in the app Swift's
+`ios/Tether/Input/FocusController.swift` is the only code that changes first responder.
+The browser follows DOM focus. In the app a hidden native `KeyboardInput: UITextField`
+owns both Terminal targets, while the web's `LineMirror` is non-editable and reports its
+caret, selection and menu actions to that same responder.
+
+Browser elements that can hold focus register with `app/focus.ts`: the direct-input
 element once (`term/xterm-input.ts` hands over xterm's textarea, `touch/owned-input.ts`
-its own). A dialog's initial focus and its focus return are the controller's, run in
-the same dispatch that called `showModal()` or closed it. The field a fine pointer starts
-in is the one marked `data-initial-focus=""` (else the close button); no screen queries the
-page for it. The control that opened an overlay is recorded by `app.openOverlay(overlay,
-opener)` (Safari leaves a clicked button unfocused, so `document.activeElement` is not it)
-and gets focus back on close; `useOverlay(screen, name?)` gives a dialog its `open`, params
-and `close`. In native the controller
-remains Swift's `FocusController`, which `app/focus.ts` reaches through
-`platform.input.setFocus`; in the browser that call is a no-op.
+its own), fields, and dialogs. A dialog's initial focus and its focus return are the
+controller's, run in the same dispatch that called `showModal()` or closed it. The field
+a fine pointer starts in is the one marked `data-initial-focus=""` (else the close button);
+no screen queries the page for it. The control that opened an overlay is recorded by
+`app.openOverlay(overlay, opener)` (Safari leaves a clicked button unfocused, so
+`document.activeElement` is not it) and gets focus back on close; `useOverlay(screen,
+name?)` gives a dialog its `open`, params and `close`. Native focus modes are sent via
+`platform.input.setFocus`.
 
 | Owner | Held by | Entered by |
 |---|---|---|
-| `terminal` | the direct-input element (§7), or native's responder | tab activation, closing an overlay and returning to Terminal (desktop); the keyboard toggle with the keyboard down (touch) |
-| `line` | the dock's line field | a tap in the field (touch) |
-| `field` | a `TextField` or `SearchField` | the user focusing it |
-| `overlay` | the top dialog or sheet | opening one |
-| `select` | the selection layer (§7.6) | a long-press on the terminal |
-| `none` | nothing | Home and Files with no field focused; the keyboard toggle from `terminal` or `line` (touch) |
+| `terminal` | browser direct-input element, or native `KeyboardInput` in terminal target | tab activation, closing an overlay and returning to Terminal (desktop); toggle from none; terminal cursor-row tap |
+| `line` | browser `LineInput`; app's web `LineMirror` plus native `KeyboardInput` in line target | box tap; restore after interruption or web-content-process restart |
+| `field` | a `TextField` or `SearchField` | user focusing it |
+| `overlay` | top dialog or sheet | opening one |
+| `select` | terminal selection layer (§7.6) | long press on terminal |
+| `none` | nothing | Home/Files with no field; toggle while `terminal` or `line` owns the keyboard |
+
+Native includes its current `focusMode` in `Boot`. If WKWebView's content process restarts,
+the app restores `terminal` or `line` as the web owner and preserves the route fragment;
+this prevents the new page's initial hidden owner from closing a still-live native line
+responder. For `line`, `Boot.lineSnapshot` carries the native editing copy, generation,
+selection/marked ranges and owning tab. The native line owner, created at app start beside
+`lineDrafts`, reconciles the single snapshot after the initial draft list and remains the
+only owner of native generations, edits and Return-to-send. It buffers events only until
+draft storage is ready. Native refuses Return while the page receiver is not ready and
+leaves the text in the field; it does not keep a Return queue.
+
+On touch, opening a sheet captures the current keyboard owner before navigation clears it.
+A tap that closes the sheet restores that owner in the same gesture; Escape or Back leaves
+the keyboard down. A native line paste reads the clipboard asynchronously but keeps the tab
+and window captured before the prompt, so a later tab or focus change cannot retarget it.
 
 - **A terminal tap never changes the owner on touch.** The recognizer (§7.6) cancels
-  the tap's compatibility events, so the browser neither focuses nor blurs anything;
-  the native guard keeps first responder.
+  compatibility events in the browser; native keeps the responder unless the tap is on
+  the cursor row or the row above/below it to open `terminal` from hidden.
 - **Focus effects run synchronously inside `dispatch`, in the event handler's call
   stack.** iOS raises the keyboard only for a focus made during a user gesture. A focus
-  run after a render, a timeout or a microtask chain would leave the keyboard down.
-- **The direct-input element and the terminal surface are mounted once**, outside the
-  routed screens, and hidden rather than unmounted. The element therefore exists when
-  the tap arrives.
+  run after a render, timeout or microtask chain would leave the keyboard down.
+- **The direct-input element and terminal surface are mounted once**, outside the routed
+  screens, and hidden rather than unmounted. The element therefore exists when a tap
+  arrives.
 - **Touch never focuses programmatically** except synchronously inside the tap that
-  asked. In `touch` density a dialog's initial focus is the dialog element or its close
-  button, never a text field. Opening the switcher therefore doesn't raise the
-  keyboard.
-- **Native resting mode.** Whenever the destination or overlay changes, the controller
-  sends native the mode that screen needs. Terminal with no overlay sends `terminal`
-  if `terminal` or `line` held the keyboard there, else `hidden`: WebKit focuses the
-  line field only on a tap, so it comes back as the terminal input. Everything else
-  sends `webText`. Leaving a field changes nothing; only a screen change and the
-  keyboard toggle do.
-- **The owner follows DOM focus on touch.** `terminal` and `line` are set from
-  `focusin` and cleared by `focusout` on their two elements, so Safari's Done and ⌃ ⌄
-  keep the toggle right. If `viewport.keyboard` drops from true to false while one of
-  them still holds focus, the controller blurs it. In native, `keyboard: false` with
-  `hardwareKeyboard: false` sets the owner to `none` (ios-shell.md "System dismissal").
-  Opening an overlay moves focus into it, which lowers the keyboard, and the controller
-  remembers which input held it. On close, native raises it again through the resting
-  mode; the browser refocuses that input synchronously inside the closing tap (a pill,
-  a window row, close or the backdrop), and leaves it down after a close without a tap
-  (back gesture, Escape).
-- **The keyboard toggle** runs inside its tap: with owner `terminal` or `line` it
-  blurs (browser) or sends `hidden` after blurring the line field (native), and the
-  owner becomes `none`; with `none` it focuses the direct-input element (browser) or
-  sends `terminal` (native). Its own `pointerdown` is cancelled so the tap never moves
-  focus first.
+  asked. In touch density a dialog's initial focus is the dialog or its close button,
+  never a text field. Opening the switcher therefore doesn't raise the keyboard.
+- **Native target.** `terminal` and `line` share the native responder. The keyboard toggle
+  selects `terminal` from hidden and closes either active target; a box tap selects
+  `line` and places its caret. Switching targets changes the return label and reloads the
+  same input view without dismissing the keyboard.
+  The app-started native line owner compares the bound draft's text with the last text native
+  reported. It sends `lineSet` on a tab bind or when those texts differ; Return already clears
+  the native field, so send does not echo another line load.
+- **Resting mode.** On Terminal with no overlay, the web asks native for `line` when the
+  app line owner is active, otherwise `terminal` if an input holds the keyboard, else
+  `hidden`. Other destinations and overlays ask for `webText`. Native therefore remains
+  first responder only on Terminal; search, rename, Files and other sheet fields use
+  WebKit normally.
+- **Selection takes priority.** While the selection layer is active, the resting target is
+  `select` even if the native line target owns the keyboard; ending selection restores
+  `line` without changing that owner.
+- **Owner changes.** In browser/PWA, `terminal` and `line` follow DOM focus events, so
+  Safari's Done and ⌃ ⌄ keep the toggle right. In the app, `nativeLineFocus` and
+  `nativeLineBlur` update the web owner when the mirror is tapped or toggle closes it.
+  A viewport keyboard drop blurs the corresponding owner but keeps the draft.
+- **Overlays.** Opening an overlay remembers which input owned the keyboard, moves focus
+  into the dialog, and lowers the keyboard. On a tap that closes it, native raises the
+  held mode again; the browser refocuses the held field synchronously in that tap. A
+  close without a tap (back gesture, Escape) leaves the keyboard down.
 - **A background event never moves focus away from a focused text field.** Background
   events include listings, reconnects and renames.
 
@@ -1274,7 +1312,8 @@ fallback.
 
 The dock (`screens/terminal/dock/`) is the bottom of Terminal whenever `directInput` is
 `owned` or `native`. One web implementation serves the phone browser, the PWA and the
-app; native draws nothing above the keyboard. Its behaviour is the contract's
+app; native draws nothing above the keyboard. The browser/PWA uses an editable textarea;
+the app uses a non-editable web mirror for its native text field. Its behaviour is the contract's
 [Phone dock](../../../../docs/design/client/browser-behaviors.md#phone-dock).
 
 ```text
@@ -1296,15 +1335,22 @@ chip.
 the window part first as in §8.6's tab labels) and the open-tab count from the
 workspace, and opens the switcher overlay. With no tabs it reads "Sessions".
 
-**The line field** is `screens/terminal/dock/LineField.tsx`, built on a styled
-`ui/primitives/LineInput.tsx` (an `<input type="text">`, for lint rule 1) with
-`enterkeyhint="send"`, `autocapitalize="off"`, autocorrect and spellcheck on, and the
-platform's own editing. Every behaviour below lives in `dock/`, not the primitive.
+**The line field** is `screens/terminal/dock/LineField.tsx`. The browser/PWA uses the
+styled `ui/primitives/LineInput.tsx` textarea (raw elements stay in primitives by lint
+rule 1) with `enterkeyhint="send"`, `autocapitalize="off"`, autocomplete/autocorrect and
+spellcheck disabled. The app uses `LineMirror.tsx`; the native `KeyboardInput` owns
+editing, with all autocorrection, capitalization, spelling, smart-punctuation and inline
+prediction traits disabled, using `keyboardType = .default` to keep IMEs and dictation
+available. The app-started `dock/nativeLine.ts` owner applies tab-bound `lineEdit` events
+to the same web-owned draft store; `LineField` renders its native selection,
+caret and marked composition. It chooses the mirror
+from the existing `directInput: native` capability; `Platform` deliberately has no
+environment-name switch. Every send and draft rule below lives in `dock/`, not the primitive.
 
 - **Return** captures `{ tab key, text }`, checks that the tab is live, and sends one
   `paste { req, watch, text, enter: true }`: the daemon runs the Enter in the same tmux
-  group, after the paste and only if it succeeded (daemon-core.md §3.4). The field
-  clears and keeps focus. An empty Return sends `{ key: "Enter" }` alone. With the tab
+  group, after the paste and only if it succeeded (daemon-core.md §3.4). The web clears
+  the draft and keeps the line target active. An empty Return sends `{ key: "Enter" }` alone. With the tab
   not live it keeps the text and says "Not connected"; nothing is queued. It never
   retargets after a tab switch.
 - **Send states** (`drafts/`, keyed by tab id and `req`: `req` counts per host, so the
@@ -1324,10 +1370,17 @@ platform's own editing. Every behaviour below lives in `dock/`, not the primitiv
 - **One line.** A `paste` event whose text holds a line break is cancelled in the field
   and sent to the terminal as one paste, without Enter (§7.5), with a notice. One whose
   `clipboardData.files` holds an image takes the image paste route (§7.5). A single
-  line is inserted for editing, as the platform does.
-- **Armed modifiers.** With ctrl or alt armed, the field's `beforeinput` for the next
-  single character outside composition is cancelled and the chord goes to the
-  terminal. A composition starting or a multi-character insert disarms instead.
+  line is inserted for editing, as the platform does. The box wraps and grows from one
+  to five visual lines, then scrolls inside; Return still sends and never inserts a newline.
+- **Armed modifiers.** The web's `apply()` is the only chord rule. In the browser field,
+  `beforeinput` cancels a chordable single-character insert and sends its chord; an
+  unchordable character or multi-character insert disarms and remains in the line. In the
+  app, native diverts only one grapheme inserted at a collapsed caret. The web sends a
+  chordable character to the terminal, disarms and restores an unchordable character with
+  `lineInsert` at the caret, and lets any other insert shape stay in UIKit after clearing
+  native's armed state; its next `lineEdit` disarms the web state. The key row follows the
+  same `chord()` rule; an unchordable key inserts into the line only while line owns the
+  keyboard, and is never sent bare to tmux. Composition disarms the modifier.
 - **Drafts.** The field shows the active tab's draft and swaps it on a tab switch. Each
   edit saves the draft per tab key, debounced 300 ms and flushed when the page is
   hidden; Return deletes it. At most 64 KiB per draft; the field refuses more and says
@@ -1336,18 +1389,28 @@ platform's own editing. Every behaviour below lives in `dock/`, not the primitiv
   "Too many saved drafts: clear one". A closed tab's draft is kept and returns when
   that window opens again. Clear local data removes all drafts.
 - **Offline.** The field can be edited; Return says "Not connected".
-- **Native.** A touch in the field's rect lends WebKit the first responder
-  (ios-shell.md); the web reports the rect through `input.setLineFieldRect` on every
-  dock layout, and `null` while an overlay covers Terminal.
+- **Native editing.** A tap on the app mirror selects `line` on the same native
+  responder as `terminal`. Tap places the caret; the spacebar trackpad moves it; a
+  long-press menu offers Paste / Select all / Clear, without selection handles. The
+  bridge carries `lineSet { text, caret, tab }` (native returns its generation),
+  `lineEdit { gen, text, tab, selection, marked }`, `lineReturn`, `lineCaret`, `lineInsert`,
+  `lineSelectAll` and armed modifiers.
+  `Boot.focusMode` restores this owner after WebKit content-process restart, and a
+  tab-bound `lineSnapshot` reconciles native's retained text/caret/composition with the
+  draft list. The native buffer is not reloaded from stale storage; the app-started line
+  owner buffers native edits through draft hydration and applies them against native's
+  generation. WebKit remains the
+  editor for sheet and Files fields, whose keyboard chrome stays ordinary.
 
 **Focus cues** follow the focus owner (§6.5), not keyboard geometry. Owner `terminal`:
 xterm's cursor is a solid block (`cursorStyle: "block"` with the terminal focused or,
 natively, drawn as focused) and the field shows its placeholder. Owner `line`: the
 terminal cursor is drawn as a hollow outline (xterm's `cursorInactiveStyle: "outline"`,
 the terminal being unfocused) and the field has the caret. The keyboard's Return key
-follows from the focused element: plain for the terminal input
-(`enterkeyhint` unset; natively `returnKeyType = .default`), the blue send key for the
-field. W2's `term/index.ts` sets both cursor options for every terminal.
+follows from the owner: plain for the terminal input
+(`enterkeyhint` unset; natively `returnKeyType = .default`), Send for the line
+(`enterkeyhint="send"`; natively `returnKeyType = .send`). W2's `term/index.ts` sets both
+cursor options for every terminal.
 
 **The key row** (`screens/terminal/dock/KeyRow.tsx`): one fixed row, esc, ←, ↑, ↓, →, ^R,
 ^C, tab, ctrl, alt, `|`, `~`, `/`, `-`, in a horizontal scroller. The arrows repeat
@@ -1357,8 +1420,8 @@ while held. No row that changes with the pane's program.
   `pointerup` inside the key. Native also gets `haptic("key")` on `pointerdown`.
 - Control keys send `{ key }` to the active tab: `Escape`, `Up`, `Down`, `C-r`, `C-c`,
   `Tab`. ↑ and ↓ repeat while held: 400 ms, then every 33 ms.
-- Character keys insert at the line field's caret when `line` owns the keyboard,
-  else send `{ text }` to the tab.
+- Character keys insert at the line field's caret when `line` owns the keyboard
+  (native uses bridge `lineInsert`), else send `{ text }` to the tab.
 - ctrl and alt toggle an armed state in `touch/modifiers.ts`, shown pressed, applied to
   the next key from any touch source, then cleared. Native gets `haptic("modifier")`.
 - The row is the same with a hardware keyboard attached.
@@ -1618,7 +1681,7 @@ densities, and keyboard-only Playwright walks of Home, the picker, Terminal and 
 | `StatusBand` | a band over the terminal's top edge | reconnecting, limited, failed, with Retry; sized for another terminal, with Fit |
 | `EmptyState`, `Spinner` | | no tabs, no matches, empty folder, loading |
 | `Icon` | inline SVG from one owned set (a Lucide subset, ISC licence), sizes 16, 20 and 24 | everywhere |
-| `LineInput` | `<input type="text">`, styled | the dock's line field, §7.4 |
+| `LineInput` | styled `<textarea>` with one logical line and five-line growth | the browser/PWA dock, §7.4 |
 | `DockButton` | `<button>` that cancels `pointerdown`, so a tap never moves focus | the dock's chip, toggle and keys, §7.4 |
 
 ### 8.3 Token tiers
@@ -1674,7 +1737,7 @@ emitted file, stubs included:
 
 | Asset | Budget | How |
 |---|---|---|
-| Initial JS (app, xterm, WebGL, unicode11) | 190 KB gz | xterm is about 135 KB gz of it; the app's own code stays under 55 KB |
+| Initial JS (app, xterm, WebGL, unicode11) | 193 KB gz | xterm is about 135 KB gz of it; the app's own code stays under 58 KB |
 | Initial CSS | 15 KB gz | |
 | Terminal font, regular and bold | 2 × 120 KB | JetBrains Mono NL subset to Latin, Latin-1, box drawing, block elements and Powerline |
 | Nerd Font symbols | 150 KB | a fallback file subset to the glyph ranges Jimmy's prompt and tmux status line use. It is listed after the core font in `--font-mono`, loaded after first paint, and the renderer clears its glyph atlas once it arrives |
@@ -1684,7 +1747,8 @@ emitted file, stubs included:
 
 W0 measures the subsets and commits the font files together with the script that made
 them, so the build itself needs no Python. A budget is raised only with its measurement
-in the commit.
+in the commit. The initial-JS cap is 193 KB after the one-keyboard mirror measured
+192.3 KB gzipped (2026-10-26); screen splitting remains the way to earn it back.
 
 ### 8.5 Mockup details improved
 
@@ -1863,7 +1927,7 @@ must change, `screens/picker/` (its sheet variant goes), and asks for the
 | **W4 PWA** | `sw/` (including `vite-plugin.ts`), `public/`, `platform/browser/pwa.ts`, `harness/pwa/`, `e2e/pwa/` | Service worker, its build plugin (entry, precache list, manifest link and `theme-color` metas), `updates` and `install`, the Update banner's state, offline Home. The manifest template's content is handed to L2 | Built bundle served by the daemon through Serve, from an enrolled second machine: install in Chromium; offline launch; the multi-window and two-updates gates (§12); no API response in Cache Storage |
 | **P3a phone dock, owned input and switcher** (after W1, W2 and the paste-confirmation lane, §10) | `touch/owned-input.ts`, `touch/modifiers.ts`, `drafts/`, `ui/primitives/LineInput.tsx`, `screens/terminal/dock/`, `screens/switcher/`, `screens/picker/` (taken over from W1), `harness/dock/` (renamed from `harness/draft/`), `e2e/dock/`; the phone toolbar in `TerminalScreen.tsx`, which becomes the dock (its disabled keyboard button goes). W0 hand-offs below | The dock as chosen (one row at rest: tab chip, line field, toggle; the key row above it while the keyboard is up), the line field with drafts and Return, the key row with armed ctrl and alt, the one keyboard toggle, the focus cues; the owned input; the `line` focus owner; the switcher replacing the phone picker sheet and tab row. Built against real tmux, with UI quality as the bar | `drafts/` and `modifiers.ts` unit tests (caps, eviction, revisions, send states by `req`, arming). Playwright WebKit at phone size against a real daemon on scratch tmux 3.4 and 3.7b: Return runs `echo hi` once in zsh and bash and submits a prompt in Claude Code and Codex; a `busy` paste refusal puts the line back and no Enter runs; every key-row key and an armed ctrl+c reach tmux; a multiline paste into the field goes to the terminal unsent; a tab switch swaps drafts; reload restores one; the switcher switches by pill, opens a window from the list, closes a tab, filters, and creates a session. Simulator Safari: the toggle raises and lowers the keyboard from both inputs and a terminal tap changes nothing; the key row appears only with the keyboard; the cursor and Return-key cues follow the owner; tmux size is unchanged with the keyboard up and the prompt on tmux's last row stays above the dock; portrait and landscape. Screenshots of every dock and switcher state, keyboard up and down, reviewed against the mockup. The real-iPhone checklist (§12) queued for Jimmy |
 | **P3b gestures, scroll and selection** (after W2) | `touch/gesture.ts`, `touch/selection.ts`, `screens/terminal/selection/`, `harness/gesture/` | The recognizer (a tap raises the keyboard only on or beside the cursor row), touch scroll with history, wheel translation, tap-to-position, the long-press with its haptic and held drag, word selection with handles and the selection layer, the edit menu (Copy, Paste) | Recognizer unit tests (tap, hold then release, hold then drag, release over a blank cell, scroll, cancel, long-press while streaming). Simulator probes against real tmux: a tap far from the cursor never changes the keyboard; ← and → move the shell cursor and vim's, repeating while held; a long-press selects a word at once, a drag extends it, Copy keeps logical newlines, Paste sends one paste without Enter; vertical swipe in less and vim sends ↑/↓ or wheel events; scroll in a shell, in less and in Claude Code. The selection-versus-click and logical-copy gates (§12) |
-| **W5 native adapter** (P4, after G3) | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v2, native transport, `saveWorkspace`, the draft store bridge, `lineField`, `readPasteboard`, `copy` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap Home search from Terminal with the keyboard up, the line field taken from `terminal` and `hidden`. Then ios-shell.md's device checklist on Jimmy's iPhone |
+| **W5 native adapter** (P4, after G3) | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v5, native transport, `saveWorkspace`, the draft store bridge, native line mirror contract, `readPasteboard`, `copy` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap Home search from Terminal with the keyboard up, and restore both keyboard targets. Then ios-shell.md's device checklist on Jimmy's iPhone |
 
 **How a commit lands.** Coders don't commit (a tech-lead call). For each reviewed change:
 
@@ -1898,8 +1962,12 @@ finished API rather than a request.
 **W0 hand-offs for P3a** (the phone dock replaced the compose design these files were
 written for):
 
+- `platform/types.ts`: the original P3a hand-off proposed `setLineFieldRect` alongside
+  the `Clipboard` interface with `read` (§5.8), `keyboardInset` (§5.4), and `HapticKind`
+  `key` and `modifier`. The settled Bridge v5 removes the rect and adds native line-edit
+  operations; the unrelated compose removals below remain historical hand-offs.
 - `platform/types.ts`: drop `composeResult`, `composeShow`, `DraftStatus`, and the
-  `composeEdit` and `composeInsert` events; add `setLineFieldRect`, the `Clipboard`
+  `composeEdit` and `composeInsert` events.
   interface with `read` (§5.8), `keyboardInset` (§5.4), and `HapticKind` `key` and
   `modifier`. `platform/browser/clipboard.ts` gains `read`; `viewport.ts` reports
   `keyboardInset`.

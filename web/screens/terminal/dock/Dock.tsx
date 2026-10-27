@@ -12,6 +12,7 @@ import { terminalsOf } from "../terminals";
 import { KeyRow } from "./KeyRow";
 import { LineField, type LocalNote } from "./LineField";
 import { lineDraftsOf } from "./lineDrafts";
+import { nativeLineOf } from "./nativeLine";
 import styles from "./Dock.module.css";
 
 /** A line unanswered this long shows "Sending…". */
@@ -45,20 +46,22 @@ function useNote(local: LocalNote | null, tabId: string | null): LocalNote | nul
 export function Dock({ active }: { active: boolean }) {
   const app = useApp();
   const terminals = terminalsOf(app);
+  const nativeLine = nativeLineOf(app);
   const workspace = useAppView((v) => v.workspace);
   const viewport = useAppView((v) => v.viewport);
-  const overlayOpen = useAppView((v) => v.nav.entry.overlay !== null);
   const owner = useStore(app.focus, (s) => s.owner);
 
   const above = useRef<HTMLDivElement>(null);
   const row = useRef<HTMLDivElement>(null);
-  const line = useRef<HTMLInputElement>(null);
+  const line = useRef<HTMLTextAreaElement>(null);
   const [local, setLocal] = useState<LocalNote | null>(null);
 
   const tab = workspace.tabs.find((t) => t.id === workspace.active) ?? null;
+  const native = viewport.directInput === "native";
   const labels = useTabLabels();
   const label = labels.find((l) => l.id === tab?.id);
-  const note = useNote(local, tab?.id ?? null);
+  const nativeNote = useStore(nativeLine, (state) => state.note);
+  const note = useNote(native ? nativeNote : local, tab?.id ?? null);
   const holding = owner !== "none";
   const phone = viewport.layout === "phone";
 
@@ -84,25 +87,57 @@ export function Dock({ active }: { active: boolean }) {
       terminals.setPanArea(Math.max(0, rowTop - covered - terminals.element.getBoundingClientRect().top));
     };
     update();
-    const watch = new ResizeObserver(update);
+    // Defer layout writes until after ResizeObserver delivery. Growing the line changes this
+    // row's height; changing the terminal pan in that same delivery can otherwise trip the
+    // browser's resize-loop guard while both boxes are being laid out.
+    let frame = 0;
+    const scheduleUpdate = (): void => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(update);
+    };
+    const watch = new ResizeObserver(scheduleUpdate);
     watch.observe(strip);
+    watch.observe(resting);
     return () => {
       watch.disconnect();
+      cancelAnimationFrame(frame);
       terminals.setPanArea(null);
     };
   }, [active, viewport.keyboardInset, viewport.visibleHeight, terminals]);
 
-  // Native lends the first responder to a touch inside this rect.
-  useEffect(() => {
-    const field = line.current;
-    app.platform.input.setLineFieldRect(active && !overlayOpen && field ? field.getBoundingClientRect() : null);
-  }, [app, active, overlayOpen, viewport.keyboardInset, viewport.width, phone]);
+  useLayoutEffect(() => {
+    const resting = row.current;
+    if (!phone || !active || !resting) return;
+    const root = document.documentElement;
+    const update = (): void => {
+      const height = `${String(resting.getBoundingClientRect().height)}px`;
+      if (root.style.getPropertyValue("--dock-row-height") !== height) root.style.setProperty("--dock-row-height", height);
+    };
+    update();
+    let frame = 0;
+    const scheduleUpdate = (): void => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(update);
+    };
+    const watch = new ResizeObserver(scheduleUpdate);
+    watch.observe(resting);
+    return () => {
+      watch.disconnect();
+      cancelAnimationFrame(frame);
+      root.style.removeProperty("--dock-row-height");
+    };
+  }, [active, phone]);
 
-  // Insert at the caret when the line field holds the keyboard; the field's own input handler saves the draft.
+  // Keep key-row characters in the same editing path on both platforms.
   const insertIntoLine = (text: string): boolean => {
+    if (owner !== "line") return false;
+    if (viewport.directInput === "native") {
+      app.platform.input.insertLine(text);
+      return true;
+    }
     const field = line.current;
-    if (owner !== "line" || !field) return false;
-    field.setRangeText(text, field.selectionStart ?? field.value.length, field.selectionEnd ?? field.value.length, "end");
+    if (!field) return false;
+    field.setRangeText(text, field.selectionStart, field.selectionEnd, "end");
     field.dispatchEvent(new Event("input", { bubbles: true }));
     return true;
   };

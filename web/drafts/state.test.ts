@@ -95,6 +95,7 @@ describe("writes and revisions", () => {
     const state = run(initialDrafts, edit(1, "typed"), { type: "listed", records: [{ key: key(1), text: "stored", revision: 2, editedAt: 0 }] });
     expect(draftText(state, tabId(key(1)))).toBe("typed");
     expect(state.drafts[tabId(key(1))]).toMatchObject({ revision: 2, base: 2 });
+    expect(state.ready).toBe(true);
   });
 });
 

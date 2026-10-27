@@ -6,19 +6,19 @@ import UIKit
 import WebKit
 
 @MainActor
-final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply, TerminalInputDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply, KeyboardInputDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     private let model: TetherAppModel
     private let schemeHandler: AppSchemeHandler
     private let haptics = Haptics()
     private let uploader = Uploader()
-    private let terminalInput = TerminalInputView(frame: .zero)
+    private let terminalInput = KeyboardInput(frame: .zero)
     private var focus: FocusController!
-    private var lineFieldLender: LineFieldLender!
     private var webView: WKWebView!
     private var webViewConstraints: [NSLayoutConstraint] = []
     private var bottomConstraint: NSLayoutConstraint!
     private var pendingInput: [InputEvent] = []
     private var inputFlushQueued = false
+    private var lineReceiverReady = false
     private var activeTab: TabKey?
     private var lastViewport: Viewport?
     private var pendingPick: PendingPick?
@@ -42,7 +42,6 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         terminalInput.output = self
         view.addSubview(terminalInput)
         focus = FocusController(input: terminalInput)
-        lineFieldLender = LineFieldLender(webView: webView, focus: focus)
 
         terminalInput.translatesAutoresizingMaskIntoConstraints = false
         bottomConstraint = webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
@@ -81,10 +80,10 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         send(type, fields: fields, completion: nil)
     }
 
-    private func send(_ type: BridgeMessageType, fields: [String: JSONValue], completion: (() -> Void)?) {
+    private func send(_ type: BridgeMessageType, fields: [String: JSONValue], completion: ((Bool) -> Void)?) {
         guard let message = try? BridgeMessage(type: type, fields: fields),
               let object = try? jsonObject(message) else {
-            completion?()
+            completion?(false)
             return
         }
         webView.callAsyncJavaScript(
@@ -92,13 +91,16 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
             arguments: ["message": object],
             in: nil,
             in: .page,
-            completionHandler: { _ in completion?() }
+            completionHandler: { result in
+                if case .success = result { completion?(true) }
+                else { completion?(false) }
+            }
         )
     }
 
     func sendLifecycle(_ lifecycle: Lifecycle, completion: @escaping () -> Void) {
         do {
-            send(.lifecycle, fields: ["lifecycle": try .encode(lifecycle)], completion: completion)
+            send(.lifecycle, fields: ["lifecycle": try .encode(lifecycle)]) { _ in completion() }
         } catch {
             completion()
             assertionFailure("Native lifecycle is not JSON encodable: \(error)")
@@ -135,14 +137,36 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         }
     }
 
-    func terminalInput(_ event: InputEvent) {
+    func keyboardInput(_ event: InputEvent) {
         pendingInput.append(event)
         guard !inputFlushQueued else { return }
         inputFlushQueued = true
         DispatchQueue.main.async { [weak self] in self?.flushInput() }
     }
 
-    func terminalInputWarning() { haptics.send("warning") }
+    func keyboardInputWarning() { haptics.send("warning") }
+
+    func keyboardInputLineEdit(gen: Int, text: String, tab: TabKey, selection: NSRange, marked: NSRange?) {
+        guard focus.mode == .line, !focus.covered, !model.isLocked else { return }
+        flushInput()
+        sendLineEdit(gen: gen, text: text, tab: tab, selection: selection, marked: marked)
+    }
+
+    func keyboardInputLineReturn(gen: Int, text: String, tab: TabKey) -> Bool {
+        guard lineReceiverReady, focus.mode == .line, !focus.covered, !model.isLocked else { return false }
+        flushInput()
+        do {
+            send(.lineReturn, fields: [
+                "gen": .number(Double(gen)),
+                "text": .string(text),
+                "tab": try .encode(tab),
+            ])
+            return true
+        } catch {
+            assertionFailure("Native line return target is not JSON encodable: \(error)")
+            return false
+        }
+    }
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -188,16 +212,22 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         return nil
     }
 
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { loadUI() }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { loadUI(fragment: webView.url?.fragment) }
 
-    private func loadUI() {
-        guard let url = URL(string: "tether-app://ui/index.html") else { return }
+    private func loadUI(fragment: String? = nil) {
+        lineReceiverReady = false
+        var components = URLComponents()
+        components.scheme = "tether-app"
+        components.host = "ui"
+        components.path = "/index.html"
+        components.fragment = fragment
+        guard let url = components.url else { return }
         webView.load(URLRequest(url: url))
     }
 
     private func recreateWebView() {
         let previous = webView!
-        lineFieldLender.setRect(nil)
+        let fragment = previous.url?.fragment
         NSLayoutConstraint.deactivate(webViewConstraints)
         previous.configuration.userContentController.removeScriptMessageHandler(forName: "tether", contentWorld: .page)
         previous.navigationDelegate = nil
@@ -207,8 +237,7 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         bottomConstraint = webView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: bottomConstraint.constant)
         webViewConstraints = constraints(for: webView, bottom: bottomConstraint)
         NSLayoutConstraint.activate(webViewConstraints)
-        lineFieldLender = LineFieldLender(webView: webView, focus: focus)
-        loadUI()
+        loadUI(fragment: fragment)
     }
 
     private func makeWebView() -> WKWebView {
@@ -229,9 +258,6 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         result.allowsBackForwardNavigationGestures = false
         #if DEBUG
         result.isInspectable = true
-        if !WebKitAccessoryBar.hide(in: result) { print("tether: WebKit accessory-bar suppression failed") }
-        #else
-        WebKitAccessoryBar.hide(in: result)
         #endif
         view.addSubview(result)
         return result
@@ -250,8 +276,11 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         do {
             switch request.type {
             case .ready:
-                activeTab = nil
-                reply(try jsonObject(model.boot(viewport: viewport())), nil)
+                let focusMode = focus.modeForWeb
+                let lineSnapshot = focusMode == .line ? terminalInput.lineSnapshot() : nil
+                let boot = try jsonObject(model.boot(viewport: viewport(), focusMode: focusMode, lineSnapshot: lineSnapshot))
+                lineReceiverReady = true
+                reply(boot, nil)
             case .socket:
                 let host: String = try request.field("host")
                 reply(try jsonObject(model.socket(for: host)), nil)
@@ -261,6 +290,7 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
                 model.rejectedToken(for: host, token: token)
                 reply(NSNull(), nil)
             case .recreateWebView:
+                lineReceiverReady = false
                 reply(NSNull(), nil)
                 DispatchQueue.main.async { [weak self] in self?.recreateWebView() }
             case .saveWorkspace:
@@ -269,10 +299,7 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
             case .focus:
                 let mode: String = try request.field("mode")
                 guard let next = FocusController.Mode(rawValue: mode) else { throw BridgeError.malformed }
-                if next == .webText, focus.covered {
-                    focus.set(next, fromLineField: lineFieldLender.confirmed())
-                } else if next == .webText, !lineFieldLender.confirmed() { focus.set(next) }
-                else if next != .webText { focus.set(next) }
+                focus.set(next)
                 reply(NSNull(), nil)
             case .activeTab:
                 let tab: JSONValue = try request.field("tab")
@@ -282,10 +309,30 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
             case .manageHosts:
                 model.showingServers = true
                 reply(NSNull(), nil)
-            case .lineField:
-                let value: JSONValue = try request.field("rect")
-                if case .null = value { lineFieldLender.setRect(nil) }
-                else { lineFieldLender.setRect(try value.decode(Rect.self)) }
+            case .lineSet:
+                let text: String = try request.field("text")
+                let caret: Int = try request.field("caret")
+                let tab: TabKey = try request.field("tab")
+                let snapshot = terminalInput.setLine(text: text, caret: caret, tab: tab)
+                reply(try jsonObject(snapshot.gen), nil)
+            case .lineCaret:
+                terminalInput.setLineCaret(try request.field("index"))
+                reply(NSNull(), nil)
+            case .lineInsert:
+                let text: String = try request.field("text")
+                guard !text.contains(where: { $0.isNewline }) else { throw BridgeError.malformed }
+                terminalInput.insertLine(text)
+                reply(NSNull(), nil)
+            case .lineSelectAll:
+                terminalInput.selectAllLine()
+                reply(NSNull(), nil)
+            case .modifiers:
+                let value: JSONValue = try request.field("armed")
+                let armed: String?
+                if case .null = value { armed = nil }
+                else if case .string(let name) = value, name == "ctrl" || name == "alt" { armed = name }
+                else { throw BridgeError.malformed }
+                terminalInput.setArmedModifier(armed)
                 reply(NSNull(), nil)
             case .draftGet:
                 reply(try jsonObject(model.drafts.get(request.field("key"))), nil)
@@ -325,7 +372,7 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
                 reply(NSNull(), nil)
             case .ack:
                 reply(NSNull(), nil)
-            case .input, .viewport, .lifecycle, .hosts, .upload:
+            case .input, .lineEdit, .lineReturn, .viewport, .lifecycle, .hosts, .upload:
                 throw BridgeError.malformed
             }
         } catch {
@@ -452,6 +499,23 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         pendingInput.removeAll(keepingCapacity: true)
         guard !events.isEmpty, !model.isLocked, !focus.covered, let activeTab else { return }
         send(.input(tab: activeTab, events: events))
+    }
+
+    private func sendLineEdit(gen: Int, text: String, tab: TabKey, selection: NSRange, marked: NSRange?) {
+        let range = { (value: NSRange) in
+            JSONValue.object(["start": .number(Double(value.location)), "end": .number(Double(NSMaxRange(value)))])
+        }
+        do {
+            send(.lineEdit, fields: [
+                "gen": .number(Double(gen)),
+                "text": .string(text),
+                "tab": try .encode(tab),
+                "selection": range(selection),
+                "marked": marked.map(range) ?? .null,
+            ])
+        } catch {
+            assertionFailure("Native line edit target is not JSON encodable: \(error)")
+        }
     }
 
     private func publishViewportIfChanged(force: Bool = false) {

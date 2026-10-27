@@ -230,7 +230,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     drafts: new Map(),
     installed: false,
 
-    boot: (): Promise<BootResult> => Promise.resolve({ hosts, workspace: options.workspace ?? null, viewport, lifecycle }),
+    boot: (): Promise<BootResult> => Promise.resolve({ hosts, workspace: options.workspace ?? null, viewport, lifecycle, focusMode: null, lineSnapshot: null }),
     subscribe(listener) {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
@@ -277,7 +277,11 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     },
     input: {
       setFocus: (mode) => { platform.focusRequests.push(mode); },
-      setLineFieldRect: () => undefined,
+      setLine: () => Promise.resolve(0),
+      setLineCaret: () => undefined,
+      insertLine: () => undefined,
+      selectAllLine: () => undefined,
+      setArmedModifier: () => undefined,
       setActiveTab: () => {},
     },
     storage: {

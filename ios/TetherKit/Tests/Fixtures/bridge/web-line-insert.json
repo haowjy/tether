@@ -1,0 +1,8 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "lineInsert",
+    "text": "λ"
+  },
+  "reply": null
+}

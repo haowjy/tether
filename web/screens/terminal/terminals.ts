@@ -148,7 +148,15 @@ export class Terminals extends Store<TerminalsView> {
       // Native's responder: only the tab on screen still takes input.
       if (event.type !== "input") return;
       const id = tabId(event.tab);
-      if (id === this.shownTerminalTab()) this.drivers.get(id)?.input(event.events);
+      if (id !== this.shownTerminalTab()) return;
+      if (this.viewport.directInput === "native") {
+        const line = this.app.focus.snapshot.owner === "line";
+        for (const input of event.events) {
+          if (line && "text" in input) {
+            if (!this.modifiers.chord([input])) this.app.platform.input.insertLine(input.text);
+          } else this.modifiers.input([input]);
+        }
+      } else this.drivers.get(id)?.input(event.events);
     });
     this.sizer.setViewport(this.viewport);
     this.sync();

@@ -1,0 +1,11 @@
+{
+  "direction": "nativeToWeb",
+  "message": {
+    "type": "lineEdit",
+    "gen": 7,
+    "text": "pinyin",
+    "tab": { "host": "host-01", "session": { "server": "main:42-7", "session": 2 } },
+    "selection": { "start": 6, "end": 6 },
+    "marked": { "start": 0, "end": 6 }
+  }
+}

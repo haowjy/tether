@@ -20,10 +20,14 @@ version section on release.
 - A setup link opened in Safari on the phone hands its host and code to the tether app
   before anything else happens in the browser, and the app enrols the phone: one code
   admits the app, Safari and the PWA on that phone. Add server waits for Next and Add.
-- The phone's line field no longer offers autocorrection or the predictive strip: a
-  line is a command or a prompt, and the strip took the row above the keyboard.
-- Sending a line clears the field and keeps it clear. iOS delivered the Return key's
-  own edit after the send, which put the sent line back in the field.
+- The phone now has one keyboard: the dock toggle types directly to tmux, while tapping
+  the line box edits the draft through the same native responder. Predictions are off for
+  the app's line; Return is Send for the line and Return for the terminal. The box grows and
+  wraps to five lines before scrolling inside, while remaining one logical line.
+- An armed ctrl or alt sends a chordable single-character line insert to tmux; punctuation
+  and multi-character inserts stay in the line instead of becoming bare terminal input.
+- A native line restored after a refused send or a remote draft change now stays intact
+  as you keep typing.
 - The app no longer leaves a keyboard-height gap under the dock: the native shell moves
   its web view above the keyboard, so it reports no covered page and the web stops
   rising by the keyboard a second time. Sheets and toasts sat in the same gap.
@@ -36,7 +40,7 @@ version section on release.
   Fit takes the window at tether's size, even when the laptop is smaller. The sizing
   band shows differences in either direction.
 - Update the daemon and clients together: this build requires daemon protocol 2 and
-  native bridge 3. Old window-based tabs, drafts and saved workspace are discarded
+  native bridge 5. Old window-based tabs, drafts and saved workspace are discarded
   on first launch; enrolled servers and credentials remain.
 - Files finds folders by typing a path: one field at the top completes the folders as you type
   (ghost text, tap a row or press `/`, Tab or → to accept, Go to open), without a request per

@@ -3,7 +3,7 @@ import XCTest
 @testable import TetherKit
 
 final class BridgeFixtureTests: XCTestCase {
-    func testEveryV2MessageRoundTripsThroughTheSharedFixtures() throws {
+    func testEveryBridgeMessageRoundTripsThroughTheSharedFixtures() throws {
         let directory = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fixtures/bridge"))
         let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "json" }
@@ -26,6 +26,11 @@ final class BridgeFixtureTests: XCTestCase {
                 if message.type == .ready {
                     let boot = try reply.decode(Boot.self)
                     XCTAssertEqual(boot.bridgeVersion, BridgeContract.version)
+                    XCTAssertEqual(boot.focusMode, .line)
+                    XCTAssertEqual(boot.lineSnapshot?.text, "echo hi")
+                    XCTAssertEqual(boot.lineSnapshot?.selection, TextRange(start: 7, end: 7))
+                    XCTAssertNil(boot.lineSnapshot?.marked)
+                    XCTAssertEqual(try JSONValue.encode(boot), reply)
                 } else if message.type == .socket {
                     XCTAssertEqual(
                         try reply.decode(SocketReply.self),

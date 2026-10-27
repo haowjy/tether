@@ -6,14 +6,15 @@ public enum BridgeDirection: String, Codable, Sendable {
 }
 
 public enum BridgeMessageType: String, CaseIterable, Codable, Sendable {
-    case ready, socket, hostRejected, recreateWebView, saveWorkspace, focus, activeTab, lineField
+    case ready, socket, hostRejected, recreateWebView, saveWorkspace, focus, activeTab
+    case lineSet, lineCaret, lineInsert, lineSelectAll, modifiers, lineEdit, lineReturn
     case draftGet, draftPut, draftDelete, draftList, copy, readPasteboard, haptic
     case pickMedia, playVideo, manageHosts, openURL, ack
     case input, viewport, lifecycle, hosts, upload
 
     public var direction: BridgeDirection {
         switch self {
-        case .input, .viewport, .lifecycle, .hosts, .upload: .nativeToWeb
+        case .input, .lineEdit, .lineReturn, .viewport, .lifecycle, .hosts, .upload: .nativeToWeb
         default: .webToNative
         }
     }
@@ -27,7 +28,13 @@ public enum BridgeMessageType: String, CaseIterable, Codable, Sendable {
         case .saveWorkspace: ["workspace"]
         case .focus: ["mode"]
         case .activeTab: ["tab"]
-        case .lineField: ["rect"]
+        case .lineSet: ["text", "caret", "tab"]
+        case .lineCaret: ["index"]
+        case .lineInsert: ["text"]
+        case .lineSelectAll: []
+        case .modifiers: ["armed"]
+        case .lineEdit: ["gen", "text", "tab", "selection", "marked"]
+        case .lineReturn: ["gen", "text", "tab"]
         case .draftGet, .draftDelete: ["key"]
         case .readPasteboard: ["tab", "id"]
         case .draftPut: ["record", "baseRevision"]

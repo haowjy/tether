@@ -1,0 +1,15 @@
+{
+  "direction": "nativeToWeb",
+  "message": {
+    "type": "lineReturn",
+    "gen": 7,
+    "text": "echo hi",
+    "tab": {
+      "host": "host-01",
+      "session": {
+        "server": "main:42-7",
+        "session": 2
+      }
+    }
+  }
+}

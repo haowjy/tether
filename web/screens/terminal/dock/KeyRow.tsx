@@ -2,9 +2,9 @@
 // lacks, in a horizontal scroller. A tap never moves focus or lowers the keyboard (DockButton),
 // and a key acts on `pointerup` inside it. Control keys go to the
 // terminal; character keys go where typing goes; ctrl and alt arm the next key.
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import type { InputEvent } from "../../../platform/types";
-import { useApp } from "../../../app/context";
+import { useApp, useAppView } from "../../../app/context";
 import { DockButton } from "../../../ui/primitives/DockButton";
 import { useStore } from "../../../ui/store";
 import { terminalsOf } from "../terminals";
@@ -47,13 +47,21 @@ export function KeyRow({ insertIntoLine }: KeyRowProps) {
   const terminals = terminalsOf(app);
   const { modifiers } = terminals;
   const armed = useStore(modifiers, (s) => s.armed);
+  const owner = useStore(app.focus, (s) => s.owner);
+  const native = useAppView((view) => view.viewport.directInput === "native");
+
+  useLayoutEffect(() => {
+    if (native && owner === "line") app.platform.input.setArmedModifier(armed);
+  }, [app, armed, native, owner]);
 
   const send = (spec: Spec): void => {
     if ("modifier" in spec) {
       modifiers.toggle(spec.modifier);
     } else if ("text" in spec) {
-      // An armed modifier takes the character to the terminal even from the line field.
-      if (!modifiers.chord(spec.text) && !insertIntoLine(spec.text)) modifiers.input([{ text: spec.text } satisfies InputEvent]);
+      const event = [{ text: spec.text } satisfies InputEvent];
+      // A chord goes to tmux; otherwise (disarmed by `chord`) the character goes where typing goes.
+      if (modifiers.chord(event)) return;
+      if (!insertIntoLine(spec.text)) modifiers.input(event);
     } else {
       modifiers.input([{ key: spec.key }]);
     }

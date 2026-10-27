@@ -334,10 +334,11 @@ The [client interaction contract](client/browser-behaviors.md) and
 clients. Desktop has a Home/Terminal/Files icon rail and top terminal tabs, without a
 back arrow. Mobile Home has Sessions/Files navigation; on touch, Terminal is
 full-bleed above a dock that is always visible. At rest it is one row: a tab chip that
-opens the session switcher (open tabs, every session, search and creation), a one-line
-text field, and the keyboard toggle. While the keyboard is up, a key row sits above
-that row, and the dock rides on top of the keyboard. The phone browser, the PWA and the native
-app share the dock, drawn by the web
+opens the session switcher (open tabs, every session, search and creation), a line
+field that grows from one to five visual lines and then scrolls inside, and the keyboard
+toggle. The field remains one logical line. While the keyboard is up, a key row sits
+above that row, and the dock rides on top of the keyboard. The phone browser, the PWA and
+the native app share the dock, drawn by the web
 ([Phone dock](client/browser-behaviors.md#phone-dock)).
 
 Use actual tmux names, typography and color, not dot markers or dot separators.
@@ -358,30 +359,39 @@ are respected.
 On touch, the dock's keyboard toggle is the only tether control that opens and closes
 the on-screen keyboard. It stays visible in either state: with the keyboard down it
 raises it for the terminal input, and with either input holding the keyboard it lowers
-it. A tap on the dock's line field brings the keyboard up for the field, as any text
-field does. A tap on the terminal never lowers the keyboard. With the keyboard down, a
+it. In the app, one native `UITextField` owns the keyboard for both targets: the toggle
+selects `terminal`, where keys go to tmux; tapping the dock box selects `line`, where keys
+edit the draft. The browser and PWA use their own textarea editor for the line. A tap on
+the terminal never lowers the keyboard. With the keyboard down, a
 tap on the cursor's row or the row directly above or below it raises it for the terminal
 input, as the toggle does (not while scrolled back into history, where the cursor is off
 screen). Taps elsewhere keep their meaning: with app mouse mode on, a tap is sent as a
 click (near the cursor it also raises the keyboard); without it, a tap does nothing,
 except that OSC 133 prompt-row cursor placement may move the cursor while the terminal
 input already has the keyboard. Scroll, selection, tab changes and reconnects leave the keyboard as it is.
-Opening a sheet lowers it; the native app raises it again when the sheet closes, as
-after any interruption, and the browser leaves it down. Desktop
+Opening a sheet lowers it; a tap that closes it restores the held owner in that tap
+(native raises the same responder, and the browser refocuses its input). Escape or Back
+leaves the keyboard down. An interruption restores the native target, including `line`.
+Desktop
 click-to-focus is unchanged. The native mechanics are in
 [ios-shell.md](ios-shell.md#keyboard), the touch rules in
 [terminal interaction](client/terminal-interaction-design.md).
 
 ### Autocorrect and text input
 
-- The terminal input never gets autocorrect, auto-capitalization, smart punctuation or
+- The terminal target never gets autocorrect, auto-capitalization, smart punctuation or
   predictions: keystrokes go as typed, so there is no text for iOS to correct after
-  it's sent. In the app it is a bare `UIKeyInput`; in the browser, the owned input
-  with those features off.
-- Dictation, CJK input and IME belong to the dock's line field, with
-  auto-capitalization, autocorrection and predictions off: a line is a command or a
-  prompt for a shell or an agent, not prose to correct. Return sends its line as one
-  paste with Enter after it, in one tmux command group.
+  it's sent. The app's hidden `KeyboardInput: UITextField` disables all prediction and
+  smart-edit traits in both targets and uses the locale's default keyboard layout so
+  IMEs and dictation remain available; in `terminal` it forwards committed text directly.
+- The line target uses that same native field in the app, with autocorrection,
+  autocapitalization, spell checking, smart punctuation and inline prediction off. The
+  web draws a non-editable mirror there; the browser/PWA keeps its textarea with
+  autocomplete, autocorrect, spellcheck and capitalization off, though Safari may still
+  show its system prediction strip. Native marked text, dictation, the spacebar caret
+  trackpad and selection are mirrored to the app's box. Return is Send in `line` and
+  Return in `terminal`; sending a line uses the existing paste-and-Enter path, while a
+  paste with line breaks goes to the terminal as one paste without Enter.
 
 ### Suggestion strip
 
@@ -692,7 +702,7 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
     browser/      index.ts assembles and boots the Platform; transport.ts, viewport.ts,
                   lifecycle.ts, storage.ts, uploads.ts, clipboard.ts, links.ts,
                   restart.ts, pwa.ts (updates and install)
-    native/       bridge v3 and adapter for the Swift shell
+    native/       bridge v4 and adapter for the Swift shell
     test/         in-memory Platform for vitest and the Playwright harness
   proto/          generated wire types, binary frames, HostLink and session identity
   net/            host.ts, http.ts, hosts.ts (registry), admission.ts (pure)
