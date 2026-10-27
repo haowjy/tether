@@ -72,8 +72,8 @@ top row (⌂, tabs, +, server), + opens a popover; no rail.
   `daemon-core.md` when building. `docs/running.md` gets the Claude Code
   `"preferredNotifChannel": "terminal_bell"` note when the bell ships (Jimmy asked for it
   in tether's docs).
-- **Browser multi-server:** the browser/PWA is bound to its page origin, but Home shows
-  several servers and Add server. Needs an origin/auth design before the browser gets a
+- **Browser multi-server:** several servers are now a product rule (`5a741ae`), but the
+  browser/PWA is bound to its page origin while Home shows several servers and Add server. Needs an origin/auth design before the browser gets a
   multi-server Home (browser-behaviors.md "Product boundaries"). The app already has a
   host registry.
 - **Smaller open details in the specs:** list vs 2-column grid for sessions (Jimmy
@@ -85,6 +85,10 @@ top row (⌂, tabs, +, server), + opens a popover; no rail.
   (`ios/AGENTS.md`); Jimmy runs the device checklist on his iPhone.
 
 ## What the tech lead needs to do
+
+Jimmy, on scope: "this is a lot of reworking btw". Plan it in shippable slices, each
+leaving the app usable, rather than one big switch.
+
 
 - **Objective:** plan and build the redesign across web (shared by Safari/PWA and the
   app), the iOS shell (native input target routing, appearance setting, Face ID relock
@@ -103,7 +107,8 @@ top row (⌂, tabs, +, server), + opens a popover; no rail.
   the two dock screenshots from issues 2-7 were not saved. Capture the current web UI in
   the browser before replacing it if comparisons will matter.
 - **Constraints:** tmux is the source of truth and never depends on tether; network bytes
-  are precious; light on the host; tmux 3.4 and 3.7b must work; MSRV 1.85; pnpm only in
+  are precious; light on the host (the four invariants now open `plan.md`); test on tmux
+  3.4 and 3.8 (3.8 fixtures still to record, `31d116f`); MSRV 1.85; pnpm only in
   `web/`; CHANGELOG bullet per user-visible change; keep `docs/design/` accurate in the
   same commit as code.
 - **Skills:** `/dev-workflow`, `/ui-implementation` for the web screens, `/probe` and
