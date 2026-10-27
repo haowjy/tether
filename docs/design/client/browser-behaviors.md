@@ -155,6 +155,21 @@ half-height over current tab             full-height from Home
   device last showed that tab; mechanism and coverage limits are in
   [plan.md](../plan.md) (Bell attention). The current-tab button
   can surface attention from another tab. It is not a connection-status indicator.
+  - **Seen is per device.** The device keeps, per session, the bell mark it last showed
+    (the `mark` in the `sessions` listing and the `bell` message, daemon-core.md §5.3),
+    and a tab shows the dot while its session's mark differs from that. The tab on
+    screen counts as shown: while a tab is the active tab on a visible page, an
+    arriving mark is recorded as seen at once and no dot appears for it; a hidden page
+    or a backgrounded app shows nothing, so the tab is not on screen and the dot
+    appears. A tab that becomes the active tab records the current mark.
+  - **A session never seen yet** (first listing) has no dot: the first mark a device
+    learns is its baseline.
+  - **Not tracked, in words, never a silent dot-free tab.** When the listing or a
+    `bell` message says `covered: false` for a session, its row says "tmux settings hide
+    bells in this session". When the `bell` message carries `available: false` for the
+    server (the daemon cannot read tmux's bell state), the server's card and the
+    sessions sheet say "Bell tracking unavailable on this host". A `listSessions` that fails with a tmux error (not "no server") says the same. Both are plain text
+    lines, not dots, and clear when a later message or listing says otherwise.
 - New session prompts for an optional name and absolute start directory; blank uses
   tmux's defaults. Cancellation is harmless and server validation is authoritative.
   Open its tab from the next listing containing it; after 5 seconds say when it was created
@@ -362,7 +377,7 @@ the initial build.
 
 ## Visual copy rule
 
-Do not use middle-dot separators in app chrome, labels, headings, or descriptive copy. Separate metadata with layout/spacing or write a short phrase. The bell attention dot is distinct from connection status, which uses text for reconnect/error states and accessible labels; its mechanism is pending probe.
+Do not use middle-dot separators in app chrome, labels, headings, or descriptive copy. Separate metadata with layout/spacing or write a short phrase. The bell attention dot is distinct from connection status, which uses text for reconnect/error states and accessible labels; its mechanism is in plan.md (Bell attention).
 
 ## Text clipboard behavior
 

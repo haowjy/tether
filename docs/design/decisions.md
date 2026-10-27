@@ -3857,3 +3857,100 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
     (`visibility:hidden`), which sizes it against the wrong box.
   - Relock is a platform capability (`setRelock`), not a value `setPreference` accepts; `Choice` is a
     `role="group"` of `aria-pressed` buttons (each its own tab stop) and no longer clips its focus ring.
+
+## Bell attention in the daemon and protocol
+
+- **Decided:** 2026-10-27, slice 7 design (spec: [daemon-core.md §4.8](daemon-core.md#48-bell-attention), §3.3, §5.3).
+  Probes on isolated tmux 3.4 and 3.8 servers; measurements are in the spec.
+- **A fixed hook index (9100), not `set-hook -ga`.** `-a` takes the first free index,
+  so tether would search `show-hooks` for its own entry to find, update or remove it, and
+  could not tell it from a user's. A fixed index makes install idempotent, two daemons on
+  one server write the same entry, a crashed daemon's stale entry is overwritten, and
+  "ours" is one indexed read. Remove is one guarded `if-shell -F` command list (unset
+  only while the element still starts with tether's text), so it never removes a user's
+  entry. This replaces `-ga` in the entry "Bell attention: BEL in the stream, plus one
+  runtime alert-bell hook". Rejected: `-ga` with a content search (races between the
+  read and the unset, and a stale duplicate per crash); a per-daemon option name and
+  pid-liveness cleanup (more state to detect a dead owner than the entry is worth);
+  an unguarded install (it clobbers a user's entry; see "Install is guarded" below).
+- **The marker is a per-session counter**, `set-option -F @tether-bell
+  "#{e|+:#{?#{@tether-bell},#{@tether-bell},0},1}"`. Exact for bells within one second,
+  survives the daemon not running, needs no clock. Rejected: a timestamp (two bells in a
+  second look like one; format clocks are one-second), a boolean (needs the daemon to
+  clear it, which a crashed or absent daemon can't).
+- **Coverage is reported, not assumed.** The listing also asks tmux, per window,
+  whether the global entry resolves, `monitor-bell` is on and `bell-action` is `any`;
+  that is `covered`. A session that fails the test shows as "not tracked", never as
+  quiet. `bell-action current` / `other` count as uncovered rather than partial.
+  Rejected: reporting nothing and documenting the limits (a user with `monitor-bell off`
+  would see a dead feature and no reason).
+- **Hook only: the daemon does not scan the stream for BEL.** Jimmy, 2026-10-27, "Hook
+  only". This changes the earlier entry ("Bell attention: BEL in the stream, plus one
+  runtime alert-bell hook") and plan.md's "for the tab on screen the daemon finds BEL in
+  the pane output". The tab on screen counts as seen on that device, so a stream bell
+  could never raise a dot for the viewing device, and it served other devices only for
+  the one watched pane of an uncovered session. Removed with it: the VT string tracker
+  (`BellScan`, `Event::Bell`, hub bumps, coverage-dependent dedupe, a one-per-second
+  `bell` spacing timer). Rejected: keep the stream path for uncovered sessions (a state
+  machine in `tmux::Session` and three hub rules for a sliver of cases); a local signal
+  from xterm.js's `onBell` (free on the wire, but it would put a dot on a tab the user is
+  looking at). The client treats the on-screen tab as seen
+  ([browser-behaviors.md](client/browser-behaviors.md)).
+- **Listing lines are records by construction.** The window name passes through `#{s/<LF>/\\n/:…}` and the user-writable `@tether-bell` through `#{e|+:…,0}`, so no field holds a raw line break and every line is one window record; a line that doesn't parse is a bad reply, not skipped. Rejected: length framing with `#{n:window_name}` (it counts stored bytes, while 3.4 escapes control characters only on output, so a length-framed parser loses sync). Probed on 3.4 and 3.8 (re-check p364).
+- **The bell poll is the existing `List` one-shot** (review p362), with the session's
+  `@tether-bell`, and a per-window coverage test in each window line, placed before the
+  names. Measured 5.2 ms wall, 1.0 ms server CPU, 2351 bytes at 60 windows against
+  5.1 ms, 0.7 ms and 1811 bytes for the current listing. It deletes the separate
+  `Markers` one-shot, `Reply::Bells` and marker lines, and takes the server-instance and
+  `NoServer` handling `listed` already has. A user `list` during a poll joins it (the
+  connect-time `list` otherwise collides with the poll started by the same connection),
+  and every listing answer diffs against one baseline and broadcasts, so a device's
+  listing returning before the first poll answer is never behind. Coverage is per window
+  (`monitor-bell` of a non-current window was missed when read per session). Rejected:
+  a separate `list-sessions` marker command (a second path, a second parser, `busy`
+  collisions).
+- **Install is guarded and empty-only, at the head of every `List`.** One tmux command
+  list, `if-shell -F '#{==:#{alert-bell[9100]},}' "set-hook -g …"`, verified on 3.4 and
+  3.8 (the earlier claim that install can't carry a guard was wrong: the hook text nests
+  with escaped double quotes). Steady state writes nothing, a missing entry is back within
+  one poll, a foreign entry is never overwritten. Hub start runs the empty-or-ours form
+  once, to rewrite an older build's entry. Rejected: read the state, then write (a
+  `HookState` and a gap); an unguarded install at hub start (it overwrote a user's entry
+  at 9100).
+- **Stated limits** (plan.md "Coverage limits"): bells before the first device connects
+  after a tmux start are lost; with two daemons on one server the first to stop removes
+  the shared entry and the survivor reinstalls at its next listing. No cheap fix exists:
+  tether has no contact with tmux while no device is connected.
+- **Poll failure is server-level.** One `bell { available: false }`; per-session `covered`
+  is tmux configuration only, so the client says "Bell tracking unavailable on this host"
+  and "tmux settings hide bells in this session" separately.
+- **Polling is the 5 s listing, while a device is connected**, about 0.15% of one core
+  at most (spawn-dominated; the listing's bell fields add 0.6 ms of server CPU). Worst-case latency 5 s (average 2.5 s);
+  2 s would cost 0.4% for a gain a phone alert doesn't need. It runs 5 s after the
+  previous finished. Rejected: polling over a control client (zero spawns, but a client
+  exists only while a tab is watched, so a second path for the rest; the measured spawn
+  is already small); a hook that runs a command to notify the daemon (a process and a
+  callback path per bell; Jimmy rejected the same in the earlier entry); `refresh-client -B`
+  subscriptions (scoped to the client's session).
+- **Rejected, the structure review's alternative (p320): poll `#{window_bell_flag}` /
+  `#{session_alerts}` with no hook.** No tmux modification and no daemon-owned state in
+  tmux, but the probes (p310, p314) show the flag is tmux's shared state: it is not set
+  for a current window while any client is attached (Jimmy's laptop, usually), it clears
+  when any client selects the window, and `kill-session -C` clears it, so a bell in another
+  client's current window, the common case, is missed and "since this device last showed
+  it" cannot be kept. It would also bring back marking tmux's flags for the phone. The hook
+  writes tether's own marker; the cost is the one runtime hook Jimmy approved.
+- **Protocol: one new message `bell` (`{ server, available, sessions }`) and an optional
+  `bell` field per listed session; no version bump.** Both are ignorable by an older peer (`src/proto/AGENTS.md`: new message
+  types and optional fields need no bump); the old client shows no dot. A reconnect learns
+  marks from the listing it fetches anyway, so nothing is replayed. `bell` carries
+  `{ session, mark, covered }` for the sessions that changed, to every connection: about 120
+  bytes for one bell, none while quiet (the poll's 5 s is the spacing). Rejected: marks
+  folded into `sessionsChanged` (it makes every client relist, 100s of bytes to learn one
+  number); a snapshot message on connect (the listing already is one); the daemon
+  remembering what each device has seen (per-device state in the daemon for something the
+  device already keeps).
+- **Failure is visible.** A foreign entry at 9100, a session-level hook, `monitor-bell off`
+  and `bell-action` not `any` produce `covered: false`; a failed poll produces
+  `available: false`. The daemon
+  never edits a user's hooks or options to widen coverage, and removes only its own entry.

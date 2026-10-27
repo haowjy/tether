@@ -578,21 +578,28 @@ width.
 - **Search (v2):** `@xterm/addon-search` over the live buffer, text search over loaded
   history, and a server-side search over `capture-pane` for the rest.
 - **Bell attention:** a terminal bell (BEL) puts a dot on its tab, its session row and
-  the current-tab button, until this device shows that tab. For the tab on screen the
-  daemon finds BEL in the pane output it already streams. For every other session it
-  appends one server-global `alert-bell` hook at runtime (`set-hook -ga`, recording the
-  ringing session in a tether user option with `set-option -F`), removes only its own
-  hook entry when it stops, and never edits `.tmux.conf` or changes `monitor-bell` or
-  `bell-action`; behavior verified on tmux 3.4, 3.7b and 3.8 (decisions.md, "Bell
-  attention").
+  the current-tab button, until this device shows that tab. The only source is a
+  server-global `alert-bell` hook the daemon installs at runtime, at the fixed index 9100
+  (`set-hook -g`; it counts the ringing session's bells in a tether user option with
+  `set-option -F`); it removes only that entry when it stops, and never edits
+  `.tmux.conf` or changes `monitor-bell` or `bell-action`; behavior verified on tmux 3.4,
+  3.7b and 3.8 (decisions.md, "Bell attention"). The daemon does not scan pane output for
+  BEL: the tab on screen counts as seen on its device, so a bell in it needs no dot
+  (Jimmy, 2026-10-27, "Hook only"). "Seen" is tether's own per-device state; tmux's shared
+  bell flags are never cleared for the phone. While at least one device is connected, the
+  daemon reads each session's count with the session listing it already has, every 5
+  seconds, and tells the devices only when a count changed: no network bytes while nothing
+  rings, and no polling with nobody connected
+  ([daemon-core.md §4.8](daemon-core.md#48-bell-attention)).
   Coverage limits, stated rather than worked around: a session with its own session-level
   `alert-bell` hook shadows the global one, and `monitor-bell off` or a `bell-action` that
-  excludes the window suppresses the hook. "Seen" is tether's own per-device state;
-  tmux's shared bell flags are never cleared for the phone. While at least one device is
-  connected, the daemon reads the markers with one local `list-sessions -F` every few
-  seconds and tells the device only when one changed: no network bytes while nothing
-  rings, and no polling with nobody connected. The interval is set in daemon-core.md
-  when this is built. Agents must ring BEL: Claude Code does so
+  excludes the window suppresses the hook; the client says so for that session in words,
+  and says separately when the daemon cannot read tmux at all. **Bells before the first
+  device connects after a tmux start are lost**, since the hook is installed only when a
+  device is connected (or the daemon started with the server up); and with **two tether
+  daemons on one server** the first to stop removes the shared entry, so the other loses
+  bells until it next reinstalls, at its next connected device's listing. Agents must ring
+  BEL: Claude Code does so
   only with `"preferredNotifChannel": "terminal_bell"` in its settings, and Codex only in
   some terminals; [running.md](../running.md) gains a section saying so when this ships.
   Jimmy approved the hook (2026-10-27); it goes onto his live tmux server only after his
