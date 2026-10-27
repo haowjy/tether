@@ -1,5 +1,11 @@
 # Client implementation checkpoint
 
+## Client redesign build (c312, 2026-10-27) — current
+
+Plan, slice order and structural decisions: [redesign/plan.md](redesign/plan.md)
+(reviewed p320). Before-state screenshots: redesign/before/. Slice 1 (Files tabs, one
+tab model) is with a Sonnet coder; everything below this section is earlier history.
+
 ## Session-follow completion in progress (c235, 2026-10-25)
 
 Resume state is in [resume-plan.md](resume-plan.md); it supersedes the older in-flight

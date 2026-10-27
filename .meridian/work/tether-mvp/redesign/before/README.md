@@ -1,0 +1,58 @@
+# Web client before redesign
+
+Captured from the harness at viewport size on 2026-10-27. Phone keyboard-up is the harness state, not an actual OS keyboard. Overlays are opened after loading the listed URL.
+
+- `phone-dark-home.png` — `http://localhost:5173/harness/index.html?fixture=home&layout=phone&scheme=dark#/` — Home and navigation; two sessions, one with two windows.
+- `phone-dark-settings.png` — `http://localhost:5173/harness/index.html?fixture=home&layout=phone&scheme=dark#/` — Settings overlay opened using Settings.
+- `phone-dark-terminal-dock.png` — `http://localhost:5173/harness/index.html?fixture=terminalLive&layout=phone&scheme=dark#/terminal` — Live terminal with keyboard down and workspace controls.
+- `phone-dark-terminal-keyboard-up.png` — `http://localhost:5173/harness/index.html?fixture=dock&layout=phone&scheme=dark#/terminal` — Dock with keyboard-up key row after Show keyboard; no actual OS keyboard.
+- `phone-dark-session-switcher.png` — `http://localhost:5173/harness/index.html?fixture=dock&layout=phone&scheme=dark#/terminal` — Session switcher opened from the dock; open tabs and two windows.
+- `phone-dark-files-roots.png` — `http://localhost:5173/harness/index.html?fixture=files&layout=phone&scheme=dark#/files` — Files roots list.
+- `phone-dark-files-folder.png` — `http://localhost:5173/harness/index.html?fixture=filesFolder&layout=phone&scheme=dark#/files` — Files folder listing.
+- `phone-dark-files-preview.png` — `http://localhost:5173/harness/index.html?fixture=filesMarkdown&layout=phone&scheme=dark#/files` — Markdown file preview.
+- `phone-dark-files-empty.png` — `http://localhost:5173/harness/index.html?fixture=filesEmpty&layout=phone&scheme=dark#/files` — Empty folder.
+- `phone-dark-files-error.png` — `http://localhost:5173/harness/index.html?fixture=filesDenied&layout=phone&scheme=dark#/files` — Folder listing denied.
+- `phone-dark-home-empty.png` — `http://localhost:5173/harness/index.html?fixture=emptyServer&layout=phone&scheme=dark#/` — Home with no sessions.
+- `phone-dark-home-offline.png` — `http://localhost:5173/harness/index.html?fixture=offlineTabs&layout=phone&scheme=dark#/` — Home with saved tabs while host is offline.
+- `phone-dark-terminal-error.png` — `http://localhost:5173/harness/index.html?fixture=terminalLimited&layout=phone&scheme=dark#/terminal` — Terminal session limit error.
+- `phone-light-home.png` — `http://localhost:5173/harness/index.html?fixture=home&layout=phone&scheme=light#/` — Home and navigation; two sessions, one with two windows.
+- `phone-light-settings.png` — `http://localhost:5173/harness/index.html?fixture=home&layout=phone&scheme=light#/` — Settings overlay opened using Settings.
+- `phone-light-terminal-dock.png` — `http://localhost:5173/harness/index.html?fixture=terminalLive&layout=phone&scheme=light#/terminal` — Live terminal with keyboard down and workspace controls.
+- `phone-light-terminal-keyboard-up.png` — `http://localhost:5173/harness/index.html?fixture=dock&layout=phone&scheme=light#/terminal` — Dock with keyboard-up key row after Show keyboard; no actual OS keyboard.
+- `phone-light-session-switcher.png` — `http://localhost:5173/harness/index.html?fixture=dock&layout=phone&scheme=light#/terminal` — Session switcher opened from the dock; open tabs and two windows.
+- `phone-light-files-roots.png` — `http://localhost:5173/harness/index.html?fixture=files&layout=phone&scheme=light#/files` — Files roots list.
+- `phone-light-files-folder.png` — `http://localhost:5173/harness/index.html?fixture=filesFolder&layout=phone&scheme=light#/files` — Files folder listing.
+- `phone-light-files-preview.png` — `http://localhost:5173/harness/index.html?fixture=filesMarkdown&layout=phone&scheme=light#/files` — Markdown file preview.
+- `phone-light-files-empty.png` — `http://localhost:5173/harness/index.html?fixture=filesEmpty&layout=phone&scheme=light#/files` — Empty folder.
+- `phone-light-files-error.png` — `http://localhost:5173/harness/index.html?fixture=filesDenied&layout=phone&scheme=light#/files` — Folder listing denied.
+- `phone-light-home-empty.png` — `http://localhost:5173/harness/index.html?fixture=emptyServer&layout=phone&scheme=light#/` — Home with no sessions.
+- `phone-light-home-offline.png` — `http://localhost:5173/harness/index.html?fixture=offlineTabs&layout=phone&scheme=light#/` — Home with saved tabs while host is offline.
+- `phone-light-terminal-error.png` — `http://localhost:5173/harness/index.html?fixture=terminalLimited&layout=phone&scheme=light#/terminal` — Terminal session limit error.
+- `desktop-dark-home.png` — `http://localhost:5173/harness/index.html?fixture=home&layout=desktop&scheme=dark#/` — Home and navigation; two sessions, one with two windows.
+- `desktop-dark-settings.png` — `http://localhost:5173/harness/index.html?fixture=home&layout=desktop&scheme=dark#/` — Settings overlay opened using Settings.
+- `desktop-dark-terminal-dock.png` — `http://localhost:5173/harness/index.html?fixture=terminalLive&layout=desktop&scheme=dark#/terminal` — Live terminal with keyboard down and workspace controls.
+- `desktop-dark-session-picker.png` — `http://localhost:5173/harness/index.html?fixture=terminalLive&layout=desktop&scheme=dark#/terminal` — Session picker opened using Open another session.
+- `desktop-dark-files-roots.png` — `http://localhost:5173/harness/index.html?fixture=files&layout=desktop&scheme=dark#/files` — Files roots list.
+- `desktop-dark-files-folder.png` — `http://localhost:5173/harness/index.html?fixture=filesFolder&layout=desktop&scheme=dark#/files` — Files folder listing.
+- `desktop-dark-files-preview.png` — `http://localhost:5173/harness/index.html?fixture=filesMarkdown&layout=desktop&scheme=dark#/files` — Markdown file preview.
+- `desktop-dark-files-empty.png` — `http://localhost:5173/harness/index.html?fixture=filesEmpty&layout=desktop&scheme=dark#/files` — Empty folder.
+- `desktop-dark-files-error.png` — `http://localhost:5173/harness/index.html?fixture=filesDenied&layout=desktop&scheme=dark#/files` — Folder listing denied.
+- `desktop-dark-home-empty.png` — `http://localhost:5173/harness/index.html?fixture=emptyServer&layout=desktop&scheme=dark#/` — Home with no sessions.
+- `desktop-dark-home-offline.png` — `http://localhost:5173/harness/index.html?fixture=offlineTabs&layout=desktop&scheme=dark#/` — Home with saved tabs while host is offline.
+- `desktop-dark-terminal-error.png` — `http://localhost:5173/harness/index.html?fixture=terminalLimited&layout=desktop&scheme=dark#/terminal` — Terminal session limit error.
+- `desktop-light-home.png` — `http://localhost:5173/harness/index.html?fixture=home&layout=desktop&scheme=light#/` — Home and navigation; two sessions, one with two windows.
+- `desktop-light-settings.png` — `http://localhost:5173/harness/index.html?fixture=home&layout=desktop&scheme=light#/` — Settings overlay opened using Settings.
+- `desktop-light-terminal-dock.png` — `http://localhost:5173/harness/index.html?fixture=terminalLive&layout=desktop&scheme=light#/terminal` — Live terminal with keyboard down and workspace controls.
+- `desktop-light-session-picker.png` — `http://localhost:5173/harness/index.html?fixture=terminalLive&layout=desktop&scheme=light#/terminal` — Session picker opened using Open another session.
+- `desktop-light-files-roots.png` — `http://localhost:5173/harness/index.html?fixture=files&layout=desktop&scheme=light#/files` — Files roots list.
+- `desktop-light-files-folder.png` — `http://localhost:5173/harness/index.html?fixture=filesFolder&layout=desktop&scheme=light#/files` — Files folder listing.
+- `desktop-light-files-preview.png` — `http://localhost:5173/harness/index.html?fixture=filesMarkdown&layout=desktop&scheme=light#/files` — Markdown file preview.
+- `desktop-light-files-empty.png` — `http://localhost:5173/harness/index.html?fixture=filesEmpty&layout=desktop&scheme=light#/files` — Empty folder.
+- `desktop-light-files-error.png` — `http://localhost:5173/harness/index.html?fixture=filesDenied&layout=desktop&scheme=light#/files` — Folder listing denied.
+- `desktop-light-home-empty.png` — `http://localhost:5173/harness/index.html?fixture=emptyServer&layout=desktop&scheme=light#/` — Home with no sessions.
+- `desktop-light-home-offline.png` — `http://localhost:5173/harness/index.html?fixture=offlineTabs&layout=desktop&scheme=light#/` — Home with saved tabs while host is offline.
+- `desktop-light-terminal-error.png` — `http://localhost:5173/harness/index.html?fixture=terminalLimited&layout=desktop&scheme=light#/terminal` — Terminal session limit error.
+- `phone-dark-session-switcher-many.png` — `http://localhost:5173/harness/index.html?fixture=homeMany&layout=phone&scheme=dark#/` — Open project-01, then open the session switcher/picker; 30 two-window sessions.
+- `phone-light-session-switcher-many.png` — `http://localhost:5173/harness/index.html?fixture=homeMany&layout=phone&scheme=light#/` — Open project-01, then open the session switcher/picker; 30 two-window sessions.
+- `desktop-dark-session-picker-many.png` — `http://localhost:5173/harness/index.html?fixture=homeMany&layout=desktop&scheme=dark#/` — Open project-01, then open the session switcher/picker; 30 two-window sessions.
+- `desktop-light-session-picker-many.png` — `http://localhost:5173/harness/index.html?fixture=homeMany&layout=desktop&scheme=light#/` — Open project-01, then open the session switcher/picker; 30 two-window sessions.
