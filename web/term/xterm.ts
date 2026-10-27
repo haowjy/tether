@@ -46,7 +46,9 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
       const addon = new WebglAddon();
       addon.onContextLoss(() => {
         addon.dispose(); // xterm falls back to the DOM renderer meanwhile
-        if (webgl === addon && webglWanted && recreations++ < MAX_WEBGL_RECREATIONS) attachWebgl();
+        if (webgl !== addon) return;
+        webgl = undefined; // `webgl` names a live addon only: the cell rounding follows the renderer that draws
+        if (webglWanted && recreations++ < MAX_WEBGL_RECREATIONS) attachWebgl();
       });
       term.loadAddon(addon);
       webgl = addon;

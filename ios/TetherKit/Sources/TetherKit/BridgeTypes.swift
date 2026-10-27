@@ -84,6 +84,15 @@ public enum Relock: String, Codable, Equatable, Sendable {
         return elapsed < .zero || elapsed > allowedAbsence
     }
 
+    /// What the Face ID prompt says it approves when this choice loosens the relock.
+    public var confirmationReason: String {
+        switch self {
+        case .fiveMinutes: "Ask for Face ID after 5 minutes away"
+        case .oneHour: "Ask for Face ID after an hour away"
+        case .launch: "Ask for Face ID only when tether starts"
+        }
+    }
+
     /// Whether `self` lets the app stay unlocked longer than `other` does.
     public func loosens(_ other: Relock) -> Bool {
         (allowedAbsence ?? .seconds(Int64.max)) > (other.allowedAbsence ?? .seconds(Int64.max))

@@ -111,7 +111,7 @@ final class TetherAppModel: ObservableObject {
         var probe = preferences
         try probe.set(name, to: value)
         if probe.relock.loosens(preferences.relock) {
-            guard await confirmWithFaceID(), !isLocked else { return preferences }
+            guard await confirmWithFaceID(reason: probe.relock.confirmationReason), !isLocked else { return preferences }
         }
         // Re-derived from what is stored now: the await above may have let another change land.
         var next = preferences
@@ -124,9 +124,9 @@ final class TetherAppModel: ObservableObject {
 
     private enum PreferenceError: Error { case locked }
 
-    private func confirmWithFaceID() async -> Bool {
+    private func confirmWithFaceID(reason: String) async -> Bool {
         let context = LAContext()
-        let confirmed = try? await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Let tether stay unlocked longer")
+        let confirmed = try? await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
         return confirmed == true
     }
 

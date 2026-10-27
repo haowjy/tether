@@ -1013,7 +1013,7 @@ stateDiagram-v2
   does not lock the app.
 - **Changing the choice.** Relock is a security control the web alone can't weaken. Choosing
   a longer interval or At launch asks for a fresh Face ID evaluation in the app before it
-  applies; cancelling or failing it leaves the setting unchanged. A shorter interval applies
+  applies, and the prompt names the choice ("Ask for Face ID only when tether starts"); cancelling or failing it leaves the setting unchanged. A shorter interval applies
   at once. Nothing changes while the app is locked. The background time is measured on a
   clock that counts through sleep and can't be set back, and an unknown (negative) elapsed
   time locks.

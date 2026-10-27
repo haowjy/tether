@@ -87,8 +87,12 @@ export class Terminals extends Store<TerminalsView> {
   private readonly sizer: TerminalSizer;
   private viewport: Viewport;
   private textSize: TextSize;
-  /** True from the start until the first measurement lands, and briefly after the chrome's inputs change. */
-  private chromeWindow = true;
+  /**
+   * Whether laid-out measures read the chrome off the surface. "open" from the start until ready and
+   * for two frames after the chrome's inputs change; "pending" when that change found the surface hidden,
+   * which the first laid-out measure then reads and closes, so a keyboard is never read as chrome.
+   */
+  private chromeWindow: "open" | "pending" | "closed" = "open";
   private registered: HTMLElement | null = null;
   /** The tab whose snapshot is on the surface. Another tab's content never shows under a pill that isn't its own. Closing that tab clears it. */
   private painted: string | null = null;
@@ -403,13 +407,12 @@ export class Terminals extends Store<TerminalsView> {
    * at the start; a keyboard shrinking a native web view's surface never opens one.
    */
   private openChromeWindow(): void {
-    this.chromeWindow = true;
+    this.chromeWindow = "open";
     // Two frames: the change renders, then the surface lays out against it.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         this.measure();
-        // Hidden, the box can't be measured: the window stays open until the surface is laid out again.
-        if (this.element.clientWidth > 0) this.chromeWindow = false;
+        if (this.chromeWindow === "open") this.chromeWindow = this.element.clientWidth > 0 ? "closed" : "pending";
       });
     });
   }
@@ -422,10 +425,11 @@ export class Terminals extends Store<TerminalsView> {
       return;
     }
     // Hidden, only the box is unknown: the cell comes from the font, so the sizer stays current for the return.
-    if (this.chromeWindow && laidOut) {
+    if (this.chromeWindow !== "closed" && laidOut) {
       const { viewport } = this;
       const { top, right, bottom, left } = viewport.safeArea;
       this.sizer.setChrome({ x: viewport.width - left - right - width, y: viewport.stableHeight - top - bottom - height });
+      if (this.chromeWindow === "pending") this.chromeWindow = "closed";
     }
     this.sizer.remeasure();
     if (this.sizer.measured) {
@@ -437,7 +441,7 @@ export class Terminals extends Store<TerminalsView> {
 
   private becomeReady(): void {
     if (this.snapshot.ready) return;
-    this.chromeWindow = false;
+    this.chromeWindow = "closed";
     this.update({ ready: true });
     this.sync();
   }
