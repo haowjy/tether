@@ -5040,3 +5040,17 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   reconnecting terminal with no explanation; Home says what is unreachable and offers
   Retry.
 - **Rejected:** reopening the last tab on launch (the lead's earlier proposal).
+
+### Several servers are a product rule
+
+- **Decided:** 2026-10-27, Jimmy ("multiple servers becomes a product rule").
+- **What:** tether serves several servers at once: Home has a card per server, the
+  sessions sheet groups by server, and tabs from different servers coexist. The app
+  already connects to each host directly; the browser/PWA stays bound to its page origin
+  until a multi-server browser design keeps its admission boundary.
+- **Why:** Jimmy runs tether on more than one machine (pop-os and his Mac), and the
+  redesigned Home and sheet are built around server cards and groups.
+- **Rejected:** one host in the MVP with a layout that merely allows more later (the
+  lead's lean), since it would ship Home and the sheet in a shape the product rule then
+  changes.
+- **Supersedes:** "one host in the MVP" in plan.md's product rules.

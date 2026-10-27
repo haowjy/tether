@@ -79,7 +79,11 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
 - **Auth:** allowlisted Tailscale login plus two device lanes: an iOS device token
   behind Face ID and an enrolled tailnet node for the browser/PWA. Both use the same
   one-time code and can be revoked with `tether device remove` ([auth.md](auth.md)).
-- **Hosts:** the app connects to each host's daemon directly; one host in the MVP.
+- **Hosts:** several servers are part of the product, not a later extension: Home shows
+  one card per server and the sessions sheet groups sessions by server. The app connects
+  to each host's daemon directly. A browser/PWA is still bound to its page origin until a
+  multi-server browser design lands (an origin and admission design that keeps the
+  browser boundary; [interaction contract](client/browser-behaviors.md#product-boundaries-and-vocabulary)).
 - **Server platform:** Linux is the primary host. A Mac can host too, with the
   standalone Tailscale app, under a weaker local boundary: Serve reaches tether on a
   loopback port guarded by a path secret that tether publishes and rotates at each
