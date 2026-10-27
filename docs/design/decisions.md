@@ -1508,7 +1508,12 @@ found each point while running the daemon.
   proxies a host's requests only after its `/auth/info` reported a compatible protocol
   range in this app session.
 - **Why the gate uses `/auth/info`:** the WebSocket, and so `welcome`, lives in the web;
-  native already calls `/auth/info`, which reports the same range.
+  `/auth/info` reports the same range.
+- **Amended 2026-10-27:** native asks `/auth/info` itself, on a host's first proxied
+  request. The original assumed native already called it each session, but native calls
+  it only at enrolment and the web's token lane never does, so the gate stayed shut and
+  Files said "speaks a different version" against a same-protocol daemon. Rejected:
+  checking every host at launch (a round trip per host before anything is used).
 - **Rejected:** host content under `tether-app://ui/h/{host}/…` (same origin as the
   UI, so a proxied script could run as the app); the web reporting `welcome` results
   over the bridge (native's gate would trust web state).

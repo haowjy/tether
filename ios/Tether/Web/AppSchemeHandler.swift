@@ -9,19 +9,16 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
         let schemeTask: WKURLSchemeTask
         let originalURL: URL
         let hostID: String?
-        let isAuthInfo: Bool
         let sentToken: String?
         var dataTask: URLSessionDataTask?
-        var authInfoBody = Data()
         var statusCode: Int?
         var stopped = false
 
-        init(identifier: ObjectIdentifier, schemeTask: WKURLSchemeTask, url: URL, hostID: String?, isAuthInfo: Bool, sentToken: String?) {
+        init(identifier: ObjectIdentifier, schemeTask: WKURLSchemeTask, url: URL, hostID: String?, sentToken: String?) {
             self.identifier = identifier
             self.schemeTask = schemeTask
             self.originalURL = url
             self.hostID = hostID
-            self.isAuthInfo = isAuthInfo
             self.sentToken = sentToken
         }
     }
@@ -36,7 +33,14 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
     }()
     private var pending: [ObjectIdentifier: Pending] = [:]
     private var byTaskID: [Int: Pending] = [:]
+    /// Hosts whose `/auth/info` reported, in this app session, a range containing the app's protocol.
     private var compatibleHosts = Set<String>()
+    /// Requests held while their host's `/auth/info` is in flight, by host; the check runs once per host.
+    private var awaitingCheck: [String: [WKURLSchemeTask]] = [:]
+    /// The held requests WebKit has not stopped.
+    private var held = Set<ObjectIdentifier>()
+    /// Has no delegate, so its tasks never reach the proxy's delegate callbacks.
+    private let infoSession = URLSession(configuration: .ephemeral)
 
     init(model: TetherAppModel, bundle: Bundle = .main) {
         self.model = model
@@ -62,6 +66,7 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
         let identifier = ObjectIdentifier(urlSchemeTask as AnyObject)
+        if held.remove(identifier) != nil { return }
         guard let request = pending.removeValue(forKey: identifier) else { return }
         request.stopped = true
         if let task = request.dataTask {
@@ -116,14 +121,14 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
             respond(schemeTask, status: 405, body: Data(), headers: Self.corsHeaders)
             return
         }
-        guard isAuthInfo || compatibleHosts.contains(hostID) else {
-            respond(schemeTask, status: 409, body: Data(#"{"error":"incompatible"}"#.utf8), headers: Self.corsHeaders.merging(["Content-Type": "application/json"]) { _, new in new })
-            return
-        }
         guard let storedHost = MainActor.assumeIsolated({ model.hosts.first { $0.id == hostID } }),
               let baseURL = URL(string: storedHost.baseURL),
               var target = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             respond(schemeTask, status: 404, body: Data(#"{"error":"not_found"}"#.utf8), headers: Self.corsHeaders)
+            return
+        }
+        if !isAuthInfo, !compatibleHosts.contains(hostID) {
+            holdUntilChecked(schemeTask, hostID: hostID, baseURL: baseURL)
             return
         }
         target.percentEncodedPath = path
@@ -153,7 +158,7 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
         }
 
         let identifier = ObjectIdentifier(schemeTask as AnyObject)
-        let item = Pending(identifier: identifier, schemeTask: schemeTask, url: targetURL, hostID: hostID, isAuthInfo: isAuthInfo, sentToken: sentToken)
+        let item = Pending(identifier: identifier, schemeTask: schemeTask, url: targetURL, hostID: hostID, sentToken: sentToken)
         pending[identifier] = item
         let task = session.dataTask(with: upstream)
         item.dataTask = task
@@ -196,7 +201,6 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         guard let item = byTaskID[dataTask.taskIdentifier], !item.stopped else { return }
-        if item.isAuthInfo { item.authInfoBody.append(data) }
         item.schemeTask.didReceive(data)
     }
 
@@ -207,15 +211,40 @@ final class AppSchemeHandler: NSObject, WKURLSchemeHandler, URLSessionDataDelega
             item.schemeTask.didFailWithError(error)
             return
         }
-        if item.isAuthInfo, item.statusCode == 200,
-           let info = try? JSONDecoder().decode(AuthInfo.self, from: item.authInfoBody),
-           info.protocolRange.contains(DaemonProtocol.version), let hostID = item.hostID {
-            compatibleHosts.insert(hostID)
-        }
         if item.statusCode == 401, let token = item.sentToken, let hostID = item.hostID {
             MainActor.assumeIsolated { model.rejectedToken(for: hostID, token: token) }
         }
         item.schemeTask.didFinish()
+    }
+
+    /// The compatibility gate: holds the request while native asks the host's `/auth/info`, then
+    /// proxies it if the range holds the app's protocol, or answers `409 incompatible` if not.
+    /// A failed check fails the held requests as a network error and is not remembered.
+    private func holdUntilChecked(_ schemeTask: WKURLSchemeTask, hostID: String, baseURL: URL) {
+        held.insert(ObjectIdentifier(schemeTask as AnyObject))
+        if awaitingCheck[hostID] != nil {
+            awaitingCheck[hostID]?.append(schemeTask)
+            return
+        }
+        awaitingCheck[hostID] = [schemeTask]
+        var request = URLRequest(url: baseURL.appending(path: "auth/info"))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        infoSession.dataTask(with: request) { data, response, _ in
+            let compatible: Bool? = (response as? HTTPURLResponse)?.statusCode == 200
+                ? data.flatMap { try? JSONDecoder().decode(AuthInfo.self, from: $0) }.map { $0.protocolRange.contains(DaemonProtocol.version) }
+                : nil
+            DispatchQueue.main.async { [self] in
+                if compatible == true { compatibleHosts.insert(hostID) }
+                for task in awaitingCheck.removeValue(forKey: hostID) ?? [] {
+                    guard held.remove(ObjectIdentifier(task as AnyObject)) != nil else { continue }
+                    switch compatible {
+                    case true: proxy(task, hostID: hostID)
+                    case false: respond(task, status: 409, body: Data(#"{"error":"incompatible"}"#.utf8), headers: Self.corsHeaders.merging(["Content-Type": "application/json"]) { _, new in new })
+                    case nil: fail(task, error: URLError(.cannotConnectToHost))
+                    }
+                }
+            }
+        }.resume()
     }
 
     private func respond(_ task: WKURLSchemeTask, status: Int, body: Data, headers: [String: String]) {

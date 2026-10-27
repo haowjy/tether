@@ -120,8 +120,11 @@ origin:
   does).
   - **Compatibility gate:** the handler proxies to a host only once that host's
     `GET /auth/info` has reported, in this app session, a protocol range that contains
-    the app's version; otherwise it answers `409 {"error": "incompatible"}` without
-    contacting the daemon. The protocol version covers the HTTP routes
+    the app's version. Native asks it: the first proxied request to a host holds while
+    the handler fetches `/auth/info` once (later requests join the same check), then
+    goes through, or gets `409 {"error": "incompatible"}` if the range excludes the
+    app. A check that gets no answer fails the held requests as a network error and is
+    not remembered. Only a compatible answer is kept. The protocol version covers the HTTP routes
     ([daemon-core.md §5.2](daemon-core.md#52-handshake-and-versions)). The app's
     version is `DaemonProtocol.version` (`TetherKit/AuthTypes.swift`), which moves with
     `PROTOCOL_VERSION` (2 since tabs follow a session); enrolment checks it too.

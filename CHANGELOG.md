@@ -5,6 +5,8 @@ version section on release.
 
 ## [Unreleased]
 
+- Files and completions work in the iOS app again: the app no longer says a server
+  "speaks a different version" when both use the same protocol.
 - On the phone, a long-press on the terminal now highlights the word under your finger
   at once, and dragging while held extends the selection; the arrow pad is gone. ← and →
   join ↑ and ↓ in the key row, repeating while held. A tap on the cursor's row, or the
