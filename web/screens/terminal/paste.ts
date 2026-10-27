@@ -8,6 +8,7 @@ import type { UploadEvent } from "../../platform/types";
 import type { InsertResult, TabDriver } from "../../tabs/driver";
 import { cannotInsert, shellQuote } from "../../tabs/input";
 import { tabLabels } from "../../workspace/labels";
+import { terminalTabOf } from "../../workspace/state";
 
 /** Over this many UTF-8 bytes a paste is refused, never split: splitting breaks bracketing. */
 export const MAX_PASTE_BYTES = 256 * 1024;
@@ -135,7 +136,7 @@ export class Pastes {
     const { app } = this.deps;
     // Captured before the read: on iOS it can wait behind the paste prompt while the session changes windows or the tab closes.
     const target = this.target();
-    const tab = app.snapshot.workspace.tabs.find((t) => t.id === target?.id);
+    const tab = terminalTabOf(app.snapshot.workspace, target?.id ?? null);
     this.deps.dismissSelection();
     if (!target || !tab) return;
     void app.platform.clipboard.read(tab.key).then((result) => {
@@ -178,8 +179,8 @@ export class Pastes {
   private async pasteImage(target: PasteTarget, file: File): Promise<void> {
     const { app } = this.deps;
     const { platform } = app;
-    const tab = app.snapshot.workspace.tabs.find((t) => t.id === target.id);
-    const client = tab && app.hosts.byHostId(tab.key.host);
+    const tab = terminalTabOf(app.snapshot.workspace, target.id);
+    const client = tab && app.hosts.byHostId(tab.host);
     if (!platform.uploads.send || !client) {
       app.notify("Paste images from Files → Upload");
       return;

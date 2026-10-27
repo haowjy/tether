@@ -5,6 +5,12 @@ version section on release.
 
 ## [Unreleased]
 
+- Files opens as tabs, any number of them, each remembering its own folder or preview
+  across a reload. Home's Files button opens a new one at that server's folders, and a
+  folder's first row goes up to its parent. On the desktop, navigation is now one top row
+  (Home, every tab, +, the server) above whichever screen shows, in place of the left
+  rail. The app opens on Home even with saved tabs. Tabs saved by earlier builds are not
+  restored once; their drafts are kept.
 - Files and completions work in the iOS app again: the app no longer says a server
   "speaks a different version" when both use the same protocol.
 - On the phone, a long-press on the terminal now highlights the word under your finger

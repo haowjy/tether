@@ -13,7 +13,6 @@ import { TabStrip, type Pill } from "../../ui/primitives/TabStrip";
 import { CodeField } from "../../ui/primitives/CodeField";
 import { SearchField, TextField } from "../../ui/primitives/TextField";
 import { Toast } from "../../ui/primitives/Toast";
-import { NavButton } from "../../ui/primitives/NavButton";
 import styles from "./Gallery.module.css";
 
 const ICONS: IconName[] = ["home", "back", "sessions", "folder", "plus", "close", "keyboard", "chevron", "chevronDown", "search", "terminal", "file", "refresh", "settings", "upload", "check", "alert", "image", "film", "external"];
@@ -95,11 +94,7 @@ export function Gallery() {
         <div class={styles.wrap}><Spinner /><span>Updating</span></div>
         <EmptyState icon="terminal" title="Open a window with + or from Home." />
       </Section>
-      <Section title="Navigation and dialogs">
-        <div class={styles.navDemo}>
-          <NavButton icon="sessions" label="Sessions" current onClick={() => undefined} />
-          <NavButton icon="folder" label="Files" current={false} onClick={() => undefined} />
-        </div>
+      <Section title="Dialogs">
         <div class={styles.wrap}>
           <Button onClick={() => { setDialog("dialog"); }}>Open dialog</Button>
           <Button onClick={() => { setDialog("sheet"); }}>Open sheet</Button>

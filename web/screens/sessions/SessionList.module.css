@@ -1,6 +1,6 @@
 .section { display: flex; flex-direction: column; gap: var(--space-2); }
 .heading { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); min-height: var(--size-target); }
-.action { margin-left: auto; }
+.action { display: flex; gap: var(--space-2); margin-left: auto; }
 .title { font-size: var(--text-small); font-weight: var(--weight-bold); color: var(--color-text-muted); }
 /* The status sits beside the heading, so "Updating" appearing never moves a row. */
 .status { display: inline-flex; align-items: center; flex: 1; gap: var(--space-2); min-width: 0; font-size: var(--text-small); color: var(--color-text-muted); }

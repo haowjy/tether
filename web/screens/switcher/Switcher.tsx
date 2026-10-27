@@ -14,6 +14,7 @@ import { terminalsOf } from "../terminal/terminals";
 import { HostSessionLists } from "../sessions/HostSessionLists";
 import { openSession } from "../sessions/openSession";
 import { useStore } from "../../ui/store";
+import { terminalTabOf } from "../../workspace/state";
 import { WindowChoices } from "./WindowChoices";
 import styles from "./Switcher.module.css";
 
@@ -31,7 +32,7 @@ export function Switcher() {
       title="Sessions"
       variant="sheet"
       onClose={close}
-      actions={<Button variant="quiet" icon="home" onClick={() => { app.router.closeOverlay(() => { app.router.go("home"); }); }}>Home</Button>}
+      actions={<Button variant="quiet" icon="home" onClick={() => { app.router.closeOverlay(() => { app.router.goHome(); }); }}>Home</Button>}
       footer={open && (
         <div class={styles.footer}>
           <SearchField label="Find a session" placeholder="Find a session" value={query} onInput={setQuery} class={styles.search} />
@@ -59,7 +60,7 @@ function SwitcherBody({ query }: { query: string }) {
   const workspace = useAppView((v) => v.workspace);
   const statuses = useStore(terminals, (s) => s.tabs);
 
-  const active = workspace.tabs.find((t) => t.id === workspace.active) ?? null;
+  const active = terminalTabOf(workspace, workspace.active);
   const hostName = useHostName();
 
   const pills = tabPills(workspace.tabs, statuses, hostName, null, Date.now());
@@ -96,7 +97,7 @@ function SwitcherBody({ query }: { query: string }) {
           }}
           onShown={() => { dismiss(); }}
           onNew={(opener) => {
-            app.openOverlay({ screen: "home", name: "newWindow", params: { handle: app.hosts.byHostId(active.key.host)?.entry.handle, tab: active.id, sessionName: active.session } }, opener);
+            app.openOverlay({ screen: "home", name: "newWindow", params: { handle: app.hosts.byHostId(active.host)?.entry.handle, tab: active.id, sessionName: active.session } }, opener);
           }}
         />
       )}

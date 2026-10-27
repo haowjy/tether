@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { FilesPlace } from "../platform/types";
 import { Router, type HistoryPort, type Navigated } from "./router";
 
 /** A browser's history: a list of entries and a cursor. `back` pops synchronously here. */
@@ -16,56 +17,101 @@ function fakeHistory(initialHash = "#/", initialState: unknown = null) {
   return { port, entries, get at() { return at; }, forward() { at++; pop?.(); } };
 }
 
-function setup(hash = "#/", files: Parameters<typeof Router.prototype.pushFiles>[0] | null = null) {
+const dir = (path: string): FilesPlace => ({ kind: "dir", path });
+
+/** `active` stands in for the workspace's active tab. */
+function setup(hash = "#/") {
   const h = fakeHistory(hash);
-  const router = new Router(h.port, files);
+  const state = { active: null as string | null };
+  const router = new Router(h.port);
+  router.activeTab = () => state.active;
   const seen: Navigated[] = [];
   router.subscribe((n) => seen.push(n));
-  return { h, router, seen, hashes: () => h.entries.slice(0, h.at + 1).map((e) => e.hash) };
+  const open = (tab: string, place: FilesPlace | null = null): void => { state.active = tab; router.openTab(tab, place); };
+  return { h, router, seen, state, open, hashes: () => h.entries.slice(0, h.at + 1).map((e) => e.hash) };
 }
 
 describe("Router", () => {
-  it("reads the destination from the hash and replaces the first entry", () => {
-    const { router, h } = setup("#/files", { kind: "dir", path: "/home/j" });
-    expect(router.entry).toMatchObject({ destination: "files", files: { kind: "dir", path: "/home/j" }, overlay: null });
+  it("opens Home on a clean launch, whatever the hash says, replacing the first entry", () => {
+    const { router, h } = setup("#/tab");
+    expect(router.entry).toMatchObject({ route: "home", tab: null, place: null, overlay: null });
     expect(h.entries).toHaveLength(1);
+    expect(h.entries[0]?.hash).toBe("#/");
   });
 
   it("keeps file paths out of the URL", () => {
-    const { router, hashes } = setup();
-    router.go("files");
-    router.pushFiles({ kind: "file", path: "/secret/path.txt" });
-    expect(hashes()).toEqual(["#/", "#/files", "#/files"]);
+    const { router, open, hashes } = setup();
+    open("f1", { kind: "roots" });
+    router.pushPlace("f1", { kind: "roots" }, { kind: "file", path: "/secret/path.txt" });
+    expect(hashes()).toEqual(["#/", "#/tab", "#/tab"]);
   });
 
-  it("pushes on destination changes and emits navigated each time", () => {
-    const { router, seen, h } = setup();
-    router.go("terminal");
-    router.go("terminal");
-    expect(seen.map((n) => n.destination)).toEqual(["terminal"]);
+  it("pushes on route changes and emits navigated each time", () => {
+    const { router, seen, open, h } = setup();
+    open("t1");
+    router.goHome();
+    router.goHome();
+    expect(seen.map((n) => n.entry.route)).toEqual(["tab", "home"]);
     h.port.go(-1);
-    expect(seen.map((n) => n.destination)).toEqual(["terminal", "home"]);
+    expect(seen.map((n) => n.entry.route)).toEqual(["tab", "home", "tab"]);
   });
 
-  it("Back closes the overlay, then the preview, then folders, then leaves the destination", () => {
-    const { router, h } = setup();
-    router.go("files");
-    router.pushFiles({ kind: "dir", path: "/a" });
-    router.pushFiles({ kind: "file", path: "/a/b" });
-    router.openOverlay({ screen: "files", name: "upload" });
-    const order: string[] = [];
-    router.subscribe(({ entry }) => order.push(entry.overlay ? "overlay" : (entry.files?.kind ?? entry.destination)));
+  it("Back walks out of the folders of the tab they were opened in, each entry recording its place", () => {
+    const { router, open, h } = setup();
+    open("f1", { kind: "roots" });
+    router.pushPlace("f1", { kind: "roots" }, dir("/a"));
+    router.pushPlace("f1", dir("/a"), { kind: "file", path: "/a/b" });
+    const places: (FilesPlace | null)[] = [];
+    router.subscribe(({ entry }) => places.push(entry.place));
     h.port.go(-1);
     h.port.go(-1);
     h.port.go(-1);
+    expect(places).toEqual([dir("/a"), { kind: "roots" }, null]);
+    expect(router.entry.route).toBe("home");
+  });
+
+  it("stamps the entry before a drill-in, so Back returns to this place even after another tab was shown", () => {
+    const { router, state, open, h } = setup();
+    open("f1", { kind: "roots" });
+    state.active = "f2"; // switched tabs: no entry of its own
+    router.pushPlace("f2", dir("/x"), dir("/x/y"));
     h.port.go(-1);
-    expect(order).toEqual(["file", "dir", "files", "home"]);
-    expect(router.entry.files).toBeNull();
+    expect(router.entry).toMatchObject({ tab: "f2", place: dir("/x") });
+  });
+
+  it("a Back that lands on an entry of a tab that is not active skips to Home, announcing nothing", () => {
+    const { router, state, seen, open, h } = setup();
+    open("f1", { kind: "roots" });
+    router.pushPlace("f1", { kind: "roots" }, dir("/a"));
+    state.active = "t1"; // the user switched tabs
+    const before = seen.length;
+    h.port.go(-1);
+    expect(seen).toHaveLength(before + 1);
+    expect(router.entry.route).toBe("home");
+    expect(h.at).toBe(0);
+  });
+
+  it("an entry from before a reload whose tab is not active is replaced with Home", () => {
+    const { router, open, h } = setup();
+    open("f1", { kind: "roots" });
+    router.pushPlace("f1", { kind: "roots" }, dir("/a"));
+    const after = new Router(h.port); // a reload: a new stack, no tab active
+    h.port.go(-1);
+    expect(after.entry.route).toBe("home");
+  });
+
+  it("closing an overlay lands on its base whichever tab was shown meanwhile", () => {
+    const { router, state, open } = setup();
+    open("t1");
+    router.openOverlay({ screen: "switcher", name: "sessions" });
+    state.active = "t2";
+    router.closeOverlay();
+    expect(router.entry).toMatchObject({ route: "tab", tab: "t1", overlay: null });
   });
 
   it("closing an overlay by an action is history.back()", () => {
-    const { router, h } = setup();
-    router.go("terminal");
+    const { router, open, h } = setup();
+    open("t1");
     router.openOverlay({ screen: "picker", name: "open" });
     expect(h.entries).toHaveLength(3);
     router.closeOverlay();
@@ -92,60 +138,62 @@ describe("Router", () => {
     expect(h.at).toBe(0);
   });
 
-  it("after a reload an overlay cannot be popped to, so closing replaces the entry", () => {
-    const { router, h } = setup("#/terminal");
+  it("after a reload an overlay cannot be popped to: a new Router starts at Home with no overlay", () => {
+    const { router, h } = setup();
     router.openOverlay({ screen: "settings", name: "x" });
-    // Simulate a reload: a new Router over the same history starts with a fresh stack.
-    const again = new Router(h.port, null);
+    const again = new Router(h.port);
     expect(again.entry.overlay).toBeNull();
   });
 
-  it("an in-app back button goes back when the previous entry is the parent, else replaces", () => {
-    const { router, h } = setup();
-    router.go("terminal");
-    router.toParent();
-    expect(router.entry.destination).toBe("home");
+  it("the in-app Home button goes back when the previous entry is Home, else replaces", () => {
+    const { router, open, h } = setup();
+    open("t1");
+    router.toHome();
+    expect(router.entry.route).toBe("home");
     expect(h.at).toBe(0);
 
-    const deep = setup("#/terminal"); // a deep link: nothing below it
-    deep.router.toParent();
-    expect(deep.router.entry.destination).toBe("home");
+    const deep = setup();
+    deep.router.replacePlace("t1", { kind: "roots" }); // an entry with nothing below it
+    deep.router.toHome();
+    expect(deep.router.entry.route).toBe("home");
     expect(deep.h.entries).toHaveLength(1);
   });
 
-  it("Files returns to the place it was left, and its in-app back goes back or replaces", () => {
-    const { router, h } = setup();
-    router.go("files");
-    router.pushFiles({ kind: "dir", path: "/a" });
-    router.pushFiles({ kind: "file", path: "/a/b" });
-    router.go("terminal");
-    router.go("files");
-    expect(router.entry.files).toEqual({ kind: "file", path: "/a/b" });
-
-    h.port.go(-1);
-    h.port.go(-1);
-    router.toParent({ kind: "dir", path: "/a" }); // the previous entry is that folder
-    expect(router.entry.files).toEqual({ kind: "dir", path: "/a" });
+  it("a Files tab's in-app back goes back when the previous entry is that place in that tab, else replaces", () => {
+    const { router, open, h } = setup();
+    open("f1", { kind: "roots" });
+    router.pushPlace("f1", { kind: "roots" }, dir("/a"));
+    router.pushPlace("f1", dir("/a"), { kind: "file", path: "/a/b" });
+    router.toPlace("f1", dir("/a"));
+    expect(router.entry.place).toEqual(dir("/a"));
     expect(h.at).toBe(2);
-    router.toParent({ kind: "roots" }); // the previous entry is not: the top entry is replaced
-    expect(router.entry.files).toEqual({ kind: "roots" });
+    router.toPlace("f1", dir("/"));
+    expect(router.entry.place).toEqual(dir("/"));
     expect(h.at).toBe(2);
-    expect(router.entry.destination).toBe("files");
   });
 
-  it("restores overlays dropped on reload: a state from an earlier page life stands alone", () => {
-    const { router, h } = setup();
-    router.go("files");
-    router.openOverlay({ screen: "x", name: "y" });
+  it("a state from an earlier page life of an active tab stands alone", () => {
+    const { router, open, h } = setup();
+    open("f1", { kind: "roots" });
+    router.pushPlace("f1", { kind: "roots" }, dir("/a"));
     h.port.go(-1);
     h.port.go(-1);
     h.forward();
-    expect(router.entry.destination).toBe("files");
+    h.forward();
+    expect(router.entry).toMatchObject({ route: "tab", tab: "f1", place: dir("/a") });
   });
 
-  it("Home has no parent", () => {
+  it("a canonical path replaces the entry's place without adding one", () => {
+    const { router, open, h } = setup();
+    open("f1", dir("/link"));
+    router.replacePlace("f1", dir("/real"));
+    expect(router.entry.place).toEqual(dir("/real"));
+    expect(h.entries).toHaveLength(2);
+  });
+
+  it("Home has no back", () => {
     const { router, seen } = setup();
-    router.toParent();
+    router.toHome();
     expect(seen).toHaveLength(0);
   });
 });

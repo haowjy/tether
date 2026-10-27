@@ -20,7 +20,7 @@ export interface InsertTarget {
 export function insertTarget(app: AppController, id: string | null): InsertTarget | null {
   const { tabs } = app.snapshot.workspace;
   const tab = tabs.find((t) => t.id === id);
-  if (!tab || tab.restoring) return null;
+  if (tab?.kind !== "terminal" || tab.restoring) return null;
   const hosts = app.snapshot.hosts;
   const label = tabLabels(tabs, (host) => hosts.find((h) => h.hostId === host)?.name ?? host).find((l) => l.id === tab.id);
   return label ? { id: tab.id, label: label.full, blocked: terminalsOf(app).canInsert(tab.id) ? null : "That tab isn't connected" } : null;

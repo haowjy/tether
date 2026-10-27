@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../../app/context";
 import { IconButton } from "../../ui/primitives/IconButton";
-import type { Tab } from "../../workspace/state";
+import type { TerminalTab } from "../../workspace/state";
 import { WindowChoices } from "../switcher/WindowChoices";
 import { terminalsOf } from "./terminals";
 import styles from "./WindowsMenu.module.css";
@@ -15,7 +15,7 @@ import styles from "./WindowsMenu.module.css";
 const GAP_PX = 4;
 const EDGE_PX = 8;
 
-export function WindowsMenu({ tab }: { tab: Tab }) {
+export function WindowsMenu({ tab }: { tab: TerminalTab }) {
   const app = useApp();
   const terminals = terminalsOf(app);
   /** The windows button, noted when it is pressed: the menu opens under it, and the creation form returns focus to it. */
@@ -35,7 +35,7 @@ export function WindowsMenu({ tab }: { tab: Tab }) {
     const el = panel.current;
     const anchor = button.current;
     if (!open || !el || !anchor) return;
-    const handle = app.hosts.byHostId(tab.key.host)?.entry.handle;
+    const handle = app.hosts.byHostId(tab.host)?.entry.handle;
     if (handle !== undefined) app.listing.refresh(handle);
     const rect = anchor.getBoundingClientRect();
     const top = rect.bottom + GAP_PX;
@@ -97,7 +97,7 @@ export function WindowsMenu({ tab }: { tab: Tab }) {
             onShown={() => { close(true); }}
             onNew={() => {
               close(false);
-              app.openOverlay({ screen: "home", name: "newWindow", params: { handle: app.hosts.byHostId(tab.key.host)?.entry.handle, tab: tab.id, sessionName: tab.session } }, button.current ?? undefined);
+              app.openOverlay({ screen: "home", name: "newWindow", params: { handle: app.hosts.byHostId(tab.host)?.entry.handle, tab: tab.id, sessionName: tab.session } }, button.current ?? undefined);
             }}
           />
         )}

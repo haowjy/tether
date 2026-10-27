@@ -4,8 +4,8 @@ import { Row } from "../../ui/primitives/Row";
 import styles from "./Home.module.css";
 
 /**
- * The open tabs, first on Home. A tap opens the existing tab (never a duplicate); the close
- * button ends that tab only. Nothing here can touch tmux.
+ * The open tabs of both kinds, first on Home. A tap opens the existing tab (never a duplicate);
+ * the close button ends that tab only. Nothing here can touch tmux.
  */
 export function OpenTabs() {
   const app = useApp();
@@ -23,12 +23,12 @@ export function OpenTabs() {
           {labels.map((l) => {
             const tab = workspace.tabs.find((t) => t.id === l.id);
             // Offline the host's id is unknown, so a lone host stands for the tab's (§9.4: offline tabs read as reconnecting).
-            const host = tab && (hosts.find((h) => h.hostId === tab.key.host) ?? (hosts.length === 1 ? hosts[0] : undefined));
-            const waiting = tab?.restoring ? (host?.admission.kind === "unreachable" ? "Reconnecting…" : "Checking…") : undefined;
+            const host = tab && (hosts.find((h) => h.hostId === tab.host) ?? (hosts.length === 1 ? hosts[0] : undefined));
+            const waiting = tab?.kind === "terminal" && tab.restoring ? (host?.admission.kind === "unreachable" ? "Reconnecting…" : "Checking…") : undefined;
             return (
               <li key={l.id} class={styles.tab}>
                 <Row
-                  icon="terminal"
+                  icon={tab?.kind === "files" ? "folder" : "terminal"}
                   label={l.full}
                   meta={waiting}
                   selected={l.id === workspace.active}

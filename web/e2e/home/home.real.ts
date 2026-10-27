@@ -30,7 +30,7 @@ for (const version of VERSIONS) {
       await home(page);
       await expect(sessionRow(page, "alpha")).toContainText("2 windows");
       await sessionRow(page, "alpha").click();
-      await expect(page).toHaveURL(/#\/terminal$/);
+      await expect(page).toHaveURL(/#\/tab$/);
       await page.getByRole("button", { name: "Home" }).click();
       // The tab shows the session's current window, the one tmux made current with new-window.
       await expect(page.getByRole("button", { name: "alpha shell", exact: true })).toBeVisible();
@@ -46,7 +46,7 @@ for (const version of VERSIONS) {
       await page.getByRole("button", { name: "New session" }).click();
       await page.getByRole("textbox", { name: "Name" }).fill("made-here");
       await page.getByRole("button", { name: "Create" }).click();
-      await expect(page).toHaveURL(/#\/terminal$/);
+      await expect(page).toHaveURL(/#\/tab$/);
       expect(stack.tmux("list-sessions", "-F", "#{session_name}")).toContain("made-here");
 
       await page.getByRole("button", { name: "Home" }).click();
@@ -55,7 +55,7 @@ for (const version of VERSIONS) {
       await page.getByRole("menuitem", { name: "New window" }).click();
       await page.getByRole("textbox", { name: "Name" }).fill("second");
       await page.getByRole("button", { name: "Create" }).click();
-      await expect(page).toHaveURL(/#\/terminal$/);
+      await expect(page).toHaveURL(/#\/tab$/);
       expect(stack.tmux("list-windows", "-t", "made-here", "-F", "#{window_name}")).toContain("second");
       // The tab follows the session to the new window.
       await expect(page.getByRole("button", { name: /^made-here second, / })).toBeVisible();
@@ -80,7 +80,7 @@ for (const version of VERSIONS) {
       stack.tmux("new-session", "-d", "-s", "doomed", "-n", "only");
       await home(page);
       await sessionRow(page, "doomed").click();
-      await expect(page).toHaveURL(/#\/terminal$/);
+      await expect(page).toHaveURL(/#\/tab$/);
       // Off screen: Home covers the tab, and the daemon's closure broadcast removes it without a notice.
       await page.getByRole("button", { name: "Home" }).click();
       await expect(page.getByRole("button", { name: "doomed only", exact: true })).toBeVisible();

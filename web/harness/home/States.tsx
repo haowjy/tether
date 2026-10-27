@@ -50,7 +50,7 @@ export function States() {
             {...(s.active !== undefined && { active: s.active })}
             onOpen={NO_OP}
             onRetry={NO_OP}
-            creation={{ onNewSession: NO_OP }}
+            creation={{ onNewSession: NO_OP, onFiles: NO_OP }}
           />
         </Block>
       ))}

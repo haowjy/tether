@@ -3481,3 +3481,53 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   client is connected can respect both constraints.
 - **Rejected:** treating tested tmux versions, the build process or the code structure
   as invariants; keeping 3.7b as the second tested version.
+
+### Saved workspace v3 discards v2 and v1 whole; drafts stay
+
+- **Decided:** 2026-10-27, tech lead, in the redesign build plan (structure review p320).
+- **What:** the saved workspace is version 3: tabs in order (a terminal tab as before, a
+  Files tab with its id, host and place) and `active` by id. One web parser takes what
+  storage returns as `unknown` and returns version 3 or null; it discards version 2 and
+  version 1 whole, and the storage adapters no longer know versions. Drafts are never
+  touched: they are keyed by `TabKey` and return when that session is reopened. This
+  replaces the earlier rule that a version-1 workspace also cleared every draft.
+- **Why:** the earlier clear existed because a window-tab draft named no session. A
+  draft keyed by `TabKey` is still correct after the workspace is discarded, and a clean
+  launch opens Home, so the tab list is cheap to rebuild from the server cards.
+- **Rejected:** converting version 2 (a compatibility branch for one tab list per device);
+  clearing drafts along with an old workspace.
+
+### Files tabs: the workspace owns the place, history is a record
+
+- **Decided:** 2026-10-27, tech lead, in the redesign build plan (structure review p320).
+- **What:** a tab is a terminal tab or a Files tab, each with a stable id and a host. The
+  workspace owns a Files tab's place and writes it only from `navigated`; a history entry
+  records `{tab, place}` so Back returns to an earlier folder without a new request.
+  Before a drill-in the router stamps the current entry with `{tab, from}`, then pushes
+  `{tab, to}`. A Back that lands on an entry whose tab is gone or not active goes to
+  Home's entry in one `history.go(-n)` computed from the in-memory stack, announcing
+  nothing for the stale entry; closing an overlay lands on its base entry whichever tab
+  was shown meanwhile. There is still one `FileBrowser` per host: it shows the active
+  Files tab's place and reports the daemon's canonical path back, which replaces the
+  entry's place. A Files tab's label is its folder or file name, and "Files" at the folder
+  list. Insert path and uploads go to the host's `lastTerminal`, the terminal tab last
+  activated and still open (after a reload, the first terminal tab of the host until one
+  is activated); with none, they are disabled with "Open a terminal tab first".
+- **Why:** one owner for a place means a tab switch, a reload and Back cannot disagree
+  about where a tab is.
+- **Rejected:** a `FileBrowser` per tab (a lifecycle that tracks tab open and close for no
+  gain: the per-host 32-folder cache already restores listings); Back as the in-app
+  parent only (it misses the history rule in browser-behaviors.md "Browsing by tap");
+  inserting into the active tab (a Files tab is never a terminal).
+
+### Switching between tabs adds no history entry
+
+- **Decided:** 2026-10-27, tech lead, in the redesign build plan.
+- **What:** moving between a terminal tab and a Files tab, or between two tabs of the
+  same kind, with the tab route showing, adds no history entry. Only Home to a tab, a tab
+  to Home, a Files drill-in and an overlay push one. Routes are `home | tab`; the screen
+  (`home`, `terminal` or `files`) is derived from the route and the active tab, and focus
+  follows that screen, not the route.
+- **Why:** browser-behaviors.md states "tab changes are not history" for terminal tabs
+  only; extending it keeps Back meaning "leave this tab's folders, then leave to Home".
+- **Rejected:** an entry per tab switch (Back would replay every switch).

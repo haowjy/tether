@@ -27,8 +27,8 @@ export interface SessionListProps {
   onOpen: (listing: TmuxListing, session: SessionListing) => void;
   /** A fresh listing, or admission again when the host is unreachable. */
   onRetry: () => void;
-  /** Home and the switcher: "New session" beside the heading. */
-  creation?: { onNewSession: (opener: HTMLElement) => void };
+  /** Home: "Files" (a new Files tab at this host's folder list) and "New session" beside the heading. */
+  creation?: { onNewSession: (opener: HTMLElement) => void; onFiles: () => void };
 }
 
 function Heading({ hostName, status, action }: { hostName: string; status: ComponentChildren; action: ComponentChildren }) {
@@ -45,8 +45,12 @@ export function SessionList(props: SessionListProps) {
   const { hostName, unreachable, sessions, query, tabIdOf, open, active, onOpen, onRetry, creation } = props;
   const listing = sessions?.listing;
   const failure = sessions?.failure ?? null;
-  const newSession = creation && (
-    <Button variant="secondary" icon="plus" disabledReason={unreachable ? `${hostName} can't be reached` : undefined} onClick={(e) => { creation.onNewSession(e.currentTarget); }}>New session</Button>
+  const reason = unreachable ? `${hostName} can't be reached` : undefined;
+  const actions = creation && (
+    <>
+      <Button variant="secondary" icon="folder" disabledReason={reason} onClick={creation.onFiles}>Files</Button>
+      <Button variant="secondary" icon="plus" disabledReason={reason} onClick={(e) => { creation.onNewSession(e.currentTarget); }}>New session</Button>
+    </>
   );
 
   let status: ComponentChildren = null;
@@ -128,7 +132,7 @@ export function SessionList(props: SessionListProps) {
 
   return (
     <section class={styles.section} aria-label={`Sessions on ${hostName}`}>
-      <Heading hostName={hostName} status={status} action={newSession} />
+      <Heading hostName={hostName} status={status} action={actions} />
       {body}
     </section>
   );

@@ -18,7 +18,7 @@ import { ArmedModifiers } from "../../touch/armed";
 import { createOwnedInput } from "../../touch/owned-input";
 import { Store } from "../../ui/store";
 import { terminalTheme } from "../../ui/theme";
-import { shownTab } from "../../workspace/state";
+import { screenOf, shownTab } from "../../workspace/state";
 import { interceptClipboard, Pastes } from "./paste";
 import type { MenuState } from "./selection/control";
 import styles from "./Terminal.module.css";
@@ -242,8 +242,8 @@ export class Terminals extends Store<TerminalsView> {
       this.measure();
     }
     for (const tab of workspace.tabs) {
-      if (this.drivers.has(tab.id)) continue;
-      const client = this.app.hosts.byHostId(tab.key.host);
+      if (tab.kind !== "terminal" || this.drivers.has(tab.id)) continue;
+      const client = this.app.hosts.byHostId(tab.host);
       if (client) this.open(tab.id, tab.key.session, client);
     }
     for (const [id, driver] of this.drivers) {
@@ -272,9 +272,10 @@ export class Terminals extends Store<TerminalsView> {
   /** On Terminal the surface shows a tab only once its own snapshot has painted; off Terminal it keeps what it holds, for the return, unless no tab is left. */
   private showPainted(): void {
     const { workspace } = this.app.snapshot;
-    const blank = workspace.active === null || (workspace.onTerminal && this.painted !== workspace.active);
+    const onTerminal = screenOf(workspace) === "terminal";
+    const blank = !workspace.tabs.some((t) => t.kind === "terminal") || (onTerminal && this.painted !== workspace.active);
     if (blank) this.element.dataset["blank"] = "true";
-    else if (workspace.onTerminal) this.element.removeAttribute("data-blank");
+    else if (onTerminal) this.element.removeAttribute("data-blank");
   }
 
   private open(id: string, session: SessionRef, client: HostClient): void {
@@ -499,9 +500,9 @@ export class Terminals extends Store<TerminalsView> {
    * something else, a dialog or a field, has taken the focus meanwhile.
    */
   private focusIfIdle(): void {
-    const { nav } = this.app.snapshot;
+    const { nav, workspace } = this.app.snapshot;
     const holder = document.activeElement;
-    if (nav.destination !== "terminal" || nav.entry.overlay !== null || (holder && holder !== document.body)) return;
+    if (screenOf(workspace) !== "terminal" || nav.entry.overlay !== null || (holder && holder !== document.body)) return;
     this.app.focus.focusTarget("terminal");
   }
 }

@@ -1,0 +1,11 @@
+.chip {
+  max-width: var(--dock-chip-max-width);
+  min-width: var(--dock-chip-min-width);
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+/* The session name is bold and the window's regular, set apart by space alone; the window truncates first. */
+.session, .window { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session { flex: 0 0.01 auto; font-weight: var(--weight-bold); }
+.window { flex: 0 1 auto; margin-right: auto; }
+.count { flex: none; font-size: var(--font-size-1); color: var(--color-text-muted); }

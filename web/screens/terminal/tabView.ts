@@ -3,7 +3,7 @@ import { initialState } from "../../tabs/connection";
 import { describe, type Status, type Tone } from "../../tabs/status";
 import type { Pill, PillTone } from "../../ui/primitives/TabStrip";
 import { tabLabels } from "../../workspace/labels";
-import type { Tab } from "../../workspace/state";
+import type { Tab, TerminalTab } from "../../workspace/state";
 import type { TabStatus } from "./terminals";
 
 export interface TabLook {
@@ -24,7 +24,7 @@ const PILL: Record<Tone, { tone: PillTone; state: string }> = {
 };
 
 /** `onScreen`: the active tab on the Terminal destination, the only one that watches. */
-export function lookOf(tab: Tab, status: TabStatus | undefined, host: string, onScreen: boolean, now: number): TabLook {
+export function lookOf(tab: TerminalTab, status: TabStatus | undefined, host: string, onScreen: boolean, now: number): TabLook {
   const known = status ?? { state: initialState, downSince: now, retryAt: null };
   const described = describe(known.state, known.downSince, known.retryAt, now, host, onScreen);
   // A restored tab is unproven until the daemon finds its session: reconnecting colour, "Checking…", no input.
@@ -39,7 +39,7 @@ export function lookOf(tab: Tab, status: TabStatus | undefined, host: string, on
   return { ...PILL[described.tone], status: described };
 }
 
-/** The open tabs as pills; `onScreen` is the tab that is on the Terminal destination, if any. */
+/** The open tabs as pills; `onScreen` is the terminal tab that is on screen, if any. A Files tab has no connection of its own: it reads as open. */
 export function tabPills(
   tabs: readonly Tab[],
   statuses: Readonly<Record<string, TabStatus>>,
@@ -51,7 +51,8 @@ export function tabPills(
   return tabLabels(tabs, hostName).flatMap((l, i) => {
     const tab = tabs[i];
     if (!tab) return [];
-    const look = lookOf(tab, statuses[tab.id], hostName(tab.key.host), tab.id === onScreen, now);
+    if (tab.kind === "files") return [{ id: tab.id, session: l.session, window: "", full: l.full, tone: "idle" as const, state: "open" }];
+    const look = lookOf(tab, statuses[tab.id], hostName(tab.host), tab.id === onScreen, now);
     return [{ id: tab.id, session: l.session, window: l.window, full: l.full, tone: look.tone, state: look.state }];
   });
 }

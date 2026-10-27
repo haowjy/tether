@@ -9,7 +9,7 @@ import type { DraftRecord, TabKey } from "../../../platform/types";
 import { tabId } from "../../../platform/tabKey";
 import { Store } from "../../../ui/store";
 import { terminalsOf } from "../terminals";
-import type { Tab } from "../../../workspace/state";
+import type { TerminalTab } from "../../../workspace/state";
 
 /** An edit settles this long after the last keystroke. */
 const DEBOUNCE_MS = 300;
@@ -86,7 +86,7 @@ export class LineDrafts extends Store<DraftsState> {
   }
 
   /** Send the line and record its request before any paste answer can arrive. */
-  send(tab: Pick<Tab, "id" | "key">, text: string, continuation = ""): "sent" | "notConnected" {
+  send(tab: Pick<TerminalTab, "id" | "key">, text: string, continuation = ""): "sent" | "notConnected" {
     const terminals = terminalsOf(this.app);
     if (!this.claimedTerminal) {
       this.claimedTerminal = true;

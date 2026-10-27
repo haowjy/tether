@@ -1,4 +1,5 @@
 import { useApp, useAppView } from "../../app/context";
+import { screenOf } from "../../workspace/state";
 import { Spinner } from "../../ui/primitives/Spinner";
 import { Enrol } from "../enrol/Enrol";
 import { NoServers } from "../enrol/NoServers";
@@ -12,16 +13,17 @@ import { Switcher } from "../switcher/Switcher";
 import { TerminalScreen } from "../terminal/TerminalScreen";
 import { AppBanners } from "./AppBanners";
 import { HostBanner } from "./HostBanner";
-import { Rail } from "./Rail";
+import { TopRow } from "./TopRow";
 import styles from "./Shell.module.css";
 
-/** The destination frame: the rail on desktop, and the screen for the route. Admission problems replace it. */
+/** The frame: the top row where there is no dock, and the screen the route and the active tab show. Admission problems replace it. */
 export function Shell() {
   const app = useApp();
   const layout = useAppView((v) => v.viewport.layout);
-  const destination = useAppView((v) => v.nav.destination);
+  const screen = useAppView((v) => screenOf(v.workspace));
+  // Touch input ends in the dock (phone and iPad); a mouse keeps the top row, even in a narrow window.
+  const topRow = useAppView((v) => v.viewport.layout === "desktop" || v.viewport.directInput === "xterm");
   const hosts = useAppView((v) => v.hosts);
-  const desktop = layout === "desktop";
   // An app with no server yet has nothing to wait for: it offers to add one.
   const noServers = hosts.length === 0 && app.platform.manageHosts !== undefined;
   // The browser has one host; native may have several, each with its own banner.
@@ -30,8 +32,8 @@ export function Shell() {
   // The terminal stays mounted, hidden, under an admission screen: its buffer and watches outlive it (§6.5).
   return (
     <div class={styles.shell} data-layout={layout}>
-      {!blocking && desktop && <Rail destination={destination} />}
       <div class={styles.column}>
+        {!blocking && topRow && <TopRow />}
         <div class={styles.banners}>
           <AppBanners />
           {!blocking && hosts.map((h) => <HostBanner key={h.entry.handle} host={h} />)}
@@ -43,11 +45,11 @@ export function Shell() {
             <>
               {hosts.length === 0 && !noServers && <div class={styles.waiting}><Spinner label="Checking access" /></div>}
               {noServers && <NoServers />}
-              {!noServers && destination === "home" && <Home pane="sessions" />}
-              {!noServers && destination === "files" && (desktop ? <FilesScreen /> : <Home pane="files" />)}
+              {!noServers && screen === "home" && <Home />}
+              {!noServers && screen === "files" && <FilesScreen />}
             </>
           )}
-          <TerminalScreen active={!blocking && destination === "terminal"} />
+          <TerminalScreen active={!blocking && screen === "terminal"} />
         </main>
       </div>
       {!blocking && (

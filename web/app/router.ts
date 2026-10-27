@@ -1,10 +1,9 @@
 // Browser history is the navigation stack, and this is its only writer (client-architecture.md
-// §6.6). Each entry's state holds the overlay open on it, the Files place, and the logical
-// parent. The URL carries the destination only, so file paths never enter it. Everyone
-// else learns of navigation one way: `navigated`, after every push, replace and pop.
+// §6.6). Each entry's state holds the route (Home or a tab), the overlay open on it, and a
+// record of the tab's Files place. The URL carries the route only, so file paths never enter
+// it. Everyone else learns of navigation one way: `navigated`, after every push, replace and pop.
 import type { FilesPlace } from "../platform/types";
-
-export type Destination = "home" | "files" | "terminal";
+import { samePlace, type Route } from "../workspace/state";
 
 /** `{ screen, name, params }` is opaque to the router: each lane adds overlays in its own screen. */
 export interface Overlay {
@@ -13,19 +12,21 @@ export interface Overlay {
   params?: Record<string, unknown>;
 }
 
+/**
+ * One history entry. `tab` and `place` are a record of what the entry showed (the tab, and
+ * for a Files tab the place it held), so Back returns to an earlier folder without a new
+ * request. The workspace owns the place; the router never decides it.
+ */
 export interface Entry {
   /** Unique per entry: lets a pop find its place in the in-memory stack. */
   id: number;
-  destination: Destination;
+  route: Route;
+  tab: string | null;
+  place: FilesPlace | null;
   overlay: Overlay | null;
-  /** Files' folder and preview. Meaningful on the Files destination only. */
-  files: FilesPlace | null;
-  /** Where the in-app back button goes: Home for every other destination. */
-  parent: Destination | null;
 }
 
 export interface Navigated {
-  destination: Destination;
   entry: Entry;
 }
 
@@ -38,11 +39,7 @@ export interface HistoryPort {
   onPop(listener: () => void): () => void;
 }
 
-const HASHES: Record<Destination, string> = { home: "#/", files: "#/files", terminal: "#/terminal" };
-
-export function destinationFromHash(hash: string): Destination {
-  return hash === HASHES.files ? "files" : hash === HASHES.terminal ? "terminal" : "home";
-}
+const HASHES: Record<Route, string> = { home: "#/", tab: "#/tab" };
 
 /** The enrolment code in a setup link's fragment (`#code=7KQ4-XM2P`), or null. Normalised to the bare characters the code field holds. */
 export function enrolCodeFromHash(hash: string): string | null {
@@ -52,26 +49,23 @@ export function enrolCodeFromHash(hash: string): string | null {
 
 function isEntry(state: unknown): state is Entry {
   const e = state as Partial<Entry> | null;
-  return typeof e?.id === "number" && (e.destination === "home" || e.destination === "files" || e.destination === "terminal");
+  return typeof e?.id === "number" && (e.route === "home" || (e.route === "tab" && typeof e.tab === "string"));
 }
+
+const HOME = { route: "home", tab: null, place: null, overlay: null } as const;
 
 export class Router {
   private stack: Entry[] = [];
   private readonly listeners = new Set<(nav: Navigated) => void>();
   private nextId = Date.now();
-  /** The last Files place any entry held: `go("files")` returns to it. */
-  private lastFiles: FilesPlace | null;
+  /** The workspace's active tab, set by the controller once the workspace exists: an entry whose tab is not it is stale. */
+  activeTab: () => string | null = () => null;
 
-  /**
-   * Reload restores the destination from the hash and the Files place from the saved
-   * workspace: the first entry is replaced with that place. Overlays do not survive.
-   */
-  constructor(private readonly port: HistoryPort, files: FilesPlace | null) {
-    const destination = destinationFromHash(port.current().hash);
-    const entry: Entry = { id: this.nextId++, destination, overlay: null, files: destination === "files" ? files : null, parent: destination === "home" ? null : "home" };
+  /** A clean launch opens Home, even with saved tabs: the first entry is replaced with Home's. */
+  constructor(private readonly port: HistoryPort) {
+    const entry: Entry = { id: this.nextId++, ...HOME };
     this.stack = [entry];
-    this.lastFiles = entry.files;
-    port.replace(entry, HASHES[destination]);
+    port.replace(entry, HASHES.home);
     port.onPop(() => { this.popped(); });
   }
 
@@ -84,16 +78,19 @@ export class Router {
     return () => { this.listeners.delete(listener); };
   }
 
-  /** Changing destination pushes an entry. The same destination changes nothing. Files returns to where it was left. */
-  go(destination: Destination): void {
-    const { entry } = this;
-    if (entry.destination === destination) return;
-    this.push({ destination, overlay: null, files: destination === "files" ? this.lastFiles : null, parent: destination === "home" ? null : "home" });
+  /** Shows Home: pushes an entry unless already there. */
+  goHome(): void {
+    if (this.entry.route === "home") return;
+    this.push(HOME);
+  }
+
+  /** Shows the active tab from Home: pushes an entry for it. Switching tabs on a tab route adds none. */
+  openTab(tab: string, place: FilesPlace | null): void {
+    this.push({ route: "tab", tab, place, overlay: null });
   }
 
   openOverlay(overlay: Overlay): void {
-    const { entry } = this;
-    this.push({ ...entry, overlay, parent: entry.parent });
+    this.push({ ...this.entry, overlay });
   }
 
   /**
@@ -129,66 +126,89 @@ export class Router {
   }
 
   private closeOverlays(count: number): void {
-    if (this.entry.overlay === null) return;
-    if (this.stack[this.stack.length - 1 - count]?.destination === this.entry.destination) this.port.go(-count);
-    else this.replace({ ...this.entry, overlay: null });
-  }
-
-  /** Drilling into a Files folder or preview. `FileBrowser` changes only when the resulting `navigated` arrives. */
-  pushFiles(place: FilesPlace): void {
-    this.push({ destination: "files", overlay: null, files: place, parent: "home" });
+    const { entry } = this;
+    if (entry.overlay === null) return;
+    const base = this.stack[this.stack.length - 1 - count];
+    if (base?.route === entry.route && base.tab === entry.tab) this.port.go(-count);
+    else this.replace({ ...entry, overlay: null });
   }
 
   /**
-   * An in-app back button: to the logical parent. If the previous entry is that parent,
-   * this is `history.back()`; after a reload or a deep link the entry is replaced with the
-   * parent, so Back never leaves the app unexpectedly. Within Files the parent is the
-   * enclosing place, given as `files`.
+   * Drilling into a folder or preview of Files tab `tab`, now at `from`. The current entry is
+   * stamped with `{tab, from}` first (a record, nothing emitted), so Back returns to this
+   * place in this tab even if another tab was shown since the entry was made.
    */
-  toParent(files?: FilesPlace): void {
-    const { entry } = this;
+  pushPlace(tab: string, from: FilesPlace, to: FilesPlace): void {
+    this.replaceQuietly({ route: "tab", tab, place: from, overlay: null });
+    this.push({ route: "tab", tab, place: to, overlay: null });
+  }
+
+  /** The Files tab's place is now `place` (the daemon's canonical path for what was asked): the entry says so. */
+  replacePlace(tab: string, place: FilesPlace): void {
+    this.replace({ route: "tab", tab, place, overlay: this.entry.overlay });
+  }
+
+  /**
+   * An in-app back button to Home. If the previous entry is Home this is `history.back()`;
+   * after a reload or a deep link the entry is replaced with Home, so Back never leaves the
+   * app unexpectedly.
+   */
+  toHome(): void {
+    if (this.entry.route === "home") return;
     const previous = this.stack[this.stack.length - 2];
-    if (files) {
-      if (previous?.destination === "files" && previous.overlay === null && JSON.stringify(previous.files) === JSON.stringify(files)) this.port.go(-1);
-      else this.replace({ destination: "files", overlay: null, files, parent: "home" });
-      return;
-    }
-    const parent = entry.parent;
-    if (parent === null) return;
-    if (previous?.destination === parent && previous.overlay === null) this.port.go(-1);
-    else this.replace({ destination: parent, overlay: null, files: null, parent: parent === "home" ? null : "home" });
+    if (previous?.route === "home" && previous.overlay === null) this.port.go(-1);
+    else this.replace(HOME);
+  }
+
+  /** The in-app back inside a Files tab: to `place`, the enclosing one. The previous entry is that place in this tab, or the entry is replaced with it. */
+  toPlace(tab: string, place: FilesPlace): void {
+    const previous = this.stack[this.stack.length - 2];
+    if (previous?.route === "tab" && previous.tab === tab && previous.overlay === null && previous.place && samePlace(previous.place, place)) this.port.go(-1);
+    else this.replace({ route: "tab", tab, place, overlay: null });
   }
 
   private push(next: Omit<Entry, "id">): void {
     const entry: Entry = { ...next, id: this.nextId++ };
     this.stack.push(entry);
-    this.port.push(entry, HASHES[entry.destination]);
+    this.port.push(entry, HASHES[entry.route]);
     this.emit();
   }
 
   private replace(next: Omit<Entry, "id">): void {
-    const entry: Entry = { ...next, id: this.nextId++ };
-    this.stack[this.stack.length - 1] = entry;
-    this.port.replace(entry, HASHES[entry.destination]);
+    this.replaceQuietly(next);
     this.emit();
   }
 
+  private replaceQuietly(next: Omit<Entry, "id">): void {
+    const entry: Entry = { ...next, id: this.nextId++ };
+    this.stack[this.stack.length - 1] = entry;
+    this.port.replace(entry, HASHES[entry.route]);
+  }
+
   private popped(): void {
-    const { state, hash } = this.port.current();
+    const leftOverlay = this.entry.overlay !== null;
+    const { state } = this.port.current();
     if (isEntry(state)) {
       const at = this.stack.findIndex((e) => e.id === state.id);
       // An entry from this page's life moves the stack; one from an earlier life (forward past a reload) stands alone.
       this.stack = at >= 0 ? this.stack.slice(0, at + 1) : [{ ...state, overlay: null }];
     } else {
-      const destination = destinationFromHash(hash);
-      this.stack = [{ id: this.nextId++, destination, overlay: null, files: null, parent: destination === "home" ? null : "home" }];
+      this.stack = [{ id: this.nextId++, ...HOME }];
+    }
+    const { entry } = this;
+    // Closing an overlay lands on its base entry, whichever tab was shown meanwhile. Any other entry
+    // for a tab that is gone or not the active one is stale: skip to Home without announcing it.
+    if (!leftOverlay && entry.route === "tab" && entry.tab !== this.activeTab()) {
+      const home = this.stack.findLastIndex((e) => e.route === "home" && e.overlay === null);
+      if (home < 0) this.replace(HOME);
+      else this.port.go(home - (this.stack.length - 1));
+      return;
     }
     this.emit();
   }
 
   private emit(): void {
-    if (this.entry.files) this.lastFiles = this.entry.files;
-    const nav: Navigated = { destination: this.entry.destination, entry: this.entry };
+    const nav: Navigated = { entry: this.entry };
     for (const listener of [...this.listeners]) listener(nav);
   }
 }

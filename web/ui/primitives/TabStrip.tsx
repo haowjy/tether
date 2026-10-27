@@ -87,7 +87,7 @@ function PillView({ pill, active, closable, action, onSelect, onClose }: { pill:
         onClick={() => { onSelect(pill.id); }}
       >
         <span class={styles.session}>{pill.session}</span>
-        <span class={styles.window}>{pill.window}</span>
+        {pill.window !== "" && <span class={styles.window}>{pill.window}</span>}
       </button>
       {action}
       {closable && <IconButton icon="close" label={`Close ${pill.full}`} class={styles.close} onClick={() => { onClose(pill.id); }} />}

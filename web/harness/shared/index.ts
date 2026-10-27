@@ -24,14 +24,13 @@ export const LISTING: TmuxListing = {
 
 /** Two tabs saved by a previous page load; the third names a session the daemon no longer has. */
 export const SAVED: SavedWorkspace = {
-  version: 2,
+  version: 3,
   tabs: [
-    { key: key(1), session: "tether", window: "agent" },
-    { key: key(2), session: "notes", window: "shell" },
-    { key: key(99), session: "gone", window: "window" },
+    { kind: "terminal", key: key(1), session: "tether", window: "agent" },
+    { kind: "terminal", key: key(2), session: "notes", window: "shell" },
+    { kind: "terminal", key: key(99), session: "gone", window: "window" },
   ],
   active: "h-pop/main:1-1/$1",
-  files: null,
 };
 
 export const fixtures: Fixtures = {

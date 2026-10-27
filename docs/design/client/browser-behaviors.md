@@ -167,7 +167,7 @@ pane, not tmux's key tables.
 
 ## Files
 
-Any number of Files tabs can be open, even on the same server. Each remembers its own folder or file preview locally and is labelled by that folder or file name. Home “Files” and the sheet/desktop “Browse files” always create a new tab at the selected server's folder list (its roots), since outside a root tether lists subfolders, not files; existing Files tabs are reached through their tab or Home row.
+Any number of Files tabs can be open, even on the same server. Each remembers its own folder or file preview locally and is labelled by that folder or file name (“Files” at the folder list). Home “Files” and the sheet/desktop “Browse files” always create a new tab at the selected server's folder list (its roots), since outside a root tether lists subfolders, not files; existing Files tabs are reached through their tab or Home row.
 
 Each Files tab presents one folder list under one path field. At rest the field shows where the user is; typed into, it completes folders; tapping rows browses one folder at a time.
 

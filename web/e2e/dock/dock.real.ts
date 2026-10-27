@@ -43,6 +43,11 @@ for (const version of VERSIONS) {
       await page.getByRole("button", { name: new RegExp(`^${session}\\b`) }).click();
       await painted(page);
     }
+    /** A reload opens Home: the saved tab for `session` is one tap away in Open tabs. */
+    async function reopen(page: Page, session: string): Promise<void> {
+      await page.getByLabel("Open tabs").getByRole("button", { name: new RegExp(`^${session}\\b`) }).click();
+      await painted(page);
+    }
     async function painted(page: Page): Promise<void> {
       await page.waitForFunction(() => { const host = document.querySelector(".xterm")?.parentElement; return host !== null && host !== undefined && !host.hasAttribute("data-blank"); });
     }
@@ -175,7 +180,7 @@ for (const version of VERSIONS) {
         server.onMessage((frame) => { ws.send(frame); });
       });
       await page.reload();
-      await painted(page);
+      await reopen(page, s);
       await toggle(page).click();
       const up = key(page, "Up arrow");
       const box = await up.boundingBox();
@@ -246,6 +251,7 @@ for (const version of VERSIONS) {
 
       await page.waitForTimeout(500);
       await page.reload();
+      await reopen(page, s);
       await expect(line(page)).toHaveValue("draft one");
     });
 

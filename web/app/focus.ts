@@ -7,7 +7,7 @@
 import type { FocusMode, InputPlatform, Viewport } from "../platform/types";
 import type { FocusPort, FocusTarget } from "../ui/focus";
 import { Store } from "../ui/store";
-import type { Destination } from "./router";
+import type { Screen } from "../workspace/state";
 
 export type { FocusTarget };
 
@@ -26,8 +26,8 @@ interface FocusView {
  * The mode native rests in for a screen: `webText` wherever a web field may take the keyboard;
  * on Terminal, `select` while the selection snapshot holds the touch, so native lets the web view's text selection work.
  */
-export function restingMode(destination: Destination, overlay: boolean, keyboardWasUp: boolean, selecting = false): FocusMode {
-  if (destination === "terminal" && !overlay) return selecting ? "select" : keyboardWasUp ? "terminal" : "hidden";
+export function restingMode(screen: Screen, overlay: boolean, keyboardWasUp: boolean, selecting = false): FocusMode {
+  if (screen === "terminal" && !overlay) return selecting ? "select" : keyboardWasUp ? "terminal" : "hidden";
   return "webText";
 }
 
@@ -44,7 +44,7 @@ export class FocusController extends Store<FocusView> implements FocusPort {
   private opener: Element | null = null;
   private standIn: HTMLElement | null = null;
   private mode: FocusMode | null = null;
-  private screen: { destination: Destination; overlay: boolean } | null = null;
+  private screen: { screen: Screen; overlay: boolean } | null = null;
   private isSelecting = false;
 
   constructor(
@@ -91,7 +91,7 @@ export class FocusController extends Store<FocusView> implements FocusPort {
 
   /** The non-editable app mirror chose the line target. */
   nativeLineFocus(): void {
-    if (!this.isNative || this.screen?.destination !== "terminal" || this.screen.overlay) return;
+    if (!this.isNative || this.screen?.screen !== "terminal" || this.screen.overlay) return;
     this.update({ owner: "line" });
     this.send("line");
   }
@@ -218,12 +218,12 @@ export class FocusController extends Store<FocusView> implements FocusPort {
     this.rest();
   }
 
-  /** Whenever the destination or overlay changes: native learns the mode the screen needs. */
-  screenChanged(destination: Destination, overlay: boolean): void {
-    this.screen = { destination, overlay };
+  /** Whenever the screen or overlay changes: native learns the mode the screen needs. */
+  screenChanged(screen: Screen, overlay: boolean): void {
+    this.screen = { screen, overlay };
     const { owner } = this.snapshot;
-    // Leaving Terminal lowers the keyboard (the dock is hidden there, which would drop it only later).
-    if ((destination !== "terminal" || overlay) && owner !== "none") {
+    // Leaving the terminal screen lowers the keyboard (the dock is hidden there, which would drop it only later).
+    if ((screen !== "terminal" || overlay) && owner !== "none") {
       if (owner === "line" && this.isNative) this.update({ owner: "none" });
       else this.targets.get(owner)?.blur();
     }
@@ -237,9 +237,9 @@ export class FocusController extends Store<FocusView> implements FocusPort {
 
   private restingNow(): FocusMode | null {
     if (!this.screen) return null;
-    if (this.isSelecting) return restingMode(this.screen.destination, this.screen.overlay, this.snapshot.owner !== "none", true);
-    if (this.isNative && this.screen.destination === "terminal" && !this.screen.overlay && this.snapshot.owner === "line") return "line";
-    return restingMode(this.screen.destination, this.screen.overlay, this.snapshot.owner !== "none", this.isSelecting);
+    if (this.isSelecting) return restingMode(this.screen.screen, this.screen.overlay, this.snapshot.owner !== "none", true);
+    if (this.isNative && this.screen.screen === "terminal" && !this.screen.overlay && this.snapshot.owner === "line") return "line";
+    return restingMode(this.screen.screen, this.screen.overlay, this.snapshot.owner !== "none", this.isSelecting);
   }
 
   private get isNative(): boolean { return this.viewport().directInput === "native"; }

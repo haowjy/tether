@@ -5,7 +5,7 @@ import { useApp, useAppView } from "../../../app/context";
 import type { TextRange } from "../../../platform/types";
 import { LineInput } from "../../../ui/primitives/LineInput";
 import { useStore } from "../../../ui/store";
-import type { Tab } from "../../../workspace/state";
+import type { TerminalTab } from "../../../workspace/state";
 import { readPaste } from "../paste";
 import { terminalsOf } from "../terminals";
 import { LineMirror } from "./LineMirror";
@@ -15,7 +15,7 @@ import { nativeLineOf } from "./nativeLine";
 export type LocalNote = { tone: "error" | "info"; text: string };
 
 interface LineFieldProps {
-  tab: Tab | null;
+  tab: TerminalTab | null;
   label: string;
   onNote: (note: LocalNote | null) => void;
   inputRef: Ref<HTMLTextAreaElement>;
@@ -60,7 +60,7 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
     onNote({ tone: "error", text: result === "tooLarge" ? "Draft too large: the limit is 64 KiB" : "Too many saved drafts: clear one" });
   };
 
-  const send = (forTab: Tab, value: string): void => {
+  const send = (forTab: TerminalTab, value: string): void => {
     const result = drafts.send(forTab, value);
     onNote(result === "notConnected" ? { tone: "error", text: "Not connected" } : null);
   };

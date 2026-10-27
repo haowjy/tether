@@ -7,6 +7,7 @@ import { viewerFor } from "../../files/kinds";
 import type { LinkTarget } from "../../files/render/markdown";
 import type { HttpRefusal } from "../../net/http";
 import { Button } from "../../ui/primitives/Button";
+import { insertTargetOf } from "../../workspace/state";
 import { insertPath, useInsertTarget } from "./insert";
 import { ImageViewer } from "./ImageViewer";
 import type { FilesSession } from "./session";
@@ -50,11 +51,11 @@ function MediaViewer({ session, file }: { session: FilesSession; file: FileRef }
   );
 }
 
-/** Insert path, with the file's details: the tab it goes to is read from the workspace and captured on the click. */
+/** Insert path, with the file's details: the tab it goes to is the last terminal tab of this host, read from the workspace and captured on the click. */
 function InsertBar({ file, children }: { file: FileRef; children?: ComponentChildren }) {
   const app = useApp();
-  const active = useAppView((v) => v.workspace.active);
-  const target = useInsertTarget(active);
+  const last = useAppView((v) => insertTargetOf(v.workspace));
+  const target = useInsertTarget(last);
   return (
     <div class={styles.bar}>
       <Button

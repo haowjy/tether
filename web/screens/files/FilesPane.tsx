@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { useApp, useAppView } from "../../app/context";
+import { useApp } from "../../app/context";
 import { describeError, parentPlace } from "../../files/browser";
 import { baseName, parentOf } from "../../files/paths";
+import type { FilesTab } from "../../workspace/state";
 import type { LinkTarget } from "../../files/render/markdown";
 import type { FilesPlace } from "../../platform/types";
 import { useStore } from "../../ui/store";
@@ -15,19 +16,20 @@ import { RemoveFolderDialog } from "./FolderDialogs";
 import { DirList, RootsList } from "./FolderList";
 import { PathField } from "./PathField";
 import { Preview } from "./Preview";
-import { startUpload, type FilesSession } from "./session";
+import { scrollKey, startUpload, type FilesSession } from "./session";
 import { UploadPanel } from "./UploadPanel";
 import styles from "./FilesScreen.module.css";
 
 /**
- * The file manager for one host: a folder list or a preview, under a header that says where
- * you are. Where you are is the router's (history entry); `FileBrowser` follows it.
+ * The file manager for one Files tab: a folder list or a preview, under a header that says
+ * where you are. Where you are is the tab's place (the workspace's, written from history);
+ * the host's `FileBrowser` follows it and reports the daemon's canonical path back.
  */
-export function FilesPane({ session }: { session: FilesSession }) {
+export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesTab }) {
   const app = useApp();
   const { browser } = session;
   const view = useStore(browser, (s) => s);
-  const wanted = useAppView((v) => v.nav.entry.files);
+  const wanted = tab.place;
   const { place, pages, roots, loading, error } = view;
   const scroller = useRef<HTMLDivElement>(null);
   // While the path field is being typed in, its completions are the list.
@@ -35,7 +37,7 @@ export function FilesPane({ session }: { session: FilesSession }) {
 
   useEffect(() => { void browser.follow(wanted); }, [browser, wanted]);
 
-  const open = (to: FilesPlace): void => { app.router.pushFiles(to); };
+  const open = (to: FilesPlace): void => { app.openPlace(to); };
   const up = parentPlace(view);
   const listed = pages !== null && (place.kind === "dir" ? pages.path === place.path : place.kind === "file" && pages.path === parentOf(place.file.path));
   const listingVisible = place.kind === "dir" && listed && !error && !finding;
@@ -43,8 +45,8 @@ export function FilesPane({ session }: { session: FilesSession }) {
   // Back finds a folder's list scrolled where it was left.
   const folder = listed ? pages.path : null;
   useLayoutEffect(() => {
-    if (folder !== null && scroller.current) scroller.current.scrollTop = session.scroll.get(folder) ?? 0;
-  }, [folder, session.scroll, listingVisible]);
+    if (folder !== null && scroller.current) scroller.current.scrollTop = session.scroll.get(scrollKey(tab.id, folder)) ?? 0;
+  }, [folder, session.scroll, tab.id, listingVisible]);
 
   const onLink = (target: LinkTarget): void => {
     if (target.kind === "external") app.platform.openURL(target.url);
@@ -56,7 +58,6 @@ export function FilesPane({ session }: { session: FilesSession }) {
   const home = roots?.home ?? null;
   const title = place.kind === "roots" ? "Files" : place.kind === "dir" ? baseName(place.path) : place.file.name;
   const rest = place.kind === "dir" ? shorten(place.path, home) : "";
-  const backLabel = place.kind === "file" ? "Back to folder" : up?.kind === "roots" ? "All folders" : "Up one folder";
 
   let body;
   if (error) {
@@ -82,7 +83,7 @@ export function FilesPane({ session }: { session: FilesSession }) {
   return (
     <div class={styles.files}>
       <header class={styles.header}>
-        {up && <IconButton icon="back" label={backLabel} onClick={() => { app.router.toParent(up); }} />}
+        {place.kind === "file" && up && <IconButton icon="back" label="Back to folder" onClick={() => { app.toPlace(up); }} />}
         <div class={styles.heading}>
           <h1 class={styles.title}>{title}</h1>
           {place.kind === "file" && <p class={styles.crumb} title={place.file.path}>{shorten(place.file.path, home)}</p>}
@@ -103,7 +104,7 @@ export function FilesPane({ session }: { session: FilesSession }) {
           key={pages.path}
           class={styles.scroll}
           hidden={!listingVisible}
-          onScroll={(e) => { session.scroll.set(pages.path, e.currentTarget.scrollTop); }}
+          onScroll={(e) => { session.scroll.set(scrollKey(tab.id, pages.path), e.currentTarget.scrollTop); }}
         >
           {pages.via === "dirs" && <AddThisFolder session={session} path={pages.path} />}
           <DirList
@@ -117,6 +118,7 @@ export function FilesPane({ session }: { session: FilesSession }) {
             onMore={() => { void browser.more(); }}
             onToggleHidden={() => { void browser.toggleHidden(); }}
             foldersOnly={pages.via === "dirs"}
+            {...(up?.kind === "dir" && { parent: { name: baseName(up.path), onOpen: () => { app.toPlace(up); } } })}
           />
         </div>
       )}

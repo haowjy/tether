@@ -13,6 +13,9 @@ const SCREENS = [["desktop", desktop], ["phone", phone]] as const;
 const REPO = "/home/jimmy/tether";
 const UPLOADED = "/home/jimmy/tether-uploads/20261022-101010Z-abcd.jpg";
 const hash = (page: Page): Promise<string> => page.evaluate(() => location.hash);
+/** The id of the tab on screen, and a tap on a tab's pill. */
+const activeTab = (page: Page): Promise<string | null | undefined> => page.evaluate(() => window.__harness?.app.snapshot.workspace.active);
+const activate = (page: Page, id: string): Promise<void> => page.evaluate((tab) => { window.__harness?.app.dispatch({ type: "activated", id: tab }); }, id);
 const title = (page: Page, name: string | RegExp) => page.getByRole("heading", { level: 1, name });
 /** The fake daemon's `/fs` requests so far, `"METHOD /path?query"`. */
 const fsRequests = (page: Page): Promise<string[]> => page.evaluate(() => window.__harness?.platform.daemon.requests.filter((r) => r.includes(" /fs/")) ?? []);
@@ -29,11 +32,13 @@ const script = (page: Page, run: "push" | "end", event?: object): Promise<void> 
 const AGENT = "h-pop/main:1-1/$1";
 const AGENT_WINDOW = 1;
 const NOTES = "h-pop/main:1-1/$2";
+/** The Files tab the fixtures open on. */
+const FILES = "files-1";
 
 for (const [name, scenario] of SCREENS) {
   test.describe(`files on ${name}`, () => {
     test("browses roots, folders and pages", async ({ page }) => {
-      const opened = await openFixture(page, "files", scenario, "#/files");
+      const opened = await openFixture(page, "files", scenario);
       await expect(page.getByRole("button", { name: "~/tether", exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: /~\/tether-uploads/ })).toContainText("Uploads");
       await page.getByRole("button", { name: "~/tether", exact: true }).click();
@@ -52,7 +57,7 @@ for (const [name, scenario] of SCREENS) {
     });
 
     test("previews code, Markdown, images, video and binary files", async ({ page }) => {
-      await openFixture(page, "filesFolder", scenario, "#/files");
+      await openFixture(page, "filesFolder", scenario);
       await page.getByRole("button", { name: "src" }).click();
       await page.getByRole("button", { name: "main.rs" }).click();
       await expect(title(page, "main.rs")).toBeVisible();
@@ -83,7 +88,7 @@ for (const [name, scenario] of SCREENS) {
     });
 
     test("Markdown links open a file here and a web link in the browser", async ({ page }) => {
-      await openFixture(page, "filesMarkdown", scenario, "#/files");
+      await openFixture(page, "filesMarkdown", scenario);
       // The document's own markup that navigates or takes focus is gone, not merely unclicked.
       await expect(page.getByRole("link", { name: "the design" })).toBeVisible();
       await expect(page.locator("article").locator("area, map, details, summary, svg, [usemap]")).toHaveCount(0);
@@ -98,8 +103,8 @@ for (const [name, scenario] of SCREENS) {
       expect(await page.evaluate(() => window.__harness?.platform.opened ?? [])).toEqual(["https://example.com/"]);
     });
 
-    test("Back retraces preview, folders and destination, and keeps the list as it was", async ({ page }) => {
-      await openFixture(page, "files", scenario, "#/files");
+    test("Back retraces preview, folders and the tab, and keeps the list as it was", async ({ page }) => {
+      await openFixture(page, "files", scenario);
       await page.getByRole("button", { name: "~/tether", exact: true }).click();
       await page.getByRole("button", { name: "src" }).click();
       await page.getByRole("button", { name: "main.rs" }).click();
@@ -114,16 +119,22 @@ for (const [name, scenario] of SCREENS) {
       await expect(title(page, "tether")).toBeVisible();
       await page.goBack();
       await expect(title(page, "Files")).toBeVisible();
-      expect(await hash(page)).toBe("#/files");
+      expect(await hash(page)).toBe("#/tab");
+      await page.goBack();
+      await expect(page.getByRole("heading", { name: "Open tabs" })).toBeVisible();
 
-      // The in-app back button goes up a level too.
+      // The in-app parent row goes up a level too: absent at a root, the folder's parent below it.
       await page.goForward();
-      await page.getByRole("button", { name: "Up one folder" }).or(page.getByRole("button", { name: "All folders" })).click();
-      await expect(title(page, "Files")).toBeVisible();
+      await expect(page.getByRole("button", { name: /^Up to / })).toHaveCount(0);
+      await page.goForward();
+      await page.goForward();
+      await expect(title(page, "src")).toBeVisible();
+      await page.getByRole("button", { name: "Up to tether" }).click();
+      await expect(title(page, "tether")).toBeVisible();
     });
 
     test("restores the preview and saves the browsed folder", async ({ page }) => {
-      await openFixture(page, "filesMarkdown", scenario, "#/files");
+      await openFixture(page, "filesMarkdown", scenario);
       await expect(title(page, "README.md")).toBeVisible();
       await page.getByRole("button", { name: "Back to folder" }).click();
       await expect(title(page, "tether")).toBeVisible();
@@ -133,25 +144,24 @@ for (const [name, scenario] of SCREENS) {
 
       await page.evaluate(() => window.__harness?.app.persist.persistNow());
       const saved = await page.evaluate(() => window.__harness?.platform.savedWorkspaces.at(-1) ?? null);
-      expect(saved?.files).toEqual({ hostId: "h-pop", place: { kind: "dir", path: `${REPO}/src` } });
+      expect(saved?.tabs.find((t) => t.kind === "files")).toEqual({ kind: "files", id: FILES, host: "h-pop", place: { kind: "dir", path: `${REPO}/src` } });
     });
 
-    test("Insert path goes to the active tab, with no Enter, and opens Terminal there", async ({ page }) => {
-      await openFixture(page, "filesCode", scenario, "#/files");
+    test("Insert path goes to the host's last terminal tab, with no Enter, and shows it", async ({ page }) => {
+      await openFixture(page, "filesCode", scenario);
       await page.getByRole("button", { name: "Insert path into tether agent" }).click();
-      await expect.poll(() => hash(page)).toBe("#/terminal");
+      await expect.poll(() => activeTab(page)).toBe(AGENT);
       // The quoted-or-bare path, as text and nothing else: no Enter. It is typed once the tab's watch binds.
       await expect.poll(() => typed(page), { timeout: 15_000 }).toEqual([[AGENT_WINDOW, `${REPO}/src/main.rs`]]);
-      expect(await page.evaluate(() => window.__harness?.app.snapshot.workspace.active)).toBe(AGENT);
     });
 
     test("Insert path is disabled for a tab the daemon refused for its session limit, and offered again once it connects", async ({ page }) => {
-      await openFixture(page, "filesCode", scenario, "#/files");
+      await openFixture(page, "filesCode", scenario);
       await page.evaluate(() => { const d = window.__harness?.platform.daemon; if (d) d.watch = { limit: "tether on pop-os allows 1 tmux session at a time" }; });
       // Showing the tab asks the daemon to watch it, and the refusal marks it limited.
-      await page.evaluate(() => window.__harness?.app.router.go("terminal"));
+      await activate(page, AGENT);
       await expect(page.getByText("allows 1 tmux session at a time").first()).toBeVisible();
-      await page.evaluate(() => window.__harness?.app.router.go("files"));
+      await activate(page, FILES);
       const button = page.getByRole("button", { name: "Insert path into tether agent" });
       await expect(button).toHaveAttribute("aria-disabled", "true");
       await expect(button).toHaveAccessibleDescription("That tab isn't connected");
@@ -159,14 +169,14 @@ for (const [name, scenario] of SCREENS) {
       expect(await typed(page)).toEqual([]);
       // The daemon now answers: the tab's own backoff retries, and Insert is offered again.
       await page.evaluate(() => { const d = window.__harness?.platform.daemon; if (d) d.watch = "ok"; });
-      await page.evaluate(() => window.__harness?.app.router.go("terminal"));
+      await activate(page, AGENT);
       await expect(page.getByText("allows 1 tmux session at a time")).toHaveCount(0, { timeout: 10_000 });
-      await page.evaluate(() => window.__harness?.app.router.go("files"));
+      await activate(page, FILES);
       await expect(button).not.toHaveAttribute("aria-disabled", "true");
     });
 
     test("Insert path says why it is unavailable with no tab open", async ({ page }) => {
-      await openFixture(page, "filesCode", scenario, "#/files");
+      await openFixture(page, "filesCode", scenario);
       await page.evaluate(() => { for (const id of ["h-pop/main:1-1/$1", "h-pop/main:1-1/$2"]) window.__harness?.app.dispatch({ type: "closed", id }); });
       const button = page.getByRole("button", { name: "Insert path" });
       await expect(button).toHaveAttribute("aria-disabled", "true");
@@ -176,7 +186,7 @@ for (const [name, scenario] of SCREENS) {
     });
 
     test("an upload shows progress, then offers the path for the tab it began in", async ({ page }) => {
-      await openFixture(page, "filesFolder", scenario, "#/files");
+      await openFixture(page, "filesFolder", scenario);
       await page.getByRole("button", { name: "Upload" }).click();
       expect(await page.evaluate(() => window.__harness?.platform.uploadScript.picks)).toBe(1);
       await script(page, "push", { id: "u1", progress: 0 });
@@ -184,20 +194,20 @@ for (const [name, scenario] of SCREENS) {
       await script(page, "push", { id: "u1", progress: 0.4 });
       await expect(page.getByText("Uploading 40%")).toBeVisible();
       // The user goes to another tab and back to Files meanwhile: the offer stays with the first.
-      await page.evaluate((id) => window.__harness?.app.dispatch({ type: "activated", id }), NOTES);
-      await expect.poll(() => hash(page)).toBe("#/terminal");
-      await page.evaluate(() => window.__harness?.app.router.go("files"));
+      await activate(page, NOTES);
+      await expect.poll(() => activeTab(page)).toBe(NOTES);
+      await activate(page, FILES);
       await expect(page.getByText("Uploading 40%")).toBeVisible();
       await script(page, "push", { id: "u1", path: UPLOADED });
       await script(page, "end");
       await expect(page.getByText("Saved 20261022-101010Z-abcd.jpg")).toBeVisible();
       await page.getByRole("button", { name: "Insert path into tether agent" }).click();
-      await expect.poll(() => hash(page)).toBe("#/terminal");
+      await expect.poll(() => activeTab(page)).toBe(AGENT);
       await expect.poll(() => typed(page), { timeout: 15_000 }).toEqual([[AGENT_WINDOW, UPLOADED]]);
     });
 
     test("when the target tab is gone mid-upload nothing is inserted anywhere", async ({ page }) => {
-      await openFixture(page, "filesFolder", scenario, "#/files");
+      await openFixture(page, "filesFolder", scenario);
       await page.getByRole("button", { name: "Upload" }).click();
       await script(page, "push", { id: "u1", progress: 0.5 });
       await expect(page.getByText("Uploading 50%")).toBeVisible();
@@ -217,7 +227,7 @@ for (const [name, scenario] of SCREENS) {
     });
 
     test("a failed upload says why and can be dismissed", async ({ page }) => {
-      await openFixture(page, "filesFolder", scenario, "#/files");
+      await openFixture(page, "filesFolder", scenario);
       await page.getByRole("button", { name: "Upload" }).click();
       await script(page, "push", { id: "u9", error: "Wait for the current uploads to finish" });
       await script(page, "end");
@@ -227,7 +237,7 @@ for (const [name, scenario] of SCREENS) {
     });
 
     test("Remove asks first, keeps the folder on Cancel, and removes it on confirm", async ({ page }) => {
-      await openFixture(page, "files", scenario, "#/files");
+      await openFixture(page, "files", scenario);
       const notes = page.getByRole("button", { name: "~/notes", exact: true });
       await page.getByRole("button", { name: "Remove ~/notes" }).click();
       const dialog = page.getByRole("dialog", { name: "Remove this folder?" });
@@ -249,7 +259,7 @@ for (const [name, scenario] of SCREENS) {
     });
 
     test("with no folders, the empty state's Add folder starts the path field at home", async ({ page }) => {
-      await openFixture(page, "filesNoRoots", scenario, "#/files");
+      await openFixture(page, "filesNoRoots", scenario);
       await page.getByRole("button", { name: "Add folder…" }).click();
       const field = page.getByRole("textbox", { name: "Go to folder" });
       await expect(field).toBeFocused();
@@ -263,12 +273,12 @@ for (const [name, scenario] of SCREENS) {
     });
 
     test("states: empty folder, refusal with retry, no roots", async ({ page }) => {
-      await openFixture(page, "filesEmpty", scenario, "#/files");
+      await openFixture(page, "filesEmpty", scenario);
       await expect(page.getByText("This folder is empty")).toBeVisible();
-      await openFixture(page, "filesDenied", scenario, "#/files");
+      await openFixture(page, "filesDenied", scenario);
       await expect(page.getByText("Permission denied.")).toBeVisible();
       await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
-      await openFixture(page, "filesNoRoots", scenario, "#/files");
+      await openFixture(page, "filesNoRoots", scenario);
       await expect(page.getByText("No folders to show")).toBeVisible();
     });
   });
@@ -293,7 +303,7 @@ for (const scenario of SCENARIOS) {
   test.describe(`accessibility ${label(scenario)}`, () => {
     for (const [state, fixture] of STATES) {
       test(state, async ({ page }) => {
-        const opened = await openFixture(page, fixture, scenario, "#/files");
+        const opened = await openFixture(page, fixture, scenario);
         await title(page, /.+/).first().waitFor();
         // Wait out loading: a spinner is not the state.
         await expect(page.getByRole("status", { name: /^Loading/ })).toHaveCount(0);

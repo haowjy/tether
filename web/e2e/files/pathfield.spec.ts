@@ -25,7 +25,7 @@ async function typeInto(page: Page, text: string): Promise<void> {
 for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const) {
   test.describe(`path field on ${name}`, () => {
     test("at rest it reads the folder; a tap starts editing at its subfolders", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       await expect(field(page)).toHaveValue("~/repos/tether");
       expect(await listings(page)).toHaveLength(1);
       await field(page).click();
@@ -39,7 +39,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("typing narrows the list, predicts the first match and ghosts the rest", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       await field(page).click();
       await page.keyboard.type("w");
       await expect(page.getByRole("listbox", { name: "Folders" }).getByRole("option")).toHaveCount(1);
@@ -50,7 +50,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("tapping a row accepts it, lists its subfolders, and keeps the field focused", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       await field(page).click();
       await option(page, /^web/).click();
       await expect(field(page)).toHaveValue("~/repos/tether/web/");
@@ -62,7 +62,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("a slash after a partial name accepts the prediction; after an exact name it is a slash", async ({ page }) => {
-      await openFixture(page, "filesFindRoots", scenario, "#/files");
+      await openFixture(page, "filesFindRoots", scenario);
       await typeInto(page, "~/re");
       await expect(option(page, /^repos/)).toBeVisible();
       await page.keyboard.type("/");
@@ -78,7 +78,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("Tab and the arrow keys complete on a hardware keyboard", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       await typeInto(page, "~/repos/te");
       await expect(option(page, /^tether-old/)).toBeVisible();
       await expect(option(page, /^tether$/)).toHaveAttribute("aria-selected", "true");
@@ -95,7 +95,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("Go opens the predicted folder, adds a history entry, and Back returns", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       await typeInto(page, "~/repos/tether/we");
       await page.keyboard.press("Enter");
       await expect(title(page, "web")).toBeVisible();
@@ -107,7 +107,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("Go right after an accept opens the accepted folder", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       await field(page).click();
       await option(page, /^docs/).click();
       await page.keyboard.press("Enter");
@@ -115,7 +115,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("Go on a path naming nothing says so and opens nothing; Escape and Cancel restore the path", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       const before = await hash(page);
       await typeInto(page, "~/repos/tetherx");
       await page.keyboard.press("Enter");
@@ -132,7 +132,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("typing ~/repos/tether/web straight through costs one listing", async ({ page }) => {
-      await openFixture(page, "filesFindRoots", scenario, "#/files");
+      await openFixture(page, "filesFindRoots", scenario);
       const now = Date.now();
       await page.clock.install({ time: now });
       await page.clock.pauseAt(now + 1000);
@@ -144,7 +144,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("typing ~/repos/tether/web with a pause in each folder costs at most four listings: home, repos, tether", async ({ page }) => {
-      await openFixture(page, "filesFindRoots", scenario, "#/files");
+      await openFixture(page, "filesFindRoots", scenario);
       await field(page).click();
       for (const step of ["", "repos/", "tether/", "web"]) {
         await page.waitForTimeout(350);
@@ -157,14 +157,14 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("outside the roots under home, rows say 'not added'; a root reads like any folder", async ({ page }) => {
-      await openFixture(page, "filesFindRoots", scenario, "#/files");
+      await openFixture(page, "filesFindRoots", scenario);
       await typeInto(page, "~/repos/");
       await expect(option(page, /^many/)).toContainText("not added");
       await expect(option(page, /^tether$/)).not.toContainText("not added");
     });
 
     test("above the roots, only the roots are offered, and elsewhere says it is outside", async ({ page }) => {
-      await openFixture(page, "filesFindRoots", scenario, "#/files");
+      await openFixture(page, "filesFindRoots", scenario);
       await typeInto(page, "/");
       await expect(page.getByRole("listbox", { name: "Folders" }).getByRole("option")).toHaveText([/^home/]);
       await page.keyboard.type("home/jimmy/repos/");
@@ -178,7 +178,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("a folder outside the roots opens with its subfolders and 'Add this folder', which makes it one", async ({ page }) => {
-      await openFixture(page, "filesFindRoots", scenario, "#/files");
+      await openFixture(page, "filesFindRoots", scenario);
       await typeInto(page, "~/repos/zebra");
       await page.keyboard.press("Enter");
       await expect(title(page, "zebra")).toBeVisible();
@@ -189,7 +189,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("Add this folder is disabled at home itself, and the daemon's refusal shows in words", async ({ page }) => {
-      await openFixture(page, "filesFindRoots", scenario, "#/files");
+      await openFixture(page, "filesFindRoots", scenario);
       await typeInto(page, "~/");
       await page.keyboard.press("Enter");
       await expect(page.getByRole("button", { name: "Add this folder" })).toHaveAccessibleDescription("Open a folder inside your home folder first");
@@ -201,7 +201,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("hidden folders only appear when the segment starts with a dot or the toggle is on", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       await typeInto(page, "~/repos/tether/");
       await expect(option(page, /^web/)).toBeVisible();
       await expect(option(page, /^\.git/)).toHaveCount(0);
@@ -211,7 +211,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("pages of folders are followed, and the last page's folders are all matched", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       await typeInto(page, "~/repos/many/folder-");
       await expect(page.getByRole("listbox", { name: "Folders" }).getByRole("option")).toHaveCount(20);
       // 20 folders at 8 to a page: three pages, each asked for once.
@@ -219,7 +219,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("Add folder… on the roots list starts the field at ~/", async ({ page }) => {
-      await openFixture(page, "filesFindRoots", scenario, "#/files");
+      await openFixture(page, "filesFindRoots", scenario);
       await page.getByRole("button", { name: "Add folder…" }).click();
       await expect(field(page)).toBeFocused();
       await expect(field(page)).toHaveValue("~/");
@@ -227,7 +227,7 @@ for (const [name, scenario] of [["desktop", desktop], ["phone", phone]] as const
     });
 
     test("tap-browsing still works at rest", async ({ page }) => {
-      await openFixture(page, "filesFind", scenario, "#/files");
+      await openFixture(page, "filesFind", scenario);
       await page.getByRole("button", { name: "web" }).click();
       await expect(title(page, "web")).toBeVisible();
       await expect(field(page)).toHaveValue("~/repos/tether/web");
@@ -251,7 +251,7 @@ for (const scenario of SCENARIOS) {
   test.describe(`path field states ${label(scenario)}`, () => {
     for (const [state, fixture, typed, expected] of STATES) {
       test(state, async ({ page }) => {
-        const opened = await openFixture(page, fixture, scenario, "#/files");
+        const opened = await openFixture(page, fixture, scenario);
         await typeInto(page, typed);
         if (state === "completing") await expect(option(page, expected)).toBeVisible();
         else if (state === "loading a folder") await expect(page.getByRole("status", { name: expected as string })).toBeVisible();
@@ -265,7 +265,7 @@ for (const scenario of SCENARIOS) {
     }
 
     test("a folder outside the roots", async ({ page }) => {
-      const opened = await openFixture(page, "filesNotAdded", scenario, "#/files");
+      const opened = await openFixture(page, "filesNotAdded", scenario);
       await expect(page.getByText("Not one of your folders")).toBeVisible();
       await expectAccessible(page);
       await expectNoHorizontalScroll(page);

@@ -44,16 +44,16 @@ test.describe("keyboard only", () => {
 
     // Enter opens the session's tab, which shows its current window.
     await page.keyboard.press("Enter");
-    await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/terminal");
+    await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/tab");
     await expect(page.getByRole("button", { name: /^tether agent, / })).toBeVisible();
   });
 
   test("the picker: opens from the keyboard, traps focus, and Escape returns focus to +", async ({ page, browserName }) => {
-    // The terminal's input keeps Tab for the shell, so the way in is the rail: with no tab open, Terminal opens the picker.
+    // The terminal's input keeps Tab for the shell, so the way in is the top row's +, reached with Tab from Home.
     await openFixture(page, "home", desktop);
-    await tabTo(page, browserName, page.getByRole("button", { name: "Terminal" }));
-    await page.keyboard.press("Enter");
     const plus = page.getByRole("button", { name: "Open another session" });
+    await tabTo(page, browserName, plus);
+    await page.keyboard.press("Enter");
     const picker = page.getByRole("dialog", { name: "Open session" });
     await expect(picker).toBeVisible();
     // A fine pointer starts in the search.
@@ -77,7 +77,7 @@ test.describe("keyboard only", () => {
     await page.keyboard.press("Escape");
     await expect(picker).toBeHidden();
     await expect(plus).toBeFocused();
-    expect(await page.evaluate(() => location.hash)).toBe("#/terminal");
+    expect(await page.evaluate(() => location.hash)).toBe("#/");
 
     // Opened again, Enter on a session opens its tab.
     await page.keyboard.press("Enter");
@@ -89,7 +89,7 @@ test.describe("keyboard only", () => {
   });
 
   test("a focused terminal is left with Ctrl+Shift+F, which moves focus to the tab strip", async ({ page }) => {
-    await openFixture(page, "restored", desktop, "#/terminal");
+    await openFixture(page, "restored", desktop, { open: true });
     const active = page.getByRole("button", { name: /^tether agent, / });
     await expect(active).toBeVisible();
     // The terminal's own input holds focus on arrival.
@@ -105,7 +105,7 @@ test.describe("keyboard only", () => {
   });
 
   test("the windows menu: Tab reaches its button, arrows move, Enter switches the window, Escape returns to the terminal", async ({ page, browserName }) => {
-    await openFixture(page, "terminalLive", desktop, "#/terminal");
+    await openFixture(page, "terminalLive", desktop, { open: true });
     const active = page.getByRole("button", { name: /^tether agent, / });
     // The "shown" mark comes from the tab's `watching`: the daemon answers the watch in this fixture, and the menu is checked once it has.
     await expect(page.getByRole("button", { name: "tether agent, connected" })).toBeVisible();

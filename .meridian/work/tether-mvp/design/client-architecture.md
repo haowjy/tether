@@ -62,7 +62,7 @@ One Preact app, three **platform adapters**, and one rule for each hard boundary
   Tokens come in three tiers of CSS custom properties: primitive, semantic and
   component. There is a light and a dark theme. **Density** depends on the pointer:
   `compact` for a fine pointer, `touch` with 44 px targets. **Layout** depends on the
-  screen size: the desktop rail, or phone Home. About fifteen primitives are built on
+  screen size: the desktop top row, or phone Home. About fifteen primitives are built on
   `<dialog>`, `<button>` and `<input>`. No `preact/compat`. Only `app/focus.ts` moves
   DOM focus.
 - **Terminal input depends on the input device, not the user agent.** A desktop with a
@@ -156,7 +156,7 @@ One name per concept. The code, the specs and the UI copy use these.
 | **terminal input** | The element that takes direct input: xterm's textarea, the owned input, or native's responder | the line field |
 | **admission** | Whether the daemon lets this client in (§4.2) | A credential. The browser holds none |
 | **stable box** | The terminal's box with no software keyboard and nothing that appears with it. tmux is sized from it alone | The visible box |
-| **layout** | `desktop` (rail) or `phone` (Home with bottom nav, full-screen terminal), chosen by screen size | **density** |
+| **layout** | `desktop` (one top row) or `phone` (Home, full-screen terminal and Files above the dock), chosen by screen size | **density** |
 | **density** | `compact` or `touch` (44 px targets), chosen by pointer | layout |
 
 ## 3. What survives, what goes, and the new layout
@@ -227,7 +227,7 @@ web/
                      stack), focus.ts (the focus controller), listing.ts (the listing
                      fetcher), persist.ts (persist now)
   screens/
-    shell/           rail (desktop), destination frame, host banner
+    shell/           top row (desktop), screen frame, host banner
     home/            open tabs, sessions list, creation dialogs, bottom nav (phone)
     picker/          the desktop session picker
     switcher/        the phone session switcher (P3a)
@@ -553,7 +553,7 @@ rows = floor((stableHeight − safeArea.top − safeArea.bottom − chrome.y) / 
 ```
 
 and recomputes whenever an input changes. `chrome` is the tether chrome in flow around
-the terminal in the keyboard-hidden layout (the rail, the tab strip, the dock's
+the terminal in the keyboard-hidden layout (the top row, the dock's
 resting slot), measured by the terminal screen in a short window after layout, density,
 width or the safe area change, and at the start, never per resize. A
 keyboard opening changes none of these inputs, so it never resizes tmux, and the sizer
@@ -866,56 +866,72 @@ Consequences:
 ### 6.1 The workspace core
 
 `workspace/` is a pure reducer over the open tabs and nothing else. Events go in:
-`opened`, `closed`, `activated`, `listing`, `sessionClosed`, `serverExited`, `hostsKnown`,
+`opened` (a terminal tab), `filesOpened` (a Files tab, with an id the caller generated),
+`closed`, `activated`, `listing`, `sessionClosed`, `serverExited`, `hostsKnown`,
 `navigated`, `restored`, `watching`. State and effects come out: `save`, `navigate`,
 `focus`, `notice`. The controller in `app/` runs the effects against the router, the focus
 controller and persist now. `TabDriver` keeps owning its own watch and its connection states,
-`limited` included. The workspace only says which tab is selected for Terminal, through
-`shownTab(state)`; the terminal lane's `Terminals` owns every driver and uses one predicate
+`limited` included. The workspace only says which tab is selected for the terminal screen, through
+`shownTab(state)` (the active tab while `screenOf(state)` is `terminal`); the terminal lane's `Terminals` owns every driver and uses one predicate
 for the watch: the shown tab only when `Lifecycle.covered` is false. It covers or uncovers
 every driver from that predicate, so no second copy owns which tab is shown or whether its
 watch is active.
 
 ```ts
 type TabKey = { host: string; session: SessionRef };   // SessionRef = { server, session: $N }
+type Tab = TerminalTab | FilesTab;       // both: stable `id`, `host` (the daemon's hostId)
+interface TerminalTab { kind: "terminal"; id: string; host: string; key: TabKey; session: string; window: string; restoring: boolean }
+interface FilesTab { kind: "files"; id: string; host: string; place: FilesPlace }
 interface WorkspaceState {
   tabs: Tab[];                    // in strip order
-  active: string | null;          // the active tab's key string
-  onTerminal: boolean;            // from `navigated` only; never set any other way
+  active: string | null;          // the active tab's id
+  route: "home" | "tab";          // from `navigated` only; never set any other way
+  lastTerminal: Record<string, string>;  // per host: the terminal tab last activated and still open
 }
+// screenOf(state): "home" | "terminal" | "files", from the route and the active tab's kind
 ```
 
-**State that is not here has its own owner.** Overlays, Files folders and the preview
-are the navigation stack (§6.6). The Files place is held by `FileBrowser`, the
-listing by `sessions/`, the focus owner by `app/focus.ts`.
-Each lane therefore extends its own state without asking W0.
+**State that is not here has its own owner.** Overlays and the history of Files drill-ins
+are the navigation stack (§6.6). The listing is `sessions/`'s, the focus owner
+`app/focus.ts`'s, the folder cache `FileBrowser`'s. A Files tab's place is the
+workspace's own, and only `navigated` writes it. Each lane therefore extends its own
+state without asking W0.
 
-**The saved workspace is assembled, not owned.** `app/persist.ts` builds it from each
-owner when it saves, and hands each owner its part at boot:
+**The saved workspace is assembled, not owned.** `app/persist.ts` builds it from the
+workspace when it saves, and `workspace/saved.ts`, the one parser, reads it back at boot:
 
 ```ts
 interface SavedWorkspace {
-  version: 2;                       // a version-1 (window tabs) workspace is dropped whole, never migrated
-  tabs: { key: TabKey; session: string; window: string }[];   // the last names, so restored pills have them
-  active: string | null;
-  files: { hostId: string; place: FilesPlace } | null;   // FileBrowser's place
+  version: 3;                       // the parser returns this version or null: v2 and v1 are discarded whole, never converted, and drafts are not touched
+  tabs: ({ kind: "terminal"; key: TabKey; session: string; window: string }   // the last names, so restored pills have them
+       | { kind: "files"; id: string; host: string; place: FilesPlace })[];
+  active: string | null;            // by id
+  hostName?: string;
 }
 ```
 
-A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
-`net/hosts.ts` knows that host's `hostId` (§6.2).
+A tab's `host` is the daemon's `hostId`. Saved tabs attach to a host once
+`net/hosts.ts` knows that host's `hostId` (§6.2). Storage hands the workspace over as
+`unknown`: an older build wrote it, so the parser checks its shape, and the adapters
+know no versions.
 
-- **Identity is the tab key**, never a name or an index. Opening a session that already
-  has a tab activates that tab.
+- **Identity** is the tab key for a terminal tab (`id = tabId(key)`, so drafts keep their
+  keys), never a name or an index; a Files tab's id is generated when it opens. Opening a
+  session that already has a tab activates that tab; opening Files always makes a new one.
+- **Insert target.** `lastTerminal[host]` is set when a terminal tab is activated or
+  opened, and cleared when that tab closes. Insert path and uploads go to the active
+  tab's host's entry, never to the active tab. After a restore, each host's first
+  terminal tab stands in until one is activated.
 - **Labels** are derived in `workspace/labels.ts`:
-  - The label is the session name, then the window the session shows now (`watching`'s,
-    else the listing's current window).
+  - A terminal tab's label is the session name, then the window the session shows now
+    (`watching`'s, else the listing's current window). A Files tab's is its folder or
+    file name, "Files" at the folder list, full name "Files: <name>".
   - When the label is truncated, the window part goes first.
   - The host's name is appended only when tabs from more than one host are open
     (native).
   - The full label is the pill's tooltip and accessible name.
-- **On screen.** Only the active tab on the Terminal destination is uncovered
-  (`shownTab`). `Terminals.sync()` runs on every app change and covers every other driver
+- **On screen.** Only the active terminal tab while the terminal screen shows is
+  uncovered (`shownTab`). `Terminals.sync()` runs on every app change and covers every other driver
   and uncovers that one, once the box is measured; both calls are idempotent. Leaving
   Terminal for Home or Files covers it, which ends its watch and returns tmux its size.
   Returning uncovers it and repaints from a fresh snapshot. Native's `input` events reach
@@ -926,13 +942,16 @@ A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
   on desktop focuses Home search.
 - **Navigation and focus.** A change that moves a tab and the screen together has one
   owner, the reducer:
-  - `opened` and `activated` emit `navigate: terminal` unless the page is already on
-    Terminal; closing the last tab from Terminal emits `navigate: home`.
+  - `opened`, `filesOpened` and `activated` emit `navigate: tab` when the route is Home;
+    on the tab route they emit nothing (switching tabs adds no history entry) and
+    `focus: terminal` when the tab they show is a terminal. Closing the last tab from a
+    tab route emits `navigate: home`.
   - The controller runs `navigate` through the router, which emits `navigated` at once,
-    so `onTerminal` (and with it `shownTab`) follows before any `focus` effect runs.
-  - Arriving at Terminal with an active tab (`navigated`: a tab tap, the rail, Back, a
-    deep link) emits `focus: terminal`; `opened` and `activated` emit it themselves only
-    when already there.
+    so `route` (and with it `screenOf` and `shownTab`) follows before any `focus` effect
+    runs. It also tells the focus controller whenever `screenOf` or the overlay changes,
+    including a switch between a terminal and a Files tab that moved no route.
+  - Arriving at the terminal screen (`navigated`: a tab tap from Home, Back, a deep link)
+    emits `focus: terminal`.
   - The controller runs `focus` effects after the render the change queued (a microtask
     after the store update): the target may be on a screen that has not mounted or is
     still hidden. On touch they do nothing, as before.
@@ -942,8 +961,11 @@ A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
 
 ### 6.2 Restore after reload
 
-1. Boot loads the saved workspace. Its tabs come back in state `restoring`, shown in the
-   reconnecting colour with "Checking…", with input disabled.
+1. Boot loads the saved workspace through the parser (a version other than 3 is null:
+   no tabs). Its terminal tabs come back in state `restoring`, shown in the
+   reconnecting colour with "Checking…", with input disabled; a Files tab comes back
+   with its place and loads it when it is shown. A clean launch opens Home whatever was
+   active.
 2. The active tab's `watch` is sent once the socket is up and the stable box is
    measured, in parallel with the listing. A reload therefore costs one round trip on a
    slow link. A `watching` reply proves the daemon found the session: the tab becomes
@@ -958,8 +980,9 @@ A tab key's `host` is the daemon's `hostId`. Saved tabs attach to a host once
    with the host's backoff while any tab is `restoring`.
 5. Saved tabs wait, in `restoring`, until `net/hosts.ts` learns their host's `hostId`
    (from `/auth/info` in the browser, from the saved list in native, and checked again
-   against `welcome.host.id`). Saved tabs and the Files place whose `hostId` no current
-   host reports are discarded then. Drafts keyed to the old host stay in storage until
+   against `welcome.host.id`). Saved tabs of either kind whose `hostId` no current host
+   reports are discarded then (a Files tab is never proved by a listing, so its host
+   alone decides). Drafts keyed to the old host stay in storage until
    cleared or evicted, but never attach to the new host's tabs.
 
 ### 6.3 The sessions listing
@@ -1008,9 +1031,6 @@ lost:
   show "index: name", a terminal glyph and no chevron. Open windows are marked Open. The
   session disclosure chevron rotates down when expanded; a folder chevron points right.
 - **attachedElsewhere** shows "Another terminal is attached. Opening may resize it."
-- **Terminal rail with no tab** (desktop) opens the picker. Dismissing it leaves the
-  empty state "Open a window with + or from Home." with the toolbar and `+` still
-  visible.
 - **Picker focus** (desktop). It focuses the picker's search. Closing it by the close
   button, an outside click or Escape leaves the active tab unchanged. Focus then
   returns to the terminal input, or to `+` when no tab is open.
@@ -1136,47 +1156,56 @@ and window captured before the prompt, so a later tab or focus change cannot ret
 ### 6.6 Routes and browser history
 
 **Browser history is the navigation stack, and `app/router.ts` is its only writer.**
-Each entry's `history.state` holds the overlay open on it, the Files folder and the
-preview, and the logical parent. The URL carries only the destination, so file paths
-never enter it and browser history sync never sees them. Everything else learns of
-navigation one way: the router emits `navigated { destination, entry }` after every
-push, replace and `popstate`.
+Each entry's `history.state` holds the route (`home` or `tab`), the overlay open on it,
+and for a tab route a record of the tab and, for a Files tab, the place it held. The URL
+carries only the route, so file paths never enter it and browser history sync never sees
+them. Everything else learns of navigation one way: the router emits `navigated { entry }`
+after every push, replace and `popstate`.
 
-- The workspace reducer reads only `onTerminal` from it.
-- `FileBrowser` shows the entry's Files place. A tap in Files asks the router to push;
-  `FileBrowser` changes only when the resulting `navigated` arrives.
+- The workspace reducer takes `route` from it, and writes the active Files tab's place
+  from the entry's record (the only writer of that place).
+- A tap in Files asks the controller to push (`openPlace`); the tab's place, and so what
+  `FileBrowser` shows, changes only when the resulting `navigated` arrives. `FileBrowser`
+  follows the active Files tab's place and, when the daemon answers with a canonical path
+  (or a folder where a file was named), reports it back (`resolvedPlace`): the router
+  replaces the entry's place and the workspace follows.
 - A screen renders the overlay named in the top entry. An overlay is
   `{ screen, name, params }`, opaque to the router, so each lane adds overlays in its own
   screen.
-- The focus controller sends native its resting mode from it (§6.5).
+- The focus controller sends native its resting mode from the derived screen (§6.5).
 
-| Route | Destination |
+| Route | Screen |
 |---|---|
-| `#/` | Home's Sessions pane |
-| `#/files` | Files: the rail destination on desktop, Home's Files pane on phone |
-| `#/terminal` | Terminal, showing the active tab |
+| `#/` | Home |
+| `#/tab` | The active tab: terminal or Files, by its kind |
 
-- **Entries.** Each of these pushes an entry: changing destination, opening an overlay,
-  drilling into a folder, opening a preview. Switching or opening tabs never touches
-  history at all: tabs live only in the workspace.
-- **Back** closes the top overlay first, then the preview, then pops folders, then
-  leaves the destination. It never touches tmux.
+- **Entries.** Each of these pushes an entry: Home to a tab, a tab to Home, opening an
+  overlay, drilling into a folder or preview. Switching between tabs while a tab shows,
+  of either kind, pushes nothing: the tabs live in the workspace.
+- **Stamp before push.** A drill-in first replaces the current entry with `{tab, from}`,
+  then pushes `{tab, to}`, so Back returns to this place in this tab even if another tab
+  was shown since the entry was made.
+- **Back** closes the top overlay first, then the preview, then pops folders, then leaves
+  to Home. It never touches tmux. A pop that lands on an entry whose tab is gone or is
+  not the active one is stale: the router goes to the nearest Home entry below it in one
+  `history.go(-n)`, computed from its in-memory stack, announcing nothing for the stale
+  entry (with no Home below, as after a reload, it replaces the entry with Home). A pop
+  that closes an overlay lands on the overlay's base whichever tab was shown meanwhile.
 - **Closing an overlay by an action**, such as picking a window, is `history.back()`
   plus the tab activation. The activation writes no history, so the two can't race.
   A finished Settings action closes its confirmation and Settings together with
   `closeAllOverlays()`: one `history.go(-n)`, because a second `back()` issued before the
   first pops is lost in WebKit.
-- **In-app back buttons go to the logical parent.** If the previous entry is that
-  parent (recorded in `history.state.parent`), they call `history.back()`. Otherwise,
-  after a reload or a deep link, they `replaceState` to the parent, so Back never leaves
-  the app unexpectedly. Inside Files the parent is the enclosing place: `toParent(place)`
-  goes back when the previous entry holds that place, else replaces the top entry.
-- **Files returns to where it was left.** The router remembers the last Files place any
-  entry held, and `go("files")` pushes an entry carrying it, so the rail and Home's
-  Files tab return to the same folder or preview.
-- **Reload** restores the destination from the hash, and the tabs and Files place from
-  the saved workspace: the router replaces the first entry with that place. Overlays do
-  not survive a reload.
+- **In-app back buttons.** To Home: if the previous entry is Home they call
+  `history.back()`; otherwise, after a reload or a deep link, they `replaceState` to
+  Home, so Back never leaves the app unexpectedly. Inside a Files tab the parent is the
+  enclosing place: `toPlace(tab, place)` goes back when the previous entry holds that
+  place in that tab, else replaces the top entry.
+- **Reload** always opens Home: the router replaces the first entry with Home's, and the
+  tabs and each Files tab's place come from the saved workspace. A pop to an entry from
+  before the reload stands alone: it is kept if its tab is active, else replaced with
+  Home. Overlays do not survive a reload. Returning from the background keeps the screen,
+  since the page was never reloaded.
 - **Native** uses the same router.
  WKWebView's back gestures are off, so only in-app
   controls navigate.
@@ -1669,7 +1698,7 @@ densities, and keyboard-only Playwright walks of Home, the picker, Terminal and 
 | Primitive | Built on | Used by |
 |---|---|---|
 | `Button` (primary, secondary, quiet) | `<button>` | creation actions, dialogs, Retry, Insert path |
-| `IconButton`, `Tooltip` | `<button aria-label>`; the tooltip shows on hover and keyboard focus | rail, toolbar, close, back, keyboard |
+| `IconButton`, `Tooltip` | `<button aria-label>`; the tooltip shows on hover and keyboard focus | top row, close, back, keyboard |
 | `TextField`, `SearchField` | `<input>` | search, creation name and directory, enrol code and device name |
 | `Dialog` | `<dialog>.showModal()` | desktop picker, creation forms, Settings, confirmations |
 | `Dialog` sheet variant | the same `<dialog>` and code, styled as a tall bottom sheet with safe-area padding | the switcher; phone creation forms and Settings |
@@ -1698,7 +1727,7 @@ semantic tokens for everything else.
 |---|---|---|
 | **Primitive** (`primitives.css`) | `--gray-0…12` (OKLCH, slightly blue-tinted); `--green-3…9`, `--amber-3…9`, `--red-3…9`, `--blue-3…9`; `--space-1…8` in 4 px steps (4, 8, 12, 16, 20, 24, 32, 40); `--radius-1…4` (4, 8, 12, 20); `--font-size-1…6`; `--duration-1…3` | nothing: raw values |
 | **Semantic** (`semantic.css`) | `--color-bg`, `--color-bg-raised`, `--color-bg-sunken`, `--color-bg-hover`; `--color-text`, `--color-text-muted`, `--color-border`, `--color-accent`, `--color-focus-ring`; `--color-status-live`, `--color-status-reconnecting`, `--color-status-error`, `--color-status-gone`; `--space-gutter`, `--size-target`; `--font-ui`, `--font-mono`, `--text-body`, `--text-meta`; `--safe-*`; `--term-*` (the xterm theme) | theme (light, dark) and density |
-| **Component** (`components.css`) | `--row-height`, `--row-pad-x`, `--tab-height`, `--tab-bg`, `--tab-bg-active`, `--rail-width` (56 px), `--toolbar-height`, `--sheet-radius`, `--sheet-bg`, `--dialog-width` | density |
+| **Component** (`components.css`) | `--row-height`, `--row-pad-x`, `--tab-height`, `--tab-bg`, `--tab-bg-active`, `--toolbar-height`, `--sheet-radius`, `--sheet-bg`, `--dialog-width` | density |
 
 - **Theme.** Dark by default; light follows `prefers-color-scheme`. Each semantic colour
   has a dark and a light value. Every text and background pair meets WCAG AA (4.5:1).
@@ -1738,7 +1767,7 @@ emitted file, stubs included:
 
 | Asset | Budget | How |
 |---|---|---|
-| Initial JS (app, xterm, WebGL, unicode11) | 193 KB gz | xterm is about 135 KB gz of it; the app's own code stays under 58 KB |
+| Initial JS (app, xterm, WebGL, unicode11) | 196 KB gz | xterm is about 135 KB gz of it; the app's own code stays under 60 KB. Measured 194.9 KB with Files tabs and the top row (194.0 before) |
 | Initial CSS | 15 KB gz | |
 | Terminal font, regular and bold | 2 × 120 KB | JetBrains Mono NL subset to Latin, Latin-1, box drawing, block elements and Powerline |
 | Nerd Font symbols | 150 KB | a fallback file subset to the glyph ranges Jimmy's prompt and tmux status line use. It is listed after the core font in `--font-mono`, loaded after first paint, and the renderer clears its glyph atlas once it arrives |
@@ -1768,7 +1797,7 @@ browser-behaviors.md in the same commit as its code. None touches the fixed choi
 | The reconnect notice floats over output at fixed offsets | A compact band on the terminal's top edge, the same in both layouts. It does not reserve space | Reserving space would resize tmux on every reconnect (§5.4) |
 | There are no loading, error, empty-folder, permission, offline, refused-session, enrol or Settings states | Each is designed with the primitives (§4, §6.3, §6.4, §9.4) | The contract asks that loading and errors not look like empty lists |
 | Desktop Home is a 640 px column | A centred column, `min(720px, 100% − 2 × gutter)` | Long session and window names. Still no sidebar |
-| Rail icons are named by `title` only | `Tooltip` on hover and keyboard focus, plus `aria-label` | `title` is invisible to keyboard and touch users |
+| Top-row icons are named by `title` only | `Tooltip` on hover and keyboard focus, plus `aria-label` | `title` is invisible to keyboard and touch users |
 | One focus ring, with no token | `--color-focus-ring`, 2 px, offset 2 px, on every interactive primitive, the active pill included | |
 
 ### 8.6 The visual copy rule

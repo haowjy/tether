@@ -19,7 +19,7 @@ const tree = (): FakeTree => ({
 
 function setup(t = tree()) {
   const fs = new FakeFs(t);
-  const browser = new FileBrowser({ api: fs, hidden: false });
+  const browser = new FileBrowser({ api: fs, hidden: false, onResolved: () => undefined });
   return { fs, browser };
 }
 
@@ -33,9 +33,9 @@ describe("within", () => {
 });
 
 describe("FileBrowser", () => {
-  it("shows the roots for no place, and a folder the router names", async () => {
+  it("shows the roots, and a folder the tab names", async () => {
     const { browser, fs } = setup();
-    await browser.follow(null);
+    await browser.follow({ kind: "roots" });
     expect(browser.snapshot.place).toEqual({ kind: "roots" });
     expect(browser.snapshot.roots?.roots.map((r) => r.path)).toEqual(["/home/j/repo"]);
     await browser.follow({ kind: "dir", path: "/home/j/repo/src" });
@@ -62,6 +62,7 @@ describe("FileBrowser", () => {
     if (!readme) throw new Error("no README");
     const place = entryPlace("/home/j/repo", readme);
     expect(place).toEqual({ kind: "file", path: "/home/j/repo/README.md" });
+    if (!place) throw new Error("no place");
     await browser.follow(place);
     expect(browser.snapshot.place).toMatchObject({ kind: "file", file: { name: "README.md", mime: "text/markdown; charset=utf-8", size: 10 } });
     const calls = fs.calls.length;
@@ -86,7 +87,7 @@ describe("FileBrowser", () => {
     expect(parentPlace(browser.snapshot)).toEqual({ kind: "dir", path: "/home/j/repo" });
     await browser.follow({ kind: "dir", path: "/home/j/repo" });
     expect(parentPlace(browser.snapshot)).toEqual({ kind: "roots" });
-    await browser.follow(null);
+    await browser.follow({ kind: "roots" });
     expect(parentPlace(browser.snapshot)).toBeNull();
   });
 

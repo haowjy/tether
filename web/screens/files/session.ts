@@ -1,11 +1,13 @@
-// What one host's Files screen keeps while it is away: the browser state (the folder and
-// preview you left), the uploads under way, and each folder's scroll. The screen unmounts
-// when you go to the terminal; this is why you come back to the same place.
+// What one host's Files tabs keep while the screen is away: the browser state (the folder and
+// preview shown last), the uploads under way, and each folder's scroll. The screen unmounts
+// when you go to the terminal or another tab; the active tab's own place, held by the
+// workspace, is what the browser follows when you come back.
 import type { AppController } from "../../app/controller";
 import type { FsApi } from "../../files/api";
-import { FileBrowser, savedPlace } from "../../files/browser";
+import { FileBrowser } from "../../files/browser";
 import { UploadTracker } from "../../files/uploads";
 import type { HostClient } from "../../net/hosts";
+import { insertTargetOf } from "../../workspace/state";
 
 export interface FilesSession {
   /** The host's adapter handle: uploads and video take it. */
@@ -14,16 +16,19 @@ export interface FilesSession {
   readonly hostName: string;
   browser: FileBrowser;
   uploads: UploadTracker;
-  /** Scroll position by folder path, so Back finds the list where it was. */
+  /** Scroll position by Files tab and folder path (`scrollKey`), so Back finds the list where it was. */
   scroll: Map<string, number>;
 }
+
+/** Two tabs may show the same folder, each scrolled its own way. */
+export const scrollKey = (tab: string, path: string): string => `${tab}\n${path}`;
 
 const sessions = new WeakMap<FsApi, FilesSession>();
 
 export function filesSession(app: AppController, host: HostClient): FilesSession {
   const existing = sessions.get(host.fs);
   if (existing) return existing;
-  const browser = new FileBrowser({ api: host.fs, hidden: false });
+  const browser = new FileBrowser({ api: host.fs, hidden: false, onResolved: (asked, settled) => { app.resolvedPlace(asked, settled); } });
   const session: FilesSession = {
     handle: host.entry.handle,
     get hostName() { return app.hosts.get(host.entry.handle)?.name ?? "the server"; },
@@ -31,19 +36,15 @@ export function filesSession(app: AppController, host: HostClient): FilesSession
     uploads: new UploadTracker((path) => { void browser.uploaded(path); }),
     scroll: new Map(),
   };
-  app.persist.provideFiles(() => {
-    const hostId = app.hosts.get(session.handle)?.hostId;
-    return hostId ? { hostId, place: savedPlace(browser.snapshot.place) } : null;
-  });
   sessions.set(host.fs, session);
   return session;
 }
 
 /**
  * The tap on Upload. The picker must open inside the tap, so `pick` is called here and
- * its stream followed afterwards. The tab active now is the one the saved path is offered to.
+ * its stream followed afterwards. The terminal tab last used on this host is the one the saved path is offered to.
  */
 export function startUpload(app: AppController, session: FilesSession): void {
-  const target = app.snapshot.workspace.active;
+  const target = insertTargetOf(app.snapshot.workspace);
   void session.uploads.track(app.platform.uploads.pick(session.handle, new AbortController().signal), target);
 }

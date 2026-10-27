@@ -5,7 +5,7 @@ import { LISTING, SAVED } from "../shared";
 
 export const fixtures: Fixtures = {
   /** A live tab with two others open, in the phone layout: the dock at rest. */
-  dock: { options: () => ({ workspace: SAVED }), daemon: (d) => { d.listing = LISTING; d.watch = "ok"; } },
+  dock: { options: () => ({ workspace: SAVED }), openActive: true, daemon: (d) => { d.listing = LISTING; d.watch = "ok"; } },
   /** No tab open: the dock's chip reads "Sessions". */
   dockEmpty: { daemon: (d) => { d.listing = LISTING; } },
 };

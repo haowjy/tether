@@ -1,29 +1,5 @@
 .terminal { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .terminal[hidden] { display: none; }
-.toolbar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: var(--toolbar-height);
-  padding: 0 var(--space-2);
-  background: var(--color-bg-raised);
-}
-.toolbar[data-layout="desktop"] { border-bottom: 1px solid var(--color-border); }
-.toolbar[data-layout="phone"] { border-top: 1px solid var(--color-border); padding-bottom: var(--safe-bottom); }
-
-/* The host's name, in the connection colour of the tab on screen: a label, never a dot. */
-.hostLabel {
-  flex: none;
-  margin-left: auto;
-  padding: 0 var(--space-2);
-  font-size: var(--text-meta);
-  color: var(--color-text-muted);
-}
-.hostLabel[data-tone="live"] { color: var(--color-status-live); }
-.hostLabel[data-tone="reconnecting"] { color: var(--color-status-reconnecting); }
-.hostLabel[data-tone="error"] { color: var(--color-status-error); }
-
 .surface {
   position: relative;
   flex: 1;

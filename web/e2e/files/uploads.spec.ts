@@ -52,7 +52,8 @@ const file = (name: string) => ({ name, mimeType: "text/plain", buffer: Buffer.f
 test("uploads go one at a time, four at most, and a fifth is refused", async ({ page }) => {
   const daemon = await fakeDaemon(page);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/#/files");
+  await page.goto("/");
+  await page.getByRole("button", { name: "Files", exact: true }).click(); // Home's Files opens a new Files tab at the roots
   await expect(page.getByRole("button", { name: "~/tether", exact: true })).toBeVisible();
 
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.getByRole("button", { name: "Upload", exact: true }).click()]);
@@ -87,7 +88,8 @@ test("uploads go one at a time, four at most, and a fifth is refused", async ({ 
 test("a refusal from the daemon is shown in words, and the picker's cancel leaves nothing behind", async ({ page }) => {
   const daemon = await fakeDaemon(page);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/#/files");
+  await page.goto("/");
+  await page.getByRole("button", { name: "Files", exact: true }).click(); // Home's Files opens a new Files tab at the roots
   await expect(page.getByRole("button", { name: "~/tether", exact: true })).toBeVisible();
 
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.getByRole("button", { name: "Upload", exact: true }).click()]);

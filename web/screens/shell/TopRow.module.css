@@ -1,0 +1,21 @@
+.row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--toolbar-height);
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+}
+/* The active tab's server, in the connection colour of the terminal tab on screen: a label, never a dot. */
+.host {
+  flex: none;
+  margin-left: auto;
+  padding: 0 var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--color-text-muted);
+}
+.host[data-tone="live"] { color: var(--color-status-live); }
+.host[data-tone="reconnecting"] { color: var(--color-status-reconnecting); }
+.host[data-tone="error"] { color: var(--color-status-error); }

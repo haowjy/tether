@@ -65,17 +65,21 @@ export interface TextRange { start: number; end: number }
 /** Native's retained in-progress edit, adopted into `lineDrafts` after a web-content-process restart. */
 export interface NativeLineSnapshot { tab: TabKey; gen: number; text: string; selection: TextRange; marked: TextRange | null }
 
-/** The files place `FileBrowser` holds, as saved across reloads. */
+/** Where a Files tab is: the folder list of its roots, a folder, or a file preview. */
 export type FilesPlace = { kind: "roots" } | { kind: "dir"; path: string } | { kind: "file"; path: string };
 
-/** What persists across a reload. `app/persist.ts` assembles it from each owner. */
+/** One saved tab, in tab order. A Files tab's id is its own; a terminal tab's is `tabId(key)`. */
+export type SavedTab =
+  | { kind: "terminal"; key: TabKey; session: string; window: string }
+  | { kind: "files"; id: string; host: string; place: FilesPlace };
+
+/** What persists across a reload. `app/persist.ts` assembles it; `workspace/saved.ts` is the one parser. */
 export interface SavedWorkspace {
-  version: 2;
-  /** The last names of each tab (its session, and the window it showed), so restored pills have them before the listing. */
-  tabs: { key: TabKey; session: string; window: string }[];
-  /** The active tab's key string. */
+  version: 3;
+  /** Terminal tabs carry the last names of their session and window, so restored pills have them before the listing. */
+  tabs: SavedTab[];
+  /** The active tab's id. */
   active: string | null;
-  files: { hostId: string; place: FilesPlace } | null;
   /** The host's last known name: an offline launch cannot ask `/auth/info`, yet still says "Can't reach pop-os". */
   hostName?: string;
 }

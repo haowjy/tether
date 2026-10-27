@@ -26,11 +26,4 @@
 .tab { display: flex; align-items: center; gap: var(--space-1); }
 .tab > :first-child { flex: 1; min-width: 0; }
 
-.nav {
-  display: flex;
-  flex: none;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg-raised);
-  padding-bottom: var(--safe-bottom);
-}
 .none { padding: 0 var(--row-pad-x); font-size: var(--text-small); color: var(--color-text-muted); }

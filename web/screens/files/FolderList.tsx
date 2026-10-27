@@ -90,9 +90,11 @@ export interface DirListProps {
   onToggleHidden: () => void;
   /** A folder outside the roots lists its subfolders only. */
   foldersOnly: boolean;
+  /** The first row: up to the enclosing folder. Absent at a root. */
+  parent?: { name: string; onOpen: () => void };
 }
 
-export function DirList({ path, entries, total, truncated, hidden, loading, onOpen, onMore, onToggleHidden, foldersOnly }: DirListProps) {
+export function DirList({ path, entries, total, truncated, hidden, loading, onOpen, onMore, onToggleHidden, foldersOnly, parent }: DirListProps) {
   const more = entries.length < total;
   const sentinel = useRef<HTMLDivElement>(null);
   const latest = useRef(onMore);
@@ -108,10 +110,15 @@ export function DirList({ path, entries, total, truncated, hidden, loading, onOp
 
   return (
     <div class={styles.wrap} aria-busy={loading}>
-      {entries.length === 0 ? (
-        <EmptyState icon="folder" title={foldersOnly ? "No folders here" : "This folder is empty"}>{hidden ? undefined : "Hidden files are not shown."}</EmptyState>
-      ) : (
+      {entries.length === 0 && (
+        <>
+          {parent && <Row icon="back" label={parent.name} aria-label={`Up to ${parent.name}`} class={styles.item} onClick={parent.onOpen} />}
+          <EmptyState icon="folder" title={foldersOnly ? "No folders here" : "This folder is empty"}>{hidden ? undefined : "Hidden files are not shown."}</EmptyState>
+        </>
+      )}
+      {entries.length > 0 && (
         <RovingList label="Contents" class={styles.list}>
+          {parent && <Row roving icon="back" label={parent.name} aria-label={`Up to ${parent.name}`} class={styles.item} onClick={parent.onOpen} />}
           {entries.map((entry) => {
             const place = entryPlace(path, entry);
             return (

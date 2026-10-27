@@ -81,8 +81,9 @@ final class TetherAppModel: ObservableObject {
             seeded = true
         }
         #endif
-        // A v1 workspace names window tabs; tabs follow sessions now, so it is dropped whole.
+        // The workspace's version lives inside the JSON, which only the web reads: the keys that named a version are retired. A saved v2 is discarded by the web parser.
         defaults.removeObject(forKey: "tether.workspace.v1")
+        defaults.removeObject(forKey: "tether.workspace.v2")
         startNetworkMonitor()
     }
 
@@ -103,11 +104,11 @@ final class TetherAppModel: ObservableObject {
 
     func saveWorkspace(_ workspace: JSONValue) {
         guard let data = try? JSONEncoder().encode(workspace) else { return }
-        defaults.set(data, forKey: "tether.workspace.v2")
+        defaults.set(data, forKey: "tether.workspace")
     }
 
     func loadWorkspace() -> JSONValue? {
-        guard let data = defaults.data(forKey: "tether.workspace.v2") else { return nil }
+        guard let data = defaults.data(forKey: "tether.workspace") else { return nil }
         return try? JSONDecoder().decode(JSONValue.self, from: data)
     }
 

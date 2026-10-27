@@ -8,12 +8,13 @@ import { HostRegistry, type HostClient } from "../net/hosts";
 import { SessionsCache } from "../sessions/cache";
 import type { BootResult, Lifecycle, Platform, UpdateState, Viewport } from "../platform/types";
 import { Store } from "../ui/store";
-import { isWindowTabWorkspace, parseSavedWorkspace } from "../workspace/saved";
-import { reduce, initialWorkspace, savedTabs, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
+import { parseSavedWorkspace } from "../workspace/saved";
+import { activeTab, initialWorkspace, reduce, samePlace, savedTabs, screenOf, type Route, type Screen, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
 import { FocusController } from "./focus";
 import { ListingFetcher } from "./listing";
 import { Persist } from "./persist";
 import { browserHistory, enrolCodeFromHash, Router, type HistoryPort, type Navigated, type Overlay } from "./router";
+import type { FilesPlace } from "../platform/types";
 import { lineDraftsOf } from "../screens/terminal/dock/lineDrafts";
 import { startNativeLine } from "../screens/terminal/dock/nativeLine";
 
@@ -57,9 +58,10 @@ export class AppController extends Store<AppView> {
   private wasOnListing = false;
   /** The active tab native was last told: undefined until the first dispatch. */
   private sentActive: string | null | undefined;
+  /** The screen and overlay state the focus controller was last told. */
+  private sentScreen: { screen: Screen; overlay: boolean } | null = null;
   static async start(platform: Platform, options: StartOptions = {}): Promise<AppController> {
     const boot = await platform.boot();
-    if (isWindowTabWorkspace(boot.workspace)) await platform.storage.clearLocalData();
     const app = new AppController(platform, boot, options);
     startNativeLine(app, lineDraftsOf(app), boot.lineSnapshot);
     app.startPlatformEvents();
@@ -80,18 +82,20 @@ export class AppController extends Store<AppView> {
     // Read before the Router: it replaces the link's `#code=…` with the entry hash, so a reload or Back cannot replay the code.
     const enrolCode = enrolCodeFromHash(history.current().hash);
     const saved = parseSavedWorkspace(boot.workspace);
-    const router = new Router(history, saved?.files?.place ?? null);
+    const router = new Router(history);
     super({
       viewport: boot.viewport,
       lifecycle: boot.lifecycle,
       workspace: initialWorkspace,
-      nav: { destination: router.entry.destination, entry: router.entry },
+      nav: { entry: router.entry },
       hosts: [],
       notice: null,
       appOffer: null,
       storageClosed: false,
       update: "none",
     });
+    // The router asks which tab is active, and the workspace lives in the store `super` builds.
+    router.activeTab = () => this.snapshot.workspace.active;
     this.router = router;
     this.enrolCode = enrolCode;
     this.linkHandoffPending = enrolCode !== null;
@@ -112,7 +116,7 @@ export class AppController extends Store<AppView> {
     this.persist = new Persist(platform.storage, () => savedTabs(this.snapshot.workspace));
     this.persist.provideHostName(() => this.hosts.all()[0]?.name ?? null);
     this.listing = new ListingFetcher({
-      restoring: () => this.snapshot.workspace.tabs.some((t) => t.restoring),
+      restoring: () => this.snapshot.workspace.tabs.some((t) => t.kind === "terminal" && t.restoring),
       visible: () => this.snapshot.lifecycle.visible,
     });
     this.sessions = new SessionsCache();
@@ -124,7 +128,7 @@ export class AppController extends Store<AppView> {
     const savedName = saved?.hostName;
     this.hosts.set(boot.hosts.map((h) => (h.name === null && h.pageOrigin !== null && savedName !== undefined ? { ...h, name: savedName } : h)));
     this.dispatch({ type: "restored", saved });
-    this.dispatch({ type: "navigated", onTerminal: router.entry.destination === "terminal" });
+    this.dispatch({ type: "navigated", route: "home", tab: null, place: null });
     router.subscribe((nav) => { this.navigated(nav); });
     this.listing.subscribe((event) => {
       const client = this.hosts.get(event.handle);
@@ -133,7 +137,6 @@ export class AppController extends Store<AppView> {
       else this.sessions.failed(event.handle, event.reason);
       if (event.type === "listed" && client?.hostId) this.dispatch({ type: "listing", hostId: client.hostId, listing: event.listing });
     });
-    this.focus.screenChanged(router.entry.destination, router.entry.overlay !== null);
     void this.checkUpdates();
   }
 
@@ -143,8 +146,10 @@ export class AppController extends Store<AppView> {
     if (state !== this.snapshot.workspace) this.update({ workspace: state });
     if (state.active !== this.sentActive) {
       this.sentActive = state.active;
-      this.platform.input.setActiveTab(state.tabs.find((t) => t.id === state.active)?.key ?? null);
+      const tab = activeTab(state);
+      this.platform.input.setActiveTab(tab?.kind === "terminal" ? tab.key : null);
     }
+    this.syncScreen();
     for (const effect of effects) this.run(effect);
     this.syncListing();
   }
@@ -153,6 +158,29 @@ export class AppController extends Store<AppView> {
   openOverlay(overlay: Overlay, opener?: Element): void {
     this.focus.noteOpener(opener ?? null);
     this.router.openOverlay(overlay);
+  }
+
+  /** A new Files tab on `hostId`, at that host's roots (every time: the tab is the place). */
+  openFiles(hostId: string): void {
+    this.dispatch({ type: "filesOpened", id: `files-${crypto.randomUUID()}`, host: hostId, place: { kind: "roots" } });
+  }
+
+  /** Drills into `to` in the active Files tab: a new history entry, which writes the tab's place once it lands. */
+  openPlace(to: FilesPlace): void {
+    const tab = activeTab(this.snapshot.workspace);
+    if (tab?.kind === "files") this.router.pushPlace(tab.id, tab.place, to);
+  }
+
+  /** The active Files tab's in-app back: to `place`, the enclosing one. */
+  toPlace(place: FilesPlace): void {
+    const tab = activeTab(this.snapshot.workspace);
+    if (tab?.kind === "files") this.router.toPlace(tab.id, place);
+  }
+
+  /** The daemon answered for a place the active Files tab asked for with the canonical `to`: the tab follows it. */
+  resolvedPlace(from: FilesPlace, to: FilesPlace): void {
+    const tab = activeTab(this.snapshot.workspace);
+    if (tab?.kind === "files" && samePlace(tab.place, from)) this.router.replacePlace(tab.id, to);
   }
 
   /** A message for the polite live region, replaced by the next. */
@@ -202,8 +230,8 @@ export class AppController extends Store<AppView> {
         this.notify(effect.text);
         break;
       case "navigate":
-        // The router emits `navigated` at once, so the reducer sees the destination before the focus effects below.
-        this.router.go(effect.to);
+        // The router emits `navigated` at once, so the reducer sees the route before the focus effects below.
+        this.navigate(effect.to);
         break;
       case "focus":
         // The element may be on a screen this change is about to render (the terminal is hidden
@@ -214,10 +242,25 @@ export class AppController extends Store<AppView> {
     }
   }
 
+  private navigate(to: Route): void {
+    const tab = activeTab(this.snapshot.workspace);
+    if (to === "home" || !tab) this.router.goHome();
+    else this.router.openTab(tab.id, tab.kind === "files" ? tab.place : null);
+  }
+
   private navigated(nav: Navigated): void {
     this.update({ nav });
-    this.focus.screenChanged(nav.destination, nav.entry.overlay !== null);
-    this.dispatch({ type: "navigated", onTerminal: nav.destination === "terminal" });
+    const { route, tab, place } = nav.entry;
+    this.dispatch({ type: "navigated", route, tab, place });
+  }
+
+  /** Focus follows the screen on screen, which changes with a route, an overlay, or a switch between tabs of different kinds. */
+  private syncScreen(): void {
+    const screen = screenOf(this.snapshot.workspace);
+    const overlay = this.snapshot.nav.entry.overlay !== null;
+    if (this.sentScreen?.screen === screen && this.sentScreen.overlay === overlay) return;
+    this.sentScreen = { screen, overlay };
+    this.focus.screenChanged(screen, overlay);
   }
 
   private hostsChanged(): void {
@@ -242,13 +285,13 @@ export class AppController extends Store<AppView> {
   /** A host stays joined while Home, the picker or the switcher is on screen, a tab on it exists, or one is restoring. This is the one place that asks for a listing on entering one of them. */
   private syncListing(): void {
     const { nav, workspace } = this.snapshot;
-    const listingShown = nav.destination === "home" || nav.entry.overlay?.screen === "picker" || nav.entry.overlay?.screen === "switcher";
+    const listingShown = screenOf(workspace) === "home" || nav.entry.overlay?.screen === "picker" || nav.entry.overlay?.screen === "switcher";
     const entered = listingShown && !this.wasOnListing;
     this.wasOnListing = listingShown;
     for (const client of this.hosts.all()) {
       const { handle } = client.entry;
       const admitted = client.admission.kind === "admitted";
-      const hasTab = client.hostId !== null && workspace.tabs.some((t) => t.key.host === client.hostId);
+      const hasTab = client.hostId !== null && workspace.tabs.some((t) => t.host === client.hostId);
       const listed = this.listing.setWanted(handle, admitted && (listingShown || hasTab));
       // Entering Home or the picker lists afresh, unless joining the host just started a listing.
       if (entered && admitted && !listed) this.listing.refresh(handle);

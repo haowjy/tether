@@ -4,7 +4,7 @@ import type { AppController } from "../../../app/controller";
 import type { NativeLineSnapshot, PlatformEvent, TabKey, TextRange } from "../../../platform/types";
 import { tabId } from "../../../platform/tabKey";
 import { Store } from "../../../ui/store";
-import type { Tab } from "../../../workspace/state";
+import { terminalTabOf, type TerminalTab } from "../../../workspace/state";
 import type { LineDrafts } from "./lineDrafts";
 import { terminalsOf } from "../terminals";
 
@@ -85,7 +85,7 @@ export class NativeLineInput extends Store<NativeLineView> {
   }
 
   /** Bind before raising UIKit from the mirror's tap, so the first key names the right tab. */
-  open(tab: Tab, text: string, caret: number): void {
+  open(tab: TerminalTab, text: string, caret: number): void {
     if (this.target?.id !== tab.id) this.bind(tab.key, text, caret);
     else if (this.target.text !== text) this.setNative(tab.key, text, caret);
     else {
@@ -94,7 +94,7 @@ export class NativeLineInput extends Store<NativeLineView> {
     }
   }
 
-  caret(tab: Tab, text: string, index: number): void {
+  caret(tab: TerminalTab, text: string, index: number): void {
     if (this.target?.id !== tab.id) this.bind(tab.key, text, index);
     else {
       this.update({ selection: { start: index, end: index }, marked: null });
@@ -102,13 +102,13 @@ export class NativeLineInput extends Store<NativeLineView> {
     }
   }
 
-  selectAll(tab: Tab, text: string): void {
+  selectAll(tab: TerminalTab, text: string): void {
     if (this.target?.id !== tab.id) this.bind(tab.key, text, 0);
     this.update({ selection: { start: 0, end: text.length }, marked: null });
     this.app.platform.input.selectAllLine();
   }
 
-  clear(tab: Tab): void {
+  clear(tab: TerminalTab): void {
     const id = tabId(tab.key);
     const restoringThisTab = this.restored !== null && tabId(this.restored.tab) === id;
     const result = this.drafts.edit(tab.key, "");
@@ -162,7 +162,7 @@ export class NativeLineInput extends Store<NativeLineView> {
   private reconcileTarget(): void {
     if (this.app.snapshot.viewport.directInput !== "native" || this.app.focus.snapshot.owner !== "line") return;
     const workspace = this.app.snapshot.workspace;
-    const tab = workspace.tabs.find((item) => item.id === workspace.active);
+    const tab = terminalTabOf(workspace, workspace.active);
     if (!tab || !this.drafts.snapshot.ready) return;
     const text = this.drafts.snapshot.drafts[tab.id]?.text ?? "";
     if (this.target?.id !== tab.id) this.bind(tab.key, text, text.length);
@@ -271,14 +271,8 @@ export class NativeLineInput extends Store<NativeLineView> {
       this.update({ text: "", selection: END, marked: null });
     }
 
-    const tab = this.app.snapshot.workspace.tabs.find((item) => item.id === id) ?? {
-      id,
-      key: event.tab,
-      session: "",
-      window: "",
-      restoring: true,
-    } satisfies Tab;
-    const result = this.drafts.send(tab, event.text, continuation);
+    // A line sent for a tab since closed has no tab to read: its id and key name it.
+    const result = this.drafts.send({ id, key: event.tab }, event.text, continuation);
     this.setNote(result === "notConnected" ? { tone: "error", text: "Not connected" } : null);
   }
 

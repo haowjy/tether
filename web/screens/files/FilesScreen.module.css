@@ -1,3 +1,11 @@
+.screen { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; }
+/* The phone's resting bar: the dock's row without its keyboard controls. */
+.dock {
+  flex: none;
+  padding: var(--space-1) var(--space-2) calc(var(--space-1) + var(--safe-bottom));
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+}
 .files {
   /* Content sits in the same centred column as Home on a wide screen; the header, the preview bar and the lists all start at it.
      The % resolves where it is used: each of them is as wide as .files. */

@@ -4,6 +4,7 @@ import type { FilesPlace } from "../platform/types";
 import { hostProblem, type HostProblem } from "../ui/hostProblem";
 import { Store } from "../ui/store";
 import { baseName, join, parentOf } from "./paths";
+import { samePlace } from "../workspace/state";
 import { Folders, listFolder, type Via } from "./folders";
 import type { Where } from "./pathfield";
 
@@ -17,7 +18,7 @@ export interface FileRef {
   mime: string | null;
 }
 
-/** Where the file manager is: the router's Files place, with the viewed file's details. */
+/** Where the file manager is: the active Files tab's place, with the viewed file's details. */
 export type Place = { kind: "roots" } | { kind: "dir"; path: string } | { kind: "file"; file: FileRef };
 
 /** A directory's pages loaded so far. */
@@ -41,6 +42,8 @@ export interface FilesView {
 export interface BrowserOptions {
   api: FsApi;
   hidden: boolean;
+  /** The place asked for settled as a different one: the daemon's canonical path, or a folder where a file was named. The owner of the place follows it. */
+  onResolved: (asked: FilesPlace, settled: FilesPlace) => void;
 }
 
 /** The canonical directories the file list may show: the working roots and uploads_dir. */
@@ -70,15 +73,15 @@ export function parentPlace(view: Pick<FilesView, "place" | "pages">): FilesPlac
   }
 }
 
-/** What the saved workspace keeps of a place. */
-export function savedPlace(place: Place): FilesPlace {
+/** The place a view shows, as the workspace holds it: a viewed file keeps its path only. */
+export function placeOf(place: Place): FilesPlace {
   return place.kind === "file" ? { kind: "file", path: place.file.path } : place;
 }
 
 /**
  * The file manager's state, apart from the DOM: the roots, the directory pages loaded for
- * the place on screen, and that place. The router owns where the user is (browser history);
- * `follow` brings this state to the place its entry names. Nothing is fetched until a place
+ * the place on screen, and that place. The active Files tab owns where the user is (its place,
+ * written from browser history); `follow` brings this state to it. Nothing is fetched until a place
  * needs it, and only the page in view (plan.md "Bandwidth").
  */
 export class FileBrowser extends Store<FilesView> {
@@ -88,10 +91,12 @@ export class FileBrowser extends Store<FilesView> {
   readonly folders: Folders;
   /** Bumped on every navigation, so an answer for a place already left is dropped. */
   private seq = 0;
+  private readonly onResolved: BrowserOptions["onResolved"];
 
   constructor(opts: BrowserOptions) {
     super({ place: { kind: "roots" }, roots: null, pages: null, loading: true, error: null, hidden: opts.hidden });
     this.api = opts.api;
+    this.onResolved = opts.onResolved;
     this.folders = new Folders(opts.api, () => this.where());
   }
 
@@ -102,12 +107,21 @@ export class FileBrowser extends Store<FilesView> {
   }
 
   /**
-   * Shows the router entry's place. What is already on screen stays (no refetch): returning
+   * Shows the active Files tab's place. What is already on screen stays (no refetch): returning
    * from the terminal finds the folder and preview as they were. A refresh is `reload`.
    */
-  follow(target: FilesPlace | null): Promise<void> {
+  follow(want: FilesPlace): Promise<void> {
+    const shown = this.show(want);
+    const seq = this.seq;
+    return shown.then(() => {
+      if (seq !== this.seq || this.snapshot.error) return;
+      const settled = placeOf(this.snapshot.place);
+      if (!samePlace(settled, want)) this.onResolved(want, settled);
+    });
+  }
+
+  private show(want: FilesPlace): Promise<void> {
     const { place, pages, roots, error } = this.snapshot;
-    const want = target ?? { kind: "roots" as const };
     // A folder or file opened by a reload has no roots yet: they name $HOME, which paths are shown relative to.
     if (want.kind !== "roots" && !roots) void this.api.roots().then((r) => { this.update({ roots: r }); }, () => undefined);
     if (want.kind === "roots") {

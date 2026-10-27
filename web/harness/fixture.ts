@@ -11,6 +11,8 @@ export interface Fixture {
   options?: () => TestPlatformOptions;
   /** Edit the fake daemon before the app boots. */
   daemon?: (daemon: TestPlatform["daemon"]) => void;
+  /** Open the saved workspace's active tab at launch, as a tap on its Home row would: a clean launch otherwise opens Home. */
+  openActive?: true;
   /** Render this component instead of the app, inside the app's context. */
   render?: () => ComponentChildren;
 }

@@ -1,34 +1,21 @@
-// The Terminal destination (client-architecture.md §6.1, §6.4, §7): the tab strip (or, on a
-// touch phone, the dock) and the surface the renderer draws into, with the status band over
-// its top edge. The screen is
+// The terminal screen (client-architecture.md §6.1, §6.4, §7): the surface the renderer draws
+// into, with the status band over its top edge, and on touch the dock below it. Its tabs are
+// the shell's top row (desktop) or the dock's current-tab button (touch). The screen is
 // mounted once and hidden rather than unmounted (§6.5); the renderer, the drivers and tmux's
 // size belong to `terminals.ts`, so this file only places things and draws state.
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import { useApp, useAppView, useHostName } from "../../app/context";
 import { EmptyState } from "../../ui/primitives/EmptyState";
-import { IconButton } from "../../ui/primitives/IconButton";
 import { StatusBand } from "../../ui/primitives/StatusBand";
-import { TabStrip } from "../../ui/primitives/TabStrip";
 import { useStore } from "../../ui/store";
 import { Button } from "../../ui/primitives/Button";
+import { terminalTabOf } from "../../workspace/state";
 import { Dock } from "./dock/Dock";
-import { WindowsMenu } from "./WindowsMenu";
 import { EditMenu } from "./selection/EditMenu";
-import { bandTone, lookOf, tabPills } from "./tabView";
+import { bandTone, lookOf } from "./tabView";
 import { terminalsOf } from "./terminals";
+import { useNow } from "./useNow";
 import styles from "./Terminal.module.css";
-
-/** The clock for countdowns and "Connecting…" while the tab on screen is not live. */
-function useNow(running: boolean): number {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!running) return;
-    setNow(Date.now());
-    const timer = setInterval(() => { setNow(Date.now()); }, 1000);
-    return () => { clearInterval(timer); };
-  }, [running]);
-  return running ? now : Date.now();
-}
 
 export function TerminalScreen({ active }: { active: boolean }) {
   const app = useApp();
@@ -38,9 +25,8 @@ export function TerminalScreen({ active }: { active: boolean }) {
   const scrolled = useStore(terminals, (s) => s.scrolled);
   const menu = useStore(terminals, (s) => s.menu);
   const workspace = useAppView((v) => v.workspace);
-  const layout = useAppView((v) => v.viewport.layout);
-  const phone = layout === "phone";
-  // Touch input (a phone, or an iPad without a trackpad) ends in the dock; a mouse keeps the tab strip.
+  const phone = useAppView((v) => v.viewport.layout === "phone");
+  // Touch input (a phone, or an iPad without a trackpad) ends in the dock.
   const dock = useAppView((v) => v.viewport.directInput !== "xterm");
 
   useEffect(() => {
@@ -48,35 +34,17 @@ export function TerminalScreen({ active }: { active: boolean }) {
   }, [terminals]);
 
   const hostName = useHostName();
-  const current = workspace.tabs.find((t) => t.id === workspace.active);
-  const running = active && current !== undefined && statuses[current.id]?.state.kind !== "live";
+  const current = terminalTabOf(workspace, workspace.active);
+  const running = active && current !== null && statuses[current.id]?.state.kind !== "live";
   const now = useNow(running);
-  const pills = tabPills(workspace.tabs, statuses, hostName, active ? workspace.active : null, now);
-  const look = current && lookOf(current, statuses[current.id], hostName(current.key.host), active, now);
+  const look = current && lookOf(current, statuses[current.id], hostName(current.host), active, now);
   const status = look?.status;
 
-  const tools = (
-    // On a touch screen with a desktop layout (an iPad), a press on the tools must not take the keyboard's focus from the owned input (§6.5).
-    <div class={styles.toolbar} data-layout={layout} onPointerDown={(e) => { if (dock) e.preventDefault(); }}>
-      {phone && <IconButton icon="back" label="Back to Home" onClick={() => { app.router.toParent(); }} />}
-      <TabStrip
-        pills={pills}
-        active={workspace.active}
-        onSelect={(id) => { terminals.activate(id); }}
-        onClose={(id) => { app.dispatch({ type: "closed", id }); }}
-        activeAction={current && <WindowsMenu tab={current} />}
-      />
-      <IconButton icon="plus" label="Open another session" focusTarget="plus" onClick={(e) => { app.openOverlay({ screen: "picker", name: "open" }, e.currentTarget); }} />
-      {!phone && current && look && <span class={styles.hostLabel} data-tone={look.tone}>{hostName(current.key.host)}</span>}
-    </div>
-  );
-
   return (
-    <div class={styles.terminal} hidden={!active} data-layout={layout} data-dock={active && dock && phone ? "" : undefined}>
+    <div class={styles.terminal} hidden={!active} data-layout={phone ? "phone" : "desktop"} data-dock={active && dock && phone ? "" : undefined}>
       <h1 class="sr-only">Terminal</h1>
-      {!phone && tools}
       <div class={styles.surface} ref={slot}>
-        {current === undefined && (
+        {current === null && (
           <div class={styles.empty}>
             <EmptyState icon="terminal" title={dock && phone ? "Open a session from Sessions." : "Open a session with + or from Home."} />
           </div>
@@ -99,7 +67,6 @@ export function TerminalScreen({ active }: { active: boolean }) {
           />
         )}
       </div>
-      {phone && !dock && tools}
       {dock && <Dock active={active} />}
     </div>
   );

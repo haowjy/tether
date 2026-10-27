@@ -7,73 +7,78 @@ const phone: Scenario = { layout: "phone", scheme: "dark", density: "touch" };
 const hash = (page: Page): Promise<string> => page.evaluate(() => location.hash);
 
 test.describe("routes and history", () => {
-  test("the rail moves between destinations, and Back retraces them", async ({ page }) => {
-    await openFixture(page, "home", desktop);
-    await page.getByRole("button", { name: "Files" }).click();
-    expect(await hash(page)).toBe("#/files");
-    await expect(page.getByRole("heading", { name: "Files" })).toBeVisible();
-    await page.getByRole("button", { name: "Terminal" }).click();
-    expect(await hash(page)).toBe("#/terminal");
-    await page.keyboard.press("Escape"); // with no tab, Terminal opened the picker
-    // Closing it is a history.back() that lands on a later popstate: Back before then undoes the wrong entry.
-    await expect(page.getByRole("dialog")).toHaveCount(0);
-    await page.goBack();
-    expect(await hash(page)).toBe("#/files");
+  test("the top row moves between Home and tabs of both kinds, and Back retraces them", async ({ page }) => {
+    await openFixture(page, "files", desktop); // a clean launch opens Home; the harness then opens the saved Files tab
+    expect(await hash(page)).toBe("#/tab");
+    await expect(page.getByRole("heading", { level: 1, name: "Files" })).toBeVisible();
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    expect(await hash(page)).toBe("#/");
+    await expect(page.getByRole("heading", { name: "tether" })).toBeVisible();
+    await page.getByRole("button", { name: /^tether agent, / }).click();
+    expect(await hash(page)).toBe("#/tab");
+    await expect(page.getByRole("button", { name: /^tether agent, / })).toHaveAttribute("aria-current", "true");
+    // Switching tab on a tab route adds no history entry.
+    await page.getByRole("button", { name: /^Files, / }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Files" })).toBeVisible();
     await page.goBack();
     expect(await hash(page)).toBe("#/");
+    await page.goBack(); // the Files tab's own entry: it is the active tab again
+    await expect(page.getByRole("heading", { level: 1, name: "Files" })).toBeVisible();
+    await page.goBack();
     await expect(page.getByRole("heading", { name: "tether" })).toBeVisible();
   });
 
-  test("a reload restores the destination from the hash", async ({ page }) => {
-    await openFixture(page, "home", desktop, "#/files");
+  test("a clean launch opens Home with the saved tabs listed, not the tab that was active", async ({ page }) => {
+    await openFixture(page, "restored", desktop);
+    await expect(page.getByRole("heading", { name: "Open tabs" })).toBeVisible();
+    expect(await hash(page)).toBe("#/");
     await page.reload();
-    await expect(page.getByRole("heading", { name: "Files" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Open tabs" })).toBeVisible();
   });
 
-  test("phone Home has Sessions and Files panes on #/ and #/files", async ({ page }) => {
-    await openFixture(page, "home", phone);
-    await page.getByRole("button", { name: "Files" }).click();
-    expect(await hash(page)).toBe("#/files");
-    await page.getByRole("button", { name: "Sessions" }).click();
-    expect(await hash(page)).toBe("#/");
+  test("Home's Files opens a new Files tab at the roots every time", async ({ page }) => {
+    await openFixture(page, "files", desktop);
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await page.getByRole("region", { name: "Sessions on pop-os" }).getByRole("button", { name: "Files" }).click();
+    await expect(page.getByRole("button", { name: /^Files, / })).toHaveCount(2);
+    expect(await hash(page)).toBe("#/tab");
   });
 });
 
 test.describe("overlays and focus", () => {
-  test("with no tab, Terminal opens the picker; Escape closes it and focus returns to +", async ({ page }, testInfo) => {
+  test("with no tab, + opens the picker; Escape closes it and focus returns to +", async ({ page }, testInfo) => {
     await openFixture(page, "home", desktop);
-    await page.getByRole("button", { name: "Terminal" }).click();
+    await page.getByRole("button", { name: "Open another session" }).click();
     const picker = page.getByRole("dialog", { name: "Open session" });
     await expect(picker).toBeVisible();
     await shot(page, "picker", desktop, testInfo.project.name);
     await page.keyboard.press("Escape");
     await expect(picker).toBeHidden();
     await expect(page.getByRole("button", { name: "Open another session" })).toBeFocused();
-    await expect(page.getByText("Open a session with + or from Home.")).toBeVisible();
   });
 
-  test("browser Back closes the overlay before leaving the destination", async ({ page }) => {
-    await openFixture(page, "home", desktop, "#/terminal");
+  test("browser Back closes the overlay before leaving the tab", async ({ page }) => {
+    await openFixture(page, "restored", desktop, { open: true });
     await page.getByRole("button", { name: "Open another session" }).click();
     await expect(page.getByRole("dialog", { name: "Open session" })).toBeVisible();
     await page.goBack();
     await expect(page.getByRole("dialog", { name: "Open session" })).toBeHidden();
-    expect(await hash(page)).toBe("#/terminal");
+    expect(await hash(page)).toBe("#/tab");
   });
 
-  test("the backdrop and the close button dismiss without changing the destination", async ({ page }) => {
-    await openFixture(page, "home", desktop, "#/terminal");
+  test("the backdrop and the close button dismiss without changing the tab", async ({ page }) => {
+    await openFixture(page, "restored", desktop, { open: true });
     await page.getByRole("button", { name: "Open another session" }).click();
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
     await page.getByRole("button", { name: "Open another session" }).click();
     await page.mouse.click(5, 5);
     await expect(page.getByRole("dialog")).toBeHidden();
-    expect(await hash(page)).toBe("#/terminal");
+    expect(await hash(page)).toBe("#/tab");
   });
 
   test("on a phone the tab chip opens the switcher sheet, which focuses no text field", async ({ page }, testInfo) => {
-    await openFixture(page, "restored", phone, "#/terminal");
+    await openFixture(page, "restored", phone, { open: true });
     const chip = page.getByRole("button", { name: /, \d tabs?, open sessions$/ });
     await chip.click();
     const sheet = page.getByRole("dialog", { name: "Sessions" });
@@ -126,7 +131,7 @@ test.describe("lists", () => {
 
 test.describe("restore", () => {
   test("the first listing closes the tab whose window is gone, with one notice, and keeps the others", async ({ page }) => {
-    await openFixture(page, "restored", desktop, "#/terminal");
+    await openFixture(page, "restored", desktop, { open: true });
     await expect(page.getByText("1 tab closed: their sessions are gone")).toBeVisible();
     const pills = page.locator("button[title]");
     await expect(pills).toHaveCount(2);
@@ -134,7 +139,7 @@ test.describe("restore", () => {
   });
 
   test("tabs wait, restoring, until the host's id is known, and the active one is kept", async ({ page }) => {
-    await openFixture(page, "restored", phone, "#/terminal");
+    await openFixture(page, "restored", phone, { open: true });
     await expect(page.getByRole("button", { name: /, \d tabs?, open sessions$/ })).toBeVisible();
   });
 });

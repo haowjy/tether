@@ -21,8 +21,8 @@ export interface Opened {
   expectNoConsoleErrors(): void;
 }
 
-/** Opens a fixture in the harness at the scenario's size, and waits for the app to render. */
-export async function openFixture(page: Page, fixture: string, scenario: Scenario, hash = "#/"): Promise<Opened> {
+/** Opens a fixture in the harness at the scenario's size, and waits for the app to render. A clean launch shows Home; `open` then opens the saved active tab, as a tap on its row would. */
+export async function openFixture(page: Page, fixture: string, scenario: Scenario, options: { open?: true } = {}): Promise<Opened> {
   const errors: string[] = [];
   page.on("console", (msg) => {
     // WebKit reports the viewport meta's `interactive-widget` (client-architecture.md §5.4) as unknown and ignores it: not an app error.
@@ -30,8 +30,8 @@ export async function openFixture(page: Page, fixture: string, scenario: Scenari
   });
   page.on("pageerror", (err) => { errors.push(err.message); });
   await page.setViewportSize(SIZES[scenario.layout]);
-  const query = new URLSearchParams({ fixture, ...scenario });
-  await page.goto(`/harness/index.html?${query.toString()}${hash}`);
+  const query = new URLSearchParams({ fixture, ...scenario, ...(options.open && { open: "" }) });
+  await page.goto(`/harness/index.html?${query.toString()}`);
   await page.waitForFunction(() => document.querySelector("#app")?.childElementCount);
   await page.evaluate(() => document.fonts.ready);
   return { expectNoConsoleErrors: () => { expect(errors).toEqual([]); } };

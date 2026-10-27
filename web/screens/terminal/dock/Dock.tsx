@@ -8,7 +8,9 @@ import { useApp, useAppView, useTabLabels } from "../../../app/context";
 import { Icon } from "../../../ui/primitives/Icon";
 import { DockButton } from "../../../ui/primitives/DockButton";
 import { useStore } from "../../../ui/store";
+import { terminalTabOf } from "../../../workspace/state";
 import { terminalsOf } from "../terminals";
+import { CurrentTabButton } from "./CurrentTabButton";
 import { KeyRow } from "./KeyRow";
 import { LineField, type LocalNote } from "./LineField";
 import { lineDraftsOf } from "./lineDrafts";
@@ -56,7 +58,7 @@ export function Dock({ active }: { active: boolean }) {
   const line = useRef<HTMLTextAreaElement>(null);
   const [local, setLocal] = useState<LocalNote | null>(null);
 
-  const tab = workspace.tabs.find((t) => t.id === workspace.active) ?? null;
+  const tab = terminalTabOf(workspace, workspace.active);
   const native = viewport.directInput === "native";
   const labels = useTabLabels();
   const label = labels.find((l) => l.id === tab?.id);
@@ -150,24 +152,7 @@ export function Dock({ active }: { active: boolean }) {
           {holding && <KeyRow insertIntoLine={insertIntoLine} />}
         </div>
         <div class={styles.row} ref={row}>
-          {phone && (
-            <DockButton
-              kind="control"
-              class={styles.chip}
-              aria-label={tab && label ? `${label.full}, ${String(workspace.tabs.length)} ${workspace.tabs.length === 1 ? "tab" : "tabs"}, open sessions` : undefined}
-              onClick={(e) => { app.openOverlay({ screen: "switcher", name: "sessions" }, e.currentTarget); }}
-            >
-              {tab && label ? (
-                <>
-                  <span class={styles.chipSession}>{label.session}</span>
-                  <span class={styles.chipWindow}>{label.window}</span>
-                  <span class={styles.chipCount}>{workspace.tabs.length}</span>
-                </>
-              ) : (
-                "Sessions"
-              )}
-            </DockButton>
-          )}
+          {phone && <CurrentTabButton />}
           <LineField tab={tab} label={label ? `Line for ${label.full}` : "Line"} onNote={setLocal} inputRef={line} />
           <DockButton
             kind="control"

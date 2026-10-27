@@ -1,5 +1,5 @@
 // The Playwright and review entry: the real app on the test platform. Open
-// `/harness/index.html?fixture=<name>&layout=phone|desktop&scheme=dark|light&density=touch|compact#/route`.
+// `/harness/index.html?fixture=<name>&layout=phone|desktop&scheme=dark|light&density=touch|compact`, plus `&open` to open the saved active tab at launch (a clean launch shows Home).
 // Served by Vite's dev server only; no production build includes it (the forbidTestModules plugin in vite.config.ts fails the build if one leaks).
 import { render } from "preact";
 import { App } from "../app/App";
@@ -37,6 +37,7 @@ const platform = createTestPlatform({ viewport, ...fixture.options?.() });
 fixture.daemon?.(platform.daemon);
 const app = await AppController.start(platform, { fetchFn: platform.fetch, applyViewport });
 window.__harness = { platform, app };
+if ((fixture.openActive || params.has("open")) && app.snapshot.workspace.active) app.dispatch({ type: "activated", id: app.snapshot.workspace.active });
 
 const root = document.getElementById("app");
 if (!root) throw new Error("harness/index.html lacks #app");

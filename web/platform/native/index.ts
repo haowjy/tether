@@ -6,7 +6,7 @@ import { createNativeTransport } from "./transport";
 import { createNativeUploads } from "./uploads";
 import type { BootResult, Platform, PlatformEvent, SavedWorkspace } from "../types";
 
-const EMPTY_WORKSPACE: SavedWorkspace = { version: 2, tabs: [], active: null, files: null };
+const EMPTY_WORKSPACE: SavedWorkspace = { version: 3, tabs: [], active: null };
 
 export function createNativePlatform(post: Post = webkitPost): Platform {
   const bridge = new Bridge(post);

@@ -16,8 +16,8 @@ interface HostSessionListsProps {
   /** The switcher: the active tab's id, so its session says "here". Home passes none. */
   active?: string | null;
   onOpen: (host: HostClient, listing: TmuxListing, session: SessionListing) => void;
-  /** Home: the creation action beside each host's list. */
-  creation?: { onNewSession: (host: HostClient, opener: HTMLElement) => void };
+  /** Home: the actions beside each host's list. */
+  creation?: { onNewSession: (host: HostClient, opener: HTMLElement) => void; onFiles: (host: HostClient) => void };
 }
 
 export function HostSessionLists({ query, active, onOpen, creation }: HostSessionListsProps) {
@@ -43,7 +43,7 @@ export function HostSessionLists({ query, active, onOpen, creation }: HostSessio
             {...(active !== undefined && { active })}
             onOpen={(l, session) => { onOpen(h, l, session); }}
             onRetry={() => { if (h.admission.kind === "unreachable") app.hosts.recheck(handle); else app.listing.refresh(handle); }}
-            {...(creation && { creation: { onNewSession: (el: HTMLElement) => { creation.onNewSession(h, el); } } })}
+            {...(creation && { creation: { onNewSession: (el: HTMLElement) => { creation.onNewSession(h, el); }, onFiles: () => { creation.onFiles(h); } } })}
           />
         );
       })}

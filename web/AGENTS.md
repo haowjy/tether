@@ -4,8 +4,11 @@ The client's design is `.meridian/work/tether-mvp/design/client-architecture.md`
 (layout and lint rules), §6 (state owners) and §11 (lanes and the hand-off protocol) before
 adding a file. [README.md](README.md) has the commands.
 
-- **One owner per piece of state.** Tabs: `workspace/` (pure reducer). Sockets and admission:
-  `net/hosts.ts`. Navigation: `app/router.ts`, the only writer of browser history. Focus:
+- **One owner per piece of state.** Tabs of both kinds, and a Files tab's place (written only
+  from `navigated`): `workspace/` (pure reducer); its saved form has one parser,
+  `workspace/saved.ts`. Sockets and admission:
+  `net/hosts.ts`. Navigation: `app/router.ts`, the only writer of browser history (routes
+  `home | tab`; the screen is derived by `screenOf`). Focus:
   `app/focus.ts`, the only caller of `.focus()` and `.blur()`. The listing: `app/listing.ts`,
   the only sender of `listSessions`. Persistence: `app/persist.ts`. Screens reach them through
   `useApp()` and call their own cores directly.

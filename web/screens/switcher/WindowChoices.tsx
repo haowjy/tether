@@ -6,7 +6,7 @@
 import { useApp } from "../../app/context";
 import { findSession } from "../../sessions/groups";
 import type { WindowListing } from "../../proto/generated/messages";
-import type { Tab } from "../../workspace/state";
+import type { TerminalTab } from "../../workspace/state";
 import { terminalsOf } from "../terminal/terminals";
 import { Button } from "../../ui/primitives/Button";
 import { RovingList } from "../../ui/primitives/RovingList";
@@ -78,13 +78,13 @@ export function WindowList({ session, variant, windows, shownId, onChoose, onSho
   );
 }
 
-type WindowChoicesProps = Pick<WindowListProps, "variant" | "onChoose" | "onShown" | "onNew"> & { tab: Tab };
+type WindowChoicesProps = Pick<WindowListProps, "variant" | "onChoose" | "onShown" | "onNew"> & { tab: TerminalTab };
 
 /** {@link WindowList} for an open tab, from the cached listing and the tab's own `watching`. */
 export function WindowChoices({ tab, ...rest }: WindowChoicesProps) {
   const app = useApp();
   const terminals = terminalsOf(app);
-  const client = app.hosts.byHostId(tab.key.host);
+  const client = app.hosts.byHostId(tab.host);
   const handle = client?.entry.handle;
   const cached = useStore(app.sessions, (s) => (handle === undefined ? undefined : s.hosts[handle]));
   const shownId = useStore(terminals, (s) => s.tabs[tab.id]?.shown?.id ?? null);

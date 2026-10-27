@@ -101,7 +101,7 @@ export function PathField({ session, rest, onEditing }: Props) {
     }
     if ("open" in result) {
       endEditing();
-      app.router.closeOverlay(() => { app.router.pushFiles({ kind: "dir", path: result.open }); });
+      app.router.closeOverlay(() => { app.openPlace({ kind: "dir", path: result.open }); });
     } else if ("say" in result) setSaid(result.say);
   };
 

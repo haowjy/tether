@@ -21,10 +21,9 @@ const listing = (server: string, ids: number[]): TmuxListing => ({
   })),
 });
 const saved = (ids: number[], active: number): SavedWorkspace => ({
-  version: 2,
-  tabs: ids.map((i) => ({ key: key(i), session: "s", window: `w${String(i)}` })),
+  version: 3,
+  tabs: ids.map((i) => ({ kind: "terminal", key: key(i), session: "s", window: `w${String(i)}` })),
   active: tabId(key(active)),
-  files: null,
 });
 
 describe("opening and closing", () => {
@@ -64,19 +63,19 @@ describe("navigation and focus", () => {
   it("activating a tab off Terminal navigates there, and the arrival focuses it", () => {
     const s = open(initialWorkspace, 1).state;
     const r = reduce(s, { type: "activated", id: tabId(key(1)) });
-    expect(r.effects).toContainEqual({ type: "navigate", to: "terminal" });
+    expect(r.effects).toContainEqual({ type: "navigate", to: "tab" });
     expect(r.effects.some((e) => e.type === "focus")).toBe(false);
-    expect(reduce(s, { type: "navigated", onTerminal: true }).effects).toContainEqual({ type: "focus", target: "terminal" });
+    expect(reduce(s, { type: "navigated", route: "tab", tab: null, place: null }).effects).toContainEqual({ type: "focus", target: "terminal" });
   });
 
   it("activating a tab already on Terminal only focuses it", () => {
-    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", onTerminal: true }]).state;
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", route: "tab", tab: null, place: null }]).state;
     const r = reduce(s, { type: "activated", id: tabId(key(1)) });
     expect(r.effects).toEqual([{ type: "focus", target: "terminal" }]);
   });
 
   it("closing the last tab on Terminal navigates Home before focusing Home search", () => {
-    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", onTerminal: true }]).state;
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", route: "tab", tab: null, place: null }]).state;
     const r = reduce(s, { type: "closed", id: tabId(key(1)) });
     expect(r.effects.map((e) => e.type)).toEqual(expect.arrayContaining(["navigate", "focus"]));
     expect(r.effects.findIndex((e) => e.type === "navigate")).toBeLessThan(r.effects.findIndex((e) => e.type === "focus"));
@@ -92,27 +91,27 @@ describe("navigation and focus", () => {
 });
 
 describe("what is on screen", () => {
-  it("watches only the active tab on the Terminal destination", () => {
+  it("watches only the active tab while its terminal screen shows", () => {
     let r = run([{ type: "opened", key: key(1), session: "s", window: "a" }]);
     expect(shownTab(r.state)).toBeNull();
-    r = run([{ type: "navigated", onTerminal: true }], r.state);
+    r = run([{ type: "navigated", route: "tab", tab: null, place: null }], r.state);
     expect(shownTab(r.state)).toBe(tabId(key(1)));
     r = run([{ type: "opened", key: key(2), session: "s", window: "b" }], r.state);
     expect(shownTab(r.state)).toBe(tabId(key(2)));
-    r = run([{ type: "navigated", onTerminal: false }], r.state);
+    r = run([{ type: "navigated", route: "home", tab: null, place: null }], r.state);
     expect(shownTab(r.state)).toBeNull();
   });
 
   it("saves on every change to the tabs, and on none other", () => {
     expect(open(initialWorkspace, 1).effects).toContainEqual({ type: "save" });
     const s = open(initialWorkspace, 1).state;
-    expect(reduce(s, { type: "navigated", onTerminal: true }).effects.some((e) => e.type === "save")).toBe(false);
+    expect(reduce(s, { type: "navigated", route: "tab", tab: null, place: null }).effects.some((e) => e.type === "save")).toBe(false);
   });
 
   it("does not save when only what is not saved changed (restoring)", () => {
     const restored = reduce(initialWorkspace, { type: "restored", saved: saved([1], 1) }).state;
     const proven = reduce(restored, { type: "watching", id: tabId(key(1)), window: "w1" });
-    expect(proven.state.tabs[0]?.restoring).toBe(false);
+    expect(proven.state.tabs[0]).toMatchObject({ restoring: false });
     expect(proven.effects.some((e) => e.type === "save")).toBe(false);
   });
 });
@@ -120,7 +119,7 @@ describe("what is on screen", () => {
 describe("restore and pruning", () => {
   it("restores tabs as restoring, with the saved active tab", () => {
     const r = reduce(initialWorkspace, { type: "restored", saved: saved([1, 2], 2) });
-    expect(r.state.tabs.every((t) => t.restoring)).toBe(true);
+    expect(r.state.tabs.every((t) => t.kind === "terminal" && t.restoring)).toBe(true);
     expect(r.state.active).toBe(tabId(key(2)));
     expect(r.state.tabs[0]).toMatchObject({ session: "s", window: "w1" });
   });
@@ -128,7 +127,7 @@ describe("restore and pruning", () => {
   it("a watching reply proves a restoring tab", () => {
     const s = reduce(initialWorkspace, { type: "restored", saved: saved([1], 1) }).state;
     const r = reduce(s, { type: "watching", id: tabId(key(1)), window: "w1" });
-    expect(r.state.tabs[0]?.restoring).toBe(false);
+    expect(r.state.tabs[0]).toMatchObject({ restoring: false });
   });
 
 
@@ -136,7 +135,7 @@ describe("restore and pruning", () => {
     const s = reduce(initialWorkspace, { type: "restored", saved: saved([1, 2, 3], 3) }).state;
     const r = reduce(s, { type: "listing", hostId: "h1", listing: listing("main:1-1", [1]) });
     expect(r.state.tabs.map((t) => t.id)).toEqual([tabId(key(1))]);
-    expect(r.state.tabs[0]?.restoring).toBe(false);
+    expect(r.state.tabs[0]).toMatchObject({ restoring: false });
     expect(r.state.active).toBe(tabId(key(1)));
     expect(r.effects).toContainEqual({ type: "notice", text: "2 tabs closed: their sessions are gone" });
   });
@@ -172,7 +171,7 @@ describe("restore and pruning", () => {
   });
 
   it("a listing refreshes the session name and, off screen, the current window's name", () => {
-    const s = reduce(initialWorkspace, { type: "restored", saved: { ...saved([1], 1), tabs: [{ key: key(1), session: "old", window: "older" }] } }).state;
+    const s = reduce(initialWorkspace, { type: "restored", saved: { ...saved([1], 1), tabs: [{ kind: "terminal", key: key(1), session: "old", window: "older" }] } }).state;
     const r = reduce(s, { type: "listing", hostId: "h1", listing: listing("main:1-1", [1]) });
     expect(r.state.tabs[0]).toMatchObject({ session: "s", window: "w1", restoring: false });
   });
@@ -191,8 +190,8 @@ describe("daemon events", () => {
 describe("savedTabs", () => {
   it("round-trips through restored", () => {
     const s = run([1, 2].map((i): WorkspaceEvent => ({ type: "opened", key: key(i), session: "s", window: `w${String(i)}` }))).state;
-    const again = reduce(initialWorkspace, { type: "restored", saved: { version: 2, ...savedTabs(s), files: null } }).state;
-    expect(again.tabs.map((t) => [t.id, t.session, t.window])).toEqual(s.tabs.map((t) => [t.id, t.session, t.window]));
+    const again = reduce(initialWorkspace, { type: "restored", saved: { version: 3, ...savedTabs(s) } }).state;
+    expect(again.tabs.map((t) => t.id)).toEqual(s.tabs.map((t) => t.id));
   });
 });
 
