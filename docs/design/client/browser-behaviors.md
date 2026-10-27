@@ -77,8 +77,9 @@ drafts and the saved workspace on this device, leaving currently open tabs until
 destructive actions confirm independently. Remove this device is available only where the
 host admits this device as a tailnet node. Settings has Back to Home.
 
-The launch destination for a saved workspace remains open: reopening the last tab is the
-proposal; Home is used when no tabs are open.
+A clean launch opens Home, even with saved tabs: Home is where an unreachable server or
+stopped daemon is explained, and the saved tabs are listed on their server cards.
+Returning from the background keeps the screen the user left.
 
 ## Terminal
 

@@ -4994,6 +4994,10 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   and p314 showed the same behavior on 3.4, 3.7b and 3.8: BEL arrives in `%output`
   with no separate notification; the global hook fires for current and other windows and
   can mark the session with `set-option -F`; `set-hook -a` keeps the user's own hooks.
+- **How the daemon learns of a marker:** a local `list-sessions -F` every few seconds,
+  only while a device is connected, reporting changes only (Jimmy: "do u think we SHOULD
+  add a little bit of polling...?"). Rejected: a hook-run command per bell (another
+  process and a callback path into the daemon for no gain).
 - **Rejected:** reading tmux's `window_bell_flag` (shared with every client, cleared
   when any client looks, and not set for a current window while a client is attached);
   `refresh-client -B` subscriptions (scoped to the control client's own session); polling
@@ -5025,3 +5029,14 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   parent and a 17 pt title; no large titles.
 - **Why:** Jimmy wanted Settings higher and more vertical space for the content.
 - **Rejected:** large titles and a separate back/header row.
+
+### A clean launch opens Home
+
+- **Decided:** 2026-10-27, Jimmy ("I think we should default to home from a clean
+  launch...? what if tether isn't running anymore?").
+- **What:** a cold start opens Home even when tabs are saved; the saved tabs are listed on
+  their server cards. Returning from the background keeps the screen the user left.
+- **Why:** if the daemon or server is down, reopening the last tab would land on a
+  reconnecting terminal with no explanation; Home says what is unreachable and offers
+  Retry.
+- **Rejected:** reopening the last tab on launch (the lead's earlier proposal).
