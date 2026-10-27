@@ -125,7 +125,7 @@ Cause: the app's file proxy only opened for a server after `/auth/info` went thr
 which never happened in the app (native checks only at enrolment; the web's token lane
 skips it). pop-os reports protocol 2-2 and the app speaks 2: no real mismatch. Fix: native
 checks `/auth/info` on a host's first proxied request. Spec + decision amended. Also
-explains any dead suggestion strip in the app. Device-unverified until Jimmy opens Files.
+explains any dead suggestion strip in the app. Verified on device: Jimmy, 2026-10-27: "yeah, files show".
 
 ### 11. Home: complete rework
 
