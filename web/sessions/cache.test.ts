@@ -13,7 +13,7 @@ describe("SessionsCache", () => {
     const cache = new SessionsCache();
     expect(cache.snapshot.hosts["h1"]).toBeUndefined();
     cache.listed("h1", listing(1));
-    expect(cache.snapshot.hosts["h1"]).toEqual({ listing: listing(1), failure: null, updating: false });
+    expect(cache.snapshot.hosts["h1"]).toMatchObject({ listing: listing(1), failure: null, updating: false });
   });
 
   it("is updating from a requested listing until an answer, and keeps the cached rows meanwhile", () => {
@@ -40,7 +40,7 @@ describe("SessionsCache", () => {
     cache.requested("h1");
     cache.failed("h1", "busy");
     cache.failed("h1", "background");
-    expect(cache.snapshot.hosts["h1"]).toEqual({ listing: undefined, failure: null, updating: true });
+    expect(cache.snapshot.hosts["h1"]).toEqual({ listing: undefined, reachedAt: null, failure: null, updating: true });
   });
 
   it("keeps a null listing (no tmux server) distinct from never listed", () => {

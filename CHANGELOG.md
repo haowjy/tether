@@ -5,6 +5,10 @@ version section on release.
 
 ## [Unreleased]
 
+- Home is now a card per server: its name and status, the tabs you have open on it, "All N
+  sessions" (a full-height list with its own search and +) and Files. A server that can't be
+  reached says when it was last reached and offers Retry; one where tmux isn't running says so.
+  Settings moved behind the gear in Home's header, and Add to Home Screen moved onto Home.
 - Mermaid diagrams render in Markdown previews, in the app's light or dark theme. A wider
   diagram scrolls inside its own box; one that doesn't parse stays as a code block with the
   reason under it. The diagram code downloads the first time a document has a diagram; a page

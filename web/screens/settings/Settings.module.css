@@ -2,7 +2,6 @@
 .section { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
 .heading { font-size: var(--text-body); font-weight: var(--weight-bold); }
 .detail { font-size: var(--text-small); color: var(--color-text-muted); }
-.steps { margin: 0; padding-left: var(--space-5); font-size: var(--text-small); }
 .confirm { display: flex; flex-direction: column; gap: var(--space-4); }
 .error { font-size: var(--text-small); color: var(--color-status-error); }
 .actions { display: flex; justify-content: flex-end; gap: var(--space-2); }

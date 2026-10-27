@@ -1,7 +1,11 @@
-// Settings (client-architecture.md §4.3): the overlay behind Home's Settings row. Remove this
-// device (a host that admits this device as a tailnet node), Clear local data, and, on a phone
-// that hasn't installed the app, how to Add to Home Screen. Each destructive action confirms in
-// its own overlay, so Back from the confirmation returns here.
+// Settings (client-architecture.md §4.3): a full-screen page behind the gear in Home's header,
+// the router overlay `{ screen: "settings", name: "settings" }` (an overlay and not a route: Back,
+// Escape and focus return to the gear are the router's and `Dialog`'s already, and a route would
+// add a Route, a hash and a saved form for a screen that never holds state). Servers, this
+// device (Remove this device, where the host admits it as a tailnet node), the keyboard, Clear
+// local data. Each destructive action confirms in its own overlay, so Back from the
+// confirmation returns here. Appearance and terminal text size are not here: nothing stores
+// them yet (slice 5 adds them with their controls).
 import { useState } from "preact/hooks";
 import { useApp, useAppView, useOverlay } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
@@ -58,15 +62,12 @@ export function Settings() {
   const app = useApp();
   const { open, close } = useOverlay("settings");
   const hosts = useAppView((v) => v.hosts);
-  const phone = useAppView((v) => v.viewport.layout === "phone");
   const keyboard = useAppView((v) => v.viewport.directInput === "xterm");
   const canRemove = removable(hosts);
   // The one host this device would be removed from. The browser has exactly one.
   const target = canRemove[0];
   const hostName = target?.name ?? "the server";
   const device = target?.admission.kind === "admitted" ? (target.admission.deviceName ?? "this device") : "this device";
-  const install = app.platform.install;
-  const showInstall = phone && install !== undefined && !install.installed();
 
   const manageHosts = app.platform.manageHosts;
 
@@ -74,7 +75,7 @@ export function Settings() {
 
   return (
     <>
-      <Dialog open={open} title="Settings" onClose={close}>
+      <Dialog open={open} title="Settings" variant="page" backLabel="Back to Home" onClose={close}>
         {open && (
           <div class={styles.sections}>
             {manageHosts && (
@@ -106,16 +107,6 @@ export function Settings() {
               <p class={styles.detail}>Drafts and the saved tabs on this device. Nothing on {hostName} changes, and tmux keeps running.</p>
               <Button variant="secondary" class={styles.danger} onClick={(e) => { ask("clearData", e.currentTarget); }}>Clear local data</Button>
             </section>
-            {showInstall && (
-              <section class={styles.section} aria-labelledby="settings-install">
-                <h3 id="settings-install" class={styles.heading}>Add to Home Screen</h3>
-                <ol class={styles.steps}>
-                  <li>Tap Share in Safari.</li>
-                  <li>Tap Add to Home Screen.</li>
-                </ol>
-                <p class={styles.detail}>The installed app and Safari keep separate drafts and tabs, though one enrolment covers both.</p>
-              </section>
-            )}
           </div>
         )}
       </Dialog>

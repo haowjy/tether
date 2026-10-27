@@ -12,6 +12,8 @@ export interface HostSessions {
   listing: TmuxListing | null | undefined;
   /** The last attempt failed: the rows above are stale. */
   failure: Failure | null;
+  /** When the last authoritative listing came, in this page's life: when the host was last reached. */
+  reachedAt: number | null;
   /** A listing was requested and no answer has come since. */
   updating: boolean;
 }
@@ -21,7 +23,7 @@ export interface SessionsState {
   hosts: Readonly<Record<string, HostSessions>>;
 }
 
-const EMPTY: HostSessions = { listing: undefined, failure: null, updating: false };
+const EMPTY: HostSessions = { listing: undefined, reachedAt: null, failure: null, updating: false };
 
 /**
  * `null` when the failure says nothing about the host (the page was hidden; the daemon was
@@ -54,7 +56,7 @@ export class SessionsCache extends Store<SessionsState> {
 
   /** An authoritative listing. */
   listed(handle: string, listing: TmuxListing | null): void {
-    this.setHost(handle, { listing, failure: null, updating: false });
+    this.setHost(handle, { listing, reachedAt: Date.now(), failure: null, updating: false });
   }
 
   /** Nothing decided: cached rows go stale. */

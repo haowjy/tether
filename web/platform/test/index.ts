@@ -79,6 +79,8 @@ export interface TestPlatformOptions {
   hosts?: HostEntry[];
   /** Offer `updates` and `install` capabilities. */
   pwa?: boolean;
+  /** Offer `manageHosts`, as the app does (Add server, Settings' Manage servers); a tap is recorded in `opened`. */
+  managed?: boolean;
 }
 
 export interface TestPlatform extends Platform {
@@ -318,5 +320,6 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     platform.updates = { check: () => Promise.resolve(), apply: () => { platform.restarts.push("update"); } };
     platform.install = { installed: () => platform.installed };
   }
+  if (options.managed) platform.manageHosts = () => { platform.opened.push("manage-hosts"); };
   return platform;
 }

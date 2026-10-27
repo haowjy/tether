@@ -70,8 +70,8 @@ export type WorkspaceEffect =
   | { type: "save" }
   /** Show Home, or the active tab, through the router. It runs before the focus effects, and the focus lands on the screen it opens. */
   | { type: "navigate"; to: Route }
-  /** Move focus on the user's behalf (desktop): to the terminal, or to Home's search. */
-  | { type: "focus"; target: "terminal" | "homeSearch" }
+  /** Move focus on the user's behalf (desktop): to the terminal. */
+  | { type: "focus"; target: "terminal" }
   | { type: "notice"; text: string };
 
 export const initialWorkspace: WorkspaceState = { tabs: [], active: null, route: "home", lastTerminal: {} };
@@ -141,7 +141,7 @@ function showActive(before: WorkspaceState, after: WorkspaceState): { navigate?:
   return activeTab(after)?.kind === "terminal" ? { focus: "terminal" } : {};
 }
 
-type Step = { state: WorkspaceState; notices: string[]; navigate?: Route; focus?: "terminal" | "homeSearch" };
+type Step = { state: WorkspaceState; notices: string[]; navigate?: Route; focus?: "terminal" };
 
 function step(state: WorkspaceState, event: WorkspaceEvent): Step {
   const none: Step = { state, notices: [] };
@@ -181,9 +181,8 @@ function step(state: WorkspaceState, event: WorkspaceEvent): Step {
     case "closed": {
       if (!state.tabs.some((t) => t.id === event.id)) return none;
       const next = without(state, new Set([event.id]));
-      // Closing the last tab returns Home, and on desktop focuses Home search.
-      if (next.tabs.length > 0) return { state: next, notices: [] };
-      return { state: next, notices: [], focus: "homeSearch" as const };
+      // Closing the last tab returns Home (the reducer's last step).
+      return { state: next, notices: [] };
     }
     case "sessionClosed":
       return state.tabs.some((t) => t.id === event.id) ? { state: without(state, new Set([event.id])), notices: [] } : none;
@@ -251,7 +250,6 @@ export function reduce(state: WorkspaceState, event: WorkspaceEvent): Reduced {
   const navigate = result.navigate ?? (next.tabs.length === 0 && next.route === "tab" ? "home" : undefined);
   if (navigate) effects.push({ type: "navigate", to: navigate });
   if (result.focus === "terminal" && next.active !== null) effects.push({ type: "focus", target: "terminal" });
-  if (result.focus === "homeSearch") effects.push({ type: "focus", target: "homeSearch" });
   for (const text of result.notices) effects.push({ type: "notice", text });
   return { state: next, effects };
 }

@@ -5,7 +5,7 @@ import { createContext } from "preact";
 import { useCallback, useContext, useRef } from "preact/hooks";
 
 /** Elements the app moves focus to by name. */
-export type FocusTarget = "terminal" | "line" | "homeSearch" | "plus" | "addFolder" | "path" | "tabs";
+export type FocusTarget = "terminal" | "line" | "plus" | "addFolder" | "path" | "tabs";
 
 export interface FocusPort {
   register(target: FocusTarget, element: HTMLElement): void;

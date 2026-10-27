@@ -1,6 +1,8 @@
-import { SAVED } from "../shared";
+import { LISTING, SAVED, WITH_FILES } from "../shared";
+import { serveTree } from "../files/fakes";
 import type { TmuxListing } from "../../proto/generated/messages";
 import type { Fixtures } from "../fixture";
+import { Cards } from "./Cards";
 import { States } from "./States";
 
 const win = (id: number, index: number, name: string) => ({ id, index, name, active: index === 0, activity: 0 });
@@ -16,6 +18,16 @@ const MANY: TmuxListing = {
   })),
 };
 
+const SEVERAL: TmuxListing = {
+  server: "main:1-1",
+  version: "3.4",
+  sessions: ["tether", "notes", "blog", "infra", "dotfiles", "scratch", "mars", "a-session-with-a-very-long-name-that-has-to-truncate", "api"].map((name, i) => ({
+    id: i + 1,
+    name,
+    windows: [win(i * 10 + 1, 0, "zsh")],
+  })),
+};
+
 export const fixtures: Fixtures = {
   /** Thirty sessions, none open. */
   homeMany: { daemon: (d) => { d.listing = MANY; } },
@@ -25,4 +37,34 @@ export const fixtures: Fixtures = {
   offlineTabs: { options: () => ({ workspace: SAVED }), daemon: (d) => { d.info = "down"; } },
   /** Every state of the sessions list at once. */
   homeStates: { render: States },
+  /** Every state of a Home server card at once. */
+  homeCards: { render: Cards },
+  /** Saved terminal tabs and a Files tab on a live server: rows on the card, "All 9 sessions" and Files. */
+  homeTabs: { options: () => ({ workspace: WITH_FILES }), daemon: (d) => { d.listing = SEVERAL; serveTree(d); } },
+  /** Two servers, one card each, in the app (Add server shown). */
+  homeTwoServers: {
+    options: () => ({
+      workspace: SAVED,
+      managed: true,
+      hosts: [
+        { handle: "h1", hostId: "h-pop", name: "pop-os", pageOrigin: null },
+        { handle: "h2", hostId: "h-mac", name: "jimmys-macbook-air", pageOrigin: null },
+      ],
+    }),
+    daemon: (d) => { d.listing = LISTING; serveTree(d); },
+  },
+  /** The app with no server added: enrolment instructions and Add server. */
+  homeNoServers: { options: () => ({ hosts: [], managed: true }) },
+  /** A phone browser that hasn't installed the app: Home shows Add to Home Screen. */
+  homeInstall: { options: () => ({ pwa: true }), daemon: (d) => { d.listing = LISTING; } },
+  /** Settings, the page behind Home's gear, in the browser. */
+  settings: { overlay: { screen: "settings", name: "settings" }, daemon: (d) => { d.listing = LISTING; } },
+  /** Settings in the app: Manage servers, and no Remove this device (the host admits by token). */
+  settingsApp: {
+    options: () => ({ managed: true, hosts: [{ handle: "h1", hostId: "h-pop", name: "pop-os", pageOrigin: null }] }),
+    overlay: { screen: "settings", name: "settings" },
+    daemon: (d) => { d.listing = LISTING; },
+  },
+  /** A server's full-height sessions sheet, as "All 9 sessions" opens it. */
+  serverSheet: { overlay: { screen: "sessions", name: "server", params: { host: "h1" } }, daemon: (d) => { d.listing = SEVERAL; } },
 };

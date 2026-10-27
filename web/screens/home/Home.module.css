@@ -1,29 +1,9 @@
 .home { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-gutter);
-  border-bottom: 1px solid var(--color-border);
-}
-.brand { font-size: var(--text-heading); font-weight: var(--weight-bold); }
-.host { font-size: var(--text-small); color: var(--color-status-live); }
-.host[data-tone="reconnecting"] { color: var(--color-status-reconnecting); }
-.host[data-tone="error"] { color: var(--color-status-error); }
+/* One 44 pt row, as every screen's header: the title and what the screen offers, no large title. */
+.header { flex: none; border-bottom: 1px solid var(--color-border); padding: 0 var(--space-gutter); }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: min(var(--page-width), 100%); min-height: var(--header-height); margin: 0 auto; }
+.title { font-size: var(--text-heading); font-weight: var(--weight-bold); }
 .body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-gutter); scroll-padding: var(--space-1); }
 /* A centred column, `min(720px, 100% - 2 * gutter)`: still no sidebar. */
-.column {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  width: min(720px, 100%);
-  margin: 0 auto;
-}
-.section { display: flex; flex-direction: column; gap: var(--space-2); }
-.heading { font-size: var(--text-small); font-weight: var(--weight-bold); color: var(--color-text-muted); }
-.tabs { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
-.tab { display: flex; align-items: center; gap: var(--space-1); }
-.tab > :first-child { flex: 1; min-width: 0; }
-
-.none { padding: 0 var(--row-pad-x); font-size: var(--text-small); color: var(--color-text-muted); }
+.column { display: flex; flex-direction: column; gap: var(--space-4); width: min(var(--page-width), 100%); margin: 0 auto; }
+.add { align-self: flex-start; }

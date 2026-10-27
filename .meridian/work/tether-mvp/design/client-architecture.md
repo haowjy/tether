@@ -378,7 +378,13 @@ Servers settings, and no Enrol screen is shown.
   `EnrolResult` is `enrolled`, `badCode` ("That code is wrong or has
   expired", under the field), `nodeRefused { reason }` (the refusal screen), or
   `tryAgain` for a `503` ("tether is busy, try again"; the code is not consumed).
-- **Settings** is an overlay opened from a Settings row at the bottom of Home. It holds:
+- **Settings** is a full-screen page (`Dialog` `variant="page"`, Back to Home) over the router
+  overlay `{ screen: "settings", name: "settings" }`, opened by the gear in Home's header. An
+  overlay and not a route: Back, Escape and focus return to the gear come with it, and a route
+  would add a `Route`, a hash and a saved form for a screen that holds no state. Appearance and
+  terminal text size join it in slice 5. It holds:
+  - **Manage servers** where the platform offers `manageHosts` (the app): add, remove, pair again.
+  - **Keyboard**, with a physical keyboard: the shortcuts.
   - **Remove this device**, for a host admitted as a tailnet node (its entry has a
     `pageOrigin`). It asks for confirmation: "Every browser and app on `<node>` will
     lose access to `<host>`." Then it closes this page's sockets, calls
@@ -386,9 +392,9 @@ Servers settings, and no Enrol screen is shown.
     Enrol. Drafts stay.
   - **Clear local data.** After a confirmation it deletes drafts and the saved workspace
     on this device only.
-  - **Add to Home Screen**, when `platform.install` is present and reports the page not
-    installed, in the phone layout. It shows the iOS steps: Share, then Add to Home
-    Screen. It is never a forced screen.
+  - **Add to Home Screen** is on Home, not here: when `platform.install` is present and
+    reports the page not installed, in the phone layout, a short section after the cards
+    shows the iOS steps. It is never a forced screen.
 
 - One enrolment covers the whole machine: Safari, the installed PWA and any other
   browser on that node. Storage is not shared, though: Safari and the PWA keep separate
@@ -936,8 +942,7 @@ know no versions.
   the same `Terminals`, and a native screen covering the terminal is Swift's own state, so
   W5 needs no reducer effect: nothing in the reducer or the controller addresses a driver.
 - **Closing** follows the contract. Closing the active tab activates its right
-  neighbour, else its left. Closing the last tab returns Home (a `navigate` effect), and
-  on desktop focuses Home search.
+  neighbour, else its left. Closing the last tab returns Home (a `navigate` effect).
 - **Navigation and focus.** A change that moves a tab and the screen together has one
   owner, the reducer:
   - `opened`, `filesOpened` and `activated` emit `navigate: tab` when the route is Home;
@@ -1506,6 +1511,20 @@ resets on close. Contract:
   and `WindowChoices` are gone: the windows are rows of `SessionList`, one renderer for
   "index: name", "shown" and "choosing the shown window does nothing". Creating a window has
   no button, and no client code for it.
+- *Phone from Home: the server sheet* (`ServerSheet.tsx`), the third overlay name,
+  `{ screen: "sessions", name: "server", params: { host } }`, opened by "All N sessions" on a
+  Home card. A `variant="page"` dialog: Back to Home, the search and `NewMenu` in its header,
+  that server's rows only (`SessionPicks only`), no tab strip. It commits like the picker (close,
+  then act), so a row opens its tab over Home, Back from the tab lands on Home and never on the
+  sheet, and the router's tab-route repair is not involved.
+- *Home* (`screens/home/`): `Home` derives one `ServerCard` per host in the registry (one or
+  several; a single server is not opened for you). The card is a view over a `CardBody` variant,
+  one per way a server can be: offline (with when this page last reached it, from the cache's
+  `reachedAt`, and Retry), needs attention, loading, failed, tmux not running (Retry, never a
+  start), empty (New session, Browse files), ready (All N sessions). Its tab rows are that
+  server's open terminal and Files tabs ("Checking…" or "Reconnecting…" until proven); Files opens
+  a new tab at the roots. Add server shows only where the platform has `manageHosts`; the browser
+  has its one page origin.
 - *History.* Tabs switch under an open sheet by replacing its entry (`switchTab`), which
   leaves the entry below naming the earlier tab. Closing by Back lands on that entry;
   `Router.popped` then replaces it with the overlay entry's tab and place, instead of

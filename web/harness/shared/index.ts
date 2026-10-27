@@ -34,6 +34,12 @@ export const SAVED: SavedWorkspace = {
   lastTerminal: { "h-pop": "h-pop/main:1-1/$1" },
 };
 
+/** `SAVED`'s tabs (the third names a session that is gone) and a Files tab after the first. */
+export const WITH_FILES: SavedWorkspace = {
+  ...SAVED,
+  tabs: SAVED.tabs.flatMap((t, i) => (i === 0 ? [t, { kind: "files" as const, id: "files-1", host: "h-pop", place: { kind: "roots" as const } }] : [t])),
+};
+
 export const fixtures: Fixtures = {
   /** Admitted, no tabs. */
   home: { daemon: (d) => { d.listing = LISTING; serveTree(d); } },

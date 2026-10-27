@@ -6,18 +6,18 @@ import { LISTING } from "../shared";
 import { SessionList, type ActiveWindows } from "../../screens/sessions/SessionList";
 
 const NO_OP = (): void => undefined;
-const fresh = { failure: null, updating: false } as const;
+const fresh = { reachedAt: null, failure: null, updating: false } as const;
 
 const STATES: { name: string; unreachable?: boolean; sessions?: HostSessions; query?: string; active?: ActiveWindows }[] = [
   { name: "Loading" },
   { name: "Unreachable", unreachable: true },
-  { name: "Offline, nothing cached", sessions: { listing: undefined, failure: "offline", updating: false } },
-  { name: "Refused, nothing cached", sessions: { listing: undefined, failure: "refused", updating: false } },
+  { name: "Offline, nothing cached", sessions: { listing: undefined, ...fresh, failure: "offline" } },
+  { name: "Refused, nothing cached", sessions: { listing: undefined, ...fresh, failure: "refused" } },
   { name: "No tmux server", sessions: { listing: null, ...fresh } },
   { name: "Empty server", sessions: { listing: { server: "main:1-1", version: "3.4", sessions: [] }, ...fresh } },
   { name: "Updating", sessions: { listing: LISTING, ...fresh, updating: true }, active: { shownId: 1, onWindow: NO_OP } },
-  { name: "Stale, offline", sessions: { listing: LISTING, failure: "offline", updating: false } },
-  { name: "Stale, refused", sessions: { listing: LISTING, failure: "refused", updating: false } },
+  { name: "Stale, offline", sessions: { listing: LISTING, ...fresh, failure: "offline" } },
+  { name: "Stale, refused", sessions: { listing: LISTING, ...fresh, failure: "refused" } },
   { name: "No match", sessions: { listing: LISTING, ...fresh }, query: "zzz" },
 ];
 

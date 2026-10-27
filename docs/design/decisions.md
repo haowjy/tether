@@ -3703,6 +3703,22 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 - **Open:** "Send" as a visible button in the box is not built; the cue is Return labelled Send
   in both editors. A native Send button needs a web-to-native Return message the bridge does not have.
 
+## Home is server cards; Settings and a server's sessions are page dialogs
+
+- **Decided:** 2026-10-27, tech lead (slice 4).
+- **What:** Home is one `ServerCard` per host (name, status, that server's open tabs, All N
+  sessions, Files, or what its state needs: Retry, "tmux isn't running", New session). Home has no
+  search and no Settings row; the gear in its header opens Settings. Settings and the server's
+  full-height sessions sheet are router overlays rendered as `Dialog variant="page"`, not routes.
+  The browser shows its one origin and no Add server. "Last reached" is the cache's in-memory
+  `reachedAt`: a page that has never reached the host says so, and nothing is persisted for it.
+  The desktop workspace no longer focuses Home search on closing the last tab; the search is gone.
+  Appearance and terminal text size are left out of Settings until slice 5 can store them.
+- **Why:** overlays give Back, Escape and focus return for free; a route needs a `Route`, a hash and
+  a saved form for a screen with no state of its own.
+- **Budget:** the initial JS budget went from 197 to 198 KB (197.4 measured): the card, the page variant and the menu are code Home needs at launch.
+- **Rejected:** a Settings route; flattening one server's sessions into Home; persisting last-reached.
+
 ## One mount per overlay name; one anchored dialog; row state as one callback
 
 - **Decided:** 2026-10-27, tech lead (slice 4, from review p342).

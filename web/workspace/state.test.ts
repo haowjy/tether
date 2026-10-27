@@ -51,13 +51,6 @@ describe("opening and closing", () => {
     const r = reduce(s.state, { type: "closed", id: tabId(key(1)) });
     expect(r.state.active).toBe(tabId(key(2)));
   });
-
-  it("closing the last tab asks to focus Home search", () => {
-    const s = open(initialWorkspace, 1);
-    const r = reduce(s.state, { type: "closed", id: tabId(key(1)) });
-    expect(r.effects).toContainEqual({ type: "focus", target: "homeSearch" });
-    expect(r.state.active).toBeNull();
-  });
 });
 
 describe("navigation and focus", () => {
@@ -75,12 +68,11 @@ describe("navigation and focus", () => {
     expect(r.effects).toEqual([{ type: "focus", target: "terminal" }]);
   });
 
-  it("closing the last tab on Terminal navigates Home before focusing Home search", () => {
+  it("closing the last tab on Terminal navigates Home", () => {
     const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", entry: { route: "tab", tab: "x", place: null } }]).state;
     const r = reduce(s, { type: "closed", id: tabId(key(1)) });
-    expect(r.effects.map((e) => e.type)).toEqual(expect.arrayContaining(["navigate", "focus"]));
-    expect(r.effects.findIndex((e) => e.type === "navigate")).toBeLessThan(r.effects.findIndex((e) => e.type === "focus"));
     expect(r.effects).toContainEqual({ type: "navigate", to: "home" });
+    expect(r.effects.some((e) => e.type === "focus")).toBe(false);
   });
 
   it("changes nothing, and so saves nothing, when a watching or a listing says what is known", () => {

@@ -21,8 +21,10 @@ interface DialogProps {
   /** Escape, the backdrop, the close button. The parent decides what closing means (usually the router's Back). */
   onClose: () => void;
   title: string;
-  /** `sheet` is the same dialog styled as a tall bottom sheet with safe-area padding. */
-  variant?: "dialog" | "sheet" | Anchored;
+  /** `page`'s Back button: what it goes back to ("Back to Home"). */
+  backLabel?: string;
+  /** `sheet` is the same dialog styled as a tall bottom sheet with safe-area padding; `page` fills the screen under one 44 pt header row, Back and the title by default (Settings, a server's sessions). */
+  variant?: "dialog" | "sheet" | "page" | Anchored;
   /** Where focus returns on close: an element or a registered name. Default: the control `app.openOverlay` was given, else the one focused at opening. A field marked `data-initial-focus=""` takes focus on opening with a fine pointer. */
   returnFocusTo?: HTMLElement | FocusTarget | null;
   /** The top row in place of the title and close button (the sessions sheet's Home and search); `title` stays as the dialog's accessible name. */
@@ -50,7 +52,7 @@ function place(dialog: HTMLDialogElement, anchor: HTMLElement): void {
 }
 
 /** `<dialog>.showModal()`: top layer, modal focus containment, Escape. Safari lacks `closedby`, so Escape and the backdrop are handled here. */
-export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo, header, footer, children }: DialogProps) {
+export function Dialog({ open, onClose, title, variant = "dialog", backLabel = "Back", returnFocusTo, header, footer, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const focus = useFocus();
@@ -107,6 +109,11 @@ export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo
             <h2 id={titleId} class="sr-only">{title}</h2>
             {header && <header class={styles.top}>{header}</header>}
           </>
+        ) : variant === "page" ? (
+          <header class={styles.pageHeader}>
+            <IconButton icon="back" label={backLabel} data-initial-focus="touch" onClick={(e) => { closeByTap(e.currentTarget); }} />
+            <h2 id={titleId} class={styles.pageTitle}>{title}</h2>
+          </header>
         ) : (
           <header class={styles.header}>
             <h2 id={titleId} class={styles.title}>{title}</h2>

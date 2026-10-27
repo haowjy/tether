@@ -1,10 +1,9 @@
 // Fixtures for the phone dock and the sessions overlay: the saved workspace restored against a
 // daemon that answers `watch`, so the dock opens on a live tab in the phone layout.
 import type { Fixtures } from "../fixture";
-import type { SavedWorkspace } from "../../platform/types";
 import type { TmuxListing } from "../../proto/generated/messages";
 import { serveTree } from "../files/fakes";
-import { LISTING, SAVED } from "../shared";
+import { LISTING, SAVED, WITH_FILES } from "../shared";
 
 const win = (id: number, index: number, name: string) => ({ id, index, name, active: index === 0, activity: 0 });
 
@@ -19,11 +18,6 @@ const SEVERAL: TmuxListing = {
   ],
 };
 
-/** `SAVED`'s tabs (the third names a session that is gone) and a Files tab after the first. */
-const WITH_FILES: SavedWorkspace = {
-  ...SAVED,
-  tabs: SAVED.tabs.flatMap((t, i) => (i === 0 ? [t, { kind: "files" as const, id: "files-1", host: "h-pop", place: { kind: "roots" as const } }] : [t])),
-};
 const SHEET = { screen: "sessions", name: "sheet" } as const;
 
 export const fixtures: Fixtures = {

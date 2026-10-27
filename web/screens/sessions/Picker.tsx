@@ -7,7 +7,7 @@ import { useApp, useAppView, useOverlay } from "../../app/context";
 import { Dialog } from "../../ui/primitives/Dialog";
 import { SearchField } from "../../ui/primitives/TextField";
 import { NewActions, useActiveHost } from "./NewActions";
-import { SessionPicks, useQuery, type Commit } from "./SessionPicks";
+import { closing, SessionPicks, useQuery } from "./SessionPicks";
 import styles from "./Sessions.module.css";
 
 export function Picker() {
@@ -17,7 +17,7 @@ export function Picker() {
   const host = useActiveHost();
   const noTabs = useAppView((v) => v.workspace.tabs.length === 0);
   const [query, setQuery] = useQuery(open);
-  const commit: Commit = (pick) => { app.router.closeOverlay(pick); };
+  const commit = closing(app);
   return (
     <Dialog
       open={open}

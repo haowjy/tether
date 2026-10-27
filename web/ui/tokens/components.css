@@ -24,6 +24,10 @@
   --tab-bg-active: var(--color-bg-hover);
   --dialog-width: 480px;
   --popover-width: 28rem;
+  /* Home's centred column and a page dialog's. */
+  --page-width: 720px;
+  /* Every screen's header row: back or title, and its controls. */
+  --header-height: 44px;
   --menu-min-width: 11rem;
   --sheet-height: 62svh;
   --dialog-bg: var(--color-bg-raised);

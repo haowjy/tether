@@ -48,6 +48,30 @@
 .sheet[open] { animation: rise var(--duration-2) var(--ease-out); }
 @keyframes rise { from { translate: 0 24px; opacity: 0; } }
 
+/* A full-screen page: one header row (Back and title, or the controls it is given), then a body in the centred column. */
+.page {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  height: calc(100svh - var(--keyboard-inset));
+  translate: 0 calc(-1 * var(--keyboard-inset));
+  margin: auto 0 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--color-bg);
+}
+.page[open] { animation: rise var(--duration-2) var(--ease-out); }
+.pageHeader, .page .top {
+  box-sizing: border-box;
+  width: min(var(--page-width), 100%);
+  min-height: calc(var(--header-height) + var(--safe-top));
+  margin: 0 auto;
+  padding: var(--safe-top) var(--space-2) 0;
+}
+.pageHeader { display: flex; align-items: center; gap: var(--space-1); }
+.pageTitle { font-size: var(--text-heading); font-weight: var(--weight-bold); }
+.page .body { box-sizing: border-box; width: min(var(--page-width), 100%); margin: 0 auto; padding: var(--space-3) var(--space-gutter) calc(var(--space-4) + var(--safe-bottom)); }
+
 /* The desktop's + picker and the + menus: placed against their anchor by script, over the page with no scrim. The scrim stays, clear, to catch a press outside. */
 .popover {
   inset: auto;

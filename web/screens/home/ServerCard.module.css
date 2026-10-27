@@ -1,0 +1,14 @@
+/* Raised rows on a sunken group: the card is the surface the rows sit on, not another bordered box. */
+.card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-3); background: var(--color-bg-sunken); }
+.head { display: flex; align-items: baseline; gap: var(--space-3); padding: 0 var(--space-1); }
+.name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-heading); font-weight: var(--weight-bold); }
+.status { flex: none; font-size: var(--text-small); color: var(--color-status-gone); }
+.status[data-status="live"] { color: var(--color-status-live); }
+.status[data-status="checking"] { color: var(--color-status-reconnecting); }
+.status[data-status="attention"] { color: var(--color-status-error); }
+.tab { display: flex; align-items: center; gap: var(--space-1); }
+.tab > :first-child { flex: 1; min-width: 0; }
+.note { padding: 0 var(--space-1); font-size: var(--text-small); color: var(--color-text-muted); }
+.loading { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-1); color: var(--color-text-muted); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.card > button { align-self: flex-start; }
