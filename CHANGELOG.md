@@ -5,6 +5,7 @@ version section on release.
 
 ## [Unreleased]
 
+- The session list stays correct when a tmux window name contains a line break (tmux 3.4 allows it): the break shows as `\n`, and a listing the host can't read as a whole is an error instead of a list with windows missing.
 - Settings has an Appearance choice (System, Light or Dark) and a terminal text size (Small,
   Default, Large, Larger). The choice is kept on the device and applies everywhere, including the
   app's lock screen and sheets. Dark is a true-black terminal with neutral greys, no blue tint. The

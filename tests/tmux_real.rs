@@ -1599,13 +1599,13 @@ async fn the_listing_names_sessions_and_windows() {
             .expect("tmux version")
             .trim(),
     );
-    let tab_name = match version {
+    let (tab_name, shown_name) = match version {
         // tmux 3.7b rejects control characters in names; 3.4 remains the version
-        // that exercises a tab inside the listing's tab-delimited window name.
+        // that exercises a tab and a line break inside the listing's window name.
         TmuxVersion::Known {
             major: 3, minor: 4, ..
-        } => "tab\there 中",
-        _ => "tab here 中",
+        } => ("tab\there\nbreak 中", "tab\there\\nbreak 中"),
+        _ => ("tab here 中", "tab here 中"),
     };
     server
         .run(&["new-session", "-d", "-s", "watched", "-n", tab_name])
@@ -1645,7 +1645,7 @@ async fn the_listing_names_sessions_and_windows() {
         (
             SessionId(1),
             "watched",
-            vec![(0, tab_name, true), (1, "second", false)]
+            vec![(0, shown_name, true), (1, "second", false)]
         )
     );
     let now = std::time::SystemTime::now()

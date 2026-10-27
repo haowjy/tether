@@ -70,16 +70,18 @@ pub(super) fn location(row: &[u8]) -> Option<Location> {
 
 /// The listing's first line.
 pub(super) const LISTING_SERVER_FORMAT: &str = "#{version}\t#{pid}\t#{start_time}";
-/// One line per window. A window name can hold a tab, so it goes last; a session name
-/// can't (tmux escapes it).
-pub(super) const LISTING_WINDOW_FORMAT: &str = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{window_name}";
+/// One line per window, and no field can hold a line break: the ids and numbers are
+/// tmux's own, tmux refuses a line break in a session name on 3.8 and stores it escaped
+/// on 3.4, and the window name, which 3.4 lets `-n` store raw, prints a line break as
+/// `\n` (`#{s/<LF>/\\n/:…}`; the argv holds a literal line feed). It goes last because a
+/// window name can still hold a tab.
+pub(super) const LISTING_WINDOW_FORMAT: &str = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{s/\n/\\\\n/:window_name}";
 
-/// The server line, then a line per window, sessions in order (`command::oneshot`). A
-/// line that isn't a window line comes from a window name with a line break in it, and
-/// is skipped.
+/// The server line, then a line per window, sessions in order (`command::oneshot`).
+/// Every line is a record; one that doesn't parse makes the whole reply bad.
 pub(super) fn listing(stdout: &[u8]) -> Option<Listing> {
-    let text = String::from_utf8_lossy(stdout);
-    let mut lines = text.split('\n');
+    let text = std::str::from_utf8(stdout).ok()?;
+    let mut lines = text.strip_suffix('\n')?.split('\n');
     let [version, pid, start_time] = lines.next()?.split('\t').collect::<Vec<_>>()[..] else {
         return None;
     };
@@ -92,35 +94,23 @@ pub(super) fn listing(stdout: &[u8]) -> Option<Listing> {
         let [session, window, index, active, activity, session_name, name] =
             line.splitn(7, '\t').collect::<Vec<_>>()[..]
         else {
-            continue;
+            return None;
         };
-        let (Some(session), Some(id), Ok(index), Ok(activity)) = (
-            SessionId::parse(session.as_bytes()),
-            WindowId::parse(window.as_bytes()),
-            index.parse(),
-            activity.parse(),
-        ) else {
-            continue;
+        let session = SessionId::parse(session.as_bytes())?;
+        let window = ListedWindow {
+            id: WindowId::parse(window.as_bytes())?,
+            index: index.parse().ok()?,
+            name: name.to_owned(),
+            active: active == "1",
+            activity: activity.parse().ok()?,
         };
-        if listing
-            .sessions
-            .last()
-            .is_none_or(|last| last.id != session)
-        {
-            listing.sessions.push(ListedSession {
+        match listing.sessions.last_mut() {
+            Some(last) if last.id == session => last.windows.push(window),
+            _ => listing.sessions.push(ListedSession {
                 id: session,
                 name: session_name.to_owned(),
-                windows: Vec::new(),
-            });
-        }
-        if let Some(last) = listing.sessions.last_mut() {
-            last.windows.push(ListedWindow {
-                id,
-                index,
-                name: name.to_owned(),
-                active: active == "1",
-                activity,
-            });
+                windows: vec![window],
+            }),
         }
     }
     Some(listing)
