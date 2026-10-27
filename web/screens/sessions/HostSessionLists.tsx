@@ -4,7 +4,7 @@
 import { useApp, useAppView, useBells } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
 import { tabId } from "../../platform/tabKey";
-import { bellLook } from "../../sessions/bells";
+import { bellLook, bellsUnavailable } from "../../sessions/bells";
 import type { SessionListing, TmuxListing } from "../../proto/generated/messages";
 import { useStore } from "../../ui/store";
 import { SessionList, type ActiveWindows } from "./SessionList";
@@ -38,7 +38,7 @@ export function HostSessionLists({ query, only, active, onOpen }: HostSessionLis
             key={handle}
             hostName={h.name ?? "the server"}
             unreachable={h.admission.kind === "unreachable"}
-            bellsUnavailable={h.hostId !== null && bells.unavailable[h.hostId] === true}
+            bellsUnavailable={bellsUnavailable(bells, h.hostId)}
             sessions={state.hosts[handle]}
             query={query}
             rowOf={(s) => {

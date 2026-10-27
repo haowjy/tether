@@ -600,8 +600,8 @@ width.
   daemons on one server** the first to stop removes the shared entry, so the other loses
   bells until it next reinstalls, at its next connected device's listing. Agents must ring
   BEL: Claude Code does so
-  only with `"preferredNotifChannel": "terminal_bell"` in its settings, and Codex only in
-  some terminals; [running.md](../running.md) gains a section saying so when this ships.
+  only with `"preferredNotifChannel": "terminal_bell"` in its settings, and Codex inside tmux
+  sends OSC 9 unless `[tui] notification_method = "bel"` is set; [running.md](../running.md) gains a section saying so when this ships.
   Jimmy approved the hook (2026-10-27); it goes onto his live tmux server only after his
   planned tmux restart. A general new-output activity dot remains v2.
 - **Typing latency on cellular:** spike 3 measures echo latency; at 200 ms or more,

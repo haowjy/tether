@@ -119,7 +119,8 @@ export function SessionList(props: SessionListProps) {
                 <Row
                   roving
                   icon="sessions"
-                  label={<>{session.name}{bell.ring && <BellDot class={styles.bell} />}</>}
+                  label={session.name}
+                  mark={bell.ring ? <BellDot /> : undefined}
                   meta={
                     <>
                       <span>{windowCount(session.windows.length)}</span>

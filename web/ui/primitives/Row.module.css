@@ -16,6 +16,7 @@
 .selected { background: var(--color-bg-selected); font-weight: var(--weight-medium); }
 .leading { display: inline-flex; flex: none; color: var(--color-text-muted); }
 .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mark { display: inline-flex; flex: none; }
 /* The meta never shrinks: on a tab row it is the only sign of the tab's connection, and a folder row's says why it is disabled. Metas are short; the label ellipsizes instead. */
 .meta { flex: none; white-space: nowrap; font-size: var(--text-small); color: var(--color-text-muted); }
 .trailing { flex: none; color: var(--color-text-muted); }

@@ -109,7 +109,7 @@ export function ServerCard({ name, tabs, body, notice, bellsUnavailable, onRetry
       {bellsUnavailable && <Note>Bell tracking unavailable on this host</Note>}
       {tabs.map((t) => (
         <div key={t.id} class={styles.tab}>
-          <Row icon={t.icon} label={<>{t.label}{t.bell && <BellDot class={styles.bell} />}</>} meta={t.meta} selected={t.selected} onClick={t.onOpen} />
+          <Row icon={t.icon} label={t.label} mark={t.bell ? <BellDot /> : undefined} meta={t.meta} selected={t.selected} onClick={t.onOpen} />
           <IconButton icon="close" label={`Close ${t.label}`} onClick={t.onClose} />
         </div>
       ))}

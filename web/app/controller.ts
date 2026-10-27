@@ -126,14 +126,15 @@ export class AppController extends Store<AppView> {
       },
       ...(options.fetchFn && { fetchFn: options.fetchFn }),
     });
-    this.persist = new Persist(platform.storage, () => savedTabs(this.snapshot.workspace), () => this.seenBells());
+    this.persist = new Persist(platform.storage, () => savedTabs(this.snapshot.workspace), () => this.bells.toSave(this.hosts.all().map((h) => h.hostId)));
     this.persist.provideHostName(() => this.hosts.all()[0]?.name ?? null);
     this.listing = new ListingFetcher({
       restoring: () => this.snapshot.workspace.tabs.some((t) => t.kind === "terminal" && t.restoring),
       visible: () => this.snapshot.lifecycle.visible,
     });
     this.sessions = new SessionsCache();
-    this.bells = new BellMarks(saved?.bellSeen ?? {});
+    // The tab on screen on a visible page counts as seen: a hidden page, a backgrounded app and Home show nothing.
+    this.bells = new BellMarks(saved?.bellSeen ?? {}, () => (this.snapshot.lifecycle.visible ? shownTab(this.snapshot.workspace) : null));
     this.persist.onClear(() => { this.bells.forget(); });
 
     this.applyViewport(boot.viewport);
@@ -159,8 +160,7 @@ export class AppController extends Store<AppView> {
       } else if (event.type === "bell") this.bells.changed(hostId, event.bell);
       else if (event.type === "failed" && event.reason === "tmux") this.bells.unreadable(hostId);
     });
-    // The tab on screen on a visible page counts as seen: a hidden page, a backgrounded app and Home show nothing.
-    this.subscribe(() => { this.bells.shown(this.snapshot.lifecycle.visible ? shownTab(this.snapshot.workspace) : null); });
+    this.subscribe(() => { this.bells.shownChanged(); });
     void this.checkUpdates();
   }
 
@@ -246,15 +246,6 @@ export class AppController extends Store<AppView> {
 
   dismissAppOffer(): void {
     this.update({ appOffer: null });
-  }
-
-  /** The seen bell marks to save: those of the hosts this device lists. A browser host's id is unknown until `/auth/info` answers, and until then nothing is dropped (each listing prunes its own host's marks). */
-  private seenBells(): Record<string, number> {
-    const all = this.hosts.all();
-    const ids = all.flatMap((h) => (h.hostId === null ? [] : [h.hostId]));
-    const seen = this.bells.snapshot.seen;
-    if (ids.length < all.length) return { ...seen };
-    return Object.fromEntries(Object.entries(seen).filter(([id]) => ids.some((h) => id.startsWith(`${h}/`))));
   }
 
   /** "Update": persist now, then the waiting worker takes over and this page reloads. */

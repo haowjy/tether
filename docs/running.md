@@ -213,11 +213,14 @@ A terminal bell (the BEL character) in any tmux session puts a dot on that sessi
 row in the session lists and the current-tab button, until you open that tab on this phone.
 Whatever rings the bell is the source, so the agent has to ring it:
 
-- **Claude Code** rings the bell only when its settings say so. In `~/.claude/settings.json`
-  (or the project's `.claude/settings.json`) set `"preferredNotifChannel": "terminal_bell"`.
-  Without it Claude Code sends no bell and no dot appears.
-- **Codex** rings the bell only in some terminals, so inside tmux it may not ring at all.
-  Check by running it in a pane and watching for the dot on another device or tab.
+- **Claude Code** sends no bell by default: its default `auto` sends a desktop notification
+  only in a few terminals (Ghostty, Kitty, iTerm2), and none reaches tether inside tmux. In
+  `~/.claude/settings.json` (or the project's `.claude/settings.json`) set
+  `"preferredNotifChannel": "terminal_bell"`.
+- **Codex** inside tmux sends OSC 9 by default (`notification_method = "auto"`), not BEL, so no
+  dot appears. In `~/.codex/config.toml` set `[tui]` `notification_method = "bel"`. If a bell
+  still doesn't arrive, try `notification_condition = "always"` too (the default,
+  `"unfocused"`, may hold it back while tmux reports the pane focused; untested).
 - Anything else rings with `printf '\a'`, which is the quickest way to test.
 
 tether does this with one tmux `alert-bell` hook, which it installs while the daemon runs and

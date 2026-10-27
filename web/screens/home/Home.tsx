@@ -4,6 +4,7 @@
 // the browser has its one page origin.
 import { useApp, useAppView, useBells, useHostName } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
+import { bellsUnavailable } from "../../sessions/bells";
 import { Button } from "../../ui/primitives/Button";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { useStore } from "../../ui/store";
@@ -27,13 +28,13 @@ function HostCard({ host, tabs }: { host: HostClient; tabs: CardTab[] }) {
   const handle = host.entry.handle;
   const { body, files } = cardOf(host, useStore(app.sessions, (s) => s.hosts[handle]));
   const { hostId } = host;
-  const bellsUnavailable = useBells().unavailable[hostId ?? ""] === true;
+  const unreadable = bellsUnavailable(useBells(), hostId);
   return (
     <ServerCard
       name={host.name ?? "the server"}
       tabs={tabs}
       body={body}
-      bellsUnavailable={bellsUnavailable}
+      bellsUnavailable={unreadable}
       notice={body.kind !== "offline" && <HostBanner host={host} />}
       onRetry={() => { app.retryHost(handle); }}
       onSessions={(opener) => { app.openOverlay({ screen: "sessions", name: "server", params: { host: handle } }, opener); }}

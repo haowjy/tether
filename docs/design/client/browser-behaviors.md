@@ -161,13 +161,17 @@ half-height over current tab             full-height from Home
     screen counts as shown: while a tab is the active tab on a visible page, an
     arriving mark is recorded as seen at once and no dot appears for it; a hidden page
     or a backgrounded app shows nothing, so the tab is not on screen and the dot
-    appears. A tab that becomes the active tab records the current mark.
+    appears. A tab that becomes the active tab records the current mark. An overlay over a
+    terminal tab (the sessions sheet) leaves the tab visible, so it still counts as shown.
   - **Seen survives a reload and a relaunch.** The marks are saved with the workspace (keyed by
     host id, tmux server instance and session), so a bell rung while the page or app was away
     shows its dot on return. Each listing drops the marks of sessions that are gone; Clear
-    local data resets them to the current marks.
-  - **A session this device has never seen** (nothing saved for it) has no dot: the first
-    mark it learns is its baseline.
+    local data resets them to the current marks. Two pages of one origin each save: the last
+    writer wins, so a dot cleared in one page can return in the other after a reload.
+  - **A session this device has no seen mark for** takes the first mark it learns as its
+    baseline (no dot), unless this page has already heard marks from that host: the
+    session's counter then started after that, at 0, so any mark is a bell not yet shown.
+    One rule for a listing and for a `bell` message, a restarted tmux included.
   - **Not tracked, in words, never a silent dot-free tab.** When the listing or a
     `bell` message says `covered: false` for a session, its row says "tmux settings hide
     bells in this session". When the `bell` message carries `available: false` for the
