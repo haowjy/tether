@@ -112,6 +112,28 @@ impl Server {
         self.run_starting(&with_n)
     }
 
+    /// Waits until a killed server refuses connections. SIGKILL is asynchronous:
+    /// newer tmux clients can still connect to the dying server and report
+    /// `%exit server exited unexpectedly` instead of the stale-socket error this
+    /// helper's callers are trying to exercise.
+    pub fn wait_until_no_server(&self) {
+        for _ in 0..1000 {
+            match self.run(&["has-session"]) {
+                Ok(_) => {}
+                Err(error) => {
+                    let error = error.to_string();
+                    if error.contains("no server running on ")
+                        || error.contains("error connecting to ")
+                    {
+                        return;
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("tmux server did not stop");
+    }
+
     /// A terminal client attached to the session, in a pty from `script`.
     pub fn attach_terminal(&self) -> Result<Child> {
         self.attach_terminal_to(SESSION, None)

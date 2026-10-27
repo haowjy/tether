@@ -1329,6 +1329,7 @@ async fn kill_server_ends_the_client_with_exit_and_then_there_is_no_server() {
     server.run(&["kill-server"]).expect("kill-server");
     client.exit().await;
     assert!(client.events.contains(&Event::Exit));
+    server.wait_until_no_server();
     assert_eq!(
         locate_session(&server.endpoint(), SessionId(0)).await,
         Err(TmuxError::NoServer)
@@ -1543,6 +1544,7 @@ async fn with_no_server_neither_the_pump_nor_a_one_shot_starts_one() {
         .status()
         .expect("kill");
     assert!(killed.success());
+    server.wait_until_no_server();
     // And a socket that was never there.
     let missing = Endpoint {
         program: tmux(),
