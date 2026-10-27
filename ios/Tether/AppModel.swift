@@ -101,14 +101,14 @@ final class TetherAppModel: ObservableObject {
 
     var platformHosts: [PlatformHost] { hosts.map(\.platformHost) }
 
-    func saveWorkspace(_ workspace: SavedWorkspace) {
+    func saveWorkspace(_ workspace: JSONValue) {
         guard let data = try? JSONEncoder().encode(workspace) else { return }
         defaults.set(data, forKey: "tether.workspace.v2")
     }
 
-    func loadWorkspace() -> SavedWorkspace? {
+    func loadWorkspace() -> JSONValue? {
         guard let data = defaults.data(forKey: "tether.workspace.v2") else { return nil }
-        return try? JSONDecoder().decode(SavedWorkspace.self, from: data)
+        return try? JSONDecoder().decode(JSONValue.self, from: data)
     }
 
     func token(for hostID: String) -> TokenAccess {

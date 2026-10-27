@@ -8,6 +8,7 @@ import { HostRegistry, type HostClient } from "../net/hosts";
 import { SessionsCache } from "../sessions/cache";
 import type { BootResult, Lifecycle, Platform, UpdateState, Viewport } from "../platform/types";
 import { Store } from "../ui/store";
+import { isWindowTabWorkspace, parseSavedWorkspace } from "../workspace/saved";
 import { reduce, initialWorkspace, savedTabs, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
 import { FocusController } from "./focus";
 import { ListingFetcher } from "./listing";
@@ -58,6 +59,7 @@ export class AppController extends Store<AppView> {
   private sentActive: string | null | undefined;
   static async start(platform: Platform, options: StartOptions = {}): Promise<AppController> {
     const boot = await platform.boot();
+    if (isWindowTabWorkspace(boot.workspace)) await platform.storage.clearLocalData();
     const app = new AppController(platform, boot, options);
     startNativeLine(app, lineDraftsOf(app), boot.lineSnapshot);
     app.startPlatformEvents();
@@ -77,7 +79,8 @@ export class AppController extends Store<AppView> {
     const history = options.history ?? browserHistory();
     // Read before the Router: it replaces the link's `#code=…` with the entry hash, so a reload or Back cannot replay the code.
     const enrolCode = enrolCodeFromHash(history.current().hash);
-    const router = new Router(history, boot.workspace?.files?.place ?? null);
+    const saved = parseSavedWorkspace(boot.workspace);
+    const router = new Router(history, saved?.files?.place ?? null);
     super({
       viewport: boot.viewport,
       lifecycle: boot.lifecycle,
@@ -118,9 +121,9 @@ export class AppController extends Store<AppView> {
     this.hosts.subscribe(() => { this.hostsChanged(); });
     this.hosts.setLifecycle(boot.lifecycle);
     // A browser host's name is unknown until `/auth/info` answers; an offline launch names it from the last save.
-    const savedName = boot.workspace?.hostName;
+    const savedName = saved?.hostName;
     this.hosts.set(boot.hosts.map((h) => (h.name === null && h.pageOrigin !== null && savedName !== undefined ? { ...h, name: savedName } : h)));
-    this.dispatch({ type: "restored", saved: boot.workspace });
+    this.dispatch({ type: "restored", saved });
     this.dispatch({ type: "navigated", onTerminal: router.entry.destination === "terminal" });
     router.subscribe((nav) => { this.navigated(nav); });
     this.listing.subscribe((event) => {

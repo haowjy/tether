@@ -130,72 +130,6 @@ public struct TabKey: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-public struct WorkspaceTab: Codable, Equatable, Sendable {
-    public var key: TabKey
-    public var session: String
-    public var window: String
-
-    public init(key: TabKey, session: String, window: String) {
-        self.key = key
-        self.session = session
-        self.window = window
-    }
-}
-
-public struct FilesPlace: Codable, Equatable, Sendable {
-    public enum Kind: String, Codable, Sendable { case roots, dir, file }
-    public var kind: Kind
-    public var path: String?
-
-    public init(kind: Kind, path: String? = nil) {
-        self.kind = kind
-        self.path = path
-    }
-}
-
-public struct SavedFilesPlace: Codable, Equatable, Sendable {
-    public var hostId: String
-    public var place: FilesPlace
-
-    public init(hostId: String, place: FilesPlace) {
-        self.hostId = hostId
-        self.place = place
-    }
-}
-
-public struct SavedWorkspace: Codable, Equatable, Sendable {
-    public var version: Int
-    public var tabs: [WorkspaceTab]
-    public var active: String?
-    public var files: SavedFilesPlace?
-    public var hostName: String?
-
-    public init(
-        version: Int = 2,
-        tabs: [WorkspaceTab] = [],
-        active: String? = nil,
-        files: SavedFilesPlace? = nil,
-        hostName: String? = nil
-    ) {
-        self.version = version
-        self.tabs = tabs
-        self.active = active
-        self.files = files
-        self.hostName = hostName
-    }
-
-    private enum CodingKeys: String, CodingKey { case version, tabs, active, files, hostName }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(version, forKey: .version)
-        try container.encode(tabs, forKey: .tabs)
-        if let active { try container.encode(active, forKey: .active) } else { try container.encodeNil(forKey: .active) }
-        if let files { try container.encode(files, forKey: .files) } else { try container.encodeNil(forKey: .files) }
-        try container.encodeIfPresent(hostName, forKey: .hostName)
-    }
-}
-
 /// The web Platform host representation. `handle` is the host id used to resolve
 /// `tether-app://h-<handle>`; `baseURL` stays in the native HostStore.
 public struct PlatformHost: Codable, Equatable, Sendable {
@@ -225,13 +159,14 @@ public struct PlatformHost: Codable, Equatable, Sendable {
 public struct Boot: Codable, Equatable, Sendable {
     public var bridgeVersion: Int
     public var hosts: [PlatformHost]
-    public var workspace: SavedWorkspace?
+    /// The saved workspace exactly as the web wrote it: native never reads its fields, so a newer web build's version round-trips.
+    public var workspace: JSONValue?
     public var viewport: Viewport
     public var lifecycle: Lifecycle
     public var focusMode: FocusMode
     public var lineSnapshot: NativeLineSnapshot?
 
-    public init(bridgeVersion: Int = BridgeContract.version, hosts: [PlatformHost], workspace: SavedWorkspace?, viewport: Viewport, lifecycle: Lifecycle, focusMode: FocusMode, lineSnapshot: NativeLineSnapshot? = nil) {
+    public init(bridgeVersion: Int = BridgeContract.version, hosts: [PlatformHost], workspace: JSONValue?, viewport: Viewport, lifecycle: Lifecycle, focusMode: FocusMode, lineSnapshot: NativeLineSnapshot? = nil) {
         self.bridgeVersion = bridgeVersion
         self.hosts = hosts
         self.workspace = workspace

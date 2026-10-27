@@ -9,7 +9,7 @@ export const BRIDGE_VERSION = 5;
 export interface Boot {
   bridgeVersion: number;
   hosts: HostEntry[];
-  workspace: SavedWorkspace | null;
+  workspace: unknown;
   viewport: Viewport;
   lifecycle: Lifecycle;
   focusMode: FocusMode;

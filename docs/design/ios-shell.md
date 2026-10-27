@@ -468,11 +468,11 @@ token to native solely for comparison and revocation, never into storage or logs
 
 | Web → native | Reply | Purpose |
 |---|---|---|
-| `ready` | `Boot { bridgeVersion: 5, hosts, workspace, viewport, lifecycle, focusMode, lineSnapshot }` | Start and restore the `SavedWorkspace` and native keyboard target/editing copy if WebKit's content process restarted |
+| `ready` | `Boot { bridgeVersion: 5, hosts, workspace, viewport, lifecycle, focusMode, lineSnapshot }` | Start and restore the saved workspace (opaque JSON) and native keyboard target/editing copy if WebKit's content process restarted |
 | `socket { host }` | `{ url, token }`, `{ locked: true }` or `{ notEnrolled: true }` | Resolve the WebSocket endpoint and credential inside `HostLink`; keep both there except echoing the exact refused token to native for `hostRejected` |
 | `hostRejected { host, token }` | `null` | Clear that exact rejected token only, then re-publish `hosts` |
 | `recreateWebView` | `null` | Discard/reload the page after unrecoverable WebSocket connection failure |
-| `saveWorkspace { workspace }` | `null` | Persist the entire `SavedWorkspace` |
+| `saveWorkspace { workspace }` | `null` | Persist the entire workspace JSON as given |
 | `focus { mode }` | `null` | `terminal`, `line`, `hidden`, `webText` or `select`; native alone changes first responder |
 | `activeTab { tab: TabKey | null }` | `null` | Update native's cached target for coalesced keyboard batches |
 | `lineSet { text, caret, tab }` | Native generation | Load the web-owned draft into native's editing copy and bind it to the tab atomically; native advances its generation and returns it to the web owner |
@@ -518,7 +518,7 @@ PlatformHost = { handle: string, hostId: string | null,
                  name: string | null, pageOrigin: string | null }
 TabKey = { host: string, session: { server: string, session: string } }
 Boot = { bridgeVersion: 5, hosts: PlatformHost[],
-         workspace: SavedWorkspace | null, viewport: Viewport,
+         workspace: JSON | null, viewport: Viewport,
          lifecycle: Lifecycle, focusMode: FocusMode,
          lineSnapshot: NativeLineSnapshot | null }
 FocusMode = "hidden" | "terminal" | "line" | "webText" | "select"
@@ -545,7 +545,7 @@ the resulting draft and native selection state.
   restoring. Bridge version 5 carries this shape. Native stores the workspace
   and the drafts under v2 keys and deletes the v1 keys (window tabs) at launch, so the app
   starts at Home with no tabs and no stale drafts. No window-tab id is guessed.
-- Native treats `SavedWorkspace` as an opaque snapshot and saves it as given. The web
+- Native stores the saved workspace as raw JSON and never decodes it (Swift has no workspace types), so a newer web build's version round-trips. The web
   owns terminal and Files tabs, their identities, each Files tab's folder or preview,
   and the meaning of `active`; native does not turn the workspace into a parallel tab
   model. The revised persisted shape and migration from the single-Files-place workspace

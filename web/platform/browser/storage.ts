@@ -12,8 +12,8 @@ const CHANNEL = "tether";
 
 export interface BrowserStorage {
   storage: PlatformStorage;
-  /** The saved workspace, read once at boot. */
-  loadWorkspace(): Promise<SavedWorkspace | null>;
+  /** The saved workspace as stored, read once at boot; `app/` parses it. */
+  loadWorkspace(): Promise<unknown>;
   /** Starts the cross-page listeners: `versionchange`, the draft channel, and focus. */
   start(emit: (event: PlatformEvent) => void): () => void;
 }
@@ -168,16 +168,7 @@ export function createBrowserStorage(): BrowserStorage {
       const handle = await dbReady;
       if (!handle) return null;
       try {
-        const ws = (await request(handle.transaction("workspace").objectStore("workspace").get(WORKSPACE_KEY))) as { version?: number } | undefined;
-        if (ws?.version === 1) {
-          // Tabs followed windows then. None of that workspace's tabs or drafts names a session, so all of it goes.
-          const tx = handle.transaction(["workspace", "drafts"], "readwrite");
-          tx.objectStore("workspace").clear();
-          tx.objectStore("drafts").clear();
-          await done(tx);
-          return null;
-        }
-        return ws?.version === 2 ? (ws as SavedWorkspace) : null;
+        return (await request(handle.transaction("workspace").objectStore("workspace").get(WORKSPACE_KEY))) as unknown;
       } catch {
         return null;
       }

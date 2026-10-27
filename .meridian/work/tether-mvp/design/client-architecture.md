@@ -426,7 +426,7 @@ interface Platform {
 
 interface BootResult {
   hosts: HostEntry[];                    // browser: exactly one, this origin's daemon
-  workspace: SavedWorkspace | null;      // §6.1
+  workspace: unknown;                    // as stored; workspace/saved.ts parses it (§6.1)
   viewport: Viewport;                    // §5.4
   lifecycle: Lifecycle;                  // §5.5
 }
@@ -695,7 +695,8 @@ interface DraftStore {
 interface DraftRecord { key: TabKey; text: string; revision: number; editedAt: number }
 ```
 
-The saved workspace arrives in `BootResult`; a draft another page changed arrives as a
+The saved workspace arrives in `BootResult` as `unknown` (an older build wrote it), and
+`workspace/saved.ts` is the one parser that turns it into the current version or null; a draft another page changed arrives as a
 `draftChanged` event.
 
 **Browser.**

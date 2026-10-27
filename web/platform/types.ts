@@ -165,7 +165,8 @@ export interface HostEntry {
 
 export interface BootResult {
   hosts: HostEntry[];
-  workspace: SavedWorkspace | null;
+  /** As stored, possibly by an older build: `workspace/saved.ts` parses it. */
+  workspace: unknown;
   viewport: Viewport;
   lifecycle: Lifecycle;
   /** Native's focus target, retained if the web content process had to restart. */
