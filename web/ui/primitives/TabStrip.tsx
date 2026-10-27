@@ -9,6 +9,9 @@ export type PillTone = "live" | "reconnecting" | "error" | "gone" | "idle";
 
 export interface Pill {
   id: string;
+  /** The host the tab is on, and what kind of tab it is. */
+  host: string;
+  kind: "terminal" | "files";
   /** Shown bold. */
   session: string;
   /** The window the tab shows, regular weight after the session, set apart by spacing alone. */

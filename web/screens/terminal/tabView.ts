@@ -48,12 +48,12 @@ export function tabPills(
   now: number,
 ): Pill[] {
   // tabLabels keeps the order of `tabs`, so the two line up.
-  return tabLabels(tabs, hostName).flatMap((l, i) => {
+  return tabLabels(tabs, hostName).flatMap((l, i): Pill[] => {
     const tab = tabs[i];
     if (!tab) return [];
-    if (tab.kind === "files") return [{ id: tab.id, session: l.session, window: "", full: l.full, tone: "idle" as const, state: "open" }];
+    if (tab.kind === "files") return [{ id: tab.id, host: tab.host, kind: tab.kind, session: l.session, window: "", full: l.full, tone: "idle" as const, state: "open" }];
     const look = lookOf(tab, statuses[tab.id], hostName(tab.host), tab.id === onScreen, now);
-    return [{ id: tab.id, session: l.session, window: l.window, full: l.full, tone: look.tone, state: look.state }];
+    return [{ id: tab.id, host: tab.host, kind: tab.kind, session: l.session, window: l.window, full: l.full, tone: look.tone, state: look.state }];
   });
 }
 

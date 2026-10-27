@@ -37,8 +37,8 @@ export function Shell() {
         {!blocking && topRow && <TopRow />}
         <div class={styles.banners}>
           <AppBanners />
-          {/* Home's card for an unreachable server says so and has the Retry. */}
-          {!blocking && hosts.filter((h) => !(screen === "home" && h.admission.kind === "unreachable")).map((h) => <HostBanner key={h.entry.handle} host={h} />)}
+          {/* Home's cards carry their own host's notice. */}
+          {!blocking && screen !== "home" && hosts.map((h) => <HostBanner key={h.entry.handle} host={h} />)}
         </div>
         <main class={styles.screen}>
           {blocking ? (

@@ -36,6 +36,8 @@ export interface ServerCardProps {
   name: string;
   tabs: CardTab[];
   body: CardBody;
+  /** What is wrong with the server, when something is: its host banner. */
+  notice: ComponentChildren;
   /** Looks at the server again: admission when it can't be reached, the sessions otherwise. */
   onRetry: () => void;
   onSessions: (opener: HTMLElement) => void;
@@ -49,7 +51,7 @@ function Note({ children }: { children: ComponentChildren }) {
   return <p class={styles.note}>{children}</p>;
 }
 
-function Body({ name, body, onRetry, onSessions, newSession }: Omit<ServerCardProps, "tabs" | "onFiles">) {
+function Body({ name, body, onRetry, onSessions, newSession }: Omit<ServerCardProps, "tabs" | "onFiles" | "notice">) {
   const retry = <Button variant="secondary" icon="refresh" onClick={onRetry}>Retry</Button>;
   switch (body.kind) {
     case "offline":
@@ -60,8 +62,9 @@ function Body({ name, body, onRetry, onSessions, newSession }: Omit<ServerCardPr
         </>
       );
     case "attention":
-      return <Note>tether can't use {name} yet. The notice above says why.</Note>;
+      return <Note>tether can't use {name} yet.</Note>;
     case "checking":
+      return <div class={styles.loading}><Spinner label="Checking access" /><span>Checking access</span></div>;
     case "loading":
       return <div class={styles.loading}><Spinner label="Loading sessions" /><span>Loading sessions</span></div>;
     case "failed":
@@ -90,13 +93,14 @@ function Body({ name, body, onRetry, onSessions, newSession }: Omit<ServerCardPr
   }
 }
 
-export function ServerCard({ name, tabs, body, onRetry, onSessions, newSession, onFiles }: ServerCardProps) {
+export function ServerCard({ name, tabs, body, notice, onRetry, onSessions, newSession, onFiles }: ServerCardProps) {
   return (
     <section class={styles.card} aria-label={name}>
       <div class={styles.head}>
         <h2 class={styles.name}>{name}</h2>
         <span class={styles.status} data-status={STATUS[body.kind]}>{STATUS_WORDS[STATUS[body.kind]]}</span>
       </div>
+      {notice}
       {tabs.map((t) => (
         <div key={t.id} class={styles.tab}>
           <Row icon={t.icon} label={t.label} meta={t.meta} selected={t.selected} onClick={t.onOpen} />

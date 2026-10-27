@@ -45,6 +45,10 @@ export class LineDrafts extends Store<DraftsState> {
       () => { this.listed([]); },
     );
     app.persist.onFlush(() => { this.flush(); });
+    app.persist.onClear(() => {
+      clearTimeout(this.timer);
+      this.update({ ...this.snapshot, drafts: {} });
+    });
     app.platform.subscribe((event) => {
       if (event.type !== "draftChanged") return;
       void storage.drafts.get(event.key).then((record) => { this.dispatch({ type: "remote", key: event.key, record }); });

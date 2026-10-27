@@ -9,7 +9,7 @@ export type CardStatus = "live" | "checking" | "offline" | "attention";
 export type CardBody =
   /** The host can't be reached; `reachedAt` is when this page last did, if it has. */
   | { kind: "offline"; reachedAt: number | null }
-  /** Admission needs the user (the banner above says what); nothing here acts on it. */
+  /** Admission needs the user (the card's notice says what); nothing here acts on it. */
   | { kind: "attention" }
   /** Admission is being decided. */
   | { kind: "checking" }

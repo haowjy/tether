@@ -1,6 +1,6 @@
 // Persist now (client-architecture.md §5.5): the one owner of "hand everything pending to
 // storage at once". The saved workspace is assembled, not owned: the workspace
-// reducer supplies the tabs, and the host name comes from the controller. Draft writes are debounced by drafts/, which registers a flusher.
+// reducer supplies the tabs, and the host name comes from the controller. Draft writes are debounced by drafts/, which registers a flusher and a clearer.
 import { tabId } from "../platform/tabKey";
 import type { PlatformStorage, SavedTab, SavedWorkspace } from "../platform/types";
 
@@ -9,6 +9,7 @@ const idOf = (t: SavedTab): string => (t.kind === "terminal" ? tabId(t.key) : t.
 export class Persist {
   private hostName: () => string | null = () => null;
   private readonly flushers = new Set<() => void>();
+  private readonly clearers = new Set<() => void>();
   /** The tabs that were open when local data was cleared: they stay open until closed but are never saved again. */
   private cleared = new Set<string>();
 
@@ -26,6 +27,11 @@ export class Persist {
   onFlush(flush: () => void): () => void {
     this.flushers.add(flush);
     return () => { this.flushers.delete(flush); };
+  }
+
+  /** drafts/ registers the reset of its in-memory state, run by Clear local data. */
+  onClear(clear: () => void): void {
+    this.clearers.add(clear);
   }
 
   /** The workspace changed: hand storage the assembled workspace (the adapter coalesces). */
@@ -48,6 +54,8 @@ export class Persist {
   /** Deletes drafts and the saved workspace; the tabs open now are not saved again (browser-behaviors.md "Settings"). */
   async clearLocalData(): Promise<void> {
     this.cleared = new Set(this.tabs().tabs.map(idOf));
+    // Memory first: an open field's draft must not be written back after the store is empty.
+    for (const clear of this.clearers) clear();
     await this.storage.clearLocalData();
   }
 

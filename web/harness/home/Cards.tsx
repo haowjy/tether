@@ -12,16 +12,16 @@ const NEW = <Button variant="quiet" icon="plus">New session</Button>;
 const base = { onRetry: NO_OP, onSessions: NO_OP, newSession: NEW };
 
 const CARDS: ServerCardProps[] = [
-  { ...base, name: "pop-os", tabs: TABS, body: { kind: "ready", count: 9 }, onFiles: NO_OP },
-  { ...base, name: "pop-os (no tabs)", tabs: [], body: { kind: "ready", count: 2 }, onFiles: NO_OP },
-  { ...base, name: "pop-os (loading)", tabs: [], body: { kind: "loading" }, onFiles: NO_OP },
-  { ...base, name: "pop-os (list failed)", tabs: [], body: { kind: "failed" }, onFiles: NO_OP },
-  { ...base, name: "no sessions", tabs: [], body: { kind: "empty" }, onFiles: NO_OP },
-  { ...base, name: "dev-box-2", tabs: [tab("t3", "build shell")], body: { kind: "noTmux" }, onFiles: NO_OP },
-  { ...base, name: "jimmys-macbook-air", tabs: [tab("t4", "tether agent", "Reconnecting…")], body: { kind: "offline", reachedAt: Date.now() - 2 * 3_600_000 }, onFiles: undefined },
-  { ...base, name: "offline, never reached", tabs: [], body: { kind: "offline", reachedAt: null }, onFiles: undefined },
-  { ...base, name: "checking", tabs: [tab("t5", "tether agent", "Checking…")], body: { kind: "checking" }, onFiles: undefined },
-  { ...base, name: "needs the user", tabs: [], body: { kind: "attention" }, onFiles: undefined },
+  { ...base, notice: null, name: "pop-os", tabs: TABS, body: { kind: "ready", count: 9 }, onFiles: NO_OP },
+  { ...base, notice: null, name: "pop-os (no tabs)", tabs: [], body: { kind: "ready", count: 2 }, onFiles: NO_OP },
+  { ...base, notice: null, name: "pop-os (loading)", tabs: [], body: { kind: "loading" }, onFiles: NO_OP },
+  { ...base, notice: null, name: "pop-os (list failed)", tabs: [], body: { kind: "failed" }, onFiles: NO_OP },
+  { ...base, notice: null, name: "no sessions", tabs: [], body: { kind: "empty" }, onFiles: NO_OP },
+  { ...base, notice: null, name: "dev-box-2", tabs: [tab("t3", "build shell")], body: { kind: "noTmux" }, onFiles: NO_OP },
+  { ...base, notice: null, name: "jimmys-macbook-air", tabs: [tab("t4", "tether agent", "Reconnecting…")], body: { kind: "offline", reachedAt: Date.now() - 2 * 3_600_000 }, onFiles: undefined },
+  { ...base, notice: null, name: "offline, never reached", tabs: [], body: { kind: "offline", reachedAt: null }, onFiles: undefined },
+  { ...base, notice: null, name: "checking", tabs: [tab("t5", "tether agent", "Checking…")], body: { kind: "checking" }, onFiles: undefined },
+  { ...base, notice: null, name: "needs the user", tabs: [], body: { kind: "attention" }, onFiles: undefined },
 ];
 
 export function Cards() {

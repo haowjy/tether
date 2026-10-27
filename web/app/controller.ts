@@ -293,19 +293,22 @@ export class AppController extends Store<AppView> {
   private syncListing(): void {
     const { entry, workspace } = this.snapshot;
     const home = screenOf(workspace) === "home";
-    const overlay = entry.overlay?.screen === "sessions" ? `${entry.overlay.screen}/${entry.overlay.name}` : null;
-    const listingShown = home || overlay !== null;
-    // Each surface asks afresh when it is entered, so Home to a server's sheet lists again; the sheet over a tab and the picker over Home are surfaces of their own.
-    const surface = overlay ?? (home ? "home" : null);
-    const entered = surface !== null && surface !== this.listingSurface;
+    const { overlay } = entry;
+    const sessionsOverlay = overlay?.screen === "sessions" ? overlay : null;
+    const listingShown = home || sessionsOverlay !== null;
+    // Each surface asks afresh when it is entered, for the hosts it shows: a server's sheet lists that server, the picker and Home list all. Returning from an overlay to the screen under it is not entering.
+    const surface = sessionsOverlay ? `${sessionsOverlay.screen}/${sessionsOverlay.name}` : home ? "home" : null;
+    const returning = surface === "home" && this.listingSurface?.startsWith("sessions/") === true;
+    const entered = surface !== null && surface !== this.listingSurface && !returning;
     this.listingSurface = surface;
+    const shown = sessionsOverlay?.name === "server" ? sessionsOverlay.params?.["host"] : undefined;
     for (const client of this.hosts.all()) {
       const { handle } = client.entry;
       const admitted = client.admission.kind === "admitted";
       const hasTab = client.hostId !== null && workspace.tabs.some((t) => t.host === client.hostId);
       const listed = this.listing.setWanted(handle, admitted && (listingShown || hasTab));
       // Entering a listing surface lists afresh, unless joining the host just started a listing.
-      if (entered && admitted && !listed) this.listing.refresh(handle);
+      if (entered && admitted && !listed && (shown === undefined || shown === handle)) this.listing.refresh(handle);
     }
   }
 

@@ -11,6 +11,7 @@ import { NewSession } from "../sessions/NewActions";
 import { now } from "../sessions/SessionPicks";
 import { pillMeta, tabPills } from "../terminal/tabView";
 import { terminalsOf } from "../terminal/terminals";
+import { HostBanner } from "../shell/HostBanner";
 import { cardOf } from "./card";
 import { Install } from "./Install";
 import { ServerCard, type CardTab } from "./ServerCard";
@@ -31,6 +32,7 @@ function HostCard({ host, tabs }: { host: HostClient; tabs: CardTab[] }) {
       name={host.name ?? "the server"}
       tabs={tabs}
       body={body}
+      notice={body.kind !== "offline" && <HostBanner host={host} />}
       onRetry={() => { app.retryHost(handle); }}
       onSessions={(opener) => { app.openOverlay({ screen: "sessions", name: "server", params: { host: handle } }, opener); }}
       newSession={<NewSession host={host} commit={now} />}
@@ -47,13 +49,12 @@ export function Home() {
   const hostName = useHostName();
   const manageHosts = app.platform.manageHosts;
 
-  const rows = tabPills(workspace.tabs, statuses, hostName, null, Date.now()).flatMap((pill, i) => {
-    const tab = workspace.tabs[i];
-    const host = tab && hostOf(tab.host, hosts);
-    if (!tab || !host) return [];
+  const rows = tabPills(workspace.tabs, statuses, hostName, null, Date.now()).flatMap((pill) => {
+    const host = hostOf(pill.host, hosts);
+    if (!host) return [];
     const row: CardTab = {
       id: pill.id,
-      icon: tab.kind === "files" ? "folder" : "terminal",
+      icon: pill.kind === "files" ? "folder" : "terminal",
       label: pill.full,
       meta: pillMeta(pill),
       selected: pill.id === workspace.active,
