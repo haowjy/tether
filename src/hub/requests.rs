@@ -11,8 +11,8 @@ use super::{
     MAX_INPUT, MAX_WATCHES, PasteFile, USER_IN_FLIGHT,
 };
 use crate::proto::{
-    self, Base64, ClientMsg, ErrorCode, ServerMsg, SessionListing, SessionRef, TmuxListing,
-    WatchEndReason, WindowListing,
+    self, Base64, BellState, ClientMsg, ErrorCode, ServerMsg, SessionListing, SessionRef,
+    TmuxListing, WatchEndReason, WindowListing,
 };
 use crate::tmux::{
     ClientId, InputItem, OneShotCmd, Op, PaneId, Reply, SessionId, Size, Tag, TmuxError, WindowId,
@@ -584,66 +584,98 @@ impl State {
         self.send(conn, &chunk(lines, history.wraps.into_bytes()), None);
     }
 
+    /// A listing request joins a listing in flight, the bell poll's included, and
+    /// shares its answer (§4.8).
     pub(super) fn list(&mut self, conn: ConnId, req: u32) {
-        if self.oneshot.is_some() || !self.can_reserve(conn, LISTING_RESERVATION) {
+        let joins = matches!(self.oneshot, Some((_, OneShotWork::List { .. })));
+        if (self.oneshot.is_some() && !joins) || !self.can_reserve(conn, LISTING_RESERVATION) {
             return self.refuse(conn, Some(req), None, ErrorCode::Busy, "tmux is busy");
         }
         self.reserve(conn, LISTING_RESERVATION);
-        self.run_oneshot(MAIN, OneShotCmd::List, OneShotWork::List { conn, req });
+        match &mut self.oneshot {
+            Some((_, OneShotWork::List { waiters })) => waiters.push((conn, req)),
+            _ => {
+                let work = OneShotWork::List {
+                    waiters: vec![(conn, req)],
+                };
+                self.run_oneshot(MAIN, OneShotCmd::List, work);
+            }
+        }
     }
 
-    pub(super) fn listed(&mut self, conn: ConnId, req: u32, result: Result<Reply, TmuxError>) {
-        self.unreserve(conn, LISTING_RESERVATION);
+    pub(super) fn listed(&mut self, waiters: Vec<(ConnId, u32)>, result: Result<Reply, TmuxError>) {
+        for &(conn, _) in &waiters {
+            self.unreserve(conn, LISTING_RESERVATION);
+        }
+        self.bell_restart_clock();
         let listing = match result {
             Ok(Reply::Listing(listing)) => listing,
             Err(TmuxError::NoServer) => {
                 if let Some(live) = self.endpoints[MAIN].live {
                     self.server_gone(MAIN, live);
                 }
-                return self.send(conn, &ServerMsg::Sessions { req, tmux: None }, None);
+                self.bell_no_server();
+                for (conn, req) in waiters {
+                    self.send(conn, &ServerMsg::Sessions { req, tmux: None }, None);
+                }
+                return;
             }
-            Err(error) => return self.refuse_tmux(conn, Some(req), None, &error),
-            Ok(_) => return self.refuse_tmux(conn, Some(req), None, &TmuxError::BadReply),
+            result => {
+                let error = result.err().unwrap_or(TmuxError::BadReply);
+                self.bell_failed();
+                for (conn, req) in waiters {
+                    self.refuse_tmux(conn, Some(req), None, &error);
+                }
+                return;
+            }
         };
         self.learned_version(MAIN, listing.server, &listing.version);
-        let sessions = listing
-            .sessions
-            .into_iter()
-            .map(|session| SessionListing {
-                id: session.id.0,
-                name: cut(session.name),
-                windows: session
-                    .windows
-                    .into_iter()
-                    .map(|window| WindowListing {
-                        id: window.id.0,
-                        index: window.index,
-                        name: cut(window.name),
-                        active: window.active,
-                        activity: window.activity,
-                    })
-                    .collect(),
-            })
-            .collect();
-        let json = ServerMsg::Sessions {
-            req,
-            tmux: Some(TmuxListing {
-                server: self.server_name(MAIN, listing.server),
-                version: listing.version.to_string(),
-                sessions,
-            }),
+        let tmux = TmuxListing {
+            server: self.server_name(MAIN, listing.server),
+            version: listing.version.to_string(),
+            sessions: listing
+                .sessions
+                .iter()
+                .map(|session| SessionListing {
+                    id: session.id.0,
+                    name: cut(session.name.clone()),
+                    bell: BellState {
+                        mark: session.bell.mark,
+                        covered: session.bell.covered,
+                    },
+                    windows: session
+                        .windows
+                        .iter()
+                        .map(|window| WindowListing {
+                            id: window.id.0,
+                            index: window.index,
+                            name: cut(window.name.clone()),
+                            active: window.active,
+                            activity: window.activity,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        };
+        for (conn, req) in waiters {
+            let json = ServerMsg::Sessions {
+                req,
+                tmux: Some(tmux.clone()),
+            }
+            .encode();
+            if json.len() as u64 > LISTING_RESERVATION {
+                self.refuse(
+                    conn,
+                    Some(req),
+                    None,
+                    ErrorCode::Tmux,
+                    "the session list is too large",
+                );
+            } else {
+                self.send_encoded(conn, json, None);
+            }
         }
-        .encode();
-        if json.len() as u64 > LISTING_RESERVATION {
-            return self.refuse(
-                conn,
-                Some(req),
-                None,
-                ErrorCode::Tmux,
-                "the session list is too large",
-            );
-        }
-        self.send_encoded(conn, json, None);
+        self.bell_read(&listing);
     }
 
     fn new_window(
@@ -823,7 +855,7 @@ impl State {
         match work {
             OneShotWork::Locate { view } => self.located(view, tag, None, result),
             OneShotWork::SessionCheck { exited } => self.checked(exited, tag, result),
-            OneShotWork::List { conn, req } => self.listed(conn, req, result),
+            OneShotWork::List { waiters } => self.listed(waiters, result),
             work @ OneShotWork::Create { .. } => self.created(work, result),
         }
     }
@@ -835,6 +867,9 @@ impl State {
         self.effects.push(Effect::DropConn { conn });
         for (watch, removed) in state.watches {
             self.leave(WatchKey { conn, watch }, removed.view);
+        }
+        if self.conns.is_empty() {
+            self.bell_connections_changed();
         }
     }
 

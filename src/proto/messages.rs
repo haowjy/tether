@@ -281,6 +281,15 @@ pub enum ServerMsg {
     /// The listing changed (sessions, or a window no watch is on closed or moved):
     /// refetch it if the sheet is open, and prune tabs against it.
     SessionsChanged,
+    /// The sessions of `server` whose bell mark or coverage changed since the last
+    /// listing the daemon read (daemon-core.md §4.8), to every connection.
+    /// `available: false` (with no sessions) says the daemon couldn't read tmux's bell
+    /// state; the next `bell` with `available: true` ends it.
+    Bell {
+        server: String,
+        available: bool,
+        sessions: Vec<BellChange>,
+    },
     /// The session sheet; `tmux` is null when no tmux server is running.
     Sessions {
         req: u32,
@@ -391,7 +400,27 @@ pub struct SessionListing {
     /// `$N`.
     pub id: u32,
     pub name: String,
+    pub bell: BellState,
     pub windows: Vec<WindowListing>,
+}
+
+/// A session's bell attention state. `mark` is opaque: a client shows a dot while it
+/// differs from the mark it last showed, and never orders them. `covered: false` says
+/// tmux's settings keep this session's bells from tether's hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BellState {
+    pub mark: u32,
+    pub covered: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BellChange {
+    /// `$N`.
+    pub session: u32,
+    pub mark: u32,
+    pub covered: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

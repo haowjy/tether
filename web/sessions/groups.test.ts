@@ -6,9 +6,9 @@ const LISTING: TmuxListing = {
   server: "main:1-1",
   version: "3.4",
   sessions: [
-    { id: 1, name: "Tether", windows: [] },
-    { id: 2, name: "notes", windows: [] },
-    { id: 3, name: "web", windows: [] },
+    { id: 1, name: "Tether", bell: { mark: 0, covered: true }, windows: [] },
+    { id: 2, name: "notes", bell: { mark: 0, covered: true }, windows: [] },
+    { id: 3, name: "web", bell: { mark: 0, covered: true }, windows: [] },
   ],
 };
 const names = (query: string): string[] => matching(LISTING, query).map((s) => s.name);

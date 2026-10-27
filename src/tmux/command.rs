@@ -7,7 +7,8 @@ use std::path::Path;
 
 use super::history::STATE_FORMAT as HISTORY_STATE_FORMAT;
 use super::reply::{
-    CREATED_FORMAT, LISTING_SERVER_FORMAT, LISTING_WINDOW_FORMAT, LOCATE_FORMAT, STARTUP_FORMAT,
+    BELL_EMPTY, BELL_HOOK_INDEX, BELL_OURS, CREATED_FORMAT, LISTING_SERVER_FORMAT, LOCATE_FORMAT,
+    STARTUP_FORMAT, listing_window_format,
 };
 use super::snapshot::STATE_FORMAT;
 use super::{
@@ -231,16 +232,35 @@ pub fn attach(session: SessionId) -> Vec<String> {
 /// argument as it is, with no quoting, except that one ending in `;` ends a command.
 pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
     Ok(match cmd {
-        // The server identity comes first; each remaining line is a window.
-        OneShotCmd::List => owned(&[
-            "display-message",
-            "-p",
-            LISTING_SERVER_FORMAT,
-            ";",
-            "list-windows",
-            "-a",
+        // The guarded install comes first (written only while the index is empty, in
+        // the same command list as the check), then the server identity; each
+        // remaining line is a window.
+        OneShotCmd::List => {
+            let mut args = owned(&["if-shell", "-F", BELL_EMPTY, &bell_install(), ";"]);
+            args.extend(owned(&[
+                "display-message",
+                "-p",
+                LISTING_SERVER_FORMAT,
+                ";",
+                "list-windows",
+                "-a",
+                "-F",
+                &listing_window_format(),
+            ]));
+            args
+        }
+        // Empty or an older build's entry: install. Never a foreign one.
+        OneShotCmd::AdoptBellHook => owned(&[
+            "if-shell",
             "-F",
-            LISTING_WINDOW_FORMAT,
+            &format!("#{{||:{BELL_EMPTY},{BELL_OURS}}}"),
+            &bell_install(),
+        ]),
+        OneShotCmd::RemoveBellHook => owned(&[
+            "if-shell",
+            "-F",
+            BELL_OURS,
+            &format!("set-hook -gu 'alert-bell[{BELL_HOOK_INDEX}]'"),
         ]),
         OneShotCmd::Locate { session } => owned(&[
             "display-message",
@@ -270,6 +290,16 @@ pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
             args
         }
     })
+}
+
+/// Tether's `alert-bell` entry (§4.8): runs in the ringing session's context and
+/// counts its bells in a user option. The double quotes are part of the text: unquoted,
+/// tmux reads `#` as a comment and stores a truncated hook.
+const BELL_HOOK: &str =
+    r##"set-option -F @tether-bell "#{e|+:#{?#{@tether-bell},#{@tether-bell},0},1}""##;
+
+fn bell_install() -> String {
+    format!("set-hook -g 'alert-bell[{BELL_HOOK_INDEX}]' '{BELL_HOOK}'")
 }
 
 /// A first command that stops the rest of a one-shot's list unless the server is

@@ -10,10 +10,10 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::JoinSet;
 use tracing::{error, warn};
 
-use super::state::{Effect, Input, State};
+use super::state::{Effect, Input, MAIN, State};
 use super::{CONN_CHANNEL, ConnId, ConnectReply, FromConn, HubMsg, INBOX, ToConn};
 use crate::blocking::Busy;
-use crate::tmux::{ClientId, PumpMsg, oneshot, pump};
+use crate::tmux::{ClientId, OneShotCmd, PumpMsg, TmuxError, oneshot, pump};
 
 /// What the executor holds for `State`. Its maps mirror the state's: an entry goes when
 /// the state's `CloseClient` or `DropConn` says so, or when its channel fails first.
@@ -43,6 +43,8 @@ pub(super) async fn run(
         inbox: weak_inbox,
         next_conn: 1,
     };
+    // Once at start, before any connection: an older build's hook entry is rewritten.
+    bell_hook(&state, OneShotCmd::AdoptBellHook).await;
     loop {
         let deadline = state.next_deadline().map(tokio::time::Instant::from_std);
         let input = tokio::select! {
@@ -65,7 +67,18 @@ pub(super) async fn run(
             }
         }
     }
+    bell_hook(&state, OneShotCmd::RemoveBellHook).await;
     io.shut_down(pump_out).await;
+}
+
+/// Adopts or removes tether's `alert-bell` entry (daemon-core.md §4.8) outside the hub's
+/// one-shot slot: nothing else runs yet or any more. A failure costs only the entry's
+/// tidiness, and no tmux server is not one.
+async fn bell_hook(state: &State, cmd: OneShotCmd) {
+    match oneshot::run(&state.endpoints[MAIN].endpoint, &cmd).await {
+        Ok(_) | Err(TmuxError::NoServer) => {}
+        Err(error) => warn!(?cmd, %error, "can't update the tmux bell hook"),
+    }
 }
 
 async fn sleep_until(deadline: Option<tokio::time::Instant>) {

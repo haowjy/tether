@@ -1,6 +1,6 @@
 # hub
 
-`State` (state.rs with owners.rs, requests.rs, reconcile.rs, credit.rs, time.rs and
+`State` (state.rs with owners.rs, requests.rs, reconcile.rs, credit.rs, bell.rs, time.rs and
 names.rs, each an `impl State` part, plus the per-session `View` in view.rs) is the hub as one pure value: no I/O, no clock,
 no shared state. Time comes in with each input, so a test can drive it with scripted
 inputs and a fake clock. `run.rs` is the only file that awaits or spawns: it executes
@@ -47,6 +47,11 @@ Rules the code relies on, which are easy to break:
   A deadline is reported only until then, so one that can't be acted on can't spin.
 - `run` returns only after every pump has ended (stdin closed, tmux gone): the
   runtime's end would otherwise kill `tmux -C`.
+- The bell poll is the `List` one-shot (bell.rs). A user's `list` joins a `List` in flight
+  (`OneShotWork::List` holds the waiters, each with its credit reservation), and every answer,
+  whoever asked, restarts the 5 s clock and is diffed against the one baseline. Hook adopt
+  at start and removal at stop run in `run.rs` outside the slot. Don't add a second path
+  that reads tmux's bell state.
 - Logs carry ids, kinds and lengths only, never pane output, reply bodies or input.
 
 `tests/hub_state.rs` drives `State` against a fake tmux that answers the lines the hub

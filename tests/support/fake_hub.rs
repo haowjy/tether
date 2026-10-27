@@ -17,9 +17,9 @@ use tether::hub::{ConnId, Effect, Endpoints, FromConn, Input, PasteFile, State, 
 use tether::proto::{self, ClientMsg, SessionRef};
 use tether::tmux::fake::{self, Capture, Command};
 use tether::tmux::{
-    ClientId, Created, Endpoint, Found, ListedSession, Listing, Location, OneShotCmd, Op, PaneId,
-    PumpMsg, Reply, ServerInstance, SessionId, Size, Socket, Tag, TmuxError, TmuxVersion, WindowId,
-    command,
+    Bell, ClientId, Created, Endpoint, Found, ListedSession, Listing, Location, OneShotCmd, Op,
+    PaneId, PumpMsg, Reply, ServerInstance, SessionId, Size, Socket, Tag, TmuxError, TmuxVersion,
+    WindowId, command,
 };
 use tokio::sync::Semaphore;
 
@@ -185,6 +185,11 @@ impl Hub {
         let conn = ConnId(self.next_conn);
         self.next_conn += 1;
         self.input(Input::Connected(conn));
+        // The first connection starts the bell poll (daemon-core.md §4.8); tests start
+        // from its answer, so the one-shot slot is free.
+        if matches!(self.oneshots.front(), Some((_, OneShotCmd::List))) {
+            self.answer_oneshot();
+        }
         conn
     }
 
@@ -321,6 +326,10 @@ impl Hub {
                     sessions: vec![ListedSession {
                         id: SessionId(0),
                         name: "fixture".into(),
+                        bell: Bell {
+                            mark: 0,
+                            covered: true,
+                        },
                         windows: Vec::new(),
                     }],
                 }),

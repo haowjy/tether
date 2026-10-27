@@ -299,8 +299,12 @@ pub enum Op {
 /// must not run on one. Answered with a `Reply` like an `Op`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OneShotCmd {
-    /// The session sheet: answered by `Reply::Listing`.
+    /// The session sheet and the bell poll: answered by `Reply::Listing`. It first
+    /// installs tether's bell hook if nothing is at its index (§4.8).
     List,
+    /// Daemon start and stop (§4.8): `Reply::Ok`.
+    AdoptBellHook,
+    RemoveBellHook,
     Locate {
         session: SessionId,
     },
@@ -432,7 +436,17 @@ pub struct Listing {
 pub struct ListedSession {
     pub id: SessionId,
     pub name: String,
+    pub bell: Bell,
     pub windows: Vec<ListedWindow>,
+}
+
+/// A session's bell attention state (§4.8). `mark` counts the session's bells; every
+/// window line carries it. `covered` is tmux's verdict, true when every window's
+/// bells reach tether's hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bell {
+    pub mark: u32,
+    pub covered: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

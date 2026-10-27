@@ -75,6 +75,7 @@ cwd: string | null, } }
   | { "type": "sessionClosed", "data": { session: SessionRef, } }
   | { "type": "serverExited", "data": { server: string, } }
   | { "type": "sessionsChanged" }
+  | { "type": "bell", "data": { server: string, available: boolean, sessions: Array<BellChange>, } }
   | { "type": "sessions", "data": { req: number, tmux: TmuxListing | null, } }
   | { "type": "historyChunk", "data": { req: number, watch: number, pane: number, start: number,
 /**
@@ -145,7 +146,20 @@ export type SessionListing = {
 /**
  * `$N`.
  */
-id: number, name: string, windows: Array<WindowListing>, };
+id: number, name: string, bell: BellState, windows: Array<WindowListing>, };
+
+/**
+ * A session's bell attention state. `mark` is opaque: a client shows a dot while it
+ * differs from the mark it last showed, and never orders them. `covered: false` says
+ * tmux's settings keep this session's bells from tether's hook.
+ */
+export type BellState = { mark: number, covered: boolean, };
+
+export type BellChange = {
+/**
+ * `$N`.
+ */
+session: number, mark: number, covered: boolean, };
 
 export type WindowListing = {
 /**

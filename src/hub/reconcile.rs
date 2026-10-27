@@ -21,6 +21,7 @@ impl State {
         }
         self.locates();
         self.session_checks();
+        self.poll_bell();
         for &client in &ready {
             self.subscribe_and_vote(client);
         }

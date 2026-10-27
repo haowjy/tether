@@ -5,7 +5,7 @@ import { classifyFailure, SessionsCache } from "./cache";
 const listing = (...ids: number[]): TmuxListing => ({
   server: "main:1-1",
   version: "3.4",
-  sessions: ids.map((id) => ({ id, name: `s${String(id)}`, windows: [{ id: id * 10, index: 0, name: "shell", active: true, activity: 0 }] })),
+  sessions: ids.map((id) => ({ id, name: `s${String(id)}`, bell: { mark: 0, covered: true }, windows: [{ id: id * 10, index: 0, name: "shell", active: true, activity: 0 }] })),
 });
 
 describe("SessionsCache", () => {

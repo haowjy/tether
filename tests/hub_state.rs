@@ -1242,7 +1242,12 @@ fn output_past_the_spacing_deadline_stands_in_for_the_tick() {
     hub.output(client, 0, "late");
     hub.settle();
     assert!(hub.take(conn).is_empty());
-    assert_eq!(hub.state.next_deadline(), None);
+    // Only the bell poll is waiting on time (§4.8).
+    assert!(
+        hub.state
+            .next_deadline()
+            .is_none_or(|at| at > hub.now + SNAPSHOT_SPACING)
+    );
     hub.credit(conn, CREDIT as u32);
     hub.settle();
     assert_eq!(hub.take(conn), [Got::Snapshot(1, size(80, 24))]);

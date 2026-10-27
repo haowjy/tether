@@ -15,6 +15,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use tracing::warn;
 
+use super::bell::BellPoll;
 use super::names::cut;
 use super::view::{Inflight, View, ViewKey, ViewPhase, Vote, WatchKey};
 use super::{
@@ -90,6 +91,7 @@ pub struct State {
     pub(super) exits: BTreeMap<ClientId, ExitCheck>,
     /// The one one-shot that may run, and what its answer is for.
     pub(super) oneshot: Option<(Tag, OneShotWork)>,
+    pub(super) bell: BellPoll,
     pub(super) now: Instant,
     pub(super) effects: Vec<Effect>,
     /// Whether this input may have changed what tmux should be doing. Pump bytes that
@@ -225,9 +227,9 @@ pub(super) enum OneShotWork {
     SessionCheck {
         exited: ClientId,
     },
+    /// The poll has no waiters; a user's `list` joins one in flight (§4.8).
     List {
-        conn: ConnId,
-        req: u32,
+        waiters: Vec<(ConnId, u32)>,
     },
     Create {
         conn: ConnId,
@@ -284,6 +286,7 @@ impl State {
             conns: BTreeMap::new(),
             exits: BTreeMap::new(),
             oneshot: None,
+            bell: BellPoll::default(),
             now,
             effects: Vec::new(),
             dirty: false,
@@ -302,6 +305,9 @@ impl State {
         match input {
             Input::Connected(conn) => {
                 self.conns.insert(conn, Conn::default());
+                if self.conns.len() == 1 {
+                    self.bell_connections_changed();
+                }
             }
             Input::Pump(client, PumpMsg::Bytes(bytes)) => self.feed(client, &bytes),
             Input::Pump(client, PumpMsg::Exited { stderr_tail }) => {

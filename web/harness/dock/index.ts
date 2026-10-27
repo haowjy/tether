@@ -12,9 +12,9 @@ const SEVERAL: TmuxListing = {
   server: "main:1-1",
   version: "3.4",
   sessions: [
-    { id: 1, name: "tether", windows: [win(1, 0, "agent"), win(2, 1, "shell"), win(4, 2, "logs")] },
-    { id: 2, name: "notes", windows: [win(3, 0, "shell")] },
-    ...["blog", "infra", "dotfiles", "scratch", "mars", "a-session-with-a-very-long-name-that-has-to-truncate"].map((name, i) => ({ id: i + 5, name, windows: [win(20 + i, 0, "zsh")] })),
+    { id: 1, name: "tether", bell: { mark: 0, covered: true }, windows: [win(1, 0, "agent"), win(2, 1, "shell"), win(4, 2, "logs")] },
+    { id: 2, name: "notes", bell: { mark: 0, covered: true }, windows: [win(3, 0, "shell")] },
+    ...["blog", "infra", "dotfiles", "scratch", "mars", "a-session-with-a-very-long-name-that-has-to-truncate"].map((name, i) => ({ id: i + 5, name, bell: { mark: 0, covered: true }, windows: [win(20 + i, 0, "zsh")] })),
   ],
 };
 

@@ -4,7 +4,7 @@
 //! parser in `snapshot.rs`.
 
 use super::{
-    Created, Found, ListedSession, ListedWindow, Listing, Location, PaneId, ServerInstance,
+    Bell, Created, Found, ListedSession, ListedWindow, Listing, Location, PaneId, ServerInstance,
     SessionId, Size, TmuxVersion, WindowId,
 };
 
@@ -70,12 +70,31 @@ pub(super) fn location(row: &[u8]) -> Option<Location> {
 
 /// The listing's first line.
 pub(super) const LISTING_SERVER_FORMAT: &str = "#{version}\t#{pid}\t#{start_time}";
+/// The server-global `alert-bell` entry tether owns (daemon-core.md §4.8).
+pub(super) const BELL_HOOK_INDEX: u32 = 9100;
+/// True while nothing is at tether's index.
+pub(super) const BELL_EMPTY: &str = "#{==:#{alert-bell[9100]},}";
+/// True while the entry at tether's index starts with tether's hook text, whatever
+/// build wrote it. A session resolves the entry, so a session-level `alert-bell` hook
+/// (which shadows the global array) breaks it.
+pub(super) const BELL_OURS: &str = "#{m:set-option -F @tether-bell*,#{alert-bell[9100]}}";
+
 /// One line per window, and no field can hold a line break: the ids and numbers are
-/// tmux's own, tmux refuses a line break in a session name on 3.8 and stores it escaped
-/// on 3.4, and the window name, which 3.4 lets `-n` store raw, prints a line break as
-/// `\n` (`#{s/<LF>/\\n/:…}`; the argv holds a literal line feed). It goes last because a
-/// window name can still hold a tab.
-pub(super) const LISTING_WINDOW_FORMAT: &str = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity}\t#{session_name}\t#{s/\n/\\\\n/:window_name}";
+/// tmux's own, `@tether-bell` goes through arithmetic (a user can set it to any text),
+/// tmux refuses a line break in a session name on 3.8 and stores it escaped on 3.4,
+/// and the window name, which 3.4 lets `-n` store raw, prints a line break as `\n`
+/// (`#{s/<LF>/\\n/:…}`; the argv holds a literal line feed). The name goes last
+/// because it can still hold a tab. The sixth field is the session's bell counter,
+/// the seventh whether this window's bells reach the hook: tmux's own verdict on what
+/// `list` can't see from outside (§4.8).
+pub(super) fn listing_window_format() -> String {
+    format!(
+        "#{{session_id}}\t#{{window_id}}\t#{{window_index}}\t#{{window_active}}\t#{{window_activity}}\t\
+         #{{e|+:#{{@tether-bell}},0}}\t\
+         #{{&&:#{{&&:{BELL_OURS},#{{monitor-bell}}}},#{{==:#{{bell-action}},any}}}}\t\
+         #{{session_name}}\t#{{s/\n/\\\\n/:window_name}}"
+    )
+}
 
 /// The server line, then a line per window, sessions in order (`command::oneshot`).
 /// Every line is a record; one that doesn't parse makes the whole reply bad.
@@ -91,8 +110,17 @@ pub(super) fn listing(stdout: &[u8]) -> Option<Listing> {
         sessions: Vec::new(),
     };
     for line in lines {
-        let [session, window, index, active, activity, session_name, name] =
-            line.splitn(7, '\t').collect::<Vec<_>>()[..]
+        let [
+            session,
+            window,
+            index,
+            active,
+            activity,
+            mark,
+            covered,
+            session_name,
+            name,
+        ] = line.splitn(9, '\t').collect::<Vec<_>>()[..]
         else {
             return None;
         };
@@ -104,11 +132,20 @@ pub(super) fn listing(stdout: &[u8]) -> Option<Listing> {
             active: active == "1",
             activity: activity.parse().ok()?,
         };
+        let covered = covered == "1";
         match listing.sessions.last_mut() {
-            Some(last) if last.id == session => last.windows.push(window),
+            Some(last) if last.id == session => {
+                last.bell.covered &= covered;
+                last.windows.push(window);
+            }
             _ => listing.sessions.push(ListedSession {
                 id: session,
                 name: session_name.to_owned(),
+                // The arithmetic leaves a number, or nothing for text a user set.
+                bell: Bell {
+                    mark: mark.parse().unwrap_or(0),
+                    covered,
+                },
                 windows: vec![window],
             }),
         }

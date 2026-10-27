@@ -40,6 +40,8 @@ fn declarations(config: &Config) -> Vec<(TypeId, String)> {
         declare::<WatchEndReason>(config),
         declare::<TmuxListing>(config),
         declare::<SessionListing>(config),
+        declare::<BellState>(config),
+        declare::<BellChange>(config),
         declare::<WindowListing>(config),
         declare::<ErrorCode>(config),
         declare::<ErrorNode>(config),

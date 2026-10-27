@@ -6,7 +6,7 @@ import { ListingFetcher, type ListingEvent } from "./listing";
 const listing = (server: string, ids: number[]): TmuxListing => ({
   server,
   version: "3.4",
-  sessions: [{ id: 1, name: "s", windows: ids.map((id) => ({ id, index: id, name: "w", active: false, activity: 0 })) }],
+  sessions: [{ id: 1, name: "s", bell: { mark: 0, covered: true }, windows: ids.map((id) => ({ id, index: id, name: "w", active: false, activity: 0 })) }],
 });
 
 beforeEach(() => { vi.useFakeTimers(); });

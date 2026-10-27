@@ -15,6 +15,7 @@ use crate::blocking::Lane;
 use crate::proto::{self, ClientMsg, Encoded};
 use crate::tmux::{Endpoint, Reply, Tag, TmuxError};
 
+mod bell;
 mod credit;
 mod names;
 mod outbox;
@@ -31,6 +32,8 @@ pub use state::{Effect, Input, State};
 
 /// Watches per connection; a watch past it ends at once.
 pub const MAX_WATCHES: usize = 2;
+/// The bell poll runs this long after the last listing answer (§4.8).
+pub const BELL_POLL: Duration = Duration::from_secs(5);
 /// How long a control client stays attached once it owns no watched window.
 pub const LINGER: Duration = Duration::from_secs(15);
 /// User requests are refused with `busy` once a control client has this many groups

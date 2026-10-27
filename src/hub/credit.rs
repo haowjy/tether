@@ -80,10 +80,13 @@ impl State {
             .flat_map(|client| client.pending.values())
             .filter(|work| matches!(work, Work::History { conn: of, .. } if *of == conn))
             .count();
-        let listing =
-            matches!(self.oneshot, Some((_, OneShotWork::List { conn: of, .. })) if of == conn);
-        (snapshots + histories) as u64 * CAPTURE_RESERVATION
-            + if listing { LISTING_RESERVATION } else { 0 }
+        let listings = match &self.oneshot {
+            Some((_, OneShotWork::List { waiters })) => {
+                waiters.iter().filter(|(of, _)| *of == conn).count()
+            }
+            _ => 0,
+        };
+        (snapshots + histories) as u64 * CAPTURE_RESERVATION + listings as u64 * LISTING_RESERVATION
     }
 
     pub(super) fn send(&mut self, conn: ConnId, msg: &ServerMsg, ends: Option<u32>) {

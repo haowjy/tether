@@ -12,7 +12,7 @@ use crate::tmux::ClientId;
 
 impl State {
     /// When `handle(Input::Tick, …)` is next due: a control client's timer (`due`), or
-    /// a starved watch's snapshot spacing. `None`: nothing is waiting on time. A
+    /// a starved watch's snapshot spacing, or the next bell poll. `None`: nothing is waiting on time. A
     /// deadline is reported until an input comes at or after it, which handles it, so
     /// one that can't be acted on then (no credit, no capture slot) can't spin.
     pub fn next_deadline(&self) -> Option<Instant> {
@@ -26,6 +26,7 @@ impl State {
         self.due()
             .map(|(at, ..)| at)
             .chain(spacing)
+            .chain(self.bell.due)
             .filter(|at| *at > self.now)
             .min()
     }

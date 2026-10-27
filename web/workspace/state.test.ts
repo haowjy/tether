@@ -17,7 +17,7 @@ const listing = (server: string, ids: number[]): TmuxListing => ({
   sessions: ids.map((id) => ({
     id,
     name: "s",
-    windows: [{ id: id * 10, index: 0, name: `w${String(id)}`, active: true, activity: 0 }],
+    bell: { mark: 0, covered: true }, windows: [{ id: id * 10, index: 0, name: `w${String(id)}`, active: true, activity: 0 }],
   })),
 });
 const saved = (ids: number[], active: number): SavedWorkspace => ({
