@@ -16,6 +16,7 @@ import type {
   Lifecycle,
   Platform,
   PlatformEvent,
+  Preferences,
   SavedWorkspace,
   TabKey,
   UpdateState,
@@ -74,6 +75,7 @@ export const PAGE_ORIGIN = "https://pop-os.tail.ts.net";
 export interface TestPlatformOptions {
   viewport?: Viewport;
   lifecycle?: Lifecycle;
+  preferences?: Preferences;
   workspace?: SavedWorkspace | null;
   /** `pageOrigin: null` stands in for a token-admitted host. */
   hosts?: HostEntry[];
@@ -207,6 +209,8 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
   const daemon = defaultDaemon();
   const listeners = new Set<(event: PlatformEvent) => void>();
   let viewport = options.viewport ?? DESKTOP;
+  const systemScheme = viewport.scheme;
+  let preferences: Preferences = options.preferences ?? { appearance: "system", textSize: "default" };
   let lifecycle = options.lifecycle ?? { visible: true, online: true, locked: false, covered: false };
   const hosts = options.hosts ?? [{ handle: "h1", hostId: null, name: null, pageOrigin: PAGE_ORIGIN }];
 
@@ -225,7 +229,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     drafts: new Map(),
     installed: false,
 
-    boot: (): Promise<BootResult> => Promise.resolve({ hosts, workspace: options.workspace ?? null, viewport, lifecycle, focusMode: null, lineSnapshot: null }),
+    boot: (): Promise<BootResult> => Promise.resolve({ hosts, workspace: options.workspace ?? null, viewport, preferences, lifecycle, focusMode: null, lineSnapshot: null }),
     subscribe(listener) {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
@@ -236,6 +240,12 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     setViewport(patch) {
       viewport = { ...viewport, ...patch };
       platform.emit({ type: "viewport", viewport });
+    },
+    setPreference(name, value) {
+      preferences = { ...preferences, [name]: value };
+      platform.emit({ type: "preferences", preferences });
+      // As the browser does: a chosen appearance is the scheme, "system" is what the system says.
+      if (name === "appearance") platform.setViewport({ scheme: preferences.appearance === "system" ? systemScheme : preferences.appearance });
     },
     setLifecycle(patch) {
       lifecycle = { ...lifecycle, ...patch };

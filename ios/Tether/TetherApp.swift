@@ -9,7 +9,6 @@ struct TetherApp: App {
     var body: some Scene {
         WindowGroup {
             TetherRootView(model: model)
-                .preferredColorScheme(nil)
                 .onChange(of: scenePhase, initial: true) { _, phase in model.sceneChanged(phase) }
                 .onOpenURL { model.openAddServerURL($0) }
         }

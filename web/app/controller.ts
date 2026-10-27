@@ -6,7 +6,7 @@
 // through `useApp()`.
 import { HostRegistry, type HostClient } from "../net/hosts";
 import { SessionsCache } from "../sessions/cache";
-import { samePlace, type BootResult, type FilesPlace, type Lifecycle, type Platform, type UpdateState, type Viewport } from "../platform/types";
+import { samePlace, type BootResult, type FilesPlace, type Lifecycle, type Platform, type Preferences, type UpdateState, type Viewport } from "../platform/types";
 import { Store } from "../ui/store";
 import { parseSavedWorkspace } from "../workspace/saved";
 import { activeTab, initialWorkspace, reduce, savedTabs, screenOf, type Route, type Screen, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
@@ -22,6 +22,7 @@ const NOTICE_MS = 5_000;
 const UPDATE_CHECK_EVERY_MS = 60 * 60_000;
 export interface AppView {
   viewport: Viewport;
+  preferences: Preferences;
   lifecycle: Lifecycle;
   workspace: WorkspaceState;
   /** The history entry on screen. */
@@ -40,6 +41,8 @@ export interface AppView {
 export interface StartOptions {
   /** Puts a viewport where CSS reads it, before the app renders it: the page passes `applyViewport`, vitest has no document. */
   applyViewport?: (viewport: Viewport) => void;
+  /** Puts the preferences where CSS reads them (the text size), likewise. */
+  applyPreferences?: (preferences: Preferences) => void;
   /** Fake the daemon's HTTP: the harness passes the test platform's. */
   fetchFn?: typeof fetch;
   /** The harness and tests stand in for `window.history`. */
@@ -70,6 +73,7 @@ export class AppController extends Store<AppView> {
   }
 
   private readonly applyViewport: (viewport: Viewport) => void;
+  private readonly applyPreferences: (preferences: Preferences) => void;
 
   /** A setup link's unspent enrolment code: kept for the life of the page and dropped only when this page's own enrolment spends it. The enrolment screen prefills with it and waits for a tap. Read-only outside `enrolled`. */
   enrolCode: string | null;
@@ -86,6 +90,7 @@ export class AppController extends Store<AppView> {
     const router = new Router(history, () => this.snapshot.workspace.active);
     super({
       viewport: boot.viewport,
+      preferences: boot.preferences,
       lifecycle: boot.lifecycle,
       workspace: initialWorkspace,
       entry: router.entry,
@@ -100,6 +105,7 @@ export class AppController extends Store<AppView> {
     this.linkHandoffPending = enrolCode !== null;
     this.linkOfferPending = enrolCode !== null;
     this.applyViewport = options.applyViewport ?? (() => undefined);
+    this.applyPreferences = options.applyPreferences ?? (() => undefined);
     const initialOwner = boot.viewport.directInput === "native" && (boot.focusMode === "line" || boot.focusMode === "terminal")
       ? boot.focusMode
       : "none";
@@ -121,6 +127,7 @@ export class AppController extends Store<AppView> {
     this.sessions = new SessionsCache();
 
     this.applyViewport(boot.viewport);
+    this.applyPreferences(boot.preferences);
     this.hosts.subscribe(() => { this.hostsChanged(); });
     this.hosts.setLifecycle(boot.lifecycle);
     // A browser host's name is unknown until `/auth/info` answers; an offline launch names it from the last save.
@@ -321,6 +328,10 @@ export class AppController extends Store<AppView> {
         this.focus.viewportChanged(this.snapshot.viewport, event.viewport);
         this.applyViewport(event.viewport);
         this.update({ viewport: event.viewport });
+        break;
+      case "preferences":
+        this.applyPreferences(event.preferences);
+        this.update({ preferences: event.preferences });
         break;
       case "lifecycle":
         if (!event.lifecycle.visible) this.persist.persistNow();

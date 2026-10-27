@@ -1,7 +1,7 @@
 import Foundation
 
 public enum BridgeContract {
-    public static let version = 6
+    public static let version = 7
 }
 
 public struct SafeArea: Codable, Equatable, Sendable {
@@ -52,6 +52,61 @@ public struct Viewport: Codable, Equatable, Sendable {
         self.keyboardInset = keyboardInset
         self.safeArea = safeArea
         self.keyboard = keyboard
+    }
+}
+
+public enum Appearance: String, Codable, Equatable, Sendable {
+    case system, light, dark
+}
+
+public enum TextSize: String, Codable, Equatable, Sendable {
+    case small, `default`, large, larger
+}
+
+/// How long the app may stay in the background before Face ID asks again (auth.md, "When the app asks for Face ID").
+public enum Relock: String, Codable, Equatable, Sendable {
+    case fiveMinutes = "5min"
+    case oneHour = "1hour"
+    case launch
+
+    /// nil: no time-based relock, the app unlocks once per launch.
+    public var backgroundDelay: TimeInterval? {
+        switch self {
+        case .fiveMinutes: 5 * 60
+        case .oneHour: 60 * 60
+        case .launch: nil
+        }
+    }
+}
+
+/// What the user chose. Native keeps these (UserDefaults) and applies them; the web only shows and asks to change them.
+public struct Preferences: Codable, Equatable, Sendable {
+    public var appearance: Appearance
+    public var textSize: TextSize
+    public var relock: Relock
+
+    public static let standard = Preferences(appearance: .system, textSize: .default, relock: .oneHour)
+
+    public init(appearance: Appearance, textSize: TextSize, relock: Relock) {
+        self.appearance = appearance
+        self.textSize = textSize
+        self.relock = relock
+    }
+
+    /// `setPreference { name, value }`: one choice from the web. An unknown name or value is a malformed request.
+    public mutating func set(_ name: String, to value: JSONValue) throws {
+        guard case .string(let raw) = value else { throw BridgeError.malformed }
+        switch name {
+        case "appearance": appearance = try Self.choice(raw)
+        case "textSize": textSize = try Self.choice(raw)
+        case "relock": relock = try Self.choice(raw)
+        default: throw BridgeError.malformed
+        }
+    }
+
+    private static func choice<T: RawRepresentable>(_ raw: String) throws -> T where T.RawValue == String {
+        guard let value = T(rawValue: raw) else { throw BridgeError.malformed }
+        return value
     }
 }
 
@@ -162,21 +217,23 @@ public struct Boot: Codable, Equatable, Sendable {
     /// The saved workspace exactly as the web wrote it: native never reads its fields, so a newer web build's version round-trips.
     public var workspace: JSONValue?
     public var viewport: Viewport
+    public var preferences: Preferences
     public var lifecycle: Lifecycle
     public var focusMode: FocusMode
     public var lineSnapshot: NativeLineSnapshot?
 
-    public init(bridgeVersion: Int = BridgeContract.version, hosts: [PlatformHost], workspace: JSONValue?, viewport: Viewport, lifecycle: Lifecycle, focusMode: FocusMode, lineSnapshot: NativeLineSnapshot? = nil) {
+    public init(bridgeVersion: Int = BridgeContract.version, hosts: [PlatformHost], workspace: JSONValue?, viewport: Viewport, preferences: Preferences, lifecycle: Lifecycle, focusMode: FocusMode, lineSnapshot: NativeLineSnapshot? = nil) {
         self.bridgeVersion = bridgeVersion
         self.hosts = hosts
         self.workspace = workspace
         self.viewport = viewport
+        self.preferences = preferences
         self.lifecycle = lifecycle
         self.focusMode = focusMode
         self.lineSnapshot = lineSnapshot
     }
 
-    private enum CodingKeys: String, CodingKey { case bridgeVersion, hosts, workspace, viewport, lifecycle, focusMode, lineSnapshot }
+    private enum CodingKeys: String, CodingKey { case bridgeVersion, hosts, workspace, viewport, preferences, lifecycle, focusMode, lineSnapshot }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -184,6 +241,7 @@ public struct Boot: Codable, Equatable, Sendable {
         try container.encode(hosts, forKey: .hosts)
         if let workspace { try container.encode(workspace, forKey: .workspace) } else { try container.encodeNil(forKey: .workspace) }
         try container.encode(viewport, forKey: .viewport)
+        try container.encode(preferences, forKey: .preferences)
         try container.encode(lifecycle, forKey: .lifecycle)
         try container.encode(focusMode, forKey: .focusMode)
         if let lineSnapshot { try container.encode(lineSnapshot, forKey: .lineSnapshot) } else { try container.encodeNil(forKey: .lineSnapshot) }

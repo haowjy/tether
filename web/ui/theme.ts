@@ -1,4 +1,4 @@
-import type { Viewport } from "../platform/types";
+import type { Preferences, Viewport } from "../platform/types";
 import type { TerminalTheme } from "../term";
 
 const ANSI = [
@@ -75,4 +75,10 @@ export function applyViewport(viewport: Viewport): void {
   }
   const inset = `${String(viewport.keyboardInset)}px`;
   if (root.style.getPropertyValue("--keyboard-inset") !== inset) root.style.setProperty("--keyboard-inset", inset);
+}
+
+/** Puts the text size where CSS reads it (`--term-text-delta`); the terminal re-fonts when the preference changes. */
+export function applyPreferences(preferences: Preferences): void {
+  const root = document.documentElement;
+  if (root.dataset["textSize"] !== preferences.textSize) root.dataset["textSize"] = preferences.textSize;
 }

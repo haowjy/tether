@@ -1,0 +1,15 @@
+.group { display: flex; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-bg-raised); overflow: hidden; }
+.option {
+  flex: 1 1 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  min-height: var(--size-target);
+  padding: 0 var(--space-2);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  transition: background var(--duration-1) var(--ease-out);
+}
+.option + .option { border-left: 1px solid var(--color-border); }
+.option:hover { background: var(--color-bg-hover); color: var(--color-text); }
+.selected, .selected:hover { background: var(--color-bg-selected); color: var(--color-text); font-weight: var(--weight-medium); }

@@ -28,10 +28,12 @@ struct AddHostRequest: Identifiable {
 
 @MainActor
 final class TetherAppModel: ObservableObject {
-    private static let backgroundLockDelay: TimeInterval = 5 * 60
+    private static let preferencesKey = "tether.preferences"
 
     @Published private(set) var hosts: [HostEntry]
     @Published private(set) var isLocked: Bool
+    /// The user's choices. Native owns them: appearance and relock are applied here, the web only shows and asks.
+    private(set) var preferences: Preferences
     @Published private(set) var pendingAddRequest: AddHostRequest?
     @Published var showingServers = false
     @Published var errorMessage: String?
@@ -64,6 +66,7 @@ final class TetherAppModel: ObservableObject {
     private let pathMonitor = NWPathMonitor()
 
     init() {
+        preferences = defaults.data(forKey: Self.preferencesKey).flatMap { try? JSONDecoder().decode(Preferences.self, from: $0) } ?? .standard
         let storedHosts = hostStore.load()
         hosts = storedHosts
         let expectsTokenItem = defaults.object(forKey: expectedTokenItemKey) as? Bool ?? !storedHosts.isEmpty
@@ -97,7 +100,17 @@ final class TetherAppModel: ObservableObject {
     }
 
     func boot(viewport: Viewport, focusMode: FocusMode, lineSnapshot: NativeLineSnapshot?) -> Boot {
-        Boot(hosts: platformHosts, workspace: loadWorkspace(), viewport: viewport, lifecycle: lifecycle, focusMode: focusMode, lineSnapshot: lineSnapshot)
+        Boot(hosts: platformHosts, workspace: loadWorkspace(), viewport: viewport, preferences: preferences, lifecycle: lifecycle, focusMode: focusMode, lineSnapshot: lineSnapshot)
+    }
+
+    /// One choice from the web's Settings. The reply is every preference, so the web shows what native holds.
+    func setPreference(_ name: String, to value: JSONValue) throws -> Preferences {
+        var next = preferences
+        try next.set(name, to: value)
+        preferences = next
+        defaults.set(try? JSONEncoder().encode(next), forKey: Self.preferencesKey)
+        shell?.applyAppearance(next.appearance)
+        return next
     }
 
     var platformHosts: [PlatformHost] { hosts.map(\.platformHost) }
@@ -289,7 +302,8 @@ final class TetherAppModel: ObservableObject {
             let elapsed = backgroundEnteredAt.map { Date().timeIntervalSince($0) } ?? 0
             backgroundEnteredAt = nil
             endBackgroundTask()
-            if backgroundHadTokens && elapsed > Self.backgroundLockDelay {
+            // The timed check runs first on foreground, against when the app went to the background; At launch has no delay, so it never relocks here.
+            if backgroundHadTokens, let delay = preferences.relock.backgroundDelay, elapsed > delay {
                 lockApp()
                 shouldAutoUnlock = true
             }

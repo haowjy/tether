@@ -47,6 +47,20 @@ export interface Viewport {
   keyboard: boolean;
 }
 
+export type Appearance = "system" | "light" | "dark";
+/** Steps around today's defaults (12 px touch, 13 px compact): one px smaller, then 2 and 4 px larger. */
+export type TextSize = "small" | "default" | "large" | "larger";
+/** How long the app may sit in the background before Face ID asks again; `launch` unlocks once per launch. */
+export type Relock = "5min" | "1hour" | "launch";
+
+/** What the user chose, kept by the platform (the browser's storage, the app's defaults). */
+export interface Preferences {
+  appearance: Appearance;
+  textSize: TextSize;
+  /** Only the app locks. */
+  relock?: Relock;
+}
+
 /** Browser: never locked. */
 export interface Lifecycle {
   visible: boolean;
@@ -186,6 +200,7 @@ export interface BootResult {
   /** As stored, possibly by an older build: `workspace/saved.ts` parses it. */
   workspace: unknown;
   viewport: Viewport;
+  preferences: Preferences;
   lifecycle: Lifecycle;
   /** Native's focus target, retained if the web content process had to restart. */
   focusMode: FocusMode | null;
@@ -198,6 +213,7 @@ export type PlatformEvent =
   | { type: "hosts"; hosts: HostEntry[] }
   | { type: "viewport"; viewport: Viewport }
   | { type: "lifecycle"; lifecycle: Lifecycle }
+  | { type: "preferences"; preferences: Preferences }
   | { type: "input"; tab: TabKey; events: InputEvent[] }
   | { type: "lineEdit"; gen: number; text: string; tab: TabKey; selection: TextRange; marked: TextRange | null }
   | { type: "lineReturn"; gen: number; text: string; tab: TabKey }
@@ -210,6 +226,8 @@ export interface Platform {
   boot(): Promise<BootResult>;
   subscribe(listener: (event: PlatformEvent) => void): Unsubscribe;
   transport: Transport;
+  /** Changes one preference; the platform applies it and answers with a `preferences` event (and a `viewport` event when the scheme changed). */
+  setPreference<K extends keyof Preferences>(name: K, value: Preferences[K]): void;
   input: InputPlatform;
   storage: PlatformStorage;
   uploads: Uploads;

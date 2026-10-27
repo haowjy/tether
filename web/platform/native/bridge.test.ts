@@ -43,6 +43,7 @@ const calls: Record<string, (b: Bridge, m: Fixture["message"]) => unknown> = {
   haptic: (b, m) => { b.haptic(m["kind"] as string); },
   pickMedia: (b, m) => { b.pickMedia(m["id"] as string, m["host"] as string); },
   playVideo: (b, m) => { b.playVideo(m["host"] as string, m["path"] as string); },
+  setPreference: (b, m) => b.setPreference(m["name"] as "appearance", m["value"] as never),
   manageHosts: (b) => { b.manageHosts(); },
   openURL: (b, m) => { b.openURL(m["url"] as string); },
 };

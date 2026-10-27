@@ -3,6 +3,7 @@
 import { createBrowserStorage } from "./storage";
 import { createBrowserTransport } from "./transport";
 import { createBrowserUploads } from "./uploads";
+import { createBrowserPreferences } from "./preferences";
 import { createBrowserViewport } from "./viewport";
 import { readLifecycle, watchLifecycle } from "./lifecycle";
 import { clipboard } from "./clipboard";
@@ -16,7 +17,8 @@ export function createBrowserPlatform(): Platform {
   const emit = (event: PlatformEvent): void => {
     for (const l of [...listeners]) l(event);
   };
-  const viewport = createBrowserViewport();
+  const preferences = createBrowserPreferences();
+  const viewport = createBrowserViewport(() => preferences.read().appearance);
   const storage = createBrowserStorage();
   let started = false;
   const start = (): void => {
@@ -35,6 +37,7 @@ export function createBrowserPlatform(): Platform {
         hosts: [{ handle: "browser", hostId: null, name: null, pageOrigin: location.origin }],
         workspace,
         viewport: viewport.read(),
+        preferences: preferences.read(),
         lifecycle: readLifecycle(),
         focusMode: null,
         lineSnapshot: null,
@@ -45,6 +48,11 @@ export function createBrowserPlatform(): Platform {
       return () => { listeners.delete(listener); };
     },
     transport: createBrowserTransport(),
+    setPreference(name, value) {
+      preferences.set(name, value);
+      emit({ type: "preferences", preferences: preferences.read() });
+      viewport.check();
+    },
     // app/focus.ts already moved DOM focus in the same dispatch; there is no native side.
     input: {
       setFocus: () => undefined,

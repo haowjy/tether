@@ -1,17 +1,17 @@
 /* Tier 1: raw values. Nothing here changes with theme or density, and screens and
    components never read the colour scales: colour goes through semantic.css. */
 :root {
-  /* Slightly blue-tinted neutral, light to dark. */
+  /* Light values are slightly blue-tinted; the dark ones (5, 9 to 12) are neutral. */
   --gray-0: oklch(0.985 0.004 262);
   --gray-1: oklch(0.96 0.006 262);
   --gray-2: oklch(0.93 0.008 262);
   --gray-3: oklch(0.89 0.01 262);
-  --gray-5: oklch(0.74 0.014 262);
+  --gray-5: oklch(0.74 0 0);
   --gray-8: oklch(0.45 0.02 262);
-  --gray-9: oklch(0.36 0.022 263);
-  --gray-10: oklch(0.29 0.022 264);
-  --gray-11: oklch(0.23 0.02 265);
-  --gray-12: oklch(0.18 0.016 266);
+  --gray-9: oklch(0.36 0 0);
+  --gray-10: oklch(0.29 0 0);
+  --gray-11: oklch(0.23 0 0);
+  --gray-12: oklch(0.18 0 0);
 
   --green-7: oklch(0.46 0.14 152);
   --green-9: oklch(0.78 0.15 152);

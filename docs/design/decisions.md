@@ -3798,3 +3798,42 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
     of them as the one fake daemon, so a second server's sessions matched the first's tabs.
 - **Budget:** initial JS 198 to 199 KB (198.1 measured).
 - **Rejected:** a Home-only `waiting` rule; clearing by closing the open tabs.
+
+## Slice 5: preferences (appearance, text size) and the Face ID relock
+
+- **Decided:** 2026-10-27, tech lead (slice 5).
+- **What:**
+  - The platform keeps the preferences: `BootResult.preferences` at start, `Platform.setPreference(name,
+    value)` to change one, and a `preferences` event on the one change channel carrying the whole value.
+    `relock` is present only where the app locks (native), so the browser's Settings shows no Face ID row.
+    (The plan's `preferences.get/set/subscribe` became these three because the platform already has one
+    `boot` and one `subscribe`; a second subscribe would be a second channel.)
+  - Browser: `localStorage`, read once at start and parsed (it can throw or hold anything; a failure falls
+    back to the defaults and a failed write keeps the choice for the page). The chosen appearance folds with
+    `prefers-color-scheme` into `Viewport.scheme`, so the theme keeps one input; `html[data-scheme]` is always
+    set, so the pre-script flash with a chosen scheme that differs from the system's is one frame.
+  - Native: Swift owns the preferences (`UserDefaults`), sets the window's `overrideUserInterfaceStyle`
+    from `viewWillAppear` (before the web loads), and reports the effective scheme in `Viewport.scheme`
+    (a trait change now publishes it). The relock choice is the delay in `sceneChanged(.active)`; At launch has
+    none. The default relock is 1 hour (it was a fixed 5 minutes). Bridge v7: `preferences` in `Boot` and a web to
+    native `setPreference { name, value }` whose reply is every preference. Native never changes a
+    preference by itself, so there is no native to web change event.
+  - Text size is `small | default | large | larger` = the density's size - 1, +0, +2, +4 px (`--term-text-delta`
+    on top of 12 px touch and 13 px compact). Whole-pixel steps keep xterm's cell measure on integers, and 1 px
+    is the least a reader sees. The terminal re-fonts on the preference's change; Settings opens over Home, where no window is shown, so the new fit is sent with the next show's one resize (verified: nothing is sent while on Home, and tmux's width follows the size on return).
+  - Dark: the terminal background is `#000`; the dark greys, the terminal's foreground, cursor, selection and grey
+    ANSI colours have no hue (the light greys stay slightly blue); the PWA theme colour is `#101010`.
+  - `Choice` (a radio group of buttons) is the primitive for a few settings visible at once.
+- **Budget:** initial JS 199 to 200 KB (199.1 measured): the two Settings sections and the preferences owner are launch code.
+- **Rejected:** the web owning the preferences and pushing them to native (two stores disagree at boot, and
+  native must apply appearance and relock before or without the web).
+
+## Slice 4 re-check notes (commit before slice 5)
+
+- **Decided:** 2026-10-27, tech lead (from p352).
+- **What:** a listing overlay lists only the hosts it shows (a server's sheet, its host; the picker, all), and
+  returning from an overlay to Home is not entering. Clear local data resets the drafts' memory through a clearer
+  that `LineDrafts` registers with `Persist`, as it does a flusher. Home owns its hosts' notices: Shell renders no
+  host banner on Home and each card renders its host's banner (the unreachable host's card has its own note and
+  Retry instead), so the card's attention body no longer points at "the notice above". `Pill` carries `host` and `kind`.
+- **Rejected:** a Shell filter that hides banners by admission kind on Home.

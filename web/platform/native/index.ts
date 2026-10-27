@@ -42,6 +42,10 @@ export function createNativePlatform(post: Post = webkitPost): Platform {
       return () => { listeners.delete(listener); };
     },
     transport: createNativeTransport(bridge),
+    setPreference(name, value) {
+      // A refusal leaves the preferences as they were: nothing to tell the page.
+      bridge.setPreference(name, value).then((preferences) => { emit({ type: "preferences", preferences }); }, () => undefined);
+    },
     input: {
       setFocus: (mode) => { bridge.setFocus(mode); },
       setLine: (text, caret, tab) => bridge.setLine(text, caret, tab),

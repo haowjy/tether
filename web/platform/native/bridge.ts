@@ -1,16 +1,17 @@
 // The only place the web UI talks to native (ios-shell.md "The bridge"). One method per
 // web → native request, each returning what native replies; `parseEvent` checks what native
 // sends. The shapes are pinned against ios/TetherKit/Tests/Fixtures/bridge/ by bridge.test.ts.
-import type { DraftRecord, FocusMode, HostEntry, InputEvent, Lifecycle, NativeLineSnapshot, SavedWorkspace, TabKey, TextRange, Viewport } from "../types";
+import type { DraftRecord, FocusMode, HostEntry, InputEvent, Lifecycle, NativeLineSnapshot, Preferences, SavedWorkspace, TabKey, TextRange, Viewport } from "../types";
 
 /** Bumped with every incompatible change here and in ios/TetherKit/.../Bridge.swift. */
-export const BRIDGE_VERSION = 6;
+export const BRIDGE_VERSION = 7;
 
 export interface Boot {
   bridgeVersion: number;
   hosts: HostEntry[];
   workspace: unknown;
   viewport: Viewport;
+  preferences: Preferences;
   lifecycle: Lifecycle;
   focusMode: FocusMode;
   lineSnapshot: NativeLineSnapshot | null;
@@ -203,6 +204,11 @@ export class Bridge {
 
   playVideo(host: string, path: string): void {
     this.fire({ type: "playVideo", host, path });
+  }
+
+  /** Native keeps the choice, applies it (appearance to its own chrome, relock to its lock) and answers with every preference. */
+  setPreference<K extends keyof Preferences>(name: K, value: Preferences[K]): Promise<Preferences> {
+    return this.post({ type: "setPreference", name, value }) as Promise<Preferences>;
   }
 
   manageHosts(): void {

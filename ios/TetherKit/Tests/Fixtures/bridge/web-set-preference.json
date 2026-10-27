@@ -1,0 +1,13 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "setPreference",
+    "name": "relock",
+    "value": "5min"
+  },
+  "reply": {
+    "appearance": "dark",
+    "textSize": "large",
+    "relock": "5min"
+  }
+}

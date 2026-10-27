@@ -5,7 +5,7 @@
 > UI rules below. Subsystem invariants remain in force; touch, clipboard and the phone
 > dock retain explicit device gates.
 
-The native shell and web adapter implement bridge v6; the device-only checks below still
+The native shell and web adapter implement bridge v7; the device-only checks below still
 need Jimmy's iPhone.
 
 tether's phone client is a Swift app: a `WKWebView` runs the web UI (terminal, tabs,
@@ -457,7 +457,7 @@ triggers it when the bridge request arrives.
 
 ## The bridge
 
-Bridge version 6 has one `tether` message handler
+Bridge version 7 has one `tether` message handler
 (`WKScriptMessageHandlerWithReply`) and a page entry point, invoked in the page
 content world: `window.__tether.receive(messages)` accepts an array of native events.
 The native shell does not query page state; web sends `activeTab` when selection changes,
@@ -471,7 +471,7 @@ token to native solely for comparison and revocation, never into storage or logs
 
 | Web → native | Reply | Purpose |
 |---|---|---|
-| `ready` | `Boot { bridgeVersion: 6, hosts, workspace, viewport, lifecycle, focusMode, lineSnapshot }` | Start and restore the saved workspace (opaque JSON) and native keyboard target/editing copy if WebKit's content process restarted |
+| `ready` | `Boot { bridgeVersion: 7, hosts, workspace, viewport, preferences, lifecycle, focusMode, lineSnapshot }` | Start and restore the saved workspace (opaque JSON) and native keyboard target/editing copy if WebKit's content process restarted |
 | `socket { host }` | `{ url, token }`, `{ locked: true }` or `{ notEnrolled: true }` | Resolve the WebSocket endpoint and credential inside `HostLink`; keep both there except echoing the exact refused token to native for `hostRejected` |
 | `hostRejected { host, token }` | `null` | Clear that exact rejected token only, then re-publish `hosts` |
 | `recreateWebView` | `null` | Discard/reload the page after unrecoverable WebSocket connection failure |
@@ -494,6 +494,7 @@ token to native solely for comparison and revocation, never into storage or logs
 | `haptic { kind }` | `null` | `key`, `modifier`, `rigid`, `selection` or the ^C/^D `warning` |
 | `pickMedia { id, host }` | `null` | Present the native media action sheet, then upload the pick to `host` under the web-chosen `id`. Needs no open tab |
 | `playVideo { host, path }` | `null` | Play an authenticated `/fs/raw` resource |
+| `setPreference { name, value }` | Every `Preferences` | Native keeps the choice (`appearance`, `textSize` or `relock`), applies it, and answers with all three; an unknown name or value is a refused request. The web shows the reply. Only the web's Settings changes a preference, so native sends no change event |
 | `manageHosts` | `null` | Present the native server management sheet from the web's Home/Settings entry |
 | `openURL { url }` | `null` | Open only `http`, `https` or `mailto` externally |
 | `ack { id }` | `null` | Optional latency-measurement acknowledgement |
@@ -515,6 +516,17 @@ event reports unlocked; `{ notEnrolled: true }` is a token refusal for that host
 browser enrolment flow. User-initiated `copy` is not the server OSC 52 path and is never
 gated here. The exact per-message rules and lane gaps are in the P4b handoff artifact.
 
+### Preferences
+
+Native owns the preferences (`UserDefaults`, defaults System, Default, 1 hour) and the web
+asks to change one with `setPreference`. Web-owned preferences were rejected: native must
+apply appearance and the relock before the web loads or without it. Appearance is set as
+the window's `overrideUserInterfaceStyle` (System is `unspecified`), so the lock screen, the
+server sheet, the keyboard and the web view agree; the viewport's `scheme` keeps reporting
+the effective scheme (a trait change publishes it, as does a system change under System).
+The relock choice sets the delay `sceneChanged(.active)` compares with the time the app
+entered the background; At launch has no delay. The text size is the web's to apply.
+
 ### Boot and host payloads
 
 ```text
@@ -522,10 +534,13 @@ HostEntry = { id: string, name: string, baseURL: string }
 PlatformHost = { handle: string, hostId: string | null,
                  name: string | null, pageOrigin: string | null }
 TabKey = { host: string, session: { server: string, session: string } }
-Boot = { bridgeVersion: 6, hosts: PlatformHost[],
+Boot = { bridgeVersion: 7, hosts: PlatformHost[],
          workspace: JSON | null, viewport: Viewport,
-         lifecycle: Lifecycle, focusMode: FocusMode,
+         preferences: Preferences, lifecycle: Lifecycle, focusMode: FocusMode,
          lineSnapshot: NativeLineSnapshot | null }
+Preferences = { appearance: "system" | "light" | "dark",
+                textSize: "small" | "default" | "large" | "larger",
+                relock: "5min" | "1hour" | "launch" }
 FocusMode = "hidden" | "terminal" | "line" | "webText" | "select"
 NativeLineSnapshot = { tab: TabKey, gen: number, text: string,
                        selection: TextRange, marked: TextRange | null }
@@ -546,7 +561,7 @@ the resulting draft and native selection state.
   bridge-safe form (`handle` resolves `tether-app://h-{handle}`, `pageOrigin: null`
   means token admission). Never send the base URL or token to JS.
 - A terminal tab is a tmux session, so `TabKey` names the session (server instance and
-  `$N`). Bridge version 6 carries `TabKey` in line, draft and active-tab messages; a Files
+  `$N`). Bridge version 7 carries `TabKey` in line, draft and active-tab messages; a Files
   tab has no `TabKey`, and `activeTab` is `null` while one is active.
 - Native stores the saved workspace as raw JSON under one key and never decodes it (Swift
   has no workspace types), so a newer web build's version round-trips. The web owns
@@ -715,7 +730,9 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 | Selection | With `line` holding the native keyboard, verify whether WebKit's selection handles and Copy work; when they need WebKit, `focus select` must release it and release restores `line` |
 | Keyboard toggle / restore | Toggle raises `terminal` from hidden and closes `terminal` or `line`; system dismissal resets the web owner; selection and sheet close restore the expected mode. Background, native server sheet, 10 s in background, Notification / Control Center, and web-process restart restore `line` as `line` without a new tap. |
 | Geometry | The key row meets the keyboard with no blank band and the box sits above it, in both geometry variants; WebKit does not also scroll for the keyboard; tmux's size changes only on rotation, including a rotation with the keyboard up |
-| Appearance | System follows device changes; explicit Light and Dark survive them and agree in native chrome and web content |
+| Appearance | System follows device changes; explicit Light and Dark survive them and agree in native chrome (lock screen, the server sheet, the keyboard) and web content, including after a relaunch and with the app locked at launch |
+| Text size | Each size resizes the shown tmux window once (`tmux display -p '#{window_width}'` changes with each size) and survives a relaunch |
+| Face ID relock | For each of 5 min, 1 hour and At launch: a background trip shorter than the interval returns with no prompt; one longer asks for Face ID first thing on foreground. At launch never asks on foreground, however long the trip, and asks once after a process restart. Changing the setting takes effect at the next background trip |
 | Predictions / sheet fields | No predictive strip in the native `line` target. Search, rename and Files fields stay WebKit-owned with ordinary keyboard chrome. |
 | Line input | With ctrl armed, a single `c` sends `C-c`, a single `.` returns to the line at the caret, and a QuickType/autocorrection multi-character insert stays in the line and disarms. Dictation into the terminal target, including revisions that arrive after send-and-clear; Chinese/Korean composition and candidate Return (candidate acceptance must not send); spacebar trackpad; `lineEdit` latency per keystroke including held Backspace; 1→5-line growth and internal scroll. |
 | Hardware keys | In `line`, printable keys / ←/→ / Backspace / ⌘V edit; Return sends; Esc returns to terminal, while Tab / ↑/↓ / Ctrl chords reach tmux. Verify terminal target still handles all existing keys, warning haptic on ^C/^D, and held-key repeat stops on release and deactivation. |

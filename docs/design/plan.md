@@ -563,7 +563,8 @@ Portrait gives about 45–50 columns, and Claude Code and Codex wrap badly at th
 width.
 
 - **Pinch to change font size, per tab (MVP).** It changes the column count, so it is
-  one of the deliberate resizes.
+  one of the deliberate resizes. So is the Settings terminal text size (Small to Larger,
+  one setting for every tab), which is the size the pinch will adjust.
 - **Landscape (MVP)** gets the full width.
 - **Pan mode, per tab (v2):** `window-size manual` on that window keeps the laptop's
   size while the phone pans across it.

@@ -1,7 +1,7 @@
 // The browser's Viewport (client-architecture.md §5.4). tmux is sized only from the stable
 // box: the app root, which is `100svh` tall and so does not change when Safari's toolbars
 // collapse or the keyboard opens. `keyboard` is derived, with no timer.
-import type { SafeArea, Viewport } from "../types";
+import type { Appearance, SafeArea, Viewport } from "../types";
 
 /** Layout is `phone` when `min(width, stableHeight)` is under this many CSS px. */
 const PHONE_BELOW = 600;
@@ -27,9 +27,12 @@ export interface BrowserViewport {
   read(): Viewport;
   /** Calls `listener` on every change of any input. Returns the way to stop. */
   watch(listener: (viewport: Viewport) => void): () => void;
+  /** Reads again now: for an input the page changes itself, such as the appearance. */
+  check(): void;
 }
 
-export function createBrowserViewport(): BrowserViewport {
+/** `appearance` is the user's choice; "system" follows `prefers-color-scheme`. */
+export function createBrowserViewport(appearance: () => Appearance): BrowserViewport {
   const probe = createProbe();
   const fine = matchMedia("(pointer: fine) and (hover: hover)");
   const coarse = matchMedia("(pointer: coarse)");
@@ -48,6 +51,7 @@ export function createBrowserViewport(): BrowserViewport {
       bottom: parseFloat(style.paddingBottom) || 0,
       left: parseFloat(style.paddingLeft) || 0,
     };
+    const chosen = appearance();
     const directInput = fine.matches ? "xterm" : "owned";
     // The visual viewport's bottom edge is where the keyboard starts; a pinch zoom shrinks it too, so a zoomed page has no keyboard.
     const typing = textOwnerFocused && directInput === "owned" && (vv?.scale ?? 1) < 1.05;
@@ -56,7 +60,7 @@ export function createBrowserViewport(): BrowserViewport {
       layout: Math.min(width, stableHeight) < PHONE_BELOW ? "phone" : "desktop",
       density: coarse.matches ? "touch" : "compact",
       directInput,
-      scheme: light.matches ? "light" : "dark",
+      scheme: chosen === "system" ? (light.matches ? "light" : "dark") : chosen,
       width,
       stableHeight,
       visibleHeight,
@@ -67,36 +71,42 @@ export function createBrowserViewport(): BrowserViewport {
     };
   };
 
+  let last = "";
+  let listener: ((viewport: Viewport) => void) | null = null;
+  const check = (): void => {
+    const now = read();
+    const key = JSON.stringify(now);
+    if (key === last) return;
+    last = key;
+    listener?.(now);
+  };
+
   return {
     read,
-    watch(listener) {
-      let last = JSON.stringify(read());
-      const changed = (): void => {
-        const now = read();
-        const key = JSON.stringify(now);
-        if (key === last) return;
-        last = key;
-        listener(now);
-      };
+    check,
+    watch(next) {
+      listener = next;
+      last = JSON.stringify(read());
       const focus = (): void => {
         textOwnerFocused = isTextOwner(document.activeElement);
-        changed();
+        check();
       };
-      addEventListener("resize", changed);
-      addEventListener("orientationchange", changed);
+      addEventListener("resize", check);
+      addEventListener("orientationchange", check);
       addEventListener("focusin", focus);
       addEventListener("focusout", focus);
-      visualViewport?.addEventListener("resize", changed);
-      visualViewport?.addEventListener("scroll", changed);
-      for (const query of [fine, coarse, light]) query.addEventListener("change", changed);
+      visualViewport?.addEventListener("resize", check);
+      visualViewport?.addEventListener("scroll", check);
+      for (const query of [fine, coarse, light]) query.addEventListener("change", check);
       return () => {
-        removeEventListener("resize", changed);
-        removeEventListener("orientationchange", changed);
+        listener = null;
+        removeEventListener("resize", check);
+        removeEventListener("orientationchange", check);
         removeEventListener("focusin", focus);
         removeEventListener("focusout", focus);
-        visualViewport?.removeEventListener("resize", changed);
-        visualViewport?.removeEventListener("scroll", changed);
-        for (const query of [fine, coarse, light]) query.removeEventListener("change", changed);
+        visualViewport?.removeEventListener("resize", check);
+        visualViewport?.removeEventListener("scroll", check);
+        for (const query of [fine, coarse, light]) query.removeEventListener("change", check);
       };
     },
   };

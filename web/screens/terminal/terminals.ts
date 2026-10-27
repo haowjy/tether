@@ -7,7 +7,7 @@
 import type { AppController } from "../../app/controller";
 import type { HostClient } from "../../net/hosts";
 import { tabId } from "../../platform/tabKey";
-import type { InputEvent, Viewport } from "../../platform/types";
+import type { InputEvent, TextSize, Viewport } from "../../platform/types";
 import { acceptsInsert, type ConnectionState } from "../../tabs/connection";
 import { TabDriver } from "../../tabs/driver";
 import type { SessionRef, ShownWindow } from "../../proto/generated/messages";
@@ -86,6 +86,7 @@ export class Terminals extends Store<TerminalsView> {
   private readonly drivers = new Map<string, TabDriver>();
   private readonly sizer: TerminalSizer;
   private viewport: Viewport;
+  private textSize: TextSize;
   /** True from the start until the first measurement lands, and briefly after the chrome's inputs change. */
   private chromeWindow = true;
   private registered: HTMLElement | null = null;
@@ -111,6 +112,7 @@ export class Terminals extends Store<TerminalsView> {
   constructor(private readonly app: AppController) {
     super({ tabs: {}, ready: false, scrolled: false, menu: null });
     this.viewport = app.snapshot.viewport;
+    this.textSize = app.snapshot.preferences.textSize;
     this.element.className = styles.host ?? "";
     this.element.dataset["blank"] = "true"; // until the first snapshot: no pretend-live empty terminal
     this.sizer = new TerminalSizer({
@@ -247,7 +249,12 @@ export class Terminals extends Store<TerminalsView> {
   }
 
   private sync(): void {
-    const { viewport, workspace } = this.app.snapshot;
+    const { viewport, workspace, preferences } = this.app.snapshot;
+    // A text size changes the column count: the new fit is measured and sent as one resize.
+    if (preferences.textSize !== this.textSize) {
+      this.textSize = preferences.textSize;
+      this.refont();
+    }
     if (viewport !== this.viewport) {
       const before = this.viewport;
       this.viewport = viewport;

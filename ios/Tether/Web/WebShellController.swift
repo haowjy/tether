@@ -38,6 +38,8 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         view.insetsLayoutMarginsFromSafeArea = false
 
         webView = makeWebView()
+        // A change of the effective appearance (the user's choice, or the system's under System) is a new scheme for the web.
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (self: Self, _) in self.publishViewportIfChanged() }
 
         terminalInput.output = self
         view.addSubview(terminalInput)
@@ -58,6 +60,21 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         focus.set(.hidden)
         model.attach(self)
         loadUI()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Before the web loads: the lock screen, sheets and keyboard take the chosen appearance from the window.
+        applyAppearance(model.preferences.appearance)
+    }
+
+    /// The window's style reaches the lock screen, the sheets, the keyboard and the web view's own scheme.
+    func applyAppearance(_ appearance: Appearance) {
+        view.window?.overrideUserInterfaceStyle = switch appearance {
+        case .system: .unspecified
+        case .light: .light
+        case .dark: .dark
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -309,6 +326,10 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
             case .manageHosts:
                 model.showingServers = true
                 reply(NSNull(), nil)
+            case .setPreference:
+                let name: String = try request.field("name")
+                let value: JSONValue = try request.field("value")
+                reply(try jsonObject(try model.setPreference(name, to: value)), nil)
             case .lineSet:
                 let text: String = try request.field("text")
                 let caret: Int = try request.field("caret")

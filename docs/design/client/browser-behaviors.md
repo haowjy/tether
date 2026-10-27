@@ -36,6 +36,14 @@ between the key row and keyboard. Standalone PWA mode has no Safari toolbar.
 - Settings offers System / Light / Dark on every surface. System follows the system
   appearance; Light and Dark override it. Dark uses a true-black terminal and neutral
   greys rather than blue-tinted terminal surfaces. Native and web appearance agree.
+  The choice is kept by the platform: the browser's local storage (a blocked or empty
+  store falls back to System and the control still works for that page), the app's own
+  preferences, which it applies to its lock screen, sheets and keyboard before the web loads.
+- Settings offers the terminal text size: Small, Default, Large, Larger, which are 1 px
+  under today's size (12 px touch, 13 px compact) and 2 and 4 px over it. Large and Larger
+  fit about a seventh and a quarter fewer columns on a phone; Small gains one in twelve. Settings opens over Home, which
+  shows no window, so the new size takes effect when a tab is next shown: it is fit to this screen
+  at that size, in the one resize every shown tab already sends.
 - Blue is the selection/accent channel; green is reserved for connected status. Selected
   rows use a blue-tinted fill and weight. Connection state is distinct from selection.
 - The phone sheet uses the current theme's raised surface. A toast floats above the dock

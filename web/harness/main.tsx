@@ -6,7 +6,7 @@ import { App } from "../app/App";
 import { AppProvider } from "../app/context";
 import { AppController } from "../app/controller";
 import { createTestPlatform, DESKTOP, PHONE, type TestPlatform } from "../platform/test";
-import { applyViewport, trackInputKind } from "../ui/theme";
+import { applyPreferences, applyViewport, trackInputKind } from "../ui/theme";
 import "../ui/tokens/index.css";
 import { fixtures } from "./index";
 
@@ -35,7 +35,7 @@ const viewport = {
 trackInputKind();
 const platform = createTestPlatform({ viewport, ...fixture.options?.() });
 fixture.daemon?.(platform.daemon);
-const app = await AppController.start(platform, { fetchFn: platform.fetch, applyViewport });
+const app = await AppController.start(platform, { fetchFn: platform.fetch, applyPreferences, applyViewport });
 window.__harness = { platform, app };
 if ((fixture.openActive || params.has("open")) && app.snapshot.workspace.active) app.dispatch({ type: "activated", id: app.snapshot.workspace.active });
 

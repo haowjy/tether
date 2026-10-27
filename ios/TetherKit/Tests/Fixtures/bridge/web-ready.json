@@ -4,7 +4,7 @@
     "type": "ready"
   },
   "reply": {
-    "bridgeVersion": 6,
+    "bridgeVersion": 7,
     "hosts": [
       {
         "handle": "host-01",
@@ -48,6 +48,11 @@
         "left": 0
       },
       "keyboard": false
+    },
+    "preferences": {
+      "appearance": "system",
+      "textSize": "default",
+      "relock": "1hour"
     },
     "lifecycle": {
       "visible": true,

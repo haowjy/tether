@@ -6,7 +6,7 @@
 
   --color-bg: light-dark(var(--gray-1), var(--gray-12));
   --color-bg-raised: light-dark(oklch(1 0 0), var(--gray-11));
-  --color-bg-sunken: light-dark(var(--gray-0), oklch(0.15 0.012 266));
+  --color-bg-sunken: light-dark(var(--gray-0), #000);
   --color-bg-hover: light-dark(var(--gray-2), var(--gray-10));
   --color-bg-selected: light-dark(var(--blue-3), oklch(0.31 0.045 255));
   --color-shadow: oklch(0 0 0 / 0.3);
@@ -47,25 +47,25 @@
 
   /* The terminal's theme (xterm.js), read by ui/theme.ts. */
   --term-bg: var(--color-bg-sunken);
-  --term-fg: light-dark(oklch(0.25 0.01 262), oklch(0.9 0.005 262));
-  --term-cursor: light-dark(oklch(0.45 0.14 245), oklch(0.85 0.09 235));
-  --term-selection: light-dark(oklch(0.5 0.14 245 / 0.22), oklch(0.78 0.11 235 / 0.3));
-  --term-black: light-dark(oklch(0.25 0.01 262), oklch(0.3 0.01 262));
+  --term-fg: light-dark(oklch(0.25 0.01 262), oklch(0.9 0 0));
+  --term-cursor: light-dark(oklch(0.45 0.14 245), oklch(0.9 0 0));
+  --term-selection: light-dark(oklch(0.5 0.14 245 / 0.22), oklch(1 0 0 / 0.25));
+  --term-black: light-dark(oklch(0.25 0.01 262), oklch(0.3 0 0));
   --term-red: light-dark(oklch(0.52 0.19 25), oklch(0.7 0.16 25));
   --term-green: light-dark(oklch(0.5 0.14 145), oklch(0.76 0.14 145));
   --term-yellow: light-dark(oklch(0.55 0.12 75), oklch(0.83 0.13 85));
   --term-blue: light-dark(oklch(0.48 0.15 255), oklch(0.72 0.12 250));
   --term-magenta: light-dark(oklch(0.5 0.17 320), oklch(0.74 0.13 320));
   --term-cyan: light-dark(oklch(0.52 0.1 200), oklch(0.78 0.1 200));
-  --term-white: light-dark(oklch(0.62 0.01 262), oklch(0.86 0.005 262));
-  --term-bright-black: light-dark(oklch(0.48 0.012 262), oklch(0.5 0.012 262));
+  --term-white: light-dark(oklch(0.62 0.01 262), oklch(0.86 0 0));
+  --term-bright-black: light-dark(oklch(0.48 0.012 262), oklch(0.5 0 0));
   --term-bright-red: light-dark(oklch(0.58 0.19 25), oklch(0.77 0.15 25));
   --term-bright-green: light-dark(oklch(0.56 0.14 145), oklch(0.84 0.14 145));
   --term-bright-yellow: light-dark(oklch(0.6 0.12 75), oklch(0.9 0.12 90));
   --term-bright-blue: light-dark(oklch(0.55 0.15 255), oklch(0.8 0.11 250));
   --term-bright-magenta: light-dark(oklch(0.56 0.17 320), oklch(0.82 0.12 320));
   --term-bright-cyan: light-dark(oklch(0.58 0.1 200), oklch(0.86 0.09 200));
-  --term-bright-white: light-dark(oklch(0.35 0.01 262), oklch(0.97 0.003 262));
+  --term-bright-white: light-dark(oklch(0.35 0.01 262), oklch(0.97 0 0));
 }
 
 /* The platform's scheme wins over the system's when it sets one (native follows the app's own appearance). */
@@ -80,6 +80,12 @@
   --text-body: var(--font-size-3);
   --term-font-size: 13px;
 }
+/* The terminal text size preference (platform/types.ts `TextSize`): px around the density's size. */
+:root,
+:root[data-text-size="default"] { --term-text-delta: 0px; }
+:root[data-text-size="small"] { --term-text-delta: -1px; }
+:root[data-text-size="large"] { --term-text-delta: 2px; }
+:root[data-text-size="larger"] { --term-text-delta: 4px; }
 :root[data-density="touch"] {
   --space-gutter: var(--space-4);
   --size-target: 44px;

@@ -14,7 +14,7 @@ const SERVED = /^(index\.html|manifest\.webmanifest|apple-touch-icon\.png|favico
 const NOT_SHELL = /^(sw\.js|\.vite\/.*)$/u;
 
 /** The dark and light `--color-bg` as hex; theme-color can't read the token. */
-const THEME_DARK = "#0e1119";
+const THEME_DARK = "#101010";
 const THEME_LIGHT = "#f0f2f6";
 
 function listFiles(dir: string): string[] {
