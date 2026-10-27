@@ -1,0 +1,7 @@
+# Future
+
+- `newWindow` is still in the protocol and the daemon, but no client sends it any more:
+  the client redesign (slice 2b) removed the desktop "New window" entry point, and
+  window creation stays on tmux's `prefix c`. Remove the message, its `created` window
+  answer and its `watch` claim path (daemon-core.md §3.6, §3.8) if a window-creation
+  control does not come back.

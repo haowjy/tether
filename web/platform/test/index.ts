@@ -186,24 +186,17 @@ function answerWatch(link: FakeLink, daemon: FakeDaemon, msg: Extract<ClientMsg,
   showWindow(link, daemon, watch, session, size);
 }
 
-/** `selectWindow` and `newWindow` change the session's current window; the watching tab follows. */
-function changeWindow(link: FakeLink, daemon: FakeDaemon, msg: Extract<ClientMsg, { type: "selectWindow" | "newWindow" }>, watches: Map<number, { session: SessionRef; size: Size }>): void {
-  const session = msg.type === "newWindow" ? msg.data.session : watches.get(msg.data.watch)?.session;
+/** `selectWindow` changes the session's current window; the watching tab follows. */
+function changeWindow(link: FakeLink, daemon: FakeDaemon, msg: Extract<ClientMsg, { type: "selectWindow" }>, watches: Map<number, { session: SessionRef; size: Size }>): void {
+  const session = watches.get(msg.data.watch)?.session;
   const listed = daemon.listing?.sessions.find((s) => s.id === session?.session);
   if (!session || !listed) return;
-  let target;
-  if (msg.type === "newWindow") {
-    target = { id: Math.max(0, ...listed.windows.map((w) => w.id)) + 1, index: listed.windows.length, name: msg.data.name ?? "sh", active: true, activity: 0 };
-    listed.windows.push(target);
-  } else {
-    target = listed.windows.find((w) => w.id === msg.data.window);
-    if (!target) {
-      link.say({ type: "error", data: { req: msg.data.req, watch: msg.data.watch, code: "tmux", message: "can't find window" } });
-      return;
-    }
+  const target = listed.windows.find((w) => w.id === msg.data.window);
+  if (!target) {
+    link.say({ type: "error", data: { req: msg.data.req, watch: msg.data.watch, code: "tmux", message: "can't find window" } });
+    return;
   }
   for (const w of listed.windows) w.active = w === target;
-  if (msg.type === "newWindow") link.say({ type: "created", data: { req: msg.data.req, window: { server: session.server, window: target.id }, session } });
   for (const [watch, w] of watches) if (w.session.session === session.session) showWindow(link, daemon, watch, session, w.size);
   link.say({ type: "sessionsChanged" });
 }
@@ -269,7 +262,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
           send(msg);
           if (msg.type === "listSessions") link.say({ type: "sessions", data: { req: msg.data.req, tmux: daemon.listing } });
           else if (msg.type === "watch") answerWatch(link, daemon, msg, watches);
-          else if (msg.type === "selectWindow" || msg.type === "newWindow") changeWindow(link, daemon, msg, watches);
+          else if (msg.type === "selectWindow") changeWindow(link, daemon, msg, watches);
         };
         return link;
       },

@@ -1,11 +1,11 @@
 // What both forms of the sessions overlay hold between their search box and their actions: every
-// listable server's sessions, with the active terminal tab's session marked "here" and its
+// listable server's sessions, with the terminal tab on screen's session marked "here" and its
 // windows beneath it. What a pick does afterwards is the form's: `commit` runs the pick once the
 // form is ready for it, at once on the sheet and after the picker has closed.
 import { useEffect, useState } from "preact/hooks";
 import { useApp, useAppView } from "../../app/context";
 import { useStore } from "../../ui/store";
-import { terminalTabOf } from "../../workspace/state";
+import { shownTab, terminalTabOf } from "../../workspace/state";
 import { terminalsOf } from "../terminal/terminals";
 import { HostSessionLists } from "./HostSessionLists";
 import { openSession } from "./openSession";
@@ -25,7 +25,8 @@ export function useQuery(open: boolean): [string, (query: string) => void] {
 export function SessionPicks({ query, commit }: { query: string; commit: Commit }) {
   const app = useApp();
   const terminals = terminalsOf(app);
-  const tab = useAppView((v) => terminalTabOf(v.workspace, v.workspace.active));
+  // "here" is the tab on screen: on Home no tab is, and every open session reads "open".
+  const tab = useAppView((v) => terminalTabOf(v.workspace, shownTab(v.workspace)));
   const shownId = useStore(terminals, (s) => (tab ? (s.tabs[tab.id]?.shown?.id ?? null) : null));
   return (
     <HostSessionLists

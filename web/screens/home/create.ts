@@ -1,7 +1,6 @@
 // Creation (client-architecture.md §6.3 "Creation"). A new session is `newSession` over the
 // host's one socket, then its tab, opened from the next listing: the `created` reply has refs,
-// not names. A new window is created through its tab (`Terminals.newWindow`): the daemon makes
-// it the session's current window and the tab follows it, so nothing is opened.
+// not names. No client creates a window this pass (tmux's `prefix c`).
 import type { AppController } from "../../app/controller";
 import { RequestError } from "../../net/host";
 import type { HostClient } from "../../net/hosts";
@@ -9,12 +8,8 @@ import type { SessionRef } from "../../proto/generated/messages";
 import { newSessionMsg, type CreationFields } from "../../sessions/creation";
 import { findSession } from "../../sessions/groups";
 import { openSession } from "../sessions/openSession";
-import { terminalsOf } from "../terminal/terminals";
 
 const LISTING_WAIT_MS = 5_000;
-
-/** A session to create, or a window to create in the session the tab `tab` follows. */
-export type Target = { kind: "session" } | { kind: "window"; tab: string };
 
 export type CreateResult = { ok: true } | { error: string };
 
@@ -58,18 +53,9 @@ function listingWith(app: AppController, host: HostClient, ref: SessionRef): Pro
   });
 }
 
-/** Creates the session and opens its tab, or creates the window and shows it. Every overlay closes first, the switcher's too. */
-export async function createAndOpen(app: AppController, host: HostClient, target: Target, fields: CreationFields): Promise<CreateResult> {
+/** Creates the session and opens its tab. Every overlay closes first, the switcher's too. */
+export async function createAndOpen(app: AppController, host: HostClient, fields: CreationFields): Promise<CreateResult> {
   const hostName = host.name ?? "the server";
-  if (target.kind === "window") {
-    try {
-      await terminalsOf(app).newWindow(target.tab, fields);
-    } catch (error) {
-      return { error: failureText(error, hostName) };
-    }
-    app.router.closeAllOverlays();
-    return { ok: true };
-  }
   let created;
   try {
     created = await host.socket.request(

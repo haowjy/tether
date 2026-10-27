@@ -11,7 +11,6 @@ import type { InputEvent, Viewport } from "../../platform/types";
 import { acceptsInsert, type ConnectionState } from "../../tabs/connection";
 import { TabDriver } from "../../tabs/driver";
 import type { SessionRef, ShownWindow } from "../../proto/generated/messages";
-import type { CreationFields } from "../../sessions/creation";
 import { createXtermRenderer, type PromptLine, type TerminalRenderer } from "../../term";
 import { TerminalSizer } from "../../term/size";
 import { ArmedModifiers } from "../../touch/armed";
@@ -178,12 +177,6 @@ export class Terminals extends Store<TerminalsView> {
   /** Makes `window` the tab's session's current window; the tab follows with the next `watching`. */
   selectWindow(id: string, window: number): void {
     if (!this.drivers.get(id)?.selectWindow(window)) this.app.notify("Couldn't switch window: the tab isn't connected");
-  }
-
-  /** Creates a window in the tab's session and shows it. Rejects with the daemon's refusal. */
-  newWindow(id: string, fields: CreationFields): Promise<void> {
-    const driver = this.drivers.get(id);
-    return driver ? driver.newWindow(fields) : Promise.reject(new Error("that tab is closed"));
   }
 
   /** The band's Fit: sizes the window to this tab and so takes it from the other terminal. */

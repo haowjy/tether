@@ -1,21 +1,18 @@
-import { useEffect, useState } from "preact/hooks";
-import { useApp, useAppView, useOverlay } from "../../app/context";
+import { useState } from "preact/hooks";
+import { useApp, useOverlay } from "../../app/context";
 import { parseCreation } from "../../sessions/creation";
 import { Button } from "../../ui/primitives/Button";
 import { Dialog } from "../../ui/primitives/Dialog";
 import { TextField } from "../../ui/primitives/TextField";
-import { createAndOpen, type Target } from "./create";
+import { createAndOpen } from "./create";
 import styles from "./CreateDialog.module.css";
 
 /** The overlay params a creation dialog is opened with. */
 export interface CreateParams extends Record<string, unknown> {
   handle: string;
-  /** The tab whose session gets a new window; absent for a new session. */
-  tab?: string;
-  sessionName?: string;
 }
 
-function Form({ params, onCreating }: { params: CreateParams; onCreating: (creating: boolean) => void }) {
+function Form({ params }: { params: CreateParams }) {
   const app = useApp();
   const [name, setName] = useState("");
   const [dir, setDir] = useState("");
@@ -23,7 +20,6 @@ function Form({ params, onCreating }: { params: CreateParams; onCreating: (creat
   const [dirError, setDirError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const host = app.hosts.get(params.handle);
-  const target: Target = params.tab ? { kind: "window", tab: params.tab } : { kind: "session" };
 
   const submit = async (e: Event): Promise<void> => {
     e.preventDefault();
@@ -33,13 +29,9 @@ function Form({ params, onCreating }: { params: CreateParams; onCreating: (creat
     setError(null);
     if ("error" in parsed) return;
     setBusy(true);
-    onCreating(target.kind === "window"); // the dialog closes inside createAndOpen, so the flag must already stand
-    const result = await createAndOpen(app, host, target, parsed.ok);
+    const result = await createAndOpen(app, host, parsed.ok);
     setBusy(false);
-    if ("error" in result) {
-      onCreating(false);
-      setError(result.error);
-    }
+    if ("error" in result) setError(result.error);
   };
 
   return (
@@ -55,18 +47,13 @@ function Form({ params, onCreating }: { params: CreateParams; onCreating: (creat
   );
 }
 
-/** New session and New window (the creation overlays; a window is created from its tab, not from Home): one dialog, two titles. */
+/** The New session overlay. */
 export function CreateDialog() {
   const { open, params: overlayParams, close } = useOverlay("home");
   const params = open ? (overlayParams as CreateParams) : null;
-  const touch = useAppView((v) => v.viewport.density === "touch");
-  // A window created from the desktop leaves the keyboard in the terminal; the opener is gone with its menu, and a phone raises no keyboard unasked.
-  const [createdWindow, setCreatedWindow] = useState(false);
-  useEffect(() => { if (open) setCreatedWindow(false); }, [open]);
-  const title = params?.tab ? `New window in ${params.sessionName ?? "session"}` : "New session";
   return (
-    <Dialog open={open} title={title} returnFocusTo={createdWindow && !touch ? "terminal" : null} onClose={close}>
-      {params && <Form key={`${params.handle}/${params.tab ?? ""}`} params={params} onCreating={setCreatedWindow} />}
+    <Dialog open={open} title="New session" onClose={close}>
+      {params && <Form key={params.handle} params={params} />}
     </Dialog>
   );
 }

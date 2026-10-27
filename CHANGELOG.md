@@ -14,6 +14,9 @@ version section on release.
   tabs and + (New session, Browse files) at the bottom. Tapping a session or a tab opens
   it behind the sheet and the sheet stays; Back, Escape or a tap outside closes it. The
   active session lists its windows under its row, with the shown one marked.
+- The sessions sheet and the desktop + popover read "here" only for the tab on screen; on
+  Home the open sessions all read "open". The desktop's "New window" dialog is gone with
+  its only entry point: create windows with tmux's `prefix c`.
 - On the desktop, + now opens a popover under the top row, in place of the centred dialog:
   search (already focused), every server's sessions, and New session and Browse files.
   The active session lists its windows under its row, replacing the windows button on the

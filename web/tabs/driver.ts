@@ -5,7 +5,6 @@ import type { TerminalRenderer } from "../term";
 import { acceptsInsert, initialState, reduce, type ConnectionEvent, type ConnectionState } from "./connection";
 import type { InputEvent } from "../platform/types";
 import { cannotInsert, shellQuote, toMessages } from "./input";
-import type { CreationFields } from "../sessions/creation";
 
 /** What became of a path: typed now, waiting for the watch, or refused (the tab can't take it, and nothing was kept). */
 export type InsertResult = "typed" | "queued" | "refused";
@@ -183,20 +182,6 @@ export class TabDriver {
     this.claiming();
     this.send({ type: "selectWindow", data: { req: this.opts.host.nextReq(), watch: this.watchId, window } });
     return true;
-  }
-
-  /**
-   * Creates a window in the session and makes it current. A live tab names its watch, so it
-   * claims the new window and follows it; a reconnecting one claims nothing. Rejects with the
-   * daemon's refusal.
-   */
-  async newWindow(fields: CreationFields): Promise<void> {
-    const watch = this.bound ? this.watchId : null;
-    if (watch !== null) this.claiming();
-    await this.opts.host.request(
-      (req) => ({ type: "newWindow", data: { req, session: this.opts.session, ...fields, ...(watch !== null && { watch }) } }),
-      (reply) => (reply.type === "created" ? true : undefined),
-    );
   }
 
   /**
