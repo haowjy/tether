@@ -144,7 +144,7 @@ One name per concept. The code, the specs and the UI copy use these.
 | **listing** | One host's tmux sessions and windows, from `listSessions`. One fetcher gets it (§6.3) | |
 | **status band** | The band on the terminal's top edge that says a tab is reconnecting, limited or failed, with Retry, or that its window is sized for another terminal, with Fit (§5.4, §8.2) | an overlay |
 | **persist now** | `app/persist.ts`: hand every pending draft and workspace write to storage at once (§5.5) | |
-| **sessions overlay** | The one overlay behind the desktop `+` and the phone's current-tab button: a picker dialog on desktop, a half-height sheet over the tab on the phone (search, sessions, the open tabs and + at the bottom) | the picker and switcher overlays of P3a |
+| **sessions overlay** | The one overlay behind the desktop `+` and the phone's current-tab button: a popover under the top row's `+` on desktop, a half-height sheet over the tab on the phone (search, sessions, the open tabs and + at the bottom) | the picker and switcher overlays of P3a |
 | **dock** | On touch, the bottom of Terminal: at rest one row (tab chip, line field, keyboard toggle); while the keyboard is up, the key row above it. Always visible; rides on the keyboard | The desktop tab strip |
 | **current-tab button** | The phone's control naming the active tab and the open-tab count; opens the sessions overlay | a tab pill |
 | **line field** | The dock's one-line text field, with the platform's autocorrect, dictation and IME. Return sends its line and then Enter | **direct input**; the shell's own line editor |
@@ -1490,9 +1490,18 @@ resets on close. Contract:
   tab at the server's roots), both for the active tab's server, else the first when no
   tab is open; a tab whose server is unknown or unreachable disables them. Dismissal
   is the backdrop, Back or Escape (Escape closes the `+` menu first).
-- *Desktop: the centred picker dialog,* today's content: search focused, sessions, a
-  choice closes the overlay and then opens the tab. The windows menu (`WindowsMenu`)
-  keeps desktop's window access until the `+` popover (slice 2b).
+- *Desktop: the `picker` popover* (`Picker.tsx`, rendered by `TopRow` beside the `+` so it
+  has the `+` element to anchor to). A `Dialog` `variant="popover"` with `anchor`: modal, so
+  Escape, focus containment and focus return come from `Dialog`, with a clear scrim that
+  catches an outside press (a press on `+` itself closes it, so `+` toggles) and placed under
+  the `+`, left edges aligned and kept inside the window. Search is focused; the body is the
+  same `SessionPicks` as the sheet (sessions by server, the active session's windows under its
+  row); the footer is `NewActions` (New session, Browse files). Any pick runs through
+  `commit`, which closes the overlay and then acts (the sheet's `commit` acts at once), so
+  focus goes to the terminal that opened, or to `+` with no tab or on touch. `WindowsMenu`
+  and `WindowChoices` are gone: the windows are rows of `SessionList`, one renderer for
+  "index: name", "shown" and "choosing the shown window does nothing". Creating a window has
+  no button; the `newWindow` creation form is unreachable until one returns.
 - *History.* Tabs switch under an open sheet by replacing its entry (`switchTab`), which
   leaves the entry below naming the earlier tab. Closing by Back lands on that entry;
   `Router.popped` then replaces it with the overlay entry's tab and place, instead of

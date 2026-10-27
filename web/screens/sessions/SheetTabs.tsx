@@ -3,13 +3,13 @@
 // a new Files tab on the active tab's server.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppView, useHostName } from "../../app/context";
-import { Button } from "../../ui/primitives/Button";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { TabStrip } from "../../ui/primitives/TabStrip";
 import { useStore } from "../../ui/store";
-import { activeTab } from "../../workspace/state";
 import { tabPills } from "../terminal/tabView";
 import { terminalsOf } from "../terminal/terminals";
+import { NewActions } from "./NewActions";
+import { now } from "./SessionPicks";
 import styles from "./SheetTabs.module.css";
 
 export function SheetTabs() {
@@ -34,14 +34,8 @@ export function SheetTabs() {
   );
 }
 
-/** + : New session and Browse files, both on the active tab's server (the first one when no tab is open). A tab whose server is unknown or unreachable disables them: they never act on another server. */
+/** + : New session and Browse files on the active tab's server. */
 function NewMenu() {
-  const app = useApp();
-  const host = useAppView((v) => {
-    const tab = activeTab(v.workspace);
-    return tab ? v.hosts.find((h) => h.hostId === tab.host) : v.hosts[0];
-  });
-  const reason = host === undefined ? "No server to use" : host.admission.kind === "unreachable" ? `${host.name ?? "The server"} can't be reached` : undefined;
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -69,32 +63,7 @@ function NewMenu() {
       <IconButton icon="plus" label="New session or Browse files" aria-haspopup="menu" aria-expanded={open} onClick={() => { setOpen(!open); }} />
       {open && (
         <div class={styles.menu} role="menu">
-          <Button
-            variant="quiet"
-            icon="plus"
-            role="menuitem"
-            disabledReason={reason}
-            onClick={(e) => {
-              if (!host || reason) return;
-              setOpen(false);
-              app.openOverlay({ screen: "home", name: "newSession", params: { handle: host.entry.handle } }, e.currentTarget);
-            }}
-          >
-            New session
-          </Button>
-          <Button
-            variant="quiet"
-            icon="folder"
-            role="menuitem"
-            disabledReason={reason}
-            onClick={() => {
-              if (!host?.hostId || reason) return;
-              setOpen(false);
-              app.openFiles(host.hostId);
-            }}
-          >
-            Browse files
-          </Button>
+          <NewActions role="menuitem" commit={now} onPick={() => { setOpen(false); }} />
         </div>
       )}
     </div>

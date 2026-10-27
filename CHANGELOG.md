@@ -14,6 +14,10 @@ version section on release.
   tabs and + (New session, Browse files) at the bottom. Tapping a session or a tab opens
   it behind the sheet and the sheet stays; Back, Escape or a tap outside closes it. The
   active session lists its windows under its row, with the shown one marked.
+- On the desktop, + now opens a popover under the top row, in place of the centred dialog:
+  search (already focused), every server's sessions, and New session and Browse files.
+  The active session lists its windows under its row, replacing the windows button on the
+  tab. Choosing anything closes it; Escape or a click outside leaves the tab as it was.
 - Files opens as tabs, any number of them, each remembering its own folder or preview
   across a reload. Home's Files button opens a new one at that server's folders, and a
   folder's first row goes up to its parent. On the desktop, navigation is now one top row

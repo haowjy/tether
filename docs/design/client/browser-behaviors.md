@@ -161,11 +161,11 @@ A terminal tab opens on its session's current window and follows it as any clien
 it. Only a session with more than one window offers a window-switching affordance; on the
 phone it is inside the sessions sheet, not terminal chrome: the active tab's session row
 lists its windows beneath it, and choosing one leaves the sheet open. Desktop keeps its
-windows menu until the + popover shows the same rows. Choosing a window runs tmux's
+desktop's + popover shows the same rows (one renderer), and choosing a window closes the popover. Choosing a window runs tmux's
 `select-window` on the session, so every attached client moves with it. Rows are in actual index order as “index: name”; the latest `watching`
 window is marked “shown”. Load from the current listing, show loading and refusal with
-Try again, and selecting the shown window changes nothing. The route for creating a new
-window in a one-window session remains open. tmux prefix keys sent by tether reach the
+selecting the shown window changes nothing. Creating a window has no button on either layout
+this pass (tmux's `prefix c`). tmux prefix keys sent by tether reach the
 pane, not tmux's key tables.
 
 ## Files

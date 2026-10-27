@@ -10,8 +10,10 @@ interface DialogProps {
   /** Escape, the backdrop, the close button. The parent decides what closing means (usually the router's Back). */
   onClose: () => void;
   title: string;
-  /** `sheet` is the same dialog styled as a tall bottom sheet with safe-area padding. */
-  variant?: "dialog" | "sheet";
+  /** `sheet` is the same dialog styled as a tall bottom sheet with safe-area padding. `popover` hangs under `anchor` with no scrim, and a press outside it closes it. */
+  variant?: "dialog" | "sheet" | "popover";
+  /** The control a `popover` sits under: left edges aligned, kept inside the window. */
+  anchor?: HTMLElement | null;
   /** Where focus returns on close: an element or a registered name. Default: the control `app.openOverlay` was given, else the one focused at opening. A field marked `data-initial-focus=""` takes focus on opening with a fine pointer. */
   returnFocusTo?: HTMLElement | FocusTarget | null;
   /** The top row in place of the title and close button (the sessions sheet's Home and search); `title` stays as the dialog's accessible name. */
@@ -21,8 +23,21 @@ interface DialogProps {
   children: ComponentChildren;
 }
 
+/** Space between a popover and its anchor, and between it and the window's edge. */
+const GAP_PX = 8;
+
+/** Puts an open popover under `anchor`, as tall as the window below allows (its body scrolls). */
+function place(dialog: HTMLDialogElement, anchor: HTMLElement): void {
+  const rect = anchor.getBoundingClientRect();
+  const top = rect.bottom + GAP_PX;
+  const { clientWidth, clientHeight } = document.documentElement;
+  dialog.style.top = `${String(top)}px`;
+  dialog.style.maxHeight = `${String(clientHeight - top - GAP_PX)}px`;
+  dialog.style.left = `${String(Math.max(GAP_PX, Math.min(rect.left, clientWidth - dialog.offsetWidth - GAP_PX)))}px`;
+}
+
 /** `<dialog>.showModal()`: top layer, modal focus containment, Escape. Safari lacks `closedby`, so Escape and the backdrop are handled here. */
-export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo, header, footer, children }: DialogProps) {
+export function Dialog({ open, onClose, title, variant = "dialog", anchor, returnFocusTo, header, footer, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const focus = useFocus();
@@ -37,7 +52,10 @@ export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo
   useLayoutEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) focus.openDialog(dialog);
+    if (open && !dialog.open) {
+      focus.openDialog(dialog);
+      if (anchor) place(dialog, anchor);
+    }
     else if (!open && dialog.open) focus.closeDialog(dialog, returnFocusTo ?? null);
   }, [open]);
 
@@ -50,7 +68,7 @@ export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo
   return (
     <dialog
       ref={ref}
-      class={cx(styles.dialog, variant === "sheet" && styles.sheet)}
+      class={cx(styles.dialog, variant !== "dialog" && styles[variant])}
       aria-labelledby={titleId}
       tabIndex={-1}
       onCancel={(e) => { e.preventDefault(); onClose(); }}

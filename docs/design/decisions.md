@@ -3640,3 +3640,18 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   later reopened it.
 - **Rejected:** one viewport-derived value read by both (the form would still change under
   an open overlay).
+
+## Desktop +: a popover with the windows rows, replacing the windows menu
+
+- **Decided:** 2026-10-27, tech lead (slice 2b), applying the 2026-10-27 popover decision.
+- **What:** + opens the `picker` overlay as a popover under the top row, anchored to +: search
+  in focus, sessions by server, the active session's windows under its row, New session and
+  Browse files. A pick closes it and then acts. The windows menu on the active pill and its
+  rows are deleted; the popover's rows are the one renderer of "index: name", "shown" and
+  "the shown window does nothing". Desktop has no New window button either, as on the phone.
+- **Why:** two renderers of the same rows could drift (p335 #3).
+- **Rejected:** keeping the pill's windows button beside the popover (a second path to the same
+  rows); a popover built outside `Dialog` (it would redo Escape, focus return and the router
+  tie-in).
+- **Cost:** the desktop's only New window path goes; `newWindow`'s creation form stays in the
+  code, unreachable, for the lead to keep or delete.

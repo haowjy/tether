@@ -54,7 +54,7 @@ export function Shell() {
       {!blocking && (
         <>
           <Sessions />
-          {/* New session and New window open from Home and from the sessions overlay. */}
+          {/* New session opens from Home and from the sessions overlay. */}
           <CreateDialog />
           <Settings />
         </>

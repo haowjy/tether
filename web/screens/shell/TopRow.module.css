@@ -19,3 +19,4 @@
 .host[data-tone="live"] { color: var(--color-status-live); }
 .host[data-tone="reconnecting"] { color: var(--color-status-reconnecting); }
 .host[data-tone="error"] { color: var(--color-status-error); }
+.plus { display: flex; flex: none; }

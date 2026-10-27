@@ -47,3 +47,12 @@
 .panel:has(> .footer) .body { padding-bottom: var(--space-3); }
 .sheet[open] { animation: rise var(--duration-2) var(--ease-out); }
 @keyframes rise { from { translate: 0 24px; opacity: 0; } }
+
+/* The desktop's + picker: placed under its anchor by script, over the page with no scrim. The scrim stays, clear, to catch a press outside. */
+.popover {
+  inset: auto;
+  margin: 0;
+  width: min(28rem, calc(100% - 2 * var(--space-gutter)));
+  box-shadow: var(--shadow-2);
+}
+.popover::backdrop { background: transparent; }
