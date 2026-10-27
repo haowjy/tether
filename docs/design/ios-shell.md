@@ -520,12 +520,17 @@ gated here. The exact per-message rules and lane gaps are in the P4b handoff art
 
 Native owns the preferences (`UserDefaults`, defaults System, Default, 1 hour) and the web
 asks to change one with `setPreference`. Web-owned preferences were rejected: native must
-apply appearance and the relock before the web loads or without it. Appearance is set as
-the window's `overrideUserInterfaceStyle` (System is `unspecified`), so the lock screen, the
-server sheet, the keyboard and the web view agree; the viewport's `scheme` keeps reporting
+apply appearance and the relock before the web loads or without it. Appearance has one owner, SwiftUI: `.preferredColorScheme` on the root view
+(`nil` for System) reads the published preferences, so the lock screen, the
+server sheet, the keyboard and the web view agree from the first frame; the viewport's `scheme` keeps reporting
 the effective scheme (a trait change publishes it, as does a system change under System).
 The relock choice sets the delay `sceneChanged(.active)` compares with the time the app
-entered the background; At launch has no delay. The text size is the web's to apply.
+entered the background, on a clock that counts through sleep and can't be set back
+(`ContinuousClock`); an elapsed time that is negative locks. At launch has no delay.
+A stored preference decodes field by field: an unreadable value takes that field's default,
+except `relock`, which takes 5 min. `setPreference` is refused while locked, and a change to
+a longer relock needs a fresh Face ID evaluation first; a declined or failed one leaves the
+stored choice and the reply says so. The text size is the web's to apply.
 
 ### Boot and host payloads
 
@@ -732,7 +737,7 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 | Geometry | The key row meets the keyboard with no blank band and the box sits above it, in both geometry variants; WebKit does not also scroll for the keyboard; tmux's size changes only on rotation, including a rotation with the keyboard up |
 | Appearance | System follows device changes; explicit Light and Dark survive them and agree in native chrome (lock screen, the server sheet, the keyboard) and web content, including after a relaunch and with the app locked at launch |
 | Text size | Each size resizes the shown tmux window once (`tmux display -p '#{window_width}'` changes with each size) and survives a relaunch |
-| Face ID relock | For each of 5 min, 1 hour and At launch: a background trip shorter than the interval returns with no prompt; one longer asks for Face ID first thing on foreground. At launch never asks on foreground, however long the trip, and asks once after a process restart. Changing the setting takes effect at the next background trip |
+| Face ID relock | For each of 5 min, 1 hour and At launch: a background trip shorter than the interval returns with no prompt; one longer asks for Face ID first thing on foreground. At launch never asks on foreground, however long the trip, and asks once after a process restart. Changing the setting takes effect at the next background trip. Choosing a longer interval or At launch asks for Face ID first, and cancelling leaves the old choice selected |
 | Predictions / sheet fields | No predictive strip in the native `line` target. Search, rename and Files fields stay WebKit-owned with ordinary keyboard chrome. |
 | Line input | With ctrl armed, a single `c` sends `C-c`, a single `.` returns to the line at the caret, and a QuickType/autocorrection multi-character insert stays in the line and disarms. Dictation into the terminal target, including revisions that arrive after send-and-clear; Chinese/Korean composition and candidate Return (candidate acceptance must not send); spacebar trackpad; `lineEdit` latency per keystroke including held Backspace; 1→5-line growth and internal scroll. |
 | Hardware keys | In `line`, printable keys / ←/→ / Backspace / ⌘V edit; Return sends; Esc returns to terminal, while Tab / ↑/↓ / Ctrl chords reach tmux. Verify terminal target still handles all existing keys, warning haptic on ^C/^D, and held-key repeat stops on release and deactivation. |

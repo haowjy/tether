@@ -1,4 +1,5 @@
 import SwiftUI
+import TetherKit
 
 struct TetherRootView: View {
     @ObservedObject var model: TetherAppModel
@@ -12,6 +13,18 @@ struct TetherRootView: View {
             .overlay {
                 if model.isLocked { LockedView(model: model) }
             }
+            // The one owner of the window's appearance: the lock screen, the sheets, the keyboard and the web's scheme follow it. nil is the system's.
+            .preferredColorScheme(model.preferences.appearance.colorScheme)
+    }
+}
+
+private extension Appearance {
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
     }
 }
 

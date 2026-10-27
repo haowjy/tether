@@ -116,7 +116,7 @@ export class Terminals extends Store<TerminalsView> {
     this.element.className = styles.host ?? "";
     this.element.dataset["blank"] = "true"; // until the first snapshot: no pretend-live empty terminal
     this.sizer = new TerminalSizer({
-      cell: () => this.renderer?.cellSize() ?? null,
+      cell: () => this.renderer?.fontCell() ?? null,
       onChange: (size) => { this.shownDriver()?.resize(size); },
     });
     this.pastes = new Pastes({
@@ -408,19 +408,21 @@ export class Terminals extends Store<TerminalsView> {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         this.measure();
-        this.chromeWindow = false;
+        // Hidden, the box can't be measured: the window stays open until the surface is laid out again.
+        if (this.element.clientWidth > 0) this.chromeWindow = false;
       });
     });
   }
 
   private measure(frame = 0): void {
     const { clientWidth: width, clientHeight: height } = this.element;
-    if (width === 0 || height === 0) return;
+    const laidOut = width > 0 && height > 0;
     if (!this.renderer) {
-      void this.createRenderer();
+      if (laidOut) void this.createRenderer();
       return;
     }
-    if (this.chromeWindow) {
+    // Hidden, only the box is unknown: the cell comes from the font, so the sizer stays current for the return.
+    if (this.chromeWindow && laidOut) {
       const { viewport } = this;
       const { top, right, bottom, left } = viewport.safeArea;
       this.sizer.setChrome({ x: viewport.width - left - right - width, y: viewport.stableHeight - top - bottom - height });

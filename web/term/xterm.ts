@@ -86,6 +86,20 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     return width > 0 && height > 0 ? { width: width / term.cols, height: height / term.rows } : null;
   };
 
+  // The cell from the font alone, with the rounding the active renderer applies to device pixels
+  // (xterm's RenderService: the WebGL renderer floors the width, both ceil the height). It needs no
+  // layout, so it is current while the terminal is hidden, where `.xterm-screen` measures nothing.
+  const metrics = document.createElement("canvas").getContext("2d");
+  const fontCell = (): CellSize | null => {
+    if (!metrics) return null;
+    metrics.font = `${String(term.options.fontSize)}px ${term.options.fontFamily ?? ""}`;
+    const text = metrics.measureText("W");
+    const dpr = window.devicePixelRatio;
+    const width = text.width * dpr;
+    const height = text.fontBoundingBoxAscent + text.fontBoundingBoxDescent;
+    return { width: (webgl ? Math.floor(width) : width) / dpr, height: Math.ceil(height * dpr) / dpr };
+  };
+
   // The keyboard shortens what is visible but never tmux: the terminal keeps its rows and
   // slides to put the last row at the pan area's bottom. If that would hide the cursor above
   // the area, the cursor row meets the bottom instead. The browser's container never shrinks.
@@ -127,6 +141,7 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     output: (bytes) => { pipeline.output(bytes); },
     snapshot: (snapshot: Snapshot) => pipeline.snapshot(snapshot),
     cellSize,
+    fontCell,
     setTheme: (theme) => { term.options.theme = theme; },
     onScrolledUp: (listener) => { scrollListeners.push(listener); },
     scrollToBottom: () => { term.scrollToBottom(); },

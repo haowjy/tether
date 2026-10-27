@@ -43,7 +43,8 @@ between the key row and keyboard. Standalone PWA mode has no Safari toolbar.
   under today's size (12 px touch, 13 px compact) and 2 and 4 px over it. Large and Larger
   fit about a seventh and a quarter fewer columns on a phone; Small gains one in twelve. Settings opens over Home, which
   shows no window, so the new size takes effect when a tab is next shown: it is fit to this screen
-  at that size, in the one resize every shown tab already sends.
+  at that size, in the one claim every shown tab already sends: the size comes from the font, which is
+  known while the terminal is hidden, so no second resize follows.
 - Blue is the selection/accent channel; green is reserved for connected status. Selected
   rows use a blue-tinted fill and weight. Connection state is distinct from selection.
 - The phone sheet uses the current theme's raised surface. A toast floats above the dock

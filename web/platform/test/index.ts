@@ -81,7 +81,7 @@ export interface TestPlatformOptions {
   hosts?: HostEntry[];
   /** Offer `updates` and `install` capabilities. */
   pwa?: boolean;
-  /** Offer `manageHosts`, as the app does (Add server, Settings' Manage servers); a tap is recorded in `opened`. */
+  /** Offer `manageHosts` and `setRelock`, as the app does (Add server, Settings' Manage servers and Face ID relock); a tap on manage is recorded in `opened`. */
   managed?: boolean;
 }
 
@@ -210,7 +210,8 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
   const listeners = new Set<(event: PlatformEvent) => void>();
   let viewport = options.viewport ?? DESKTOP;
   const systemScheme = viewport.scheme;
-  let preferences: Preferences = options.preferences ?? { appearance: "system", textSize: "default" };
+  // The app also reports its relock (see `managed`).
+  let preferences: Preferences = options.preferences ?? { appearance: "system", textSize: "default", ...(options.managed ? { relock: "1hour" as const } : {}) };
   let lifecycle = options.lifecycle ?? { visible: true, online: true, locked: false, covered: false };
   const hosts = options.hosts ?? [{ handle: "h1", hostId: null, name: null, pageOrigin: PAGE_ORIGIN }];
 
@@ -334,6 +335,12 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     platform.updates = { check: () => Promise.resolve(), apply: () => { platform.restarts.push("update"); } };
     platform.install = { installed: () => platform.installed };
   }
-  if (options.managed) platform.manageHosts = () => { platform.opened.push("manage-hosts"); };
+  if (options.managed) {
+    platform.manageHosts = () => { platform.opened.push("manage-hosts"); };
+    platform.setRelock = (value) => {
+      preferences = { ...preferences, relock: value };
+      platform.emit({ type: "preferences", preferences });
+    };
+  }
   return platform;
 }

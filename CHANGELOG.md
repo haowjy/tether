@@ -10,7 +10,8 @@ version section on release.
   app's lock screen and sheets. Dark is a true-black terminal with neutral greys, no blue tint. The
   next terminal you open is fit to your screen at the new text size.
 - In the app, Settings sets when Face ID asks again after the app has been in the background: after
-  5 minutes, after 1 hour (the new default) or only at launch.
+  5 minutes, after 1 hour (the new default) or only at launch. A longer wait asks for Face ID
+  first, and the background time can no longer be defeated by setting the clock back.
 - In the browser, Send no longer sends a line while an IME is still composing it, as in the app.
 - Home is now a card per server: its name and status, the tabs you have open on it, "All N
   sessions" (a full-height list with its own search and +) and Files. A server that can't be

@@ -103,7 +103,7 @@ export function Settings() {
   const hostName = target?.name ?? "the server";
   const device = target?.admission.kind === "admitted" ? (target.admission.deviceName ?? "this device") : "this device";
 
-  const manageHosts = app.platform.manageHosts;
+  const { manageHosts, setRelock } = app.platform;
 
   const ask = (name: Confirmation, from: Element): void => { app.openOverlay({ screen: "settings", name }, from); };
 
@@ -118,9 +118,9 @@ export function Settings() {
             <Section title="Terminal text size" detail="Applies to every terminal. The window you open next is resized to fit this screen at that size.">
               <Choice label="Terminal text size" options={TEXT_SIZES} value={preferences.textSize} onChange={(v) => { app.platform.setPreference("textSize", v); }} />
             </Section>
-            {preferences.relock !== undefined && (
-              <Section title="Ask for Face ID" detail="How long tether can stay in the background before it asks for Face ID again. At launch asks once each time the app starts.">
-                <Choice label="Ask for Face ID" options={RELOCKS} value={preferences.relock} onChange={(v) => { app.platform.setPreference("relock", v); }} />
+            {setRelock && preferences.relock && (
+              <Section title="Ask for Face ID" detail="How long tether can stay in the background before it asks for Face ID again. At launch asks once each time the app starts. A longer wait asks for Face ID now.">
+                <Choice label="Ask for Face ID" options={RELOCKS} value={preferences.relock} onChange={setRelock} />
               </Section>
             )}
             {manageHosts && (

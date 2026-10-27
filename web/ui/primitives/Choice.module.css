@@ -1,4 +1,7 @@
-.group { display: flex; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-bg-raised); overflow: hidden; }
+.group { display: flex; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-bg-raised); }
+/* No clipping on the group: the 2 px focus ring sits outside the option. The ends round themselves to the group's corners. */
+.option:first-child { border-radius: calc(var(--radius-2) - 1px) 0 0 calc(var(--radius-2) - 1px); }
+.option:last-child { border-radius: 0 calc(var(--radius-2) - 1px) calc(var(--radius-2) - 1px) 0; }
 .option {
   flex: 1 1 0;
   border: 0;

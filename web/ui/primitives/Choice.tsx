@@ -9,16 +9,15 @@ export interface ChoiceProps<T extends string> {
   onChange: (value: T) => void;
 }
 
-/** One of a few settings, all visible at once: a radio group of buttons. */
+/** One of a few settings, all visible at once: a group of toggle buttons, each its own tab stop. */
 export function Choice<T extends string>({ label, options, value, onChange }: ChoiceProps<T>) {
   return (
-    <div role="radiogroup" aria-label={label} class={styles.group}>
+    <div role="group" aria-label={label} class={styles.group}>
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
-          role="radio"
-          aria-checked={o.value === value}
+          aria-pressed={o.value === value}
           class={cx(styles.option, o.value === value && styles.selected)}
           onClick={() => { if (o.value !== value) onChange(o.value); }}
         >

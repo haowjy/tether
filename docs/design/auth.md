@@ -1011,6 +1011,12 @@ stateDiagram-v2
   time the app entered the background. On a normal background transition a short
   `beginBackgroundTask` window lets the web receive lifecycle and close its sockets; it
   does not lock the app.
+- **Changing the choice.** Relock is a security control the web alone can't weaken. Choosing
+  a longer interval or At launch asks for a fresh Face ID evaluation in the app before it
+  applies; cancelling or failing it leaves the setting unchanged. A shorter interval applies
+  at once. Nothing changes while the app is locked. The background time is measured on a
+  clock that counts through sleep and can't be set back, and an unknown (negative) elapsed
+  time locks.
 - **Locking** drops the tokens from native memory and tells the web (`lifecycle` with
   `locked: true`), which drops its copies. A native lock screen covers
   the web view until the next read succeeds. When a timed choice is exceeded, the

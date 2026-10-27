@@ -3822,7 +3822,7 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
     on top of 12 px touch and 13 px compact). Whole-pixel steps keep xterm's cell measure on integers, and 1 px
     is the least a reader sees. The terminal re-fonts on the preference's change; Settings opens over Home, where no window is shown, so the new fit is sent with the next show's one resize (verified: nothing is sent while on Home, and tmux's width follows the size on return).
   - Dark: the terminal background is `#000`; the dark greys, the terminal's foreground, cursor, selection and grey
-    ANSI colours have no hue (the light greys stay slightly blue); the PWA theme colour is `#101010`.
+    ANSI colours have no hue (the light greys stay slightly blue); the PWA theme colour is `#121212`.
   - `Choice` (a radio group of buttons) is the primitive for a few settings visible at once.
 - **Budget:** initial JS 199 to 200 KB (199.1 measured): the two Settings sections and the preferences owner are launch code.
 - **Rejected:** the web owning the preferences and pushing them to native (two stores disagree at boot, and
@@ -3837,3 +3837,23 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   host banner on Home and each card renders its host's banner (the unreachable host's card has its own note and
   Retry instead), so the card's attention body no longer points at "the notice above". `Pill` carries `host` and `kind`.
 - **Rejected:** a Shell filter that hides banners by admission kind on Home.
+
+## Slice 5 fix round 1: one appearance owner, relock as a guarded control
+
+- **Decided:** 2026-10-27, lead (from p354, p355).
+- **What:**
+  - The window's appearance has one owner, SwiftUI's `.preferredColorScheme` on the root view; the
+    `viewWillAppear` writer is deleted (it ran before the view had a window, so a stored choice was
+    ignored at launch).
+  - The relock delay is measured on `ContinuousClock`, and a negative elapsed time locks.
+  - A stored `Preferences` decodes per field; `relock` falls back to 5 min, the strictest.
+  - `setPreference` is refused while locked. A change that loosens relock (a longer interval or At
+    launch) needs a fresh native Face ID evaluation first; tightening applies at once; a declined
+    evaluation returns the stored preferences. Rejected: any web request applies, since relock is a
+    security control the web alone shouldn't weaken.
+  - The terminal sizer reads the cell from the font (canvas metrics with the renderer's device-pixel
+    rounding), not from the laid-out `.xterm-screen`, so every sizer input is current while the terminal
+    is hidden and a return sends one `watch` at the right size. Rejected: keeping the host laid out
+    (`visibility:hidden`), which sizes it against the wrong box.
+  - Relock is a platform capability (`setRelock`), not a value `setPreference` accepts; `Choice` is a
+    `role="group"` of `aria-pressed` buttons (each its own tab stop) and no longer clips its focus ring.

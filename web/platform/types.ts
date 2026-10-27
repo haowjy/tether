@@ -57,7 +57,7 @@ export type Relock = "5min" | "1hour" | "launch";
 export interface Preferences {
   appearance: Appearance;
   textSize: TextSize;
-  /** Only the app locks. */
+  /** Reported only by the app, the one environment that locks; chosen with {@link Platform.setRelock}. */
   relock?: Relock;
 }
 
@@ -227,7 +227,7 @@ export interface Platform {
   subscribe(listener: (event: PlatformEvent) => void): Unsubscribe;
   transport: Transport;
   /** Changes one preference; the platform applies it and answers with a `preferences` event (and a `viewport` event when the scheme changed). */
-  setPreference<K extends keyof Preferences>(name: K, value: Preferences[K]): void;
+  setPreference<K extends Exclude<keyof Preferences, "relock">>(name: K, value: Preferences[K]): void;
   input: InputPlatform;
   storage: PlatformStorage;
   uploads: Uploads;
@@ -239,6 +239,8 @@ export interface Platform {
   restart(reason: "stuck" | "update"): void;
   /** Opens the platform's own screen for adding, pairing and removing servers. Native only. */
   manageHosts?: () => void;
+  /** Chooses when Face ID asks again. Native only. A longer interval needs a fresh Face ID there, so the answer may be the unchanged `preferences`. */
+  setRelock?: (value: Relock) => void;
   /** Hands a server's https origin, and the unspent enrolment code if the page holds one, to the tether app installed on this device. Offered only where the app can exist (iPhone, iPad) and this is not the app. */
   openInApp?: (origin: string, code: string | null) => void;
   updates?: Updates;

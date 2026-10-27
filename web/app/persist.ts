@@ -29,9 +29,10 @@ export class Persist {
     return () => { this.flushers.delete(flush); };
   }
 
-  /** drafts/ registers the reset of its in-memory state, run by Clear local data. */
-  onClear(clear: () => void): void {
+  /** drafts/ registers the reset of its in-memory state, run by Clear local data; returns the way to stop. */
+  onClear(clear: () => void): () => void {
     this.clearers.add(clear);
+    return () => { this.clearers.delete(clear); };
   }
 
   /** The workspace changed: hand storage the assembled workspace (the adapter coalesces). */

@@ -33,7 +33,7 @@ final class TetherAppModel: ObservableObject {
     @Published private(set) var hosts: [HostEntry]
     @Published private(set) var isLocked: Bool
     /// The user's choices. Native owns them: appearance and relock are applied here, the web only shows and asks.
-    private(set) var preferences: Preferences
+    @Published private(set) var preferences: Preferences
     @Published private(set) var pendingAddRequest: AddHostRequest?
     @Published var showingServers = false
     @Published var errorMessage: String?
@@ -51,7 +51,7 @@ final class TetherAppModel: ObservableObject {
     private var visible = true
     private var covered = false
     private var online = false
-    private var backgroundEnteredAt: Date?
+    private var backgroundEnteredAt: ContinuousClock.Instant?
     private var backgroundHadTokens = false
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var shouldAutoUnlock = false
@@ -66,7 +66,7 @@ final class TetherAppModel: ObservableObject {
     private let pathMonitor = NWPathMonitor()
 
     init() {
-        preferences = defaults.data(forKey: Self.preferencesKey).flatMap { try? JSONDecoder().decode(Preferences.self, from: $0) } ?? .standard
+        preferences = Preferences.restore(from: defaults.data(forKey: Self.preferencesKey))
         let storedHosts = hostStore.load()
         hosts = storedHosts
         let expectsTokenItem = defaults.object(forKey: expectedTokenItemKey) as? Bool ?? !storedHosts.isEmpty
@@ -104,13 +104,30 @@ final class TetherAppModel: ObservableObject {
     }
 
     /// One choice from the web's Settings. The reply is every preference, so the web shows what native holds.
-    func setPreference(_ name: String, to value: JSONValue) throws -> Preferences {
+    /// Relock is a security control the web alone must not weaken: a longer interval needs a fresh Face ID
+    /// here, and a declined or failed one leaves the stored choice (the reply says so). Locked, nothing changes.
+    func setPreference(_ name: String, to value: JSONValue) async throws -> Preferences {
+        guard !isLocked else { throw PreferenceError.locked }
+        var probe = preferences
+        try probe.set(name, to: value)
+        if probe.relock.loosens(preferences.relock) {
+            guard await confirmWithFaceID(), !isLocked else { return preferences }
+        }
+        // Re-derived from what is stored now: the await above may have let another change land.
         var next = preferences
         try next.set(name, to: value)
+        let data = try JSONEncoder().encode(next)
         preferences = next
-        defaults.set(try? JSONEncoder().encode(next), forKey: Self.preferencesKey)
-        shell?.applyAppearance(next.appearance)
+        defaults.set(data, forKey: Self.preferencesKey)
         return next
+    }
+
+    private enum PreferenceError: Error { case locked }
+
+    private func confirmWithFaceID() async -> Bool {
+        let context = LAContext()
+        let confirmed = try? await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Let tether stay unlocked longer")
+        return confirmed == true
     }
 
     var platformHosts: [PlatformHost] { hosts.map(\.platformHost) }
@@ -299,11 +316,11 @@ final class TetherAppModel: ObservableObject {
         switch phase {
         case .active:
             visible = true
-            let elapsed = backgroundEnteredAt.map { Date().timeIntervalSince($0) } ?? 0
+            let elapsed = backgroundEnteredAt.map { $0.duration(to: .now) } ?? .zero
             backgroundEnteredAt = nil
             endBackgroundTask()
-            // The timed check runs first on foreground, against when the app went to the background; At launch has no delay, so it never relocks here.
-            if backgroundHadTokens, let delay = preferences.relock.backgroundDelay, elapsed > delay {
+            // Measured on a clock that counts through sleep and can't be set back; At launch never relocks here.
+            if backgroundHadTokens, preferences.relock.locks(after: elapsed) {
                 lockApp()
                 shouldAutoUnlock = true
             }
@@ -317,7 +334,7 @@ final class TetherAppModel: ObservableObject {
         case .background:
             visible = false
             if backgroundEnteredAt == nil {
-                backgroundEnteredAt = Date()
+                backgroundEnteredAt = .now
                 backgroundHadTokens = tokens?.isEmpty == false
             }
             beginBackgroundTask()

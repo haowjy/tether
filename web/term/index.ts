@@ -52,6 +52,8 @@ export interface TerminalRenderer {
   snapshot(snapshot: Snapshot): Promise<void>;
   /** One cell's size in CSS pixels, null until the first paint; changes with font size. */
   cellSize(): CellSize | null;
+  /** One cell's size in CSS pixels from the font alone: current at once and while hidden, which the laid-out {@link cellSize} is not. Sizes tmux. */
+  fontCell(): CellSize | null;
   setTheme(theme: TerminalTheme): void;
   /** Calls `listener` whenever the view moves onto or off the newest line. */
   onScrolledUp(listener: (scrolledUp: boolean) => void): void;

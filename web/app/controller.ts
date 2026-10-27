@@ -49,6 +49,12 @@ export interface StartOptions {
   history?: HistoryPort;
 }
 
+/** The listing surface on screen: Home, or one sessions overlay (a server's sheet, the picker). */
+interface ListingSurface {
+  kind: "home" | "sessions";
+  name: string;
+}
+
 export class AppController extends Store<AppView> {
   readonly hosts: HostRegistry;
   readonly router: Router;
@@ -59,7 +65,7 @@ export class AppController extends Store<AppView> {
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastUpdateCheck = 0;
   /** The listing surface on screen when the last listing was asked for; null when none is. */
-  private listingSurface: string | null = null;
+  private listingSurface: ListingSurface | null = null;
   /** The active tab native was last told: undefined until the first dispatch. */
   private sentActive: string | null | undefined;
   /** The screen and overlay state the focus controller was last told. */
@@ -304,9 +310,11 @@ export class AppController extends Store<AppView> {
     const sessionsOverlay = overlay?.screen === "sessions" ? overlay : null;
     const listingShown = home || sessionsOverlay !== null;
     // Each surface asks afresh when it is entered, for the hosts it shows: a server's sheet lists that server, the picker and Home list all. Returning from an overlay to the screen under it is not entering.
-    const surface = sessionsOverlay ? `${sessionsOverlay.screen}/${sessionsOverlay.name}` : home ? "home" : null;
-    const returning = surface === "home" && this.listingSurface?.startsWith("sessions/") === true;
-    const entered = surface !== null && surface !== this.listingSurface && !returning;
+    const surface: ListingSurface | null = sessionsOverlay ? { kind: "sessions", name: sessionsOverlay.name } : home ? { kind: "home", name: "" } : null;
+    const before = this.listingSurface;
+    const returning = surface?.kind === "home" && before?.kind === "sessions";
+    const same = surface?.kind === before?.kind && surface?.name === before?.name;
+    const entered = surface !== null && !same && !returning;
     this.listingSurface = surface;
     const shown = sessionsOverlay?.name === "server" ? sessionsOverlay.params?.["host"] : undefined;
     for (const client of this.hosts.all()) {

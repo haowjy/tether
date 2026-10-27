@@ -69,13 +69,24 @@ public enum Relock: String, Codable, Equatable, Sendable {
     case oneHour = "1hour"
     case launch
 
-    /// nil: no time-based relock, the app unlocks once per launch.
-    public var backgroundDelay: TimeInterval? {
+    /// The Face ID gap this choice allows; `launch` is unbounded: the app unlocks once per launch.
+    private var allowedAbsence: Duration? {
         switch self {
-        case .fiveMinutes: 5 * 60
-        case .oneHour: 60 * 60
+        case .fiveMinutes: .seconds(5 * 60)
+        case .oneHour: .seconds(60 * 60)
         case .launch: nil
         }
+    }
+
+    /// An elapsed time that is negative is unknown, and an unknown time fails toward locking.
+    public func locks(after elapsed: Duration) -> Bool {
+        guard let allowedAbsence else { return false }
+        return elapsed < .zero || elapsed > allowedAbsence
+    }
+
+    /// Whether `self` lets the app stay unlocked longer than `other` does.
+    public func loosens(_ other: Relock) -> Bool {
+        (allowedAbsence ?? .seconds(Int64.max)) > (other.allowedAbsence ?? .seconds(Int64.max))
     }
 }
 
@@ -86,11 +97,30 @@ public struct Preferences: Codable, Equatable, Sendable {
     public var relock: Relock
 
     public static let standard = Preferences(appearance: .system, textSize: .default, relock: .oneHour)
+    /// What an unreadable stored relock means: the strictest choice, since a guess must not loosen the lock.
+    private static let unreadableRelock = Relock.fiveMinutes
 
     public init(appearance: Appearance, textSize: TextSize, relock: Relock) {
         self.appearance = appearance
         self.textSize = textSize
         self.relock = relock
+    }
+
+    private enum CodingKeys: String, CodingKey { case appearance, textSize, relock }
+
+    /// Each field on its own, so one unreadable value (a newer build's, or damage) costs only that field.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        appearance = (try? container.decode(Appearance.self, forKey: .appearance)) ?? Self.standard.appearance
+        textSize = (try? container.decode(TextSize.self, forKey: .textSize)) ?? Self.standard.textSize
+        relock = (try? container.decode(Relock.self, forKey: .relock)) ?? Self.unreadableRelock
+    }
+
+    /// The stored bytes, or the defaults when nothing was stored. Bytes that are not even an object keep the strict relock.
+    public static func restore(from data: Data?) -> Preferences {
+        guard let data else { return .standard }
+        return (try? JSONDecoder().decode(Preferences.self, from: data))
+            ?? Preferences(appearance: standard.appearance, textSize: standard.textSize, relock: unreadableRelock)
     }
 
     /// `setPreference { name, value }`: one choice from the web. An unknown name or value is a malformed request.

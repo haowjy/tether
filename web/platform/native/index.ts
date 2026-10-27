@@ -4,7 +4,7 @@
 import { Bridge, installReceiver, webkitPost, type Post } from "./bridge";
 import { createNativeTransport } from "./transport";
 import { createNativeUploads } from "./uploads";
-import type { BootResult, Platform, PlatformEvent, SavedWorkspace } from "../types";
+import type { BootResult, Platform, PlatformEvent, Preferences, SavedWorkspace } from "../types";
 
 const EMPTY_WORKSPACE: SavedWorkspace = { version: 3, tabs: [], active: null, lastTerminal: {} };
 
@@ -17,6 +17,11 @@ export function createNativePlatform(post: Post = webkitPost): Platform {
 
   const emit = (event: PlatformEvent): void => {
     for (const l of [...listeners]) l(event);
+  };
+
+  // Native answers with every preference it holds: the stored ones when it declined (locked, or Face ID not confirmed). A failed request leaves the page as it was.
+  const choose = <K extends keyof Preferences>(name: K, value: Preferences[K]): void => {
+    bridge.setPreference(name, value).then((preferences) => { emit({ type: "preferences", preferences }); }, () => undefined);
   };
 
   // Install before `ready`; its reply snapshots the current line before the app owner subscribes.
@@ -42,10 +47,7 @@ export function createNativePlatform(post: Post = webkitPost): Platform {
       return () => { listeners.delete(listener); };
     },
     transport: createNativeTransport(bridge),
-    setPreference(name, value) {
-      // A refusal leaves the preferences as they were: nothing to tell the page.
-      bridge.setPreference(name, value).then((preferences) => { emit({ type: "preferences", preferences }); }, () => undefined);
-    },
+    setPreference: choose,
     input: {
       setFocus: (mode) => { bridge.setFocus(mode); },
       setLine: (text, caret, tab) => bridge.setLine(text, caret, tab),
@@ -88,5 +90,6 @@ export function createNativePlatform(post: Post = webkitPost): Platform {
     haptic: (kind) => { bridge.haptic(kind); },
     restart: () => { bridge.recreateWebView(); },
     manageHosts: () => { bridge.manageHosts(); },
+    setRelock: (value) => { choose("relock", value); },
   };
 }

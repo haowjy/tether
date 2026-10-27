@@ -62,21 +62,6 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
         loadUI()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        // Before the web loads: the lock screen, sheets and keyboard take the chosen appearance from the window.
-        applyAppearance(model.preferences.appearance)
-    }
-
-    /// The window's style reaches the lock screen, the sheets, the keyboard and the web view's own scheme.
-    func applyAppearance(_ appearance: Appearance) {
-        view.window?.overrideUserInterfaceStyle = switch appearance {
-        case .system: .unspecified
-        case .light: .light
-        case .dark: .dark
-        }
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         publishViewportIfChanged()
@@ -329,7 +314,9 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
             case .setPreference:
                 let name: String = try request.field("name")
                 let value: JSONValue = try request.field("value")
-                reply(try jsonObject(try model.setPreference(name, to: value)), nil)
+                Task { @MainActor in
+                    do { reply(try jsonObject(try await model.setPreference(name, to: value)), nil) } catch { reply(nil, "native request failed") }
+                }
             case .lineSet:
                 let text: String = try request.field("text")
                 let caret: Int = try request.field("caret")
