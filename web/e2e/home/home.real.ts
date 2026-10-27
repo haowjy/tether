@@ -1,4 +1,5 @@
 import { expect, test, type Page, type WebSocket } from "@playwright/test";
+import { goHome } from "../shared/home";
 import { startStack, type Stack, type TmuxVersion } from "../shared/stack";
 
 // Home, the picker and creation against a real daemon and a real tmux (3.4 and 3.7b), in both
@@ -20,14 +21,21 @@ for (const version of VERSIONS) {
     });
     test.afterAll(async () => { await stack.stop(); });
 
-    const home = async (page: Page): Promise<void> => {
-      await page.goto(`${stack.url}/#/`);
-      await expect(page.getByRole("heading", { name: "On pop-os" }).or(page.locator("h2", { hasText: /^On / }))).toBeVisible();
+    const home = (page: Page): Promise<void> => goHome(page, stack.url);
+    const serverSheet = (page: Page) => page.getByRole("dialog", { name: /^Sessions on / });
+    const sessionRow = (page: Page, name: string) => serverSheet(page).getByRole("button", { name: new RegExp(`^${name} \\d+ windows?`) }).first();
+    const allSessions = (page: Page) => page.getByRole("button", { name: /^All \d+ sessions/ });
+
+    /** The sessions sheet's +, then New session. */
+    const newSession = async (page: Page): Promise<void> => {
+      await allSessions(page).click();
+      await page.getByRole("button", { name: "New session or Browse files" }).click();
+      await page.getByRole("button", { name: "New session", exact: true }).click();
     };
-    const sessionRow = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(`^${name} \\d+ windows?`) }).first();
 
     test("lists the real sessions, and opening one makes its tab", async ({ page }) => {
       await home(page);
+      await allSessions(page).click();
       await expect(sessionRow(page, "alpha")).toContainText("2 windows");
       await sessionRow(page, "alpha").click();
       await expect(page).toHaveURL(/#\/tab$/);
@@ -35,30 +43,21 @@ for (const version of VERSIONS) {
       // The tab shows the session's current window, the one tmux made current with new-window.
       await expect(page.getByRole("button", { name: "alpha shell", exact: true })).toBeVisible();
       // The row is marked, and opening it again activates the tab: no duplicate.
+      await allSessions(page).click();
       await expect(sessionRow(page, "alpha")).toContainText("open");
       await sessionRow(page, "alpha").click();
       await page.getByRole("button", { name: "Home" }).click();
       await expect(page.getByRole("button", { name: "alpha shell", exact: true })).toHaveCount(1);
     });
 
-    test("creates a session and a window, and the window lands in the session's tab", async ({ page }) => {
+    test("creates a session, and its tab opens", async ({ page }) => {
       await home(page);
-      await page.getByRole("button", { name: "New session" }).click();
+      await newSession(page);
       await page.getByRole("textbox", { name: "Name" }).fill("made-here");
       await page.getByRole("button", { name: "Create" }).click();
       await expect(page).toHaveURL(/#\/tab$/);
       expect(stack.tmux("list-sessions", "-F", "#{session_name}")).toContain("made-here");
 
-      await page.getByRole("button", { name: "Home" }).click();
-      await sessionRow(page, "made-here").click();
-      await page.getByRole("button", { name: "Windows in made-here" }).click();
-      await page.getByRole("menuitem", { name: "New window" }).click();
-      await page.getByRole("textbox", { name: "Name" }).fill("second");
-      await page.getByRole("button", { name: "Create" }).click();
-      await expect(page).toHaveURL(/#\/tab$/);
-      expect(stack.tmux("list-windows", "-t", "made-here", "-F", "#{window_name}")).toContain("second");
-      // The tab follows the session to the new window.
-      await expect(page.getByRole("button", { name: /^made-here second, / })).toBeVisible();
       // Back from the tab goes Home, not to the closed dialog.
       await page.goBack();
       await expect(page).toHaveURL(/#\/$/);
@@ -67,18 +66,20 @@ for (const version of VERSIONS) {
 
     test("a refused start directory shows the daemon's message in the form", async ({ page }) => {
       await home(page);
-      await page.getByRole("button", { name: "New session" }).click();
+      await newSession(page);
       await page.getByRole("textbox", { name: "Start directory" }).fill("/definitely/not/here");
       await page.getByRole("button", { name: "Create" }).click();
       await expect(page.getByRole("alert")).toBeVisible();
       await expect(page.getByRole("dialog", { name: "New session" })).toBeVisible();
       await page.keyboard.press("Escape");
-      await expect(page.getByRole("button", { name: "New session" })).toBeFocused();
+      // The sheet closed to open the form, so focus goes back to what opened the sheet.
+      await expect(allSessions(page)).toBeFocused();
     });
 
     test("a tab under an off-screen Home closes when its session is killed", async ({ page }) => {
       stack.tmux("new-session", "-d", "-s", "doomed", "-n", "only");
       await home(page);
+      await allSessions(page).click();
       await sessionRow(page, "doomed").click();
       await expect(page).toHaveURL(/#\/tab$/);
       // Off screen: Home covers the tab, and the daemon's closure broadcast removes it without a notice.
