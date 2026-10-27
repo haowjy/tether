@@ -69,6 +69,8 @@ final class KeyboardInput: UITextField, UITextFieldDelegate {
 
     func setMode(_ mode: FocusController.Mode) {
         guard self.mode != mode else { return }
+        // A held hardware key was routed for the old mode (Esc in the line returns to the terminal): repeats must not go on under the new one.
+        stopAllRepeats()
         self.mode = mode
         inputView = mode == .hidden ? emptyInputView : nil
         returnKeyType = mode == .line ? .send : .default
@@ -147,25 +149,31 @@ final class KeyboardInput: UITextField, UITextFieldDelegate {
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         guard markedTextRange == nil else { return false }
         if mode == .line {
-            guard let tab = lineTab else { return false }
-            let returnedText = text ?? ""
-            let returnedGeneration = generation
-            guard output?.keyboardInputLineReturn(gen: returnedGeneration, text: returnedText, tab: tab) == true else {
-                output?.keyboardInputWarning()
-                return false
-            }
-            generation += 1
-            suppressLineEdit = true
-            text = ""
-            if let caret = position(from: beginningOfDocument, offset: 0) {
-                selectedTextRange = textRange(from: caret, to: caret)
-            }
-            suppressLineEdit = false
-            lastLineEdit = lineEdit
+            submitLine()
         } else if mode == .terminal || mode == .hidden {
             output?.keyboardInput(.key("Enter"))
         }
         return false
+    }
+
+    /// The line's Return: the whole line goes to the tab, then Enter, and the box empties. The web's Send
+    /// button asks for the same (`lineSubmit`). Dropped while the keyboard composes, as Return is.
+    func submitLine() {
+        guard mode == .line, markedTextRange == nil, let tab = lineTab else { return }
+        let returnedText = text ?? ""
+        let returnedGeneration = generation
+        guard output?.keyboardInputLineReturn(gen: returnedGeneration, text: returnedText, tab: tab) == true else {
+            output?.keyboardInputWarning()
+            return
+        }
+        generation += 1
+        suppressLineEdit = true
+        text = ""
+        if let caret = position(from: beginningOfDocument, offset: 0) {
+            selectedTextRange = textRange(from: caret, to: caret)
+        }
+        suppressLineEdit = false
+        lastLineEdit = lineEdit
     }
 
     func textFieldDidChangeSelection(_ textField: UITextField) { publishLineEdit() }

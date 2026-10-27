@@ -58,23 +58,24 @@ export function KeyRow({ editor }: { editor: LineEditor }) {
     if (native && owner === "line") app.platform.input.setArmedModifier(armed);
   }, [app, armed, native, owner]);
 
+  // Routed against the live owner and armed state, not this render's: a held key fires from the render it was pressed in.
   const send = (spec: Spec): void => {
     if ("modifier" in spec) {
       modifiers.toggle(spec.modifier);
       return;
     }
-    const route = routeKey(spec.key, owner, armed);
+    const keyOwner = app.focus.snapshot.owner;
+    if (keyOwner === "none") return;
+    const route = modifiers.route(spec.key, keyOwner);
     switch (route.to) {
-      case "terminal": modifiers.input(route.events); break;
+      case "terminal": break;
       case "caret": editor.step(route.step); break;
       case "focusTerminal": app.focus.focusTarget("terminal", true); break;
-      case "line":
-        // A character with no chord is typed unmodified, which uses the armed modifier up.
-        if (armed !== null) modifiers.disarm();
-        editor.insert(route.text);
-        break;
+      case "line": editor.insert(route.text); break;
     }
   };
+
+  if (owner === "none") return null; // the row is mounted only while typing
 
   return (
     <div class={styles.keys} role="group" aria-label="Terminal keys">
@@ -84,7 +85,7 @@ export function KeyRow({ editor }: { editor: LineEditor }) {
           spec={spec}
           pressed={"modifier" in spec && armed === spec.modifier}
           // The two destinations look different: a key whose tap lands in the compose box rather than in tmux.
-          acts={"key" in spec && routeKey(spec.key, owner, armed).to !== "terminal" ? "box" : undefined}
+          acts={"key" in spec && routeKey(spec.key, owner, armed).route.to !== "terminal" ? "box" : undefined}
           onPress={() => { send(spec); }}
           onDown={() => { app.platform.haptic("modifier" in spec ? "modifier" : "key"); }}
         />

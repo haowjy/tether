@@ -3700,8 +3700,10 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 - **Rejected:** a web-computed caret index sent through `lineCaret` (that race, and it breaks
   marked composition); committing the composition and then stepping (it ends a composition the
   user did not end; revisit on device if dropping the step feels dead).
-- **Open:** "Send" as a visible button in the box is not built; the cue is Return labelled Send
-  in both editors. A native Send button needs a web-to-native Return message the bridge does not have.
+- **Send:** the box shows a Send button while it owns typing; it acts as Return (the line, then
+  Enter; focus stays) and takes no focus (`DockButton`). In the app native holds the text, so the
+  button sends the web-to-native `lineSubmit`, which runs the same code as native's Return key.
+  Part of v6, which no build has shipped.
 
 ## Home is server cards; Settings and a server's sessions are page dialogs
 
@@ -3737,3 +3739,20 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   Escape, containment and focus return for free; plain buttons need no menu keys); making the menu
   a router overlay (a `+` menu is not a place Back should land on, and the sheet unmounting it is
   simpler).
+
+## Review fixes to the keyboard-up dock: one dispatch, one action per tap
+
+- **Decided:** 2026-10-27, lead (slice 3 fix round, from review p343).
+- **What:** `routeKey` returns `{ route, armed }`; `ArmedModifiers.route(key, owner)` reads the
+  live armed state, commits the modifier the key uses and sends terminal input, and every caller
+  (key row, including each repeat tick; the browser field's `beforeinput` and Esc; the native text
+  path) goes through it. `chord()` and the callers' own `disarm()` are deleted, and the owner type
+  is `"terminal" | "line"`. A held armed ← sends one `C-Left`, then steps the caret: the repeat
+  timer used a render's copy of `armed`. A held hardware Esc in the native line no longer sends
+  Escapes to tmux: repeats stop on a focus-mode change. The browser's caret step drops during
+  IME composition, as native's does.
+- **Taps:** with the keyboard up and the box owning typing, a terminal tap does exactly one thing,
+  gives typing back to the terminal: no mouse click, no cursor move, and the next tap acts as
+  usual. `tapAction(...)` resolves every tap to a single action.
+- **Rejected:** a tap that both returns typing and clicks (an unintended click in vim or htop
+  mid-line is worse than one extra tap).

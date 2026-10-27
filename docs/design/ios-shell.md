@@ -261,7 +261,8 @@ Standard user-driven paste remains required. The line mirror's Paste menu asks t
   and inserted back into the line at the caret. Other insert shapes stay in UIKit and
   clear native's armed state; their next `lineEdit` disarms the web state.
 - Key repeat for consumed keys: `pressesBegan` reports key-down once, so
-  `KeyboardInput` repeats (400 ms delay, then every 33 ms) until `pressesEnded`.
+  `KeyboardInput` repeats (400 ms delay, then every 33 ms) until `pressesEnded` or the focus mode
+  changes (a held Esc in `line` returns to the terminal and must not go on to send Escapes to tmux).
   All repeat timers stop when the responder resigns or the app becomes inactive. If
   the device checklist shows iOS repeating `pressesBegan` itself, the timer goes. `UIKeyCommand`
   fires once per press, so it isn't used for terminal keys.
@@ -288,7 +289,7 @@ generation and replies with it. Return captures the old generation, then native 
 and advances before sending the event. If the page is not ready, Return stays in the
 native field and warns; it is not queued. The platform forwards line events to subscribers,
 and the app-started owner buffers them only until draft hydration. The dock key row sends
-line characters to the native field via `lineInsert` and its unmodified ← and → via `lineCaretStep`; `routeKey` (web) decides which keys go where, and native owns the text and caret, so the web never computes a native caret index. The web tells native when ctrl or alt
+line characters to the native field via `lineInsert`, its unmodified ← and → via `lineCaretStep` and the box's Send button via `lineSubmit`; `routeKey` (web) decides which keys go where, and native owns the text and caret, so the web never computes a native caret index. The web tells native when ctrl or alt
 is armed, so a one-grapheme insert at a collapsed caret can be routed as a terminal chord.
 
 ```text
@@ -319,9 +320,11 @@ InputEvent = { text: string }    // literal text
   a chord. In native `line`, only one grapheme inserted at a collapsed caret is diverted
   to that rule; an unchordable character is disarmed and restored with `lineInsert` at
   the caret. Any other insert shape clears native's armed state and stays in UIKit; its
-  next `lineEdit` disarms the web state. The browser line field uses the same rule. Key-row
-  text uses `chord()` too; an unchordable key inserts into the line only while line owns
-  the keyboard, and is never sent bare to tmux. IME composition disarms the one-shot modifier.
+  next `lineEdit` disarms the web state. The browser line field uses the same rule. One
+  dispatch, `ArmedModifiers.route(key, owner)`, reads the live armed state, commits the modifier
+  it uses and returns where the key goes; the key row (each repeat tick too), the browser field's
+  `beforeinput`/Esc and the native text path all call it. An unchordable key inserts into the line
+  only while line owns the keyboard, and is never sent bare to tmux. IME composition disarms the one-shot modifier.
 - The web sends `activeTab { tab: TabKey | null }` whenever the active tab changes.
   Native caches that key, so each coalesced input batch needs one bridge call; the web
   still drops stale-tab batches before routing them.
@@ -479,6 +482,7 @@ token to native solely for comparison and revocation, never into storage or logs
 | `lineCaret { index }` | `null` | Move the native editing caret to a UTF-16 offset |
 | `lineCaretStep { step }` | `null` | `-1` or `1`: move the native caret one character left or right with UIKit's own text positions (a selection collapses toward the step); dropped while the keyboard has marked text |
 | `lineInsert { text }` | `null` | Insert a one-line key-row character or paste |
+| `lineSubmit {}` | `null` | The web's Send button: submit the native line exactly as Return does (the whole line, then Enter; the box empties and keeps focus); dropped while the keyboard composes |
 | `lineSelectAll {}` | `null` | Select the native editing copy's full line for the mirror's menu |
 | `modifiers { armed }` | `null` | Keep native's one-shot ctrl/alt routing in step with the web's modifier owner |
 | `draftGet { key: TabKey }` | `DraftRecord` or `null` | Read the line-field draft |
@@ -557,7 +561,7 @@ the resulting draft and native selection state.
 
 | Event (native signal) | What happens |
 |---|---|
-| Launch | Load the bundled UI; `ready` returns bridge-v2 `Boot`; the web restores `workspace` and starts host connections. If a token item exists or saved hosts indicate a missing item needs recovery, native covers the UI and attempts one Face ID read ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)); a fresh app with no tokens opens without a prompt. |
+| Launch | Load the bundled UI; `ready` returns the bridge `Boot`; the web restores `workspace` and starts host connections. If a token item exists or saved hosts indicate a missing item needs recovery, native covers the UI and attempts one Face ID read ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)); a fresh app with no tokens opens without a prompt. |
 | Background (`scenePhase == background`) | Native starts a short background task and publishes `lifecycle { visible:false, online, locked, covered }`, then ends the task after the web callback or expiration. The web closes sockets. Native keeps tokens in memory until a lock. |
 | A native screen covers the terminal (server list, Add host, or lock screen) | Native blurs any WebKit text field and covers the terminal. A server sheet sets `Lifecycle.covered`; the lock screen uses `Lifecycle.locked`. The web's single watch predicate unwatches the hidden active tab. On sheet dismissal native republishes the whole lifecycle snapshot. |
 | Foreground (`scenePhase == active`) | If the selected 5 min or 1 hour interval was exceeded, native drops its token map and attempts one Keychain read to unlock; At launch never relocks merely on foreground. Otherwise restore focus without a prompt. The web recomputes admission and reconnects as needed. |
@@ -706,7 +710,7 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 | Keyboard stays as set | Guard on: scroll and fling the terminal; with the keyboard up, tap the terminal from the line field and use esc, ←/→ and tmux keys. The keyboard stays up and input goes to the intended target |
 | Restored without a tap | A web sheet opened and closed, the native server sheet, 10 s in the background, Notification and Control Center, a killed web content process: verify the intended focus and keyboard return; a line target returns as `line`, not `terminal` |
 | Hidden keeps input | Hidden with the empty `inputView`: no blank keyboard area; hardware keys still reach the terminal; only a tap on or beside the cursor opens the keyboard |
-| One keyboard / line target | With the keyboard up, one tap on the box selects `line`; a terminal tap or esc returns to `terminal` without hiding it, and Hide closes either mode. Confirm the idle box has no caret, the focused box has a caret and Send, the terminal cursor is solid or hollow as appropriate, and no first tap is lost. Send keeps line focus. Long press opens Paste / Select all / Clear; tap places the caret and spacebar trackpad follows it. The line wraps to five visual lines and scrolls internally. |
+| One keyboard / line target | With the keyboard up, one tap on the box selects `line`; a terminal tap or esc returns to `terminal` without hiding it (the tap does nothing else: no click in a mouse-mode app), and Hide closes either mode. Confirm the idle box has no caret, the focused box has a caret and Send, the terminal cursor is solid or hollow as appropriate, and no first tap is lost. Send (the web button, `lineSubmit`) acts as Return and keeps line focus. Long press opens Paste / Select all / Clear; tap places the caret and spacebar trackpad follows it. The line wraps to five visual lines and scrolls internally. |
 | Key row with the box focused | ← and → step the caret one character: a held arrow repeats at 33 ms without skipping or lagging, an emoji or accented letter is one step, a selection collapses toward the arrow. ↑ ↓ ^R ^C tab ⇧tab ⏎ reach tmux. esc and a terminal tap return typing to the terminal with the keyboard up. Exactly one cursor is live: the terminal's solid block or the box's caret, never both, and no tap is lost. During Chinese/Korean composition the row's ← → do nothing (note whether that feels dead and committing first would be better). Hardware ← → move the caret and hardware Esc returns to the terminal. The row marks esc ← → \| ~ / - as acting on the box. |
 | Selection | With `line` holding the native keyboard, verify whether WebKit's selection handles and Copy work; when they need WebKit, `focus select` must release it and release restores `line` |
 | Keyboard toggle / restore | Toggle raises `terminal` from hidden and closes `terminal` or `line`; system dismissal resets the web owner; selection and sheet close restore the expected mode. Background, native server sheet, 10 s in background, Notification / Control Center, and web-process restart restore `line` as `line` without a new tap. |

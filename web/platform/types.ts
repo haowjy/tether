@@ -130,6 +130,8 @@ export interface InputPlatform {
   stepLineCaret(step: -1 | 1): void;
   /** Insert one line at the native caret. */
   insertLine(text: string): void;
+  /** Submits the native line as its Return key does. */
+  submitLine(): void;
   /** Select the native editing copy's full text. */
   selectAllLine(): void;
   /** Keep the native responder in step with the web-owned armed modifier. */

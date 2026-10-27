@@ -58,6 +58,7 @@ export function Dock({ active }: { active: boolean }) {
   const above = useRef<HTMLDivElement>(null);
   const row = useRef<HTMLDivElement>(null);
   const line = useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
   const [local, setLocal] = useState<LocalNote | null>(null);
 
   const tab = terminalTabOf(workspace, workspace.active);
@@ -132,7 +133,8 @@ export function Dock({ active }: { active: boolean }) {
         return;
       }
       const field = line.current;
-      if (!field) return;
+      // Moving the selection mid-composition commits or garbles it: the keyboard's until it commits, as in native.
+      if (!field || composing.current) return;
       const { selectionStart: start, selectionEnd: end, value } = field;
       const to = start !== end ? (step < 0 ? start : end) : stepGrapheme(value, start, step);
       field.setSelectionRange(to, to);
@@ -146,7 +148,7 @@ export function Dock({ active }: { active: boolean }) {
           <p class={styles.note} data-tone={note?.tone} role="status">{note?.text}</p>
           {/* Mounted at rest too, so the draft and the field's refs outlive the keyboard; hidden, so nothing can focus it. */}
           <div class={styles.compose} hidden={!typing}>
-            <LineField tab={tab} label={label ? `Line for ${label.full}` : "Line"} onNote={setLocal} inputRef={line} />
+            <LineField tab={tab} label={label ? `Line for ${label.full}` : "Line"} onNote={setLocal} inputRef={line} composing={composing} />
           </div>
         </div>
         <div class={styles.row} ref={row}>

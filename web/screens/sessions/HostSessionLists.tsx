@@ -15,7 +15,7 @@ interface HostSessionListsProps {
   query: string;
   /** Only this host's list (a server's full-height sheet); every listable host's when absent. */
   only?: string;
-  /** The terminal tab on screen: its session says "here" and lists its windows. None on Home. */
+  /** The terminal tab on screen: its session says "here" and lists its windows. None on Home and Files. */
   active?: ActiveWindows & { id: string };
   onOpen: (host: HostClient, listing: TmuxListing, session: SessionListing) => void;
 }

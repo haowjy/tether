@@ -48,6 +48,7 @@ export function createNativePlatform(post: Post = webkitPost): Platform {
       setLineCaret: (index) => { bridge.lineCaret(index); },
       stepLineCaret: (step) => { bridge.lineCaretStep(step); },
       insertLine: (text) => { bridge.lineInsert(text); },
+      submitLine: () => { bridge.lineSubmit(); },
       selectAllLine: () => { bridge.lineSelectAll(); },
       setArmedModifier: (armed) => { bridge.modifiers(armed); },
       setActiveTab: (tab) => { bridge.activeTab(tab); },

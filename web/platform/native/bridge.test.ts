@@ -31,6 +31,7 @@ const calls: Record<string, (b: Bridge, m: Fixture["message"]) => unknown> = {
   lineCaret: (b, m) => { b.lineCaret(m["index"] as number); },
   lineCaretStep: (b, m) => { b.lineCaretStep(m["step"] as -1 | 1); },
   lineInsert: (b, m) => { b.lineInsert(m["text"] as string); },
+  lineSubmit: (b) => { b.lineSubmit(); },
   lineSelectAll: (b) => { b.lineSelectAll(); },
   modifiers: (b, m) => { b.modifiers(m["armed"] as "ctrl" | "alt" | null); },
   draftGet: (b, m) => b.draftGet(m["key"] as never),

@@ -14,7 +14,6 @@ import type { SessionRef, ShownWindow } from "../../proto/generated/messages";
 import { createXtermRenderer, type PromptLine, type TerminalRenderer } from "../../term";
 import { TerminalSizer } from "../../term/size";
 import { ArmedModifiers } from "../../touch/armed";
-import { routeKey } from "../../touch/keyRoute";
 import { createOwnedInput } from "../../touch/owned-input";
 import { Store } from "../../ui/store";
 import { terminalTheme } from "../../ui/theme";
@@ -151,12 +150,16 @@ export class Terminals extends Store<TerminalsView> {
       if (this.viewport.directInput === "native") {
         const line = this.app.focus.snapshot.owner === "line";
         for (const input of event.events) {
-          if (line && "text" in input) {
-            if (!this.modifiers.chord([input])) this.app.platform.input.insertLine(input.text);
-          } else if (line && "key" in input && routeKey({ name: input.key }, "line", this.modifiers.snapshot.armed).to === "focusTerminal") {
-            // A hardware Esc does what the key row's esc does.
-            this.app.focus.focusTarget("terminal", true);
-          } else this.modifiers.input([input]);
+          // While the box owns typing, a character or key goes by the same rule as the key row's.
+          const key = "text" in input ? { text: input.text } : "key" in input ? { name: input.key } : null;
+          if (!line || !key) {
+            this.modifiers.input([input]);
+            continue;
+          }
+          const route = this.modifiers.route(key, "line");
+          if (route.to === "line") this.app.platform.input.insertLine(route.text);
+          else if (route.to === "caret") this.app.platform.input.stepLineCaret(route.step);
+          else if (route.to === "focusTerminal") this.app.focus.focusTarget("terminal", true);
         }
       } else this.drivers.get(id)?.input(event.events);
     });

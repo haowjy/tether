@@ -23,9 +23,9 @@ version section on release.
   the key row (esc ← ↑ ↓ → ⇧tab tab ^C ^R ctrl alt ⏎ | ~ / -, Hide keyboard fixed at its end)
   replaces the bar. While the box holds the keyboard, ← and → move its caret by one character,
   esc returns typing to the terminal and every other control reaches tmux; the keys that act on the
-  box are marked. Tapping the terminal also hands typing back without lowering the keyboard.
+  box are marked. Tapping the terminal does only that: it hands typing back without lowering the keyboard, with no click or cursor move. A Send button sits beside the box while it holds the keyboard and acts as Return.
   The terminal cursor is solid while it takes typing, hollow while the box does, and the idle box
-  shows no caret. The app's bridge moves to v6 (`lineCaretStep`), so update the app with the web.
+  shows no caret. The app's bridge moves to v6 (`lineCaretStep`, `lineSubmit`), so update the app with the web.
 - The sessions sheet and the desktop + popover read "here" only for the tab on screen; on
   Home the open sessions all read "open". The desktop's "New window" dialog is gone with
   its only entry point: create windows with tmux's `prefix c`.

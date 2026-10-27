@@ -20,6 +20,7 @@ interface LineInputProps {
   onKeyDown?: (e: TargetedKeyboardEvent<HTMLTextAreaElement>) => void;
   onBeforeInput?: (e: TargetedInputEvent<HTMLTextAreaElement>) => void;
   onCompositionStart?: (e: TargetedEvent<HTMLTextAreaElement, CompositionEvent>) => void;
+  onCompositionEnd?: (e: TargetedEvent<HTMLTextAreaElement, CompositionEvent>) => void;
   onPaste?: (e: TargetedClipboardEvent<HTMLTextAreaElement>) => void;
 }
 

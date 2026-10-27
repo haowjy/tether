@@ -29,6 +29,23 @@ interface TouchDeps {
   owner(): Owner;
 }
 
+/** What a short press on the terminal does: exactly one of these. */
+export type TapAction = "focus" | "focusAndClick" | "click" | "moveCursor" | "none";
+
+/**
+ * A tap, resolved (terminal-interaction-design.md, "Terminal taps"). With the compose box typing it only gives
+ * typing back: a click there would hit vim or htop mid-line, so the next tap clicks. Elsewhere it is aimed at a
+ * cell (`cell`, false in history): with the keyboard down, near the cursor row (`nearCursor`) it raises the
+ * keyboard; then a click for an application that asked for the mouse (`mouse`), else the terminal's own tap moves the prompt cursor.
+ */
+export function tapAction(t: { owner: Owner; cell: boolean; nearCursor: boolean; mouse: boolean }): TapAction {
+  if (t.owner === "line") return "focus";
+  if (!t.cell) return "none";
+  if (t.owner === "terminal") return t.mouse ? "click" : "moveCursor";
+  if (t.mouse) return t.nearCursor ? "focusAndClick" : "click";
+  return t.nearCursor ? "focus" : "none";
+}
+
 export class TouchControl {
   private readonly recognizer = new GestureRecognizer();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -156,32 +173,27 @@ export class TouchControl {
     }
   }
 
-  /**
-   * A short press, resolved. On the cursor's row or the row above or below it, with the keyboard down, it raises the
-   * keyboard for the terminal. Then a click for an application that asked for the mouse, else the prompt's cursor.
-   */
+  /** A short press, resolved to the one thing it does (`tapAction`). */
   private tap(x: number, y: number): void {
     const renderer = this.deps.renderer();
     if (this.deps.directInput() === "xterm") {
       this.deps.focusTerminal();
       return;
     }
-    // With the keyboard up, a tap anywhere takes typing from the compose box, history included; it moves nothing else.
-    const owner = this.deps.owner();
-    if (owner === "line") this.deps.focusTerminal();
-    if (!renderer || !this.deps.scroll.atLatest) return;
-    const cell = renderer.cellAt(x, y);
-    if (!cell) return;
-    // With it down, a tap near the cursor raises it. Decided before focusing: that tap doesn't also move the cursor.
-    const held = owner === "terminal";
-    if (owner === "none" && Math.abs(cell.row - renderer.cursor().row) <= 1) this.deps.focusTerminal();
-    const mode = renderer.mouseMode();
-    if (mode === "none") {
-      if (held) this.moveCursorTo(cell.col, cell.row);
-      return;
-    }
-    const events = mouseInput("tap", cell.col, cell.row, mode, renderer.mouseEncoding());
-    if (events) this.deps.send(events);
+    const cell = this.deps.scroll.atLatest ? renderer?.cellAt(x, y) ?? null : null;
+    const action = tapAction({
+      owner: this.deps.owner(),
+      cell: cell !== null,
+      nearCursor: cell !== null && renderer !== null && Math.abs(cell.row - renderer.cursor().row) <= 1,
+      mouse: renderer !== null && renderer.mouseMode() !== "none",
+    });
+    if (action === "focus" || action === "focusAndClick") this.deps.focusTerminal();
+    if (!renderer || !cell) return;
+    if (action === "click" || action === "focusAndClick") {
+      const mode = renderer.mouseMode();
+      const events = mode === "none" ? null : mouseInput("tap", cell.col, cell.row, mode, renderer.mouseEncoding());
+      if (events) this.deps.send(events);
+    } else if (action === "moveCursor") this.moveCursorTo(cell.col, cell.row);
   }
 
   /** On the prompt's input row, a tap moves the cursor there; the caller has checked that the terminal's own input held the keyboard. */

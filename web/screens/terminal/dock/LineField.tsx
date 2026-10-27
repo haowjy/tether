@@ -3,6 +3,7 @@ import { useRef } from "preact/hooks";
 import type { Ref } from "preact";
 import { useApp, useAppView } from "../../../app/context";
 import type { TextRange } from "../../../platform/types";
+import { DockButton } from "../../../ui/primitives/DockButton";
 import { LineInput } from "../../../ui/primitives/LineInput";
 import { useStore } from "../../../ui/store";
 import type { TerminalTab } from "../../../workspace/state";
@@ -11,6 +12,7 @@ import { terminalsOf } from "../terminals";
 import { LineMirror } from "./LineMirror";
 import { lineDraftsOf } from "./lineDrafts";
 import { nativeLineOf } from "./nativeLine";
+import styles from "./Dock.module.css";
 
 export type LocalNote = { tone: "error" | "info"; text: string };
 
@@ -19,13 +21,15 @@ interface LineFieldProps {
   label: string;
   onNote: (note: LocalNote | null) => void;
   inputRef: Ref<HTMLTextAreaElement>;
+  /** Whether the textarea's IME is composing; the key row's caret step waits for it (the browser's twin of native's marked text). */
+  composing: { current: boolean };
 }
 
 /** The line is one logical line. One trailing paste break is dropped; multiple lines go to tmux. */
 const withoutTrailingBreak = (text: string): string => text.replace(/\r?\n$/, "").replace(/\r$/, "");
 const hasInnerBreak = (text: string): boolean => /[\r\n]/.test(withoutTrailingBreak(text));
 
-export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
+export function LineField({ tab, label, onNote, inputRef, composing }: LineFieldProps) {
   const app = useApp();
   const terminals = terminalsOf(app);
   const drafts = lineDraftsOf(app);
@@ -65,11 +69,27 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
     onNote(result === "notConnected" ? { tone: "error", text: "Not connected" } : null);
   };
 
+  // Acts as Return does, and takes no focus: the box keeps the keyboard (DockButton). In the app native holds the text, so it submits.
+  const sendButton = owner === "line" && (
+    <DockButton
+      kind="control"
+      class={styles.send}
+      disabled={!tab}
+      onClick={() => {
+        if (native) app.platform.input.submitLine();
+        else if (tab) send(tab, inputText.current);
+      }}
+    >
+      Send
+    </DockButton>
+  );
+
   if (native) {
     const bound = nativeState.tabId === tab?.id;
     const value = bound ? nativeState.text : text;
     const selection: TextRange = bound ? nativeState.selection : { start: value.length, end: value.length };
     return (
+      <>
       <LineMirror
         label={label}
         placeholder={tab ? "Type or dictate a line" : "Open a window to type"}
@@ -101,10 +121,13 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
           });
         }}
       />
+      {sendButton}
+      </>
     );
   }
 
   return (
+    <>
     <LineInput
       label={label}
       placeholder={tab ? "Type or dictate a line" : "Open a window to type"}
@@ -114,6 +137,13 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
       inputRef={inputRef}
       onInput={edit}
       onKeyDown={(event) => {
+        // A hardware Esc goes where the key row's esc does (the same dispatch as the app's native line).
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
+        if (event.key === "Escape" && !event.isComposing && event.keyCode !== 229) {
+          event.preventDefault();
+          if (modifiers.route({ name: "Escape" }, "line").to === "focusTerminal") app.focus.focusTarget("terminal", true);
+          return;
+        }
         // Return confirming an IME candidate is the IME's, not a send. Safari reports it after
         // `compositionend`, as keyCode 229 with isComposing already false.
         if (event.key !== "Enter") return;
@@ -127,8 +157,8 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
         if (tab) send(tab, inputText.current);
       }}
       onBeforeInput={(event) => {
-        // Cancel only a real chord; unchordable and multi-character inserts stay in the line.
-        if (event.inputType === "insertText" && event.data && modifiers.chord([{ text: event.data }])) {
+        // Cancel only a real chord (sent to tmux); unchordable and multi-character inserts stay in the line.
+        if (event.inputType === "insertText" && event.data && modifiers.route({ text: event.data }, "line").to === "terminal") {
           event.preventDefault();
         }
         if (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph") {
@@ -138,7 +168,11 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
           if (!imeReturn && tab) send(tab, inputText.current);
         }
       }}
-      onCompositionStart={() => { modifiers.disarm(); }}
+      onCompositionStart={() => {
+        composing.current = true;
+        modifiers.disarm();
+      }}
+      onCompositionEnd={() => { composing.current = false; }}
       onPaste={(event) => {
         const pasted = readPaste(event.clipboardData);
         if (pasted.kind === "image" || (pasted.kind === "text" && hasInnerBreak(pasted.text))) {
@@ -155,5 +189,7 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
         }
       }}
     />
+    {sendButton}
+    </>
   );
 }

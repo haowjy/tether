@@ -38,11 +38,14 @@
 /* The compose box, visible while any input holds the keyboard. */
 .compose {
   display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
   background: var(--color-bg-raised);
   border-top: 1px solid var(--color-border);
 }
 .compose[hidden] { display: none; }
+.send { background: var(--color-accent); color: var(--color-on-accent); }
 
 /* The row is one height at rest and typing, so the keyboard never changes how tall tmux is. */
 .row {

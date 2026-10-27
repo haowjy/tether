@@ -328,6 +328,9 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
                 guard !text.contains(where: { $0.isNewline }) else { throw BridgeError.malformed }
                 terminalInput.insertLine(text)
                 reply(NSNull(), nil)
+            case .lineSubmit:
+                terminalInput.submitLine()
+                reply(NSNull(), nil)
             case .lineSelectAll:
                 terminalInput.selectAllLine()
                 reply(NSNull(), nil)

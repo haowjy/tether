@@ -299,8 +299,8 @@ bottom safe area                           esc ← ↑ ↓ → ⇧tab tab ^C ^R 
   terminal cursor, and Return labelled Send. There is exactly one active typing cursor.
 - **Terminal taps and sheets.** With the keyboard down, a tap on the cursor's row or the
   row directly above or below it raises terminal input, except while scrolled into
-  history. With the keyboard up, a terminal tap switches from line to terminal without
-  hiding it. Mouse-mode taps still send a click; OSC 133 prompt-row cursor placement may
+  history. With the keyboard up and the box owning typing, a terminal tap does one thing:
+  it gives typing back to the terminal (no click, no cursor move; the next tap acts as usual). Otherwise mouse-mode taps send a click; OSC 133 prompt-row cursor placement may
   move the cursor while terminal input already owns the keyboard. Scroll and selection
   do not toggle it. Opening a sheet or dialog lowers it, as does leaving Terminal for
   Home or Files. On sheet close, native restores the held target; the browser refocuses

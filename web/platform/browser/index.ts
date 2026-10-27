@@ -52,6 +52,7 @@ export function createBrowserPlatform(): Platform {
       setLineCaret: () => undefined,
       stepLineCaret: () => undefined,
       insertLine: () => undefined,
+      submitLine: () => undefined,
       selectAllLine: () => undefined,
       setArmedModifier: () => undefined,
       setActiveTab: () => undefined,

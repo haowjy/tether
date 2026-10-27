@@ -276,6 +276,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
       setLineCaret: () => undefined,
       stepLineCaret: () => undefined,
       insertLine: () => undefined,
+      submitLine: () => undefined,
       selectAllLine: () => undefined,
       setArmedModifier: () => undefined,
       setActiveTab: () => {},

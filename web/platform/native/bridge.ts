@@ -150,6 +150,10 @@ export class Bridge {
     this.fire({ type: "lineInsert", text });
   }
 
+  lineSubmit(): void {
+    this.fire({ type: "lineSubmit" });
+  }
+
   lineSelectAll(): void {
     this.fire({ type: "lineSelectAll" });
   }
