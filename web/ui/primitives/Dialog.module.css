@@ -23,17 +23,18 @@
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
 }
 .title { flex: 1; font-size: var(--text-heading); font-weight: var(--weight-bold); }
-.actions { display: flex; align-items: center; gap: var(--space-2); }
+/* A sheet's own top row: no title bar, the controls it is given. */
+.top { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-2); }
 /* The top padding is the focus ring's room (2px outline + 2px offset): a scrolling body clips what is drawn outside it. */
 .body { flex: 1; overflow-y: auto; padding: var(--space-1) var(--space-4) var(--space-4); min-height: 0; scroll-padding: var(--space-1); }
 
-/* The phone picker: a tall bottom sheet, safe-area padded, in the theme's raised surface. */
+/* The phone's sessions sheet: half the screen over the page, safe-area padded, in the theme's raised surface. */
 .sheet {
   width: 100%;
   max-width: none;
   max-height: none;
   /* Sits on the keyboard and shrinks to the screen that is left. */
-  height: min(88svh, calc(100svh - var(--keyboard-inset) - var(--safe-top)));
+  height: min(62svh, calc(100svh - var(--keyboard-inset) - var(--safe-top)));
   translate: 0 calc(-1 * var(--keyboard-inset));
   margin: auto 0 0;
   border-radius: var(--sheet-radius) var(--sheet-radius) 0 0;

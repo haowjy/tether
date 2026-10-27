@@ -7,9 +7,8 @@ import { HostProblem } from "../enrol/HostProblem";
 import { FilesScreen } from "../files/FilesScreen";
 import { CreateDialog } from "../home/CreateDialog";
 import { Home } from "../home/Home";
-import { Picker } from "../picker/Picker";
+import { Sessions } from "../sessions/Sessions";
 import { Settings } from "../settings/Settings";
-import { Switcher } from "../switcher/Switcher";
 import { TerminalScreen } from "../terminal/TerminalScreen";
 import { AppBanners } from "./AppBanners";
 import { HostBanner } from "./HostBanner";
@@ -54,9 +53,8 @@ export function Shell() {
       </div>
       {!blocking && (
         <>
-          <Picker />
-          <Switcher />
-          {/* New session and New window open from Home and from the switcher. */}
+          <Sessions />
+          {/* New session and New window open from Home and from the sessions overlay. */}
           <CreateDialog />
           <Settings />
         </>

@@ -3579,3 +3579,21 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   really", then "e2e scripts maybe (to test the full behavior, and record performance)".
 - **Rejected:** keeping the harness suite, opt-in or in preflight (it checks a fake daemon's
   idea of the app, and costs a browser install and maintenance every change).
+
+## Phone sessions sheet: list, row tap keeps the sheet, windows under the active row
+
+- **Decided:** 2026-10-27, Jimmy, answering the redesign's open details.
+- **What:** (1) the sessions sheet lists sessions, not a grid ("List"); (2) a session-row
+  tap opens or activates that tab behind the sheet and the sheet stays open, the same as a
+  tab in the strip ("it should open the tab, not close the sheet? (be consistent with
+  tabs?)"); dismissal is the backdrop, Back or Escape; the desktop popover still closes on
+  selection; (3) the active tab's session row lists its windows beneath it when it has more
+  than one ("Under the active row"): "index: name", the latest `watching` window marked
+  "shown", a tap runs `select-window` and choosing the shown one does nothing; other rows
+  show a window count. New window has no button on the phone this pass (`prefix c`).
+  Browse files, like a row tap, leaves the sheet open on the new Files tab (tech coder's call).
+- **Also:** one `sessions` overlay replaces `picker` and `switcher`; tabs switched under an
+  open sheet replace its history entry, and a Back that closes the sheet repairs the entry
+  below it (`Router.popped`) so Back leaves the sheet in place and the next Back goes Home.
+- **Rejected:** a grid; closing the sheet on a row tap; keeping the base entry in step
+  (browser history can only replace the current entry); a window disclosure chevron.

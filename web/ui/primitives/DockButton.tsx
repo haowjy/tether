@@ -12,7 +12,7 @@ interface DockButtonProps extends Omit<ButtonHTMLAttributes, "icon"> {
 
 /**
  * A button of the phone dock. Its `pointerdown` is cancelled, so a tap on any dock control
- * never moves focus: the input holding the keyboard keeps it, or the toggle and the switcher
+ * never moves focus: the input holding the keyboard keeps it, or the toggle and the sessions sheet
  * decide what happens to it.
  */
 export function DockButton({ kind, pressed, class: className, children, onPointerDown, ...rest }: DockButtonProps) {

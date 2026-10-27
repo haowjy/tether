@@ -71,7 +71,7 @@ One Preact app, three **platform adapters**, and one rule for each hard boundary
   input. Named keys always go to tmux by name. Paste is intercepted before xterm sees
   it. On touch, a web-drawn dock is the same in the browser, the PWA and the app: at
   rest one row (tab chip, one-line field, keyboard toggle), with the key row above it
-  while the keyboard is up. The tab chip opens the session switcher. The line field's
+  while the keyboard is up. The current-tab button opens the sessions overlay. The line field's
   Return sends its line and then Enter.
 - **Touch gestures have one owner.** A sans-IO recognizer decides between tap,
   scroll, long-press and cancel before anything reaches tmux or raises the keyboard.
@@ -91,7 +91,7 @@ One Preact app, three **platform adapters**, and one rule for each hard boundary
 
 ```mermaid
 flowchart TB
-  screens["screens/: home, picker, switcher, terminal, files, enrol, settings"]
+  screens["screens/: home, sessions, terminal, files, enrol, settings"]
   ui["ui/: tokens and primitives"]
   app["app/: controller, router, focus, listing fetcher, persist"]
   cores["UI-free cores: workspace, sessions, drafts, tabs, net, proto, term, touch, files"]
@@ -114,16 +114,16 @@ flowchart TB
 
 These are Jimmy's explicit choices. No lane changes them without his say:
 
-- Desktop terminal `+` opens the existing-session picker directly, and the phone's tab
-  chip opens the session switcher directly. There is no intermediate menu, and Files is
+- Desktop terminal `+` opens the sessions picker directly, and the phone's current-tab
+  button opens the sessions sheet directly. There is no intermediate menu, and Files is
   in neither.
 - No dot status markers. No middle-dot separators in any copy (§8.6 checks it).
 - On touch, Terminal ends in the phone dock, in the browser, the PWA and the app. At
-  rest it is one row: the tab chip, the line field and the keyboard toggle. While the
+  rest it is one row: the current-tab button and the keyboard toggle (the line field replaces the button while the keyboard is up). While the
   keyboard is up, the fixed key row (esc ↑ ↓ ^R ^C tab ctrl alt | ~ / -) sits above it.
   Tabs on top were rejected ("hard to reach").
-- The tab chip opens one switcher sheet: open tabs, then every session on the host,
-  with search and New session at the bottom. It is the phone's only picker.
+- The current-tab button opens one sessions sheet: search and every session on top,
+  the open tabs and + at the bottom (2026-10-27 redesign; supersedes the tall switcher).
 - A long-press fires with a haptic and selects the word at once; held and dragged it
   extends the selection, released it shows the menu.
 - The keyboard toggle opens and closes the keyboard. A tap on the cursor's row or the row
@@ -139,15 +139,14 @@ One name per concept. The code, the specs and the UI copy use these.
 | **host** | One tether daemon endpoint, identified by `hostId` (`/auth/info.hostId`, `welcome.host.id`). The browser has exactly one, the daemon behind its page origin. Native has a saved list | `SessionRef.server`, a tmux server *instance*. UI copy shows the host's name (`pop-os`) with no label word; native settings call the list "Servers" (connection-roadmap.md) |
 | **tab** | A tether tab: one tmux session open in tether, showing whichever window the session shows. Its identity is the **tab key**, `(hostId, SessionRef)` | A browser tab. Closing a tether tab never touches tmux |
 | **route** | Home or the active tab: the top level of navigation. The screen on screen (Home, Terminal or Files) follows from the route and the active tab's kind | |
-| **overlay** | A modal surface stacked on a route: the picker, the switcher, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files; the **status band** |
+| **overlay** | A modal surface stacked on a route: sessions, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files; the **status band** |
 | **navigation stack** | The browser history entries tether pushes: route, overlay, Files folder and preview (§6.6). Its only writer is the router | The tab strip, which never enters history |
 | **listing** | One host's tmux sessions and windows, from `listSessions`. One fetcher gets it (§6.3) | |
 | **status band** | The band on the terminal's top edge that says a tab is reconnecting, limited or failed, with Retry, or that its window is sized for another terminal, with Fit (§5.4, §8.2) | an overlay |
 | **persist now** | `app/persist.ts`: hand every pending draft and workspace write to storage at once (§5.5) | |
-| **picker** | The desktop's session picker behind terminal `+`. It only attaches existing windows | Home's creation actions; the switcher |
-| **switcher** | The phone's session sheet behind the tab chip: Home, the open tabs, every session, search and New session. The phone's only picker; the phone's Terminal has no tab strip | the picker |
+| **sessions overlay** | The one overlay behind the desktop `+` and the phone's current-tab button: a picker dialog on desktop, a half-height sheet over the tab on the phone (search, sessions, the open tabs and + at the bottom) | the picker and switcher overlays of P3a |
 | **dock** | On touch, the bottom of Terminal: at rest one row (tab chip, line field, keyboard toggle); while the keyboard is up, the key row above it. Always visible; rides on the keyboard | The desktop tab strip |
-| **tab chip** | The dock's control naming the active tab and the open-tab count; opens the switcher | a tab pill |
+| **current-tab button** | The phone's control naming the active tab and the open-tab count; opens the sessions overlay | a tab pill |
 | **line field** | The dock's one-line text field, with the platform's autocorrect, dictation and IME. Return sends its line and then Enter | **direct input**; the shell's own line editor |
 | **draft** | The line field's unsent text for one tab key, saved locally | |
 | **key row** | The dock's row of terminal keys, shown above the resting row while the keyboard is up | an app-drawn keyboard; it supplements the system keyboard |
@@ -229,8 +228,7 @@ web/
   screens/
     shell/           top row (desktop), screen frame, host banner
     home/            open tabs, sessions list, creation dialogs, bottom nav (phone)
-    picker/          the desktop session picker
-    switcher/        the phone session switcher (P3a)
+    sessions/        the sessions overlay (phone sheet, desktop picker) and the session rows Home shares
     terminal/        tab strip, terminal surface, status band; dock/ (the phone dock)
     files/           folder list, preview, upload, insert path
     enrol/           enrolment and admission-problem screens
@@ -1034,8 +1032,8 @@ lost:
 - **Picker focus** (desktop). It focuses the picker's search. Closing it by the close
   button, an outside click or Escape leaves the active tab unchanged. Focus then
   returns to the terminal input, or to `+` when no tab is open.
-- **Switcher focus** (phone). Nothing is focused on open, so the keyboard stays down;
-  closing it without a choice returns focus to the tab chip, without raising the
+- **Sessions sheet focus** (phone). Nothing is focused on open, so the keyboard stays down;
+  closing it without a choice returns focus to the current-tab button, without raising the
   keyboard.
 - **Creation dialogs.** Cancel and Escape restore focus to the exact control that
   opened the dialog.
@@ -1357,18 +1355,22 @@ always:            DockRow     [TabChip] [LineField .............] [Toggle]
 ```
 
 **Layout.** `Dock.tsx` stacks `KeyRow` (mounted while the focus owner is `terminal` or
-`line`) above the resting row (inlined in `Dock.tsx`, as is the tab chip, not separate
-files). Row items are 34 px, keys 32 px (`--dock-control-height`, `--dock-key-height`); each control's touch area extends to its row's height. The line field's font is
+`line`) above the resting row (inlined in `Dock.tsx`; the current-tab button is `dock/CurrentTabButton.tsx`). Row items are 34 px, keys 32 px (`--dock-control-height`, `--dock-key-height`); each control's touch area extends to its row's height. The line field's font is
 16 px, below which Safari zooms on focus. The dock adds the bottom safe area only while
 the keyboard is down. tmux is sized from the stable box (§5.4), which includes the
 resting row and excludes the key row, since the key row only appears with the keyboard;
 so showing it never resizes tmux. Portrait and landscape use the same layout. In the
-desktop layout with touch input, the tab strip stays on top and `DockRow` has no tab
-chip.
+desktop layout with touch input, the tab strip stays on top and `DockRow` has no
+current-tab button.
 
-**The tab chip** shows the active tab's window label (truncating,
-the window part first as in §8.6's tab labels) and the open-tab count from the
-workspace, and opens the switcher overlay. With no tabs it reads "Sessions".
+**The current-tab button** (`dock/CurrentTabButton.tsx`) fills the phone's resting row
+beside the keyboard toggle, and is the only control of a Files screen's bar. It shows the
+active tab's label (session bold, window regular, the window truncating first as in
+§8.6's tab labels; a Files tab's folder or file name) and the open-tab count, and opens
+the `sessions` overlay. With no tabs it reads "Sessions". While the keyboard is up the
+button gives its place to the line field, which stays mounted but `hidden` at rest so
+its draft and refs outlive the keyboard and nothing can focus it. The attention dot
+(plan.md "Bell attention") is not drawn yet.
 
 **The line field** is `screens/terminal/dock/LineField.tsx`. The browser/PWA uses the
 styled `ui/primitives/LineInput.tsx` textarea (raw elements stay in primitives by lint
@@ -1465,18 +1467,34 @@ while held. No row that changes with the pane's program.
 and "Hide keyboard" otherwise, from the focus owner rather than keyboard geometry, so it
 works with a hardware keyboard too.
 
-**The switcher** (`screens/switcher/`, P3a) is a router overlay, the `Dialog` sheet
-variant, opened by the tab chip. It is the contract's
-[session switcher](../../../../docs/design/client/browser-behaviors.md#session-picker-desktop-and-session-switcher-phone):
-a header with Home and close; the open tabs as pills from the workspace (tap activates
-and closes the overlay; each pill's close icon closes that tab); the host's sessions
-through W1's `screens/sessions/` renderer, given the active tab key so a window row
-says "here" for it and "open" for another open tab; and at the bottom, `SearchField`
-over `sessions/`' filter and "+ New session", which opens W1's creation dialog. The
-session holding the active tab starts expanded. It fetches the listing on open like the
-picker (§6.3). Initial focus is the dialog element (§6.5), so the keyboard stays down;
-opening it lowers the keyboard like any overlay. On the phone layout nothing else opens
-`screens/picker/`: the picker keeps only its desktop dialog, and its sheet variant goes.
+**The sessions overlay** (`screens/sessions/Sessions.tsx`) is the one router overlay
+`{ screen: "sessions", name: "open" }`, opened by the current-tab button and the desktop
+`+`; it replaces the P3a `picker` and `switcher` overlays. Its presentation follows the
+layout, over one `HostSessionLists` (the same session rows as Home) and one search box
+that resets on close. Contract:
+[session picker and switcher](../../../../docs/design/client/browser-behaviors.md#session-picker-desktop-and-session-switcher-phone).
+
+- *Phone: the half-height `Dialog` sheet* (`variant="sheet"`, `header` for its top row)
+  over the current tab. Top row: Home and the search field, not auto-focused (initial
+  focus is the dialog, §6.5). The list is every listable server, grouped by server, rows
+  marked "here" (the active terminal tab's session) and "open". The active session's
+  row, when it has several windows, lists them beneath it ("index: name", the tab's
+  latest `watching` window marked "shown"; `selectWindow` for another, nothing for the
+  shown one); other rows show a window count. A row tap calls `openSession` and the
+  sheet stays: the tab opens behind it. The footer, `SheetTabs.tsx`, is the open tabs
+  of both kinds as a `TabStrip` (tap switches the tab behind the sheet, × on the active
+  tab only, closing never touches tmux) and `+` (New session; Browse files, a new Files
+  tab at the server's roots), both for the active tab's server, else the first. Dismissal
+  is the backdrop, Back or Escape (Escape closes the `+` menu first).
+- *Desktop: the centred picker dialog,* today's content: search focused, sessions, a
+  choice closes the overlay and then opens the tab. The windows menu (`WindowsMenu`)
+  keeps desktop's window access until the `+` popover (slice 2b).
+- *History.* Tabs switch under an open sheet by replacing its entry (`switchTab`), which
+  leaves the entry below naming the earlier tab. Closing by Back lands on that entry;
+  `Router.popped` then replaces it with the overlay entry's tab and place, instead of
+  treating it as stale, so Back closes the sheet in place and the next Back leaves the
+  tab for Home. Closing by an action is `history.back()` and takes the same path.
+- *Listing.* Opening the overlay refreshes the listing like Home (`syncListing`).
 
 **P3a build notes (2026-10-24; where the build differs from the text above).**
 
@@ -1485,13 +1503,12 @@ opening it lowers the keyboard like any overlay. On the phone layout nothing els
   share one strip over the terminal's bottom edge (out of flow, so tmux is never resized; the
   cursor pan counts it).
 - *A narrow window with a mouse* (`layout: phone`, `directInput: xterm`) has no dock: it keeps
-  the bottom tab strip with `+`, which opens the picker as a dialog. The picker's sheet variant
-  is gone.
-- *`Dialog` gained `actions` and `footer`* (the switcher's Home and its pinned search); a sheet
+  the bottom tab strip with `+`, which opens the sessions overlay (a sheet at that layout).
+- *`Dialog` gained `footer`* (since slice 2 also `header`, replacing `actions`); a sheet
   lifts onto the keyboard in CSS by `--keyboard-inset`, and `DockButton` cancels every
-  `pointerdown`, so no dock control moves focus; `TabStrip` gained `closeAll`; `CreateDialog` moved from Home to
-  the shell so Home and the switcher share it; the switcher keeps its own expansion (the active
-  session open, the rest collapsed), through `HostSessionLists`' `expansion` prop.
+  `pointerdown`, so no dock control moves focus; `CreateDialog` moved from Home to
+  the shell so Home and the sessions overlay share it.
+  Slice 2 replaced the switcher's expansion with windows under the active row.
 - *A line paste ending in one line break* is a single line and is inserted for editing; only a
   break inside the text goes to the terminal.
 - *A draft whose write loses to a newer revision* adopts the stored text, marked "Edited in
@@ -1500,9 +1517,8 @@ opening it lowers the keyboard like any overlay. On the phone layout nothing els
   to scroll the page for it. Its aria-label is "Terminal keyboard".
 - *Keyboard dropping* (`viewport.keyboard` true to false) blurs the held input only through
   `FocusController.viewportChanged`, as §6.5 says; the iPhone gate in §12 covers its misfires.
-- *The tab chip and the resting row are inlined in `Dock.tsx`* (the spec names `dock/TabChip.tsx`
-  and `DockRow`); the chip shows the window label, its accessible name is `<window>, N tabs,
-  open sessions`. The switcher's New session targets the first host, as Home's does.
+- *The resting row is inlined in `Dock.tsx`* (the spec names `DockRow`); the current-tab
+  button's accessible name is `<label>, N tabs, open sessions`.
 - *The W0 port `blur`* became `FocusController.toggleKeyboard` and `returnKeyboardInTap`.
 - *Armed ctrl/alt* is a store in `touch/armed.ts` over the pure `touch/modifiers.ts`;
   `Terminals` owns the instance and types through it.
@@ -1707,7 +1723,7 @@ and both densities and to walk it by keyboard. There is no UI test suite (decisi
 | `IconButton`, `Tooltip` | `<button aria-label>`; the tooltip shows on hover and keyboard focus | top row, close, back, keyboard |
 | `TextField`, `SearchField` | `<input>` | search, creation name and directory, enrol code and device name |
 | `Dialog` | `<dialog>.showModal()` | desktop picker, creation forms, Settings, confirmations |
-| `Dialog` sheet variant | the same `<dialog>` and code, styled as a tall bottom sheet with safe-area padding | the switcher; phone creation forms and Settings |
+| `Dialog` sheet variant | the same `<dialog>` and code, styled as a half-height bottom sheet with safe-area padding and an optional `header` row | the sessions sheet; phone creation forms and Settings |
 | `Disclosure` | `<button aria-expanded>` and a region. Controlled, because search forces expansion | session groups |
 | `Row` | `<button>` with fixed slots: leading icon, label, metadata, trailing | session, window, folder, file and open-tab rows; Home's Settings row |
 | `RovingList` | a list with arrow-key roving `tabindex` | Home and picker lists, file list |

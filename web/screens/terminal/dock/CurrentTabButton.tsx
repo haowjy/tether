@@ -1,9 +1,10 @@
 import { useApp, useAppView, useTabLabels } from "../../../app/context";
+import { Icon } from "../../../ui/primitives/Icon";
 import { DockButton } from "../../../ui/primitives/DockButton";
 import { activeTab } from "../../../workspace/state";
 import styles from "./CurrentTabButton.module.css";
 
-/** The phone dock's current-tab button, on a terminal tab and on a Files tab alike: the tab's name, how many tabs are open, and a tap opens the sessions sheet. */
+/** The phone's current-tab button, on a terminal tab and on a Files tab alike: the tab's name, how many tabs are open, and a tap opens the sessions sheet. It fills its bar. */
 export function CurrentTabButton() {
   const app = useApp();
   const tab = useAppView((v) => activeTab(v.workspace));
@@ -14,7 +15,7 @@ export function CurrentTabButton() {
       kind="control"
       class={styles.chip}
       aria-label={label ? `${label.full}, ${String(count)} ${count === 1 ? "tab" : "tabs"}, open sessions` : undefined}
-      onClick={(e) => { app.openOverlay({ screen: "switcher", name: "sessions" }, e.currentTarget); }}
+      onClick={(e) => { app.openOverlay({ screen: "sessions", name: "open" }, e.currentTarget); }}
     >
       {label ? (
         <>
@@ -23,8 +24,9 @@ export function CurrentTabButton() {
           <span class={styles.count}>{count}</span>
         </>
       ) : (
-        "Sessions"
+        <span class={styles.only}>Sessions</span>
       )}
+      <Icon name="chevronUp" size={16} class={styles.open} />
     </DockButton>
   );
 }

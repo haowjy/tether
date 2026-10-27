@@ -130,8 +130,9 @@ export class Router {
   private closeOverlays(count: number): void {
     const { entry } = this;
     if (entry.overlay === null) return;
+    // The entry below may name an earlier tab (the sheet switches tabs behind itself): the pop repairs it.
     const base = this.stack[this.at - count];
-    if (base?.route === entry.route && (base.route === "home" || (entry.route === "tab" && base.tab === entry.tab))) this.port.go(-count);
+    if (base?.route === entry.route) this.port.go(-count);
     else this.replace({ ...entry, overlay: null });
   }
 
@@ -186,6 +187,7 @@ export class Router {
 
   private popped(): void {
     const { state } = this.port.current();
+    const left = this.at;
     if (isEntry(state)) {
       const at = this.stack.findIndex((e) => e.id === state.id);
       // An entry from this page's life moves the cursor; one from an earlier life (forward past a reload) stands alone.
@@ -195,6 +197,15 @@ export class Router {
       this.stand({ id: this.nextId++, ...HOME });
     }
     const { entry } = this;
+    // Back out of overlays lands on the entry below them. The overlay's entry names the active tab and place (tabs switch under an open sheet), the one below may not: it takes them, so the sheet closing leaves the tab as it is.
+    const closed = this.stack.slice(this.at + 1, left + 1);
+    if (closed.length > 0 && closed.every((e) => e.overlay !== null) && entry.overlay === null && entry.route === "tab") {
+      const top = closed[closed.length - 1] as Entry;
+      if (top.route === "tab") {
+        this.replace({ route: "tab", tab: top.tab, place: top.place, overlay: null });
+        return;
+      }
+    }
     // An entry for a tab that is gone or not the active one is stale: skip to Home without announcing it.
     if (entry.route === "tab" && entry.tab !== this.activeTab()) {
       const home = this.stack.slice(0, this.at + 1).findLastIndex((e) => e.route === "home" && e.overlay === null);

@@ -14,15 +14,15 @@ interface DialogProps {
   variant?: "dialog" | "sheet";
   /** Where focus returns on close: an element or a registered name. Default: the control `app.openOverlay` was given, else the one focused at opening. A field marked `data-initial-focus=""` takes focus on opening with a fine pointer. */
   returnFocusTo?: HTMLElement | FocusTarget | null;
-  /** Beside the close button in the header (the switcher's Home). */
-  actions?: ComponentChildren;
-  /** Pinned under the scrolling body, safe-area padded (the switcher's search). */
+  /** The top row in place of the title and close button (the sessions sheet's Home and search); `title` stays as the dialog's accessible name. */
+  header?: ComponentChildren;
+  /** Pinned under the scrolling body, safe-area padded (the sessions sheet's tabs). */
   footer?: ComponentChildren;
   children: ComponentChildren;
 }
 
 /** `<dialog>.showModal()`: top layer, modal focus containment, Escape. Safari lacks `closedby`, so Escape and the backdrop are handled here. */
-export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo, actions, footer, children }: DialogProps) {
+export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo, header, footer, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const focus = useFocus();
@@ -57,11 +57,17 @@ export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo
       onClick={(e) => { if (e.target === e.currentTarget) closeByTap(e.currentTarget); }}
     >
       <div class={styles.panel}>
-        <header class={styles.header}>
-          <h2 id={titleId} class={styles.title}>{title}</h2>
-          {actions && <div class={styles.actions}>{actions}</div>}
-          <IconButton icon="close" label="Close" data-initial-focus="touch" onClick={(e) => { closeByTap(e.currentTarget); }} />
-        </header>
+        {header ? (
+          <>
+            <h2 id={titleId} class="sr-only">{title}</h2>
+            <header class={styles.top}>{header}</header>
+          </>
+        ) : (
+          <header class={styles.header}>
+            <h2 id={titleId} class={styles.title}>{title}</h2>
+            <IconButton icon="close" label="Close" data-initial-focus="touch" onClick={(e) => { closeByTap(e.currentTarget); }} />
+          </header>
+        )}
         <div class={styles.body}>{children}</div>
         {footer && <footer class={styles.footer}>{footer}</footer>}
       </div>

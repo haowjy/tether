@@ -106,7 +106,8 @@ Both surfaces fetch sessions when opened, search locally by name without a reque
 keystroke, distinguish no matches from loading and errors, and mark sessions already open.
 With several servers, group the list by server; the session name and window count remain
 readable. Session rows open an existing session's tab or activate it, never create a shell.
-The dismissal behavior after selecting a session row in the phone sheet is open.
+On the phone, selecting a session row opens or activates its tab behind the sheet and the
+sheet stays open, as a tab in the strip does. Sessions are a list, not a grid.
 
 **Desktop:** + opens a popover under the top row with search, sessions grouped by server,
 and New session / Browse files. Selecting a session opens or activates its tab and closes
@@ -139,6 +140,8 @@ half-height over current tab             full-height from Home
   leaves its session running. + offers New session and Browse files; Browse files opens
   a new Files tab at the server's folder list (its roots).
 - Session rows mark the active tab's session “here” and other open sessions “open”.
+  When the active tab's session has more than one window, its row lists them beneath it
+  (see Window switcher); other rows show a window count.
   An attention dot on tab buttons and session rows marks a terminal bell since this
   device last showed that tab; mechanism and coverage limits are in
   [plan.md](../plan.md) (Bell attention). The current-tab button
@@ -156,9 +159,9 @@ half-height over current tab             full-height from Home
 
 A terminal tab opens on its session's current window and follows it as any client changes
 it. Only a session with more than one window offers a window-switching affordance; on the
-phone it is inside the sessions sheet, not terminal chrome. Expanding the active
-session row is proposed; the exact control remains open. Desktop also needs an
-equivalent way to switch multi-window sessions. Choosing a window runs tmux's
+phone it is inside the sessions sheet, not terminal chrome: the active tab's session row
+lists its windows beneath it, and choosing one leaves the sheet open. Desktop keeps its
+windows menu until the + popover shows the same rows. Choosing a window runs tmux's
 `select-window` on the session, so every attached client moves with it. Rows are in actual index order as “index: name”; the latest `watching`
 window is marked “shown”. Load from the current listing, show loading and refusal with
 Try again, and selecting the shown window changes nothing. The route for creating a new

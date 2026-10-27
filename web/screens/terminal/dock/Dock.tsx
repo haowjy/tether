@@ -1,6 +1,6 @@
 // The phone dock (client-architecture.md §7.4), the bottom of Terminal on touch in the browser,
-// the PWA and the app: at rest one row (tab chip, line field, keyboard toggle), with the key
-// row above it while an input holds the keyboard. It rides on the keyboard but never resizes
+// the PWA and the app: at rest on the phone one row (current-tab button, keyboard toggle); while
+// an input holds the keyboard the line field replaces the button and the key row sits above. It rides on the keyboard but never resizes
 // tmux: its slot is in flow in the keyboard-hidden layout, and the lifted row is translated
 // out of the slot by `--keyboard-inset` (Dock.module.css).
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -66,6 +66,8 @@ export function Dock({ active }: { active: boolean }) {
   const note = useNote(native ? nativeNote : local, tab?.id ?? null);
   const holding = owner !== "none";
   const phone = viewport.layout === "phone";
+  // The phone with the keyboard down shows the current-tab button in the line field's place.
+  const resting = phone && !holding;
 
   // A note belongs to the field it came from.
   useEffect(() => { setLocal(null); }, [tab?.id]);
@@ -152,8 +154,11 @@ export function Dock({ active }: { active: boolean }) {
           {holding && <KeyRow insertIntoLine={insertIntoLine} />}
         </div>
         <div class={styles.row} ref={row}>
-          {phone && <CurrentTabButton />}
-          <LineField tab={tab} label={label ? `Line for ${label.full}` : "Line"} onNote={setLocal} inputRef={line} />
+          {resting && <CurrentTabButton />}
+          {/* Mounted at rest too, so the draft and the field's refs outlive the keyboard; hidden, so nothing can focus it. */}
+          <div class={styles.line} hidden={resting}>
+            <LineField tab={tab} label={label ? `Line for ${label.full}` : "Line"} onNote={setLocal} inputRef={line} />
+          </div>
           <DockButton
             kind="control"
             class={styles.toggle}

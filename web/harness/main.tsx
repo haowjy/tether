@@ -39,6 +39,8 @@ const app = await AppController.start(platform, { fetchFn: platform.fetch, apply
 window.__harness = { platform, app };
 if ((fixture.openActive || params.has("open")) && app.snapshot.workspace.active) app.dispatch({ type: "activated", id: app.snapshot.workspace.active });
 
+if (fixture.overlay) app.openOverlay(fixture.overlay);
+
 const root = document.getElementById("app");
 if (!root) throw new Error("harness/index.html lacks #app");
 const Replacement = fixture.render;

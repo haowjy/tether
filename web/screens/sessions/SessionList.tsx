@@ -1,7 +1,7 @@
-// One host's sessions, as Home, the picker and the switcher draw them (the same rows in all,
+// One host's sessions, as Home and the sessions overlay draw them (the same rows in both,
 // per the contract): a heading with the host's name, then loading, error, no-server, empty,
 // no-match or one row per session. A view over the cache's state; it fetches and navigates nothing.
-import type { ComponentChildren } from "preact";
+import { Fragment, type ComponentChildren } from "preact";
 import type { HostSessions } from "../../sessions/cache";
 import { matching, windowCount } from "../../sessions/groups";
 import type { SessionListing, TmuxListing } from "../../proto/generated/messages";
@@ -11,6 +11,15 @@ import { RovingList } from "../../ui/primitives/RovingList";
 import { Row } from "../../ui/primitives/Row";
 import { Spinner } from "../../ui/primitives/Spinner";
 import styles from "./SessionList.module.css";
+
+/** The active tab, when the list marks it: its session reads "here", and with several windows lists them beneath its row. */
+export interface ActiveTab {
+  id: string;
+  /** The window the tab shows: its latest `watching`'s, which can be newer than the listing's `active`. */
+  shownId: number | null;
+  /** A window other than the shown one was chosen. */
+  onWindow: (window: number) => void;
+}
 
 export interface SessionListProps {
   hostName: string;
@@ -22,8 +31,8 @@ export interface SessionListProps {
   tabIdOf: (session: SessionListing) => string | null;
   /** The ids of the open tabs. */
   open: ReadonlySet<string>;
-  /** The active tab's id: its session reads "here" and other open sessions "open", in words and never dots. */
-  active?: string | null;
+  /** Its session reads "here" and other open sessions "open", in words and never dots. */
+  active?: ActiveTab;
   onOpen: (listing: TmuxListing, session: SessionListing) => void;
   /** A fresh listing, or admission again when the host is unreachable. */
   onRetry: () => void;
@@ -109,21 +118,41 @@ export function SessionList(props: SessionListProps) {
           {shown.map((session) => {
             const id = tabIdOf(session);
             const isOpen = id !== null && open.has(id);
+            const here = active !== undefined && id === active.id;
             return (
-              <Row
-                key={session.id}
-                roving
-                icon="sessions"
-                label={session.name}
-                meta={
-                  <>
-                    <span>{windowCount(session.windows.length)}</span>
-                    {isOpen && <span class={styles.state}>{id === active ? "here" : "open"}</span>}
-                  </>
-                }
-                selected={isOpen}
-                onClick={() => { onOpen(listing, session); }}
-              />
+              <Fragment key={session.id}>
+                <Row
+                  roving
+                  icon="sessions"
+                  label={session.name}
+                  meta={
+                    <>
+                      <span>{windowCount(session.windows.length)}</span>
+                      {isOpen && <span class={styles.state}>{here ? "here" : "open"}</span>}
+                    </>
+                  }
+                  selected={isOpen}
+                  onClick={() => { onOpen(listing, session); }}
+                />
+                {here && session.windows.length > 1 && (
+                  <div class={styles.windows} role="group" aria-label={`Windows in ${session.name}`}>
+                    {session.windows.map((w) => {
+                      const shown = w.id === active.shownId;
+                      return (
+                        <Row
+                          key={w.id}
+                          roving
+                          icon="terminal"
+                          label={`${String(w.index)}: ${w.name}`}
+                          meta={shown ? "shown" : undefined}
+                          selected={shown}
+                          onClick={() => { if (!shown) active.onWindow(w.id); }}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </Fragment>
             );
           })}
         </RovingList>

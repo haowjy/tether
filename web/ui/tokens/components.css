@@ -5,7 +5,7 @@
   --row-pad-x: var(--space-3);
   --tab-height: 32px;
   --toolbar-height: 44px;
-  /* The phone dock's resting row: chip, line field and keyboard toggle. */
+  /* The phone dock's resting row: the current-tab button and the keyboard toggle. */
   --dock-height: 42px;
   /* Dock reports its measured height when the one-line editor grows. */
   --dock-row-height: var(--dock-height);
@@ -13,8 +13,6 @@
   --dock-key-height: 32px;
   /* The key row above the resting row. */
   --dock-keys-height: 40px;
-  --dock-chip-min-width: 70px;
-  --dock-chip-max-width: 104px;
 }
 :root[data-density="touch"] {
   --row-height: 48px;
@@ -28,7 +26,7 @@
   --tab-bg-active: var(--color-bg-hover);
   --dialog-width: 480px;
   --dialog-bg: var(--color-bg-raised);
-  /* The phone picker follows the theme's raised surface, dark in dark mode and light in light mode. */
+  /* The phone sheet follows the theme's raised surface, dark in dark mode and light in light mode. */
   --sheet-bg: var(--color-bg-raised);
   --sheet-radius: var(--radius-4);
   --band-bg: var(--color-bg-raised);

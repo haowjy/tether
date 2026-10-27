@@ -5,6 +5,12 @@ version section on release.
 
 ## [Unreleased]
 
+- On the phone, the terminal's bar is now the current tab's name, the open-tab count and
+  Show keyboard; the tab strip and + moved into the sessions sheet. The button opens a
+  half-height sheet over the tab with Home, search, every server's sessions, the open
+  tabs and + (New session, Browse files) at the bottom. Tapping a session or a tab opens
+  it behind the sheet and the sheet stays; Back, Escape or a tap outside closes it. The
+  active session lists its windows under its row, with the shown one marked.
 - Files opens as tabs, any number of them, each remembering its own folder or preview
   across a reload. Home's Files button opens a new one at that server's folders, and a
   folder's first row goes up to its parent. On the desktop, navigation is now one top row

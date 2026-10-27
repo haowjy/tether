@@ -58,4 +58,5 @@
   min-height: var(--dock-height);
   padding: var(--space-1) var(--space-2);
 }
+.line { flex: 1; min-width: 0; }
 .toggle { width: var(--dock-control-height); padding: 0; }

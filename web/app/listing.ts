@@ -1,13 +1,13 @@
 // The one listing fetcher (client-architecture.md §6.3): the only code that sends
 // `listSessions`. It joins each host as a TabPort and reports each reply once, to whoever
 // subscribes: the controller turns it into the workspace's `listing` event (pruning) and
-// sessions/ renders it (Home, the picker and the switcher), so all see the same listing.
+// sessions/ renders it (Home and the sessions overlay), so all see the same listing.
 import { RequestError, type Host, type TabPort } from "../net/host";
 import { backoffMs } from "../tabs/connection";
 import type { ServerMsg, TmuxListing } from "../proto/generated/messages";
 
 const RELIST_DELAY_MS = 300;
-/** The socket outlives the last reason for it by this long (Home or the picker closing, the last tab leaving). */
+/** The socket outlives the last reason for it by this long (Home or the sessions overlay closing, the last tab leaving). */
 const LINGER_MS = 30_000;
 
 export type ListingEvent =
@@ -100,7 +100,7 @@ export class ListingFetcher {
   }
 
   /**
-   * Home or the picker is on screen, a tab exists, or a tab is restoring: the host stays
+   * Home or the sessions overlay is on screen, a tab exists, or a tab is restoring: the host stays
    * joined (the socket stays up, so hints keep arriving). When nothing wants it, the host is
    * left after 30 s. Returns whether it started a listing (the host became wanted while ready),
    * so a caller about to `refresh` knows one has just begun.
@@ -130,7 +130,7 @@ export class ListingFetcher {
   }
 
   /**
-   * Entering Home, opening the picker, a user's Retry, or waiting for a new session to
+   * Entering Home, opening the sessions overlay, a user's Retry, or waiting for a new session to
    * appear: a listing that starts now. One already in flight may have started before the
    * change the caller is waiting on, so it queues exactly one more after it. A request
    * waiting for the socket is sent on `linkUp`.

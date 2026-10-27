@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import type { Overlay } from "../app/router";
 import type { TestPlatform, TestPlatformOptions } from "../platform/test";
 
 /**
@@ -13,6 +14,8 @@ export interface Fixture {
   daemon?: (daemon: TestPlatform["daemon"]) => void;
   /** Open the saved workspace's active tab at launch, as a tap on its Home row would: a clean launch otherwise opens Home. */
   openActive?: true;
+  /** An overlay to open once the app is up, as a tap on its opener would. */
+  overlay?: Overlay;
   /** Render this component instead of the app, inside the app's context. */
   render?: () => ComponentChildren;
 }

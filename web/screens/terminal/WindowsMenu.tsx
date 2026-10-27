@@ -1,14 +1,14 @@
 // The desktop's window switcher (browser-behaviors.md "Window switcher"): a windows button in
-// the active tab's pill, shown on every session, opening a menu under the pill with the same
-// rows as the phone's switcher and "New window". It is a popover of the top layer, so the
+// the active tab's pill, shown on every session, opening a menu under the pill with the
+// window rows and "New window". It is a popover of the top layer, so the
 // strip's clipping can't cut it, positioned from the button on opening and kept inside the window. Escape or a press
 // outside closes it; Escape and a choice return focus to the terminal.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../../app/context";
 import { IconButton } from "../../ui/primitives/IconButton";
 import type { TerminalTab } from "../../workspace/state";
-import { WindowChoices } from "../switcher/WindowChoices";
 import { terminalsOf } from "./terminals";
+import { WindowChoices } from "./WindowChoices";
 import styles from "./WindowsMenu.module.css";
 
 /** Space between the pill and its menu, and between the menu and the window's edge. */
@@ -89,7 +89,6 @@ export function WindowsMenu({ tab }: { tab: TerminalTab }) {
         {open && (
           <WindowChoices
             tab={tab}
-            variant="menu"
             onChoose={(window) => {
               terminals.selectWindow(tab.id, window);
               close(true);

@@ -2,7 +2,7 @@
 // runs the workspace reducer's effects. Everything else has its own owner: the workspace
 // reducer owns tabs, `net/hosts.ts` owns sockets and admission, the router owns navigation,
 // `app/focus.ts` owns focus, `app/persist.ts` owns persistence, `app/listing.ts` owns the
-// listing, `sessions/cache.ts` the rows Home and the picker render. Screens reach each of them
+// listing, `sessions/cache.ts` the rows Home and the sessions overlay render. Screens reach each of them
 // through `useApp()`.
 import { HostRegistry, type HostClient } from "../net/hosts";
 import { SessionsCache } from "../sessions/cache";
@@ -282,10 +282,10 @@ export class AppController extends Store<AppView> {
     this.dispatch({ type: "hostsKnown", ids, complete: hosts.length > 0 && ids.length === hosts.length });
   }
 
-  /** A host stays joined while Home, the picker or the switcher is on screen, a tab on it exists, or one is restoring. This is the one place that asks for a listing on entering one of them. */
+  /** A host stays joined while Home or the sessions overlay is on screen, a tab on it exists, or one is restoring. This is the one place that asks for a listing on entering one of them. */
   private syncListing(): void {
     const { entry, workspace } = this.snapshot;
-    const listingShown = screenOf(workspace) === "home" || entry.overlay?.screen === "picker" || entry.overlay?.screen === "switcher";
+    const listingShown = screenOf(workspace) === "home" || entry.overlay?.screen === "sessions";
     const entered = listingShown && !this.wasOnListing;
     this.wasOnListing = listingShown;
     for (const client of this.hosts.all()) {
@@ -293,7 +293,7 @@ export class AppController extends Store<AppView> {
       const admitted = client.admission.kind === "admitted";
       const hasTab = client.hostId !== null && workspace.tabs.some((t) => t.host === client.hostId);
       const listed = this.listing.setWanted(handle, admitted && (listingShown || hasTab));
-      // Entering Home or the picker lists afresh, unless joining the host just started a listing.
+      // Entering Home or the sessions overlay lists afresh, unless joining the host just started a listing.
       if (entered && admitted && !listed) this.listing.refresh(handle);
     }
   }

@@ -1,0 +1,2 @@
+.search { flex: 1; min-width: 0; }
+.picker { display: flex; flex-direction: column; gap: var(--space-4); }

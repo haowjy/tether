@@ -3,19 +3,19 @@
 import type { ComponentChildren } from "preact";
 import type { HostSessions } from "../../sessions/cache";
 import { LISTING } from "../shared";
-import { SessionList } from "../../screens/sessions/SessionList";
+import { SessionList, type ActiveTab } from "../../screens/sessions/SessionList";
 
 const NO_OP = (): void => undefined;
 const fresh = { failure: null, updating: false } as const;
 
-const STATES: { name: string; unreachable?: boolean; sessions?: HostSessions; query?: string; active?: string }[] = [
+const STATES: { name: string; unreachable?: boolean; sessions?: HostSessions; query?: string; active?: ActiveTab }[] = [
   { name: "Loading" },
   { name: "Unreachable", unreachable: true },
   { name: "Offline, nothing cached", sessions: { listing: undefined, failure: "offline", updating: false } },
   { name: "Refused, nothing cached", sessions: { listing: undefined, failure: "refused", updating: false } },
   { name: "No tmux server", sessions: { listing: null, ...fresh } },
   { name: "Empty server", sessions: { listing: { server: "main:1-1", version: "3.4", sessions: [] }, ...fresh } },
-  { name: "Updating", sessions: { listing: LISTING, ...fresh, updating: true }, active: "1" },
+  { name: "Updating", sessions: { listing: LISTING, ...fresh, updating: true }, active: { id: "1", shownId: 1, onWindow: NO_OP } },
   { name: "Stale, offline", sessions: { listing: LISTING, failure: "offline", updating: false } },
   { name: "Stale, refused", sessions: { listing: LISTING, failure: "refused", updating: false } },
   { name: "No match", sessions: { listing: LISTING, ...fresh }, query: "zzz" },

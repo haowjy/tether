@@ -1,0 +1,20 @@
+.row { display: flex; align-items: center; gap: var(--space-2); }
+.tabs { flex: 1; min-width: 0; }
+.new { position: relative; flex: none; }
+/* Over the sheet's list, above the +, inside the sheet: the dialog clips what leaves it. */
+.menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  min-width: 11rem;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: var(--color-bg-raised);
+  box-shadow: var(--shadow-2);
+}
+.menu > button { justify-content: flex-start; }

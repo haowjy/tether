@@ -80,14 +80,20 @@ describe("Router", () => {
     expect(router.entry).toMatchObject({ tab: "f2", place: dir("/x") });
   });
 
-  it("switching tabs under an open overlay keeps the overlay, and closing it replaces the entry", () => {
-    const { router, state, open } = setup();
-    open("t1");
-    router.openOverlay({ screen: "switcher", name: "sessions" });
-    state.active = "t2";
-    router.switchTab("t2", null);
-    router.closeOverlay();
-    expect(router.entry).toMatchObject({ route: "tab", tab: "t2", overlay: null });
+  it("tabs switched under an open sheet stay as they are when the sheet closes, by an action or by Back", () => {
+    for (const close of [(r: Router) => { r.closeOverlay(); }, (_: Router, back: () => void) => { back(); }]) {
+      const { router, state, open, h } = setup();
+      open("t1");
+      router.openOverlay({ screen: "sessions", name: "open" });
+      state.active = "t2";
+      router.switchTab("t2", null);
+      expect(router.entry).toMatchObject({ tab: "t2", overlay: { screen: "sessions" } });
+      close(router, () => { h.port.go(-1); });
+      expect(router.entry).toMatchObject({ route: "tab", tab: "t2", overlay: null });
+      expect(h.at).toBe(1);
+      h.port.go(-1);
+      expect(router.entry.route).toBe("home");
+    }
   });
 
   it("a Back that lands on an entry of a tab that is not active skips to Home, announcing nothing", () => {
@@ -114,7 +120,7 @@ describe("Router", () => {
   it("closing an overlay by an action is history.back()", () => {
     const { router, open, h } = setup();
     open("t1");
-    router.openOverlay({ screen: "picker", name: "open" });
+    router.openOverlay({ screen: "sessions", name: "open" });
     expect(h.entries).toHaveLength(3);
     router.closeOverlay();
     expect(router.entry.overlay).toBeNull();
@@ -125,7 +131,7 @@ describe("Router", () => {
     const { router } = setup();
     const ran: (string | null)[] = [];
     router.closeOverlay(() => ran.push("none open"));
-    router.openOverlay({ screen: "picker", name: "open" });
+    router.openOverlay({ screen: "sessions", name: "open" });
     router.closeOverlay(() => ran.push(router.entry.overlay?.name ?? null));
     expect(ran).toEqual(["none open", null]);
   });

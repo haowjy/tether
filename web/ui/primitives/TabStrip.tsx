@@ -26,8 +26,6 @@ interface TabStripProps {
   active: string | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
-  /** Every pill carries a close button, not only the active one (the phone switcher, where there is no hover). */
-  closeAll?: boolean;
   /** A control on the active pill only, between its label and its close button (the desktop's windows button). */
   activeAction?: ComponentChildren;
 }
@@ -38,7 +36,7 @@ interface TabStripProps {
  * mask at an overflowing edge. Not an ARIA `tablist`: the pills carry their own close
  * buttons and share one panel. Selection is the fill; the connection colour is on the label.
  */
-export function TabStrip({ pills, active, onSelect, onClose, closeAll = false, activeAction }: TabStripProps) {
+export function TabStrip({ pills, active, onSelect, onClose, activeAction }: TabStripProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ start: false, end: false });
 
@@ -66,7 +64,7 @@ export function TabStrip({ pills, active, onSelect, onClose, closeAll = false, a
   return (
     <div ref={scroller} class={styles.strip} data-start={edges.start || undefined} data-end={edges.end || undefined} onScroll={measure}>
       {pills.map((pill) => (
-        <PillView key={pill.id} pill={pill} active={pill.id === active} closable={closeAll || pill.id === active} action={pill.id === active ? activeAction : undefined} onSelect={onSelect} onClose={onClose} />
+        <PillView key={pill.id} pill={pill} active={pill.id === active} closable={pill.id === active} action={pill.id === active ? activeAction : undefined} onSelect={onSelect} onClose={onClose} />
       ))}
     </div>
   );

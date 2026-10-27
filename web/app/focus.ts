@@ -174,7 +174,7 @@ export class FocusController extends Store<FocusView> implements FocusPort {
   /**
    * Shows a modal dialog and sets its initial focus: the field marked `data-initial-focus=""`
    * on a fine pointer, else the close button; in `touch` density never a field (the close
-   * button), so opening the picker on a phone doesn't raise the keyboard.
+   * button), so opening the sessions sheet on a phone doesn't raise the keyboard.
    */
   openDialog(dialog: HTMLDialogElement): void {
     const { owner } = this.snapshot;
