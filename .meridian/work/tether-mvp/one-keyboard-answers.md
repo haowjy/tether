@@ -78,3 +78,28 @@ the selection; release shows handles + Copy/Paste. ← → join the key row besi
 repeating while held. Box grows (wrap, 1-5 lines, then scrolls; Return sends; no typed
 newlines) and a tap on the cursor's row ±1 opens the keyboard to the terminal: both his own
 suggestions, taken in the shape proposed. Keyboard-up pan: bottom-align, cursor-clamped.
+
+## Round 6: no spike
+
+Jimmy: "why... do... we ... need ... kb spike, jjust use the actualy damn app". Spike app
+uninstalled and deleted. Build the one-keyboard design straight into tether; the phone
+questions (predictions, dictation, IME, reloadInputViews flicker, trackpad, latency) are
+answered by Jimmy using the real app. Field: hidden UITextField (the box's 1-5 line growth
+is the web mirror's wrapping of one logical line; no typed newlines).
+
+## Landed (2026-10-26 late)
+
+- `f4b4b6d` (pushed): one keyboard. Reviews p304 (request changes), p306 (one regression:
+  chord routing), round 3 fixed by splitting on shape (native diverts only a single grapheme
+  at the caret; web's apply() chords or puts it back). Lead fixed KeyRow dropping an
+  unchordable armed key in the terminal target. Installed on Jimmy's iPhone from a clean
+  export of f4b4b6d.
+- Correction: the iOS app serves its web UI from its own bundle (AppSchemeHandler →
+  WebUI, ios/scripts/build-web.sh), not from the daemon. Web changes reach the app only by
+  reinstalling it; the daemon's bundle is for Safari/PWA only. The lead told Jimmy the
+  opposite earlier in this session.
+- pop-os daemon runs 95f8a97 (Safari/PWA bundle one change behind; protocol unchanged).
+- Waiting on Jimmy's phone: ios-shell.md Device checklist rows for the keyboard
+  (predictions, dictation in both targets, IME candidate Return, reloadInputViews page
+  continuity, spacebar trackpad, latency, hardware keys), selection handles/Copy, the
+  near-cursor tap, keyboard-up bottom pan.
