@@ -1,26 +1,16 @@
 # Decision log
 
-Every design decision behind tether's specs: what was decided, why, the alternatives
-rejected, when, and who decided. The specs ([plan.md](plan.md),
+The decisions in force behind tether's specs: who decided, when, what was decided,
+why, and which alternatives were rejected. The specs ([plan.md](plan.md),
 [daemon-core.md](daemon-core.md), [ios-shell.md](ios-shell.md), [auth.md](auth.md),
-[fs.md](fs.md), [complete.md](complete.md), [setup.md](setup.md))
-state only the current rule; this log keeps the reasoning and the history.
+[fs.md](fs.md), [complete.md](complete.md), [setup.md](setup.md)) state the current
+rules; this log preserves the reasoning.
 
-**Who decides.** *Jimmy* owns product calls, and his decisions are marked as his.
-*Tech lead* decisions settle reviews. *Design* decisions were made by the spec's
-author while writing it; the spawn that wrote each spec is named for traceability
-(daemon core p7, iOS shell and auth p8 and p15, review round 2 revision p21; the
-`tmux::Session` build p25, the restore-byte composer p30, the pump and one-shot
-runner p33, and the hub and wire protocol p35, whose builds corrected the daemon-core
-spec; the HTTP layer, auth, CLI and config build p40, commit b1dcb8c; the web host
-layer p42, commit a43014f; the hub fixes after review p43, commit cb7548e; the web boot
-p45, commit b115c2b; the hub refactor after the structural review p49 was applied in
-p51, commit 97f8c39; the web fixes p52, commit 0342137; the file API spec p53 and its
-build p58, commit ed9c637; the completion spec p60). Reviews:
-round 1 of the plan is [plan-review.md](plan-review.md); round 1 of the subsystem specs
-was p10–p14; round 2 was p16 (structure) and p17 (correctness).
+**Who decides.** Jimmy owns product calls; his decisions are marked as his. Tech lead
+settles reviews. Design decisions were made by the spec's author.
 
-A later entry that changes an earlier one says so; the earlier one keeps its text.
+The log holds the decisions in force. A decision that replaces another removes it,
+naming the old option under Rejected; git history keeps the removed text.
 
 ## Jimmy's decisions
 
@@ -34,21 +24,13 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### tmux setup
 
-- **What:** tmux 3.4 on the server and 3.7b on the Mac, `window-size latest`, default
-  prefix `C-b`, the laptop sometimes attached at once. Jimmy adds the recommended
+- **What:** tmux 3.4 is the minimum supported version; `window-size latest`, default
+  prefix `C-b`, and the laptop sometimes attached at once. Jimmy adds the recommended
   tmux.conf lines ([plan.md](plan.md#sending-keys-and-tmuxconf)).
-- **Corrected by the plan review:** tether resizes a window only when a tab opens and
-  on rotation or font change, never when the keyboard opens or closes (a SIGWINCH per
-  keyboard toggle reflows the app and the laptop). `allow-passthrough on` is not
-  recommended: OSC 133, 7 and 52 reach control mode with it off
-  ([probe-tmux.md §1](research/probe-tmux.md)).
-
-### Tabs: one per tmux window
-
-- **What:** 1 tab = 1 tmux window, showing its active pane full screen. Tabs never
-  close on network loss.
-- **Why:** Jimmy doesn't split panes.
-- **Superseded:** by "One tab per session, like `tmux attach`" (2026-10-25).
+- **Why:** opening or closing the keyboard must not resize tmux: a SIGWINCH per toggle
+  reflows the app and the laptop. OSC 133, 7 and 52 reach control mode without
+  `allow-passthrough` ([probe-tmux.md §1](research/probe-tmux.md)).
+- **Rejected:** resizing for each keyboard toggle; recommending `allow-passthrough on`.
 
 ### Shell integration
 
@@ -84,17 +66,15 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Scratch shell: kept
 
-- **What:** a shell outside Jimmy's tmux sessions, from the "+" sheet. A native
-  fallback via TestFlight or Xcode is acceptable.
-- **Changed 2026-10-21 (Jimmy, review round 2):** the scratch shell is a tmux session on
-  a private server (`tmux -L tether-scratch`), started with `systemd-run --user
-  --scope` so it lives outside tether's cgroup, and reusing the one stream path. It
-  lands after the core MVP.
-- **Rejected:** a raw pty per scratch shell (portable-pty): a pty has no snapshot, so
-  "stays alive across reconnects" had no repaint path without a server-side emulator,
-  and its tab couldn't be addressed by the protocol. Dropping it from the MVP.
+- **Decided:** 2026-10-21, Jimmy.
+- **What:** a scratch shell outside Jimmy's tmux sessions uses a private tmux server
+  (`tmux -L tether-scratch`) started in a transient systemd scope outside tether's
+  cgroup. It reuses the stream path and lands after the core MVP.
+- **Rejected:** a raw pty per scratch shell: it has no snapshot for repainting after a
+  reconnect without a server-side emulator, and its tab could not use the protocol;
+  dropping scratch shells from the product.
 
-### Scope: no agent status or notifications
+### Scope: no agent dashboards or notification service
 
 - **What:** tmux tabs, a session list, cheap reconnect, a Termius-grade keyboard with
   tool completion, a file manager.
@@ -117,7 +97,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 ### Multi-host: the app connects to each host directly
 
 - **What:** the app keeps a host list and a token per host; each host runs its own
-  single-host daemon; tabs from several hosts share one UI. One host in the MVP.
+  single-host daemon; tabs from several hosts share one UI.
 - **Why:** for a native app, a hub daemon would add a single point of failure on a box
   that already crashes, an extra hop, and daemon-to-daemon auth.
 - **Rejected:** a hub daemon proxying the other hosts (the answer only while the
@@ -126,8 +106,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### A Mac can host tether, behind a path secret
 
-- **Decided:** 2026-10-24, Jimmy, choosing among the options p170 laid out. Supersedes
-  "`tether serve` is Linux-only for now".
+- **Decided:** 2026-10-24, Jimmy.
 - **What:** on a Mac with the standalone Tailscale app, Serve reaches tether on a
   loopback TCP port, and tether publishes itself at a random **path secret** that
   Serve adds to every request. A request without it is dropped before anything else
@@ -151,7 +130,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
     sockets on macOS 27. `LOCAL_PEERCRED` is Unix-only; libproc gives `EPERM`; the
     `pcblist_n` sysctl and NetworkStatistics return only the caller's own flows; LocalAPI
     whois doesn't know Serve's loopback ports. Evidence:
-    `.meridian/work/tether-mvp/mac-host-peer-provenance.md` (p170).
+    `.meridian/work/tether-mvp/mac-host-peer-provenance.md`.
   - A root helper (a launchd daemon that reports which process owns a loopback
     connection): a root component in a tool that is meant to stay light and never own
     anything, a sudo install step, and new attack surface; that root can see the flows
@@ -164,16 +143,17 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   - Trusting whois on `X-Forwarded-For` alone: the header is whatever the connecting
     process writes, so it identifies a node only when the connection is known to be
     Serve's, which is the question.
+  - A Mac daemon that skips LocalAPI checks: no login allowlist or Funnel check.
   - Keeping the Mac a client only: Jimmy wants to host on it.
 
 ### A Mac host has one user account, Jimmy's
 
-- **Decided:** 2026-10-24, Jimmy, answering p171.
+- **Decided:** 2026-10-24, Jimmy.
 - **What:** tether supports a Mac host only when Jimmy's is its one user account,
   now and as planned. It is the Mac host's stated precondition
   ([auth.md](auth.md#threat-model)), and the Mac design defends against no other login
-  account.
-- **Why:** every other account was the reason for most of p171's Mac machinery: a
+  account. Background setup refuses to install when another login account exists.
+- **Why:** other accounts were the reason for the proposed Mac machinery: a
   LaunchDaemon so the port stays held while Jimmy is logged out or switched away,
   `tether unpublish` and an unpublish on every stop, pinning LocalAPI's endpoint
   against an account squatting its port, and a gate that needed a second account.
@@ -187,7 +167,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### tether runs from a LaunchAgent on a Mac
 
-- **Decided:** 2026-10-24, Jimmy, answering p171.
+- **Decided:** 2026-10-24, Jimmy.
 - **What:** a LaunchAgent in Jimmy's login session, installed without sudo. launchd
   binds `127.0.0.1:7851` at login and holds it across crashes; tether stops at logout,
   and while Jimmy is logged out the phone can't reach it on that Mac.
@@ -197,17 +177,16 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   accounts or a Mac reached while nobody is logged in. The agent also runs in his GUI
   session, so TCC can ask about `~/Documents` instead of refusing silently.
 - **Rejected:**
-  - A LaunchDaemon with `UserName` (p171): a sudo install, a job whose groups,
+  - A LaunchDaemon with `UserName`: a sudo install, a job whose groups,
     environment and TCC behaviour were untested, and no GUI session.
   - The daemon binding the port itself: every crash frees it while Serve points at it.
 
 ### Tailscale's log upload stays on for a Mac host
 
-- **Decided:** 2026-10-24, Jimmy. This replaces an earlier decision the same day to turn
-  upload off with `TS_NO_LOGS_NO_SUPPORT=true` in the extension's `tailscaled-env.txt`.
+- **Decided:** 2026-10-24, Jimmy.
 - **What:** the Mac setup leaves Tailscale's log upload on. The extension uploads the
   Serve handler line, path secret included (`ipn/ipnlocal/serve.go:1450` at v1.104.2,
-  through the logtail-backed `b.logf`, p174), and tether accepts that.
+  through the logtail-backed `b.logf`), and tether accepts that.
 - **Why:** the app can't turn upload off. Tailscale documents the opt-out only for the
   open-source `tailscaled` on macOS, not the Standalone or App Store app
   (https://tailscale.com/docs/features/logging.md, tailscale/tailscale#5114). On this
@@ -215,6 +194,8 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   uploaded secret is useless without a tailnet node reaching Serve, and goes stale at
   tether's next start. Gate M7 checks the rotation.
 - **Rejected:**
+  - Turning upload off with `TS_NO_LOGS_NO_SUPPORT=true` in the extension's
+    `tailscaled-env.txt`: the app did not honor the opt-out.
   - Running the open-source `tailscaled` from Homebrew on the Mac: it supports the
     opt-out and has a LocalAPI socket, but drops the app Jimmy uses and needs a root
     service.
@@ -224,32 +205,18 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### launchd's socket is taken by a local module, not the `raunch` crate
 
-- **Decided:** 2026-10-24, Jimmy, after review p175.
+- **Decided:** 2026-10-24, Jimmy.
 - **What:** `src/launchd.rs` (macOS only, about 24 lines) calls
   `launch_activate_socket` and returns `io::Result<Vec<OwnedFd>>`. It is the one module
   allowed `unsafe`: `lib.rs` goes from `forbid(unsafe_code)` to `deny(unsafe_code)` so
   the module's `allow` can override it, and `main.rs` keeps `forbid`. `libc` becomes a
   macOS-only direct dependency; it is already in the lockfile.
 - **Why:** raunch 1.0.1 returns `Vec<RawFd>`, so turning its fds into an `OwnedFd` or
-  a listener needs `unsafe { from_raw_fd }` in tether anyway (p175 compiled it under
-  `forbid` and it was rejected). The crate doesn't save the lint exception, and it is
+  a listener needs `unsafe { from_raw_fd }` in tether anyway (a compile under
+  `forbid` was rejected). The crate doesn't save the lint exception, and it is
   dormant since 2024. The local module owns its fds, returns an empty list for a null
   array instead of raunch's undefined-behaviour edge, and passes errno through.
 - **Rejected:** raunch, pinned to `=1.0.1` (the above).
-
-### AGENTS.md states principles; the specs hold the rules
-
-- **What (2026-10-23):** AGENTS.md lists the principles behind tether's constraints,
-  each with its reason: tmux's independence from tether, usable on spotty
-  connections, light on a busy host whose CPU and memory Jimmy caps, private to the
-  tailnet. The concrete limits that follow from them live in the subsystem specs.
-- **Why:** a rule without its reason gets applied where it doesn't serve it. "No
-  polling" serves two principles. For connections, clients never poll the server over
-  the network. For the host, nothing runs while idle and nothing polls tmux. A
-  server-local check that sends nothing over the network, and runs only while a client
-  is connected, serves both.
-- **Rejected:** rules in AGENTS.md, classified or not: they restate the principles
-  without the reasons and drift from the specs.
 
 ## Product and architecture
 
@@ -281,12 +248,13 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### The web UI is bundled in the app
 
-- **Decided:** 2026-10-21, design (iOS shell).
-- **Why:** one UI talks to several daemons, checked per host by the handshake; instant
-  offline launch; no web assets in the daemon.
-- **Rejected:** loading the UI from each daemon: which host serves the UI that shows
-  every host's tabs, each origin needs its own storage and auth, and a cached copy is
-  of unknown age. A Debug-only dev-server switch keeps web iteration fast.
+- **Decided:** 2026-10-21, design.
+- **What:** the native app bundles its web UI; the daemon also serves the browser UI.
+- **Why:** a single native UI can connect to several daemons, checks compatibility per
+  host, and launches offline.
+- **Rejected:** the native app loading its UI from whichever daemon it connects to:
+  which host would serve the UI for all hosts, each origin needs its own storage and
+  auth, and a cached copy is of unknown age.
 
 ### The WebSocket lives in the web UI
 
@@ -298,13 +266,12 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Snapshot is the only catch-up
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #1).
+- **Decided:** 2026-10-21, tech lead.
 - **What:** every watch, reconnect, resize and overflow repaints from a snapshot.
   Frames carry no generation or sequence number.
 - **Why:** resume replay was a second catch-up path beside snapshots, and the only
   reason for generations, sequence numbers, rings, `daemon.instance`, stream linger,
-  the replay cap and the outbox's sequence filter. Two review rounds landed on
-  in-flight snapshots versus generation breaks; one fewer state dimension removes that
+  the replay cap and the outbox's sequence filter. The choice between in-flight snapshots and generation breaks added complexity; one fewer state dimension removes that
   class. Resume saved only one capture list; the network round trip is the same.
 - **Rejected:** replay from a 256 KiB ring per stream with `(gen, seq)` positions;
   frame counters; a generation per snapshot. Adding an optional `resume` later needs no
@@ -312,22 +279,9 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **Cost:** a reset and repaint on every tab switch (spike 3 checks for a flash), and
   xterm.js's local scrollback is cleared on each snapshot.
 
-### Completion is HTTP, and cwd comes from tmux
-
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #3, p17 #6).
-- **What:** `POST /complete {line, cursor, cwd}` in `src/complete/`, never through the
-  hub. cwd comes from a tmux format subscription on `#{pane_current_path}` for the
-  watched window, sent in `watching`. The "⧉ 2 panes" badge and `selectPane` are
-  dropped: Jimmy doesn't split, and the tab follows the active pane.
-- **Why:** one mechanism that works without the shell snippet and inside TUIs; the hub
-  never runs carapace or the PATH index.
-- **Rejected:** OSC 7 from the snippet (no cwd without the snippet, none inside TUIs);
-  a `PaneFacts` query through the hub (no wire path, and completion would make the
-  hub run carapace); a pane-listing exchange for the badge.
-
 ### The daemon is single-host on the wire
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #5).
+- **Decided:** 2026-10-21, tech lead.
 - **What:** daemon routes are `/ws`, `/fs/*`, `/auth/*`, `/complete`; no message
   carries `host`. `welcome.host.id` and `/auth/info.hostId` bind tokens to hosts.
 - **Why:** one socket per host already routes by host; every `host` field was a
@@ -337,7 +291,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### One protocol version on the client, a range on the daemon
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #14).
+- **Decided:** 2026-10-21, tech lead.
 - **Why:** client-side ranges make the web UI carry old message shapes; only the
   daemon needs to accept several.
 - **Rejected:** ranges on both sides with the highest common version; a single
@@ -346,15 +300,15 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### ts-rs for TypeScript, hand-written Swift
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #10). Changes the design's
-  earlier choice of typeshare.
-- **Why:** Swift needs only the three `/auth/*` bodies, and the larger bridge is
-  already hand-written twice against shared fixtures.
-- **Rejected:** typeshare (a Swift generator and a preflight check for three types);
-  specta (a runtime type model plain DTOs don't need); JSON Schema plus quicktype (two
-  tools and a schema artifact for one producer).
-- **Changed 2026-10-22 (p35):** how and where ts-rs output is rendered; see "One
-  generated TypeScript file, rendered by a test" below.
+- **Decided:** 2026-10-21, tech lead.
+- **What:** ts-rs declarations generate one committed TypeScript protocol file; a Rust
+  test renders and checks it. Swift is hand-written.
+- **Why:** Swift needs only three auth bodies, while the larger bridge is already
+  hand-written on both sides against shared fixtures.
+- **Rejected:** typeshare (a Swift generator and check for three types); specta (a
+  runtime type model plain DTOs do not need); JSON Schema plus quicktype (two tools and
+  a schema artifact for one producer); ts-rs `#[ts(export)]` writing generated files on
+  every test run rather than checking the committed output.
 
 ## Daemon core
 
@@ -386,18 +340,16 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Snapshot boundary: one atomic command list
 
-- **Decided:** 2026-10-21, design (daemon core), from probes p3 and p5.
+- **Decided:** 2026-10-21, design.
 - **What:** `continue`, state, captures in one list; the snapshot is emitted at its
   replies' position in the stream; torn lists are retried.
-- **Rejected:** pause → capture → marker → continue (pausing discards output; p3
+- **Rejected:** pause → capture → marker → continue (pausing discards output; a probe
   measured a gap); a private marker command (the list is already atomic); a
   server-side `vt100` (a second emulator, still needing the boundary).
 
 ### Torn: the snapshot's own pane, or a changed size
 
-- **Decided:** 2026-10-22, design (p25, from tmux 3.4 probes; the size check by the
-  `src/tmux/` lane). Changes the torn rule of "Snapshot boundary: one atomic command
-  list" above, which counted any `%output` or flag-0 block in the list.
+- **Decided:** 2026-10-22, design.
 - **What:** a snapshot group is torn when `%output` for its own pane arrives between its
   first and last reply, or when the full `<STATE>` re-read by the list's last command
   isn't byte-identical to the first state reply (about 150 bytes per snapshot).
@@ -411,41 +363,19 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **Rejected:** any flag-0 block or any `%output` in the list as torn (the old rule,
   above); output for other panes cannot be in this pane's capture.
 
-### A Release invalidates snapshot attempts
-
-- **Decided:** 2026-10-22, design (the `src/tmux/` lane).
-- **What:** `Release` for a pane abandons its outstanding snapshot attempts: none is
-  re-sent, and a reply that still arrives produces no `Snapshot`.
-- **Why:** every snapshot list starts with `continue`; a retry after the pane was
-  released would resume a pane the session just unwanted and paused.
-- **Changed 2026-10-22 (p51):** the reply is no longer silent; see "A released snapshot
-  is answered `Released`" below.
-
 ### A released snapshot is answered `Released`
 
-- **Decided:** 2026-10-22, tech lead, from the structural review of the hub (p49),
-  applied in p51 (commit 97f8c39). Partly reverses "A Release invalidates snapshot
-  attempts" above, whose rule that none is re-sent stands and whose "no event of any
-  kind" does not
-  ([daemon-core.md §3.3](daemon-core.md#33-session-the-sans-io-control-client-sessionrs)).
-- **What:** when the group of a snapshot attempt that a `Release` outdated ends,
-  whatever its replies, `Session` emits `Done { tag, Err(TmuxError::Released) }`, in
-  stream order. It still never retries and never emits `Snapshot` for it. The hub no
-  longer works out what a Release invalidates: `Work::Release { invalidates }` is gone
-  (a Release is maintenance like any other), with the computation of the invalidated
-  tags, `forget_snapshot`, `Inflight.client`, `Work::Snapshot.pane`, the `Option`
-  around its window and `abandon`'s lookup in `pending`, about 80 lines. A tag leaves a
-  client's `pending`, and frees its capture slot, when its own answer arrives. The
-  `snapshot-released` fixture was re-recorded on tmux 3.4: only its `.events` golden
-  changed (`+done tag=1 error Released`), its `.in` did not, and replaying the old
-  recording had already failed only that golden. The recorder scenario now requires
-  exactly this answer.
-- **Why:** the session already knows which of its groups are snapshots of the pane and
-  what a retry would resume, but the hub rebuilt that: it computed the tags a Release
-  invalidated, remembered them, and freed their slots when the Release was answered, so
-  two components had to agree on one rule. With an answer, a snapshot's tag ends on
-  its own reply like every other tag.
-- **Rejected:** the silent drop with the hub inferring the invalidated tags (above).
+- **Decided:** 2026-10-22, tech lead.
+- **What:** `Release` abandons outstanding snapshot attempts for its pane. A released
+  attempt is never retried and emits no `Snapshot`; when its command group ends it
+  emits `Done { tag, Err(TmuxError::Released) }` in stream order. The tag and capture
+  slot are freed on that answer ([daemon-core.md §3.3](daemon-core.md#33-session-the-sans-io-control-client-sessionrs)).
+- **Why:** each snapshot begins with `continue`, so retrying after release would resume
+  an unwanted pane. `Session` already knows which attempts release invalidates; answering
+  each attempt lets the hub end its tag the same way as any other, without separately
+  reconstructing the invalidation rule.
+- **Rejected:** silently dropping the attempt and having the hub infer its invalidated
+  tags; retrying after release.
 
 ### The daemon composes restore bytes
 
@@ -456,8 +386,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### `Session` composes them: `Event::Snapshot { tag, pane, size, restore }`
 
-- **Decided:** 2026-10-22, design (p30). Replaces the draft event shape
-  `PaneSnapshot { pane, size, restore }` and p25's typed `PaneSnapshot` event.
+- **Decided:** 2026-10-22, design.
 - **What:** `Session` runs `snapshot::compose` over the five typed replies and emits the
   composed bytes with the pane's size. `PaneSnapshot` and `PaneState` stay inside
   `tmux/snapshot.rs`.
@@ -468,7 +397,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Restore bytes: what the probes settled
 
-- **Decided:** 2026-10-22, design (p25 and p30), from tmux 3.4 recordings.
+- **Decided:** 2026-10-22, design.
 - **What:**
   - `?1003h` comes from `mouse_all_flag`.
   - Each tab stop is a CUP to its column and `ESC H`.
@@ -486,7 +415,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### How the composer is tested
 
-- **Decided:** 2026-10-22, design (p30).
+- **Decided:** 2026-10-22, design.
 - **What:** the recorded snapshots' restore bytes are fed to `vt100` 0.18 and compared
   with tmux's capture and state; the modes `vt100` lacks (autowrap, insert, tab
   stops) are pinned on the bytes; a continuity check restores snapshot 1, feeds the
@@ -516,7 +445,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Sans-IO cores
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #2).
+- **Decided:** 2026-10-21, tech lead.
 - **What:** `tmux::Session::{feed, request}` and `hub::State::handle(input, now)` are
   pure; the pool folds into the hub state; the I/O tasks are pumps and effect
   executors.
@@ -527,7 +456,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### The hub owns every Session; the pump only moves bytes
 
-- **Decided:** 2026-10-21, design (p21).
+- **Decided:** 2026-10-21, design.
 - **Why:** one pure value holds all state, so capacity, ownership and wanted panes are
   read in one place, and a hub test can feed recorded tmux bytes end to end. The
   runtime is single-threaded, so parsing on the hub task costs nothing extra.
@@ -537,7 +466,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Maintenance is desired state
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p17 #5).
+- **Decided:** 2026-10-21, tech lead.
 - **What:** snapshots needed, releases, votes and clears (and, in this revision, cwd
   subscriptions and Locates) are derived from the hub state and reconciled when a
   control client has capacity. Only user requests get `busy`.
@@ -547,7 +476,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Capacity: a user threshold and capture slots
 
-- **Decided:** 2026-10-21, design (p21).
+- **Decided:** 2026-10-21, design.
 - **What:** 32 groups in flight per control client, user requests only below 24;
   snapshots and history share 2 capture slots daemon-wide.
 - **Why:** reserved headroom means user traffic can't starve maintenance, and the
@@ -555,54 +484,9 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **Rejected:** a separate priority queue inside the control client (a second queue
   the decision set out to remove); per-request retry timers (polling).
 
-### Locate and a single owner per watched window
-
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #6, p17 #2, #3).
-- **What:** `Locate {window} → (session, pane, size)`, empty meaning gone, on any live
-  control client or as a one-shot. Each pane stream has one owner; other clients'
-  output for it is ignored and paused. A move or link change gives a new owner and a
-  snapshot. When a control client exits, its watched windows are located again before
-  any watch ends.
-- **Why:** the closed-window concern reached its third review round. The old existence
-  check relied on `display-message` failing for a missing window, which tmux 3.4 never
-  does (it succeeds with empty fields), and pane streams had no single producer: a
-  linked window watched from two sessions had two, a moved window had none, and moving
-  a session's last window ended its watches.
-- **Rejected:** resolving inside the hinted session with `list-windows`, an `Exists`
-  check, a listing fallback and a `session` hint on `watch`.
-- **Changed 2026-10-25:** views are per watched session, and the owner is that session's control client; `Locate { session }` replaces the window Locate ("The daemon follows the window; the client never re-watches").
-
-### How ownership and Locate interact
-
-- **Decided:** 2026-10-21, design (p21).
-- **What:** a window is `Locating` or `Bound`; one Locate per window is in flight, and
-  a trigger during it re-runs it afterwards. The owner is the control client of the
-  located session. A new owner or pane moves the watches to that stream, which breaks
-  and takes a snapshot from the new owner. Only the owner's `Output`, `ActivePane`,
-  `Layout` and `Cwd` count; a non-owner's copy of a linked pane is paused by its own
-  session's unwanted-pane rule, and a former owner gets `Release` from reconciliation.
-  On a client's exit the session check runs first; then its windows locate again, and
-  a window still in the same live session follows the detach or crash rule, so a
-  Locate never reattaches by itself. Work in flight on a client that exits, and a
-  one-shot that fails or times out, becomes needed again. The Locate format includes `#{pid}` and `#{start_time}`, which expand even for a
-  missing target, so every Locate also checks the server instance.
-- **Rejected:** carrying a stream's continuity across owners (needs the sequence
-  numbers just removed); de-duplicating two producers' bytes; a separate exit
-  classifier that tested whether `display-message -t '$S'` failed (it never fails);
-  running the session check and the windows' Locates independently (a Locate that
-  finds the session alive would spawn its client again, reattaching after a detach
-  and skipping the crash delay); holding in-flight work as bare tags (a tag on a
-  client that exits is never answered, leaving its window locating forever).
-- **Found by:** the review of this revision (p23).
-- **Changed 2026-10-22 (p35):** a bound window stays bound during a re-Locate, a window
-  binds only from its owner's own answer, and a Locate that fails ends the watches;
-  see "A window binds only from its owner's own Locate answer" below.
-- **Changed 2026-10-25:** a view binds from its owner's own `Locate { session }` answer; sessions don't move, so no answer rebinds a view to another owner ("The daemon follows the window; the client never re-watches").
-
 ### `tmux -N` on every invocation
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #7). Probe:
-  [probe-locate-subscriptions.md](research/probe-locate-subscriptions.md).
+- **Decided:** 2026-10-21, tech lead. Evidence: [probe-locate-subscriptions.md](research/probe-locate-subscriptions.md).
 - **What:** every tmux command tether runs fails instead of starting a server. New
   windows and sessions are one-shots.
 - **Rejected:** `-f /dev/null` so a started server exits at once, attaching only to
@@ -611,7 +495,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### `-u` on every invocation
 
-- **Decided:** 2026-10-22, tech lead (review of p33, from a tmux 3.4 probe).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** every tmux process tether runs, control client and one-shot, is
   `tmux -u -N …`, built in `Endpoint::command`.
 - **Why:** when the client's locale isn't UTF-8, tmux 3.4 replaces non-ASCII characters
@@ -622,7 +506,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Both no-server messages are `NoServer`
 
-- **Decided:** 2026-10-22, tech lead (review of p33).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** with `-N`, a stale socket prints `no server running on …` and a missing
   socket file prints `error connecting to … (No such file or directory)`. Both map to
   `TmuxError::NoServer`.
@@ -633,7 +517,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### One-shots are arguments, not command lines
 
-- **Decided:** 2026-10-22, tech lead (review of p33, from a tmux 3.4 probe).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** a one-shot is an argv vector. A user's `name` or `dir` gets every `#`
   doubled, a trailing `;` sent as `\;`, and control characters refused.
 - **Why:** tmux takes each argument literally, so the single-quote quoting of a
@@ -643,11 +527,13 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   line, and a name with a line break would also garble the listing.
 - **Rejected:** building the same quoted string a control client takes and passing it
   to tmux as one command; sending a trailing `;` unescaped.
+- **Listing constraint:** tmux 3.4 permits tabs and line breaks in window names but
+  escapes them in session names. Listing puts the window name last and splits only
+  the fixed leading fields; malformed extra lines are skipped.
 
 ### One reply type for control-client and one-shot answers
 
-- **Decided:** 2026-10-22, tech lead (review of p33). Replaces the draft
-  `OneShotResult`.
+- **Decided:** 2026-10-22, tech lead.
 - **What:** a one-shot answers `Result<Reply, TmuxError>`, like `Event::Done`. `Reply`
   gained `Listing` and `Created`; `TmuxError` gained `NoServer`, `Timeout` and
   `Spawn(String)`.
@@ -658,8 +544,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### `pump::spawn` can't fail
 
-- **Decided:** 2026-10-22, tech lead (review of p33). Replaces
-  `Result<_, SpawnError>`.
+- **Decided:** 2026-10-22, tech lead.
 - **What:** `spawn` returns the line sender and the task handle. A failure to start
   tmux arrives as `PumpMsg::Exited` with `stderr_tail` `can't run tmux: …` and no bytes
   before it.
@@ -667,73 +552,35 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   died later.
 - **Rejected:** a `SpawnError` at the call: a second exit path beside `Exited`.
 
-### The pump's file is `pump.rs`
-
-- **Decided:** 2026-10-22, tech lead (review of p33).
-- **What:** the module is `src/tmux/pump.rs`, `tmux::pump`, as the spec's task table
-  says.
-- **Rejected:** `client.rs`, which the build brief named: the spec, the task table and
-  `src/tmux/AGENTS.md` all say `pump`.
-
-### The listing and creation formats
-
-- **Decided:** 2026-10-22, tech lead (review of p33).
-- **What:**
-  - `list-clients` prints `#{session_id}` rather than `#{client_session}`, and comes
-    before `list-windows`.
-  - The window line puts `#{window_name}` last, after `#{session_name}`.
-  - `new-window` and `new-session` print `#{pid}\t#{start_time}\t#{session_id}\t#{window_id}`,
-    replacing `#{window_id}` and `#{session_id}\t#{window_id}`.
-- **Why:** the session id joins client lines to window lines directly. tmux 3.4 allows
-  raw tabs and line breaks in a window name set with `-n`, so a name goes last to be
-  split with `splitn`, and clients come first so a name with a line break garbles only
-  window lines. A session name can't hold either (tmux escapes it). `created` carries a
-  `WindowRef`, which needs the server instance, and the hub may not know one for the
-  endpoint when it asks to create.
-- **Rejected:** `#{client_session}` (a name, not an id); windows before clients; a
-  creation format without the server instance, leaving the hub to guess it.
-
 ### "Nothing is lost" holds only for stalls shorter than `pause-after`
 
-- **Decided:** 2026-10-22, tech lead (review of p33, from the Gap tests). Changes the
-  rule in §2 and §3.3 that with only control clients attached nothing is lost.
+- **Decided:** 2026-10-22, tech lead.
 - **What:** with only control clients attached, a stall shorter than `pause-after`
   (3 s) loses nothing and sends no `%pause`. A longer stall can still end in a Gap.
 - **Why:** when a control client falls behind, tmux stops reading the pane, but the
   blocks it had already queued keep ageing and are paused at 3 s. That explains the
-  1-in-3 Gap p25 saw with control clients only. The hub's inbox (2 MiB) sits in front of
+  1-in-3 Gap observed with control clients only. The hub's inbox (2 MiB) sits in front of
   tmux, so tmux notices a stall only once the inbox is full. The real-tmux test uses a 2 s
   stall for the no-Gap case and a terminal client with a 7 s stall for the Gap case.
 - **Rejected:** keeping the unconditional claim, which the tests contradict.
 
 ### The client size is set at startup
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #8); the mechanism by design
-  (p21).
+- **Decided:** 2026-10-21, tech lead and design.
 - **What:** the session's startup line reports the current window's size, and the
   session sets it as the client size before reporting `Ready`, so no vote reaches tmux
-  first.
+  first. The default 80×24 client size would otherwise resize other windows.
 - **Why two lines:** `refresh-client -C` doesn't expand formats, so the size can't be
   read and set in one command group.
 - **Rejected:** "the first `Vote` also sets the client size" (a second mode in the
-  vote path); a one-shot size query before spawning (an extra process per attach).
-
-### Sizing: client size at attach, a vote per watched window
-
-- **Decided:** 2026-10-21, design (daemon core), verified on 3.4.
-- **Rejected:** a pin on the session's current window (capped the laptop's window for
-  the client's whole life and was lost once the phone viewed that window); client size
-  = the phone's size (shrinks every window where the client is `latest` or alone);
-  votes only (the default 80×24 client size resizes other windows); `attach -f
-  ignore-size` (the phone could never size a window while the laptop is attached);
-  `window-size manual` (changes a global option and the laptop's behaviour).
-- **Two phones with different sizes** (tech lead, review round 2): last resize wins;
-  not designed for.
-- **Changed 2026-10-25:** the vote is for the window the view's claim names, its current window or the one being selected ("A claim names a window and moves only by tether's own act").
+  vote path); a one-shot size query before spawning (an extra process per attach);
+  setting the client size to the phone size (shrinks every window where the client is
+  `latest` or alone); attaching with `ignore-size` (the phone could never size a window
+  while the laptop was attached).
 
 ### A watch exists only while its tab is on screen
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #8).
+- **Decided:** 2026-10-21, tech lead.
 - **What:** a covered or hidden terminal sends `unwatch`; `watch` carries a required
   size.
 - **Rejected:** a `visibility` message with per-connection and per-watch visible state
@@ -742,10 +589,10 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### The cwd subscription's shape
 
-- **Decided:** 2026-10-21, design (p21). Probe:
-  [probe-locate-subscriptions.md](research/probe-locate-subscriptions.md).
+- **Decided:** 2026-10-21, design. Evidence: [probe-locate-subscriptions.md](research/probe-locate-subscriptions.md).
 - **What:** one window subscription per watched window on its owner, named `w<W>`,
-  `@W:#{pane_current_path}`; the value goes in `watching.cwd`, and `watching` is
+  including `@W:#{pane_current_path}` and the other-client activity data; cwd goes
+  in `watching.cwd`, and `watching` is
   re-sent when it changes. `cwd` is null until tmux first reports, within about a
   second.
 - **Why:** a window subscription follows the active pane by itself, reports its first
@@ -759,21 +606,14 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Closure is a broadcast fact
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #11).
-- **What:** `windowClosed`, `sessionClosed`, `serverExited` are broadcasts;
-  `watchEnded` carries only `detached` or `error`.
-- **Rejected:** `watchEnded { windowClosed | sessionClosed | serverExited }` beside a
-  `windowClosed` broadcast: closure reported twice, and tabs on a killed session that
-  weren't watched never closed.
-- **Design note (p21):** tabs close on `windowClosed` and `serverExited` only. A
-  session's windows may have moved before it died, so `sessionClosed` closes no tab;
-  it is sent when a control client's session is found gone.
-- **Changed 2026-10-22 (p45):** the daemon sends `windowClosed` only for windows with a
-  watch, so the web also prunes tabs against `sessions` listings; see "The web prunes
-  its tabs against `sessions` listings" below.
-- **Changed 2026-10-25:** tabs are sessions, so `windowClosed` is gone and
-  `sessionClosed` closes tabs ("The daemon follows the window; the client never
-  re-watches").
+- **Decided:** 2026-10-21, tech lead.
+- **What:** `sessionClosed` and `serverExited` are broadcasts; `watchEnded` ends an
+  individual watch for detach, limit or error.
+- **Why:** a session or server closure affects tabs that are not watched as well as
+  the visible tab.
+- **Rejected:** reporting closure only as a watch-local `watchEnded`, which leaves
+  hidden tabs open, or reporting the same closure twice as both a watch-local reason
+  and a broadcast.
 
 ### No automatic reattach after a detach
 
@@ -786,13 +626,18 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Input: hex for text, names for keys
 
-- **Decided:** 2026-10-21, design (daemon core).
+- **Decided:** 2026-10-21, design (daemon core); native key mapping by tech lead, 2026-10-24.
+- **What:** native key names stay within the daemon's allowlist; Shift is omitted for
+  unshiftable names. Option plus printable non-alphanumeric ASCII sends ESC-prefixed
+  bytes, except Option+Space, which is `M-Space`.
+- **Why:** Shift on Escape or Backspace produced names the daemon rejected for the
+  entire input batch.
 - **Rejected:** `send-keys -l '…'` (needs quoting, can't carry newlines); raw bytes for
-  named keys (wrong in application-cursor mode).
+  named keys (wrong in application-cursor mode); unvalidated key names.
 
 ### Input before `watching` is refused
 
-- **Decided:** 2026-10-21, design (p21).
+- **Decided:** 2026-10-21, design.
 - **What:** `input` and `paste` for a watch that isn't bound get `busy`; the client
   sends input only after `watching`.
 - **Why:** with Locate before binding there may be no control client yet, and the
@@ -800,13 +645,14 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 - **Rejected:** routing early input through any live control client (none may exist
   on a cold start); buffering it in the daemon (another queue).
 
-### Watches: client-chosen ids, targeting a window
+### Watches use client-chosen ids and target a session
 
-- **Decided:** 2026-10-21, design (daemon core).
-- **Rejected:** server-assigned ids (a round trip per tab); reusable ids (a stale frame
-  for an old watch could reach the new one); watching a pane (the client would track
-  active-pane changes it can't see).
-- **Changed 2026-10-25:** a watch targets a session (`SessionRef`); `input` and `paste` name the window the tab showed ("Input, paste and inserted paths name the window the tab showed").
+- **Decided:** 2026-10-21, design; session target, 2026-10-25.
+- **What:** each watch has a client-chosen, non-reused id and targets a session.
+  Input and paste separately name the window the user saw.
+- **Rejected:** server-assigned ids (one round trip per tab); reusable ids (a stale
+  frame could reach a new watch); a pane target (the client would have to track active
+  pane changes it cannot see).
 
 ### One hub task
 
@@ -815,24 +661,9 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   load); streams inside the control-client task (tangles protocol parsing with
   fan-out policy).
 
-### Backpressure: one budget, starve every watch, pull snapshots
-
-- **Decided:** 2026-10-21, design (daemon core); simplified by the tech lead (review
-  round 2, p16 #14).
-- **Rejected:** a snapshot pushed on every overflow (captures at the pane's output
-  rate during a flood); a hub-side starved flag (duplicates the outbox); replay for
-  slow consumers (a few-KB snapshot beats 256 KB of `yes` on cellular); unbounded
-  queues; in round 2, dropping only the largest watch queue and coalescing JSON
-  messages (a connection normally has one watch), the control client's 256-request
-  internal queue (the hub never awaits it), and close 4008 for a JSON overflow (folded
-  into wedged).
-
 ### Credit-based flow control per connection
 
-- **Decided:** 2026-10-22, tech lead, from the verification review of the round 2
-  revision (p24). Replaces the outbox budget, the outbox's starved state and snapshot
-  pull, and the JSON FIFO and hub → connection message caps as memory bounds, from
-  "Backpressure: one budget, starve every watch, pull snapshots" above.
+- **Decided:** 2026-10-22, tech lead.
 - **What:** the hub holds a byte credit per connection (2 MiB) and debits it for every
   `ToConn`; the connection returns credit over `FromConn::Credit` once a frame is
   written or discarded. A snapshot or history capture reserves 1 MiB before its group
@@ -841,36 +672,29 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   alone, which catches up by snapshot, no sooner than 250 ms after its last one.
   Control JSON is never refused and may overdraw by 64 KiB; past that the connection
   is wedged (4002). The outbox keeps ordering, replacement and coalescing, and no
-  limits ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)). The memory
-  ceiling drops from about 62 MB to about 59 MB.
+  limits ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)).
 - **Why:** count-bounded queues carrying variable-size payloads escaped the byte
   budget. A legal 200-row history capture at 500 columns encoded to 134 KB, so 256
   queued in one JSON FIFO were 34 MB; snapshots and output in the 256-message
   `ToConn` channel had the same gap. One number in the hub, which already decides what
   to send, bounds production, transit, outbox residence and the frame being written,
-  and keeps the no-shared-state rule: the connection only reports bytes.
-  Starvation moves into the hub, reversing the earlier rejection of a hub-side starved
-  flag: with the credit in the hub, the outbox no longer tracks it, so nothing is
-  duplicated. Wedged (4002) now means control JSON past its overdraft or a full
-  channel, no longer a JSON FIFO overflow.
+  and keeps the no-shared-state rule: the connection only reports bytes. It also
+  returns credit when it discards a frame, since an idle socket may make no next write.
+  The hub owns starvation with the credit; the outbox no longer tracks it, so the
+  state is not duplicated. Wedged (4002) covers control JSON past its overdraft or a
+  full channel.
 - **Rejected:** end-to-end permits (a response permit object carried from the capture
   to the socket and dropped on delivery: the same bound, but shared state across
   tasks, which the hub/connection split forbids); per-message byte caps (each message
   bounded, but the count still multiplies them: 256 × a capped `historyChunk` is the
   failure above); keeping the outbox budget beside the credit (two limits on the same
-  bytes, and the outbox would starve watches the hub thinks are live).
-
-### Wedged closes with 4002
-
-- **Decided:** 2026-10-21, design (p21).
-- **What:** a connection dropped because the hub's channel to it is full, or because
-  its JSON FIFO overflowed, closes with 4002; the client reconnects.
-- **Rejected:** a separate code per cause, such as the former 4008 for a JSON
-  overflow: the client does the same thing for both.
+  bytes, and the outbox would starve watches the hub thinks are live); an unbounded
+  queue; a snapshot on every overflow (capture rate would follow a flood); replay for
+  slow consumers (a snapshot costs far fewer bytes than a ring full of flood output).
 
 ### Every watch the daemon ends gets `watchEnded`
 
-- **Decided:** 2026-10-21, design (p21), from the review of this revision (p23).
+- **Decided:** 2026-10-21, design.
 - **What:** apart from the closure broadcasts, a watch ends only with `watchEnded`,
   including a watch refused for the connection's watch cap or the control-client cap.
   `error` refuses one request and never ends a watch; the outbox forgets a watch only
@@ -881,7 +705,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Paste slots
 
-- **Decided:** 2026-10-21, design (p21), from the review of this revision (p23).
+- **Decided:** 2026-10-21, design.
 - **What:** at most 4 paste files exist at once daemon-wide; without a free slot the
   connection answers `busy` before writing anything. Deleting the file frees its slot.
 - **Why:** `$XDG_RUNTIME_DIR` is tmpfs, charged to tether's cgroup; with only the
@@ -890,16 +714,15 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Paste: a file on receipt, deleted on the group's reply
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #13, p17 #4).
+- **Decided:** 2026-10-21, tech lead.
 - **Why:** with payloads in a queue, 256 queued pastes of 256 KiB were 64 MiB, the
   whole memory limit; a probe showed tmux has read the file by the time the group
   replies.
 - **Rejected:** deleting on `%paste-buffer-deleted` or after a 5 s timer.
 
-### Paste buffers: a window check first, a separate delete on failure
+### Failed paste groups clean up tmux buffers
 
-- **Decided:** 2026-10-22, design (p25 for the check and the names; the `src/tmux/`
-  lane for the delete).
+- **Decided:** 2026-10-22, design.
 - **What:** the paste group is `load-buffer ; paste-buffer -p -d`, the buffer is
   `tether-<tag>`, and a failed group is followed by a separate `delete-buffer -b
   tether-<tag>` group whose error is ignored. Tags are unique across control clients.
@@ -915,123 +738,52 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### An oversized reply fails its group, not the control client
 
-- **Decided:** 2026-10-21, design (p21).
-- **What:** a partial line or a group's replies over 1 MiB are discarded and the group
-  fails `TooLarge`.
-- **Why:** a legal, very large screen made the old 4 MiB limit kill the control
-  client, which would respawn and fail again.
-- **Rejected:** treating any limit breach as fatal.
-- **Changed 2026-10-22 (design, p25):** the parser caps only the length of a line
-  (`TooLong`, never an error). The 1 MiB reply cap is `Session`'s, per group, because
-  only `Session` knows the groups; replies to hooks and the attach are never held. The
-  4 MiB block limit is gone.
-  - **Rejected:** a block cap in the parser, which doesn't know the groups.
+- **Decided:** 2026-10-21, design.
+- **What:** `Session` caps a group's replies at 1 MiB and fails an oversized group
+  `TooLarge`. The parser limits the length of a line but does not cap a reply block;
+  attach and hook replies are not held.
+- **Why:** a legal, very large screen could exceed the earlier limit, killing a control
+  client that would respawn and fail again. Only `Session` knows command groups.
+- **Rejected:** killing the control client on a group-limit breach; a block cap in the
+  parser, which cannot know the groups.
 
-### `Session::new()` takes no session id
+### A zoomed pane uses the visible layout
 
-- **Decided:** 2026-10-22, design (p25).
-- **What:** `Session::new()` takes no argument. The pump's `attach-session -t '$S'`
-  is the only place the id is used.
-- **Why:** the protocol never uses it: `display-message` without `-t` targets the
-  attached session.
-- **Rejected:** `Session::new(SessionId)` as the earlier spec had it.
-
-- **Changed 2026-10-25:** `Session::new` takes the session id the pump attaches to,
-  so it can tell its own session's `%session-window-changed` from others' from the
-  first byte ("The daemon follows the window; the client never re-watches").
-
-### Notification choices in `Session`
-
-- **Decided:** 2026-10-22, design (p25), where the spec was silent.
-- **What:**
-  - `%session-renamed` becomes `SessionsChanged`, like `%sessions-changed`.
-  - `Layout` takes pane sizes from the visible layout, so a zoomed pane reports its
-    full window size.
-  - The client-size line at startup produces a `%layout-change` even when no size
-    changes; it is reported like any other, and a `Layout` that repeats a stream's
-    size is not a break.
-  - `%exit` follows a detach, `kill-server` and a closed stdin alike, so
-    `LocateSession` keeps running first in the exit path.
-- **Rejected:** the window layout for sizes (it is the unzoomed layout).
-- **Changed 2026-10-25:** the exit path's session check is `Locate { session }`, which
-  replaces `LocateSession` ("The daemon follows the window; the client never re-watches").
-
-### Caps sized for the memory ceiling
-
-- **Decided:** 2026-10-21, design (p21), from tech lead review round 2 (p17 #4:
-  recompute the ceiling from simultaneously reachable states, and count pre-handshake
-  sockets).
-- **What:** 3 connections counted from the upgrade, 3 control clients, 2 watches per
-  connection, 1 one-shot, 1 MiB per reply group, 2 capture slots
-  ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
-- **Why:** with the earlier caps (4 connections, 4 control clients, 8 streams, 4 MiB
-  blocks) the reachable total exceeded `MemoryMax=64M` before counting carapace.
-- **Rejected:** keeping the caps and raising `MemoryMax`.
+- **Decided:** 2026-10-22, design, from tmux 3.4 behavior.
+- **What:** `Layout` gets pane sizes from the visible layout, so a zoomed pane reports
+  its full window size. A repeated size does not break a stream.
+- **Rejected:** deriving sizes from the window layout, which is the unzoomed layout.
 
 ### Logs carry framing metadata only
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p17 #9).
-- **Rejected:** logging the last 4 KiB of control-client input on a parser error: that
-  stream holds terminal output and captured screens, the contents the logging rule
-  forbids.
+- **Decided:** 2026-10-21, tech lead.
+- **What:** parser failures report kind and position, not content. Completion JSON
+  errors use fixed phrases and line/column, never serde's message.
+- **Why:** serde error messages can quote carapace output, which can echo what Jimmy
+  typed; the control-client stream contains terminal output and captured screens.
+- **Rejected:** logging serde's message or the last 4 KiB of control-client input.
 
 ### Server instances name their endpoint
 
-- **Decided:** 2026-10-21, design (p21).
-- **What:** `WindowRef.server` is `"<endpoint>:<pid>-<start_time>"`, `main` or
-  `scratch`, so the hub routes a window to its tmux server from the id alone.
-- **Rejected:** a separate endpoint field on every ref; a lookup from instance to
-  endpoint (empty after a daemon restart, before anything is attached).
-- **Changed 2026-10-25:** tabs name sessions, so `SessionRef.server` carries the instance
-  the same way; `WindowRef` remains only in `created` ("One tab per session, like `tmux
-  attach`").
-
-### A window binds only from its owner's own Locate answer
-
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes "How
-  ownership and Locate interact" above
-  ([daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate)).
-- **What:** a window binds only from a Locate answered by the control client that will
-  own it. An answer from another client or a one-shot only names the session; the hub
-  finds or spawns that session's client and Locates again on it. A bound window stays
-  bound, and its stream live, while a re-Locate runs, and changes owner only if the
-  answer names a different owner or pane. So the old state diagram's `Bound →
-  Locating: unlinked` is gone.
-- **Why:** tmux orders a control client's replies with that client's own notifications
-  and with nobody else's. After the owner's answer, any later `ActivePane` or unlink
-  reaches the hub behind it; after another client's answer, one the owner had already
-  reported could be missed and the window bound to a stale pane. A `WindowUnlinked`
-  from an unrelated session of a linked window is common, and it must not cost the
-  watched window its stream.
-- **Rejected:** binding from any answer (the race above); returning a window to
-  `Locating` on every unlink (a live stream broken, and a snapshot paid, for a change
-  that names the same owner and pane).
-- **Changed 2026-10-25:** a *view* (one per watched session) binds from its owner's own
-  `Locate { session }` answer; sessions don't move between control clients, so the
-  rebinding cases and `WindowUnlinked` are gone ("The daemon follows the window; the
-  client never re-watches").
+- **Decided:** 2026-10-21, design; session references, 2026-10-25.
+- **What:** `SessionRef.server` is `"<endpoint>:<pid>-<start_time>"`, where the
+  endpoint is `main` or `scratch`. The hub routes a session from the reference alone.
+- **Rejected:** a separate endpoint field on every reference; a lookup from instance
+  to endpoint, which is empty after daemon restart before anything is attached.
 
 ### A failing Locate or session check ends the watches
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes "How
-  ownership and Locate interact" above
-  ([daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate)).
-- **What:** a Locate or session check answered with anything but `NoServer` (tmux can't
-  run, a timeout, an unexpected reply) ends the window's watches with `watchEnded {
-  error }`. `NoServer` still means the server is gone. Work lost because its control
-  client exited is still needed again.
-- **Why:** needed-again work is sent on the next `reconcile`. When tmux can't be run at
-  all, a one-shot fails at once and every `handle` would spawn a failing process.
-- **Rejected:** "needed again" for one-shot failures and timeouts, as the earlier entry
-  had it.
-- **Changed 2026-10-25:** the watches it ends are the view's, one view per watched
-  session (daemon-core §4.2).
+- **Decided:** 2026-10-22, tech lead.
+- **What:** a failed Locate or session check ends that view's watches with
+  `watchEnded { error }`, except `NoServer`, which means the server is gone. Work lost
+  when its control client exited can still be needed again.
+- **Why:** immediately retrying a failing one-shot during reconciliation can spawn a
+  failing process on every input when tmux cannot run.
+- **Rejected:** treating one-shot failures and timeouts as always needed again.
 
 ### The reply timeout is a progress deadline; every unplanned exit gets a session check
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes the
-  per-group timeout in the daemon-core spec
-  ([§4.5](daemon-core.md#45-control-clients)).
+- **Decided:** 2026-10-22, tech lead. Evidence: [§4.5](daemon-core.md#45-control-clients).
 - **What:**
   - A control client with groups in flight that completes none for 10 s is killed. The
     deadline belongs to the client, so it also covers `Session`'s own groups (the
@@ -1044,80 +796,39 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   unwatched); checking a session only when one of its windows was watched (closure
   broadcasts reach tabs that exist but aren't on screen, and they would never be told).
 
-### One reporter per endpoint for renames and session changes
+### The stream is part of the session view
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35).
-- **What:** `windowRenamed` and `sessionsChanged` come only from the endpoint's
-  lowest-id `Ready` control client
-  ([daemon-core.md §4.5](daemon-core.md#45-control-clients)).
-- **Why:** tmux sends these notifications to every control client, so each would be
-  broadcast once per client.
-- **Rejected:** broadcasting from every client (N copies).
-- **Extended 2026-10-22 (p51):** the reporter's close notifications for unwatched
-  windows are turned into `sessionsChanged` too, coalesced per input; see "An unwatched
-  window's close broadcasts `sessionsChanged`, once per input" below.
-- **Changed 2026-10-25:** window renames are no longer broadcast; every window add or close from the reporter becomes `sessionsChanged` (daemon-core §4.5).
-
-### The stream is part of the window; `state.rs` is split three ways
-
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes the
-  `Stream` of [daemon-core.md §4.3](daemon-core.md#43-pane-streams) and the file layout
-  of §4.
-- **What:** a window shows one pane, so the hub keeps one stream per window (live, size,
-  the snapshot in flight and its reservations), and an active-pane change breaks it.
-  `state.rs` holds the model, tmux events, streams and credit; `owners.rs` the Locate
-  answers, binding, control clients and exits; `requests.rs` the connections'
-  messages.
-- **Rejected:** a `streams` map keyed by pane (it always changes together with its
-  window, and every change would touch both); one `state.rs` (three concerns in one file).
-- **Changed 2026-10-25:** the stream is part of the view, one per watched session (daemon-core §4.3).
+- **Decided:** 2026-10-22, tech lead; session views, 2026-10-25.
+- **What:** the pane stream is part of the watched session's view, which displays one
+  pane at a time.
+- **Why:** the stream and view change together.
+- **Rejected:** a separate stream map keyed by pane, requiring every transition to keep
+  the map and its view in step.
 
 ### Reconcile runs only after inputs that may change desired state
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes
-  [daemon-core.md §4.1](daemon-core.md#41-statehandle), which had `reconcile` after
-  every `handle`.
+- **Decided:** 2026-10-22, tech lead. Evidence: [daemon-core.md §4.1](daemon-core.md#41-statehandle).
 - **What:** `reconcile` is skipped for pump bytes that complete no group, produce only
   `Output` events and starve no watch. Every other input, and every timer that fires,
   runs it.
 - **Why:** measured in one release process, a plain output chunk cost about 230 ns
   without `reconcile` and 590–910 ns with it; with the skip it costs about 256 ns, 5% of
   the pump's own ~5 µs wake per chunk. Output is the only input at pump rate.
+  Snapshot spacing feeds `next_deadline` without being a timer action.
 - **Rejected:** `reconcile` after every `handle` (2.5 to 4 times the hub's work on the
-  hot path, for no change in what is sent).
-
-### Connection API details
-
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes
-  [daemon-core.md §4.6–4.7](daemon-core.md#47-public-interface).
-- **What:**
-  - `hub::spawn(endpoints)` takes no config: every limit is a constant.
-  - `connect` and `send` return `Result<_, HubGone>`.
-  - `ToConn::Msg` carries `ends: Option<u32>`, the watch a `watchEnded` ends; the outbox
-    forgets that watch as it takes the message.
-  - The outbox keeps no registry of watches. Frames for a forgotten watch are written,
-    and the client drops frames for a watch it no longer has.
-  - The connection sends `Credit` whenever `take_credit()` is non-zero, not only after a
-    write.
-- **Why:** the limits are sized together for the memory ceiling, so nothing is
-  configurable. A registry would copy what the client and hub already know. Credit
-  returned by a discard (an `unwatch` with frames queued) would otherwise wait for the
-  next write, and an idle socket makes none.
-- **Rejected:** a `HubConfig` struct; an outbox registry of live watches; returning
-  credit only after a socket write.
+  hot path, for no change in what is sent); scanning every watch for snapshot spacing
+  in the timer action (an extra 35–45 ns per chunk with three connections).
 
 ### `sessions.tmux` is `TmuxListing | null`
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes the
-  `sessions` message ([daemon-core.md §5.3](daemon-core.md#53-json-messages)).
+- **Decided:** 2026-10-22, tech lead. Evidence: [daemon-core.md §5.3](daemon-core.md#53-json-messages).
 - **Why:** `null` for "no tmux server" is what serde and ts-rs express cleanly.
 - **Rejected:** `"notRunning" | { … }`: a string-or-object union has no clean serde or
   ts-rs shape.
 
 ### Watches that can never bind, and reused ids
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Fills a gap in
-  [daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate).
+- **Decided:** 2026-10-22, tech lead. Evidence: [daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate).
 - **What:** a `watch` whose `server` string doesn't parse, or names an unknown endpoint,
   gets `serverExited` for that string on that connection, which closes the tab. A watch
   id that is already active gets `error { badRequest }` and the active watch is
@@ -1129,8 +840,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Unknown message types are reported by `decode`
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Fills a gap in
-  [daemon-core.md §5.2](daemon-core.md#52-handshake-and-versions).
+- **Decided:** 2026-10-22, tech lead. Evidence: [daemon-core.md §5.2](daemon-core.md#52-handshake-and-versions).
 - **What:** `ClientMsg::decode` returns `Decoded::Unknown { kind }` for a type it
   doesn't know, so the connection logs and ignores it; a known type with bad data is a
   protocol violation (4003).
@@ -1139,28 +849,9 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   without `data`, so a newer client's message carrying a `data` object would fail to
   parse and look like a protocol violation.
 
-### One generated TypeScript file, rendered by a test
-
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35). Changes "ts-rs
-  for TypeScript, hand-written Swift" above
-  ([daemon-core.md §5.5](daemon-core.md#55-type-generation)).
-- **What:** the TypeScript is one file, `web/proto/generated/messages.ts`, rendered from
-  ts-rs declarations by a Rust test in `src/proto/typescript.rs`. The test fails while
-  the committed file is stale, so `cargo test` in preflight checks it;
-  `UPDATE_PROTO_TYPES=1 cargo test --lib proto::typescript` rewrites it. The message
-  types are `ClientMsg` and `ServerMsg`; the file also exports `PROTOCOL_VERSION` and
-  `CloseCode`. The web imports from it and drops its hand-written copies
-  (`ClientMessage`, `ServerMessage`, and `"notRunning"` for `sessions.tmux`).
-- **Why:** the web's protocol code lives under `web/proto/`, so the generated types sit
-  beside it.
-- **Rejected:** ts-rs's `#[ts(export)]`, which writes into the tree on every test run
-  instead of comparing against the committed file; `web/src/proto/generated/`, the
-  spec's earlier path.
-
 ### An oversized history capture is retried with half the rows
 
-- **Decided:** 2026-10-22, tech lead, on the hub build's finding (p35). Changes how a
-  `historyChunk` is cut ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)).
+- **Decided:** 2026-10-22, tech lead. Evidence: [daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox).
 - **What:** when a `history` capture fails `TooLarge`, the hub reissues it with half the
   rows, down to one row, and the client sees a shorter `historyChunk` and asks again
   from where it ends. A single row that still fails answers `error { tmux }`.
@@ -1173,22 +864,9 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   front (it can't know row sizes before capturing, and a fixed lower limit would shrink
   every request for the rare heavy one).
 
-### Two watches on one connection snapshot one at a time under load
-
-- **Decided:** 2026-10-22, tech lead, accepted from the hub build (p35); a consequence
-  of the credit entry above, stated so nobody reads it as a stall.
-- **What:** credit is 2 MiB and a capture reservation 1 MiB, so two reservations on one
-  connection fit together only while nothing else is outstanding to it. With output or
-  an earlier snapshot in flight, the second watch's snapshot waits for credit to
-  return.
-- **Rejected:** none recorded; the sizes are set by the memory ceiling
-  ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
-
 ### `NewWindow` carries the server instance, and tmux checks it
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub fixes after review (p43,
-  commit cb7548e). Changes how the hub treated a stale session ref on `newWindow`
-  ([daemon-core.md §3.8](daemon-core.md#38-one-shots-and-endpoints-oneshotrs)).
+- **Decided:** 2026-10-22, tech lead. Evidence: [daemon-core.md §3.8](daemon-core.md#38-one-shots-and-endpoints-oneshotrs).
 - **What:** `OneShotCmd::NewWindow` carries the instance named by the request's
   `SessionRef`, and the one-shot starts with `if-shell -F
   '#{!=:#{pid}-#{start_time},<server>}' tether-server-changed ;` before `new-window`. On
@@ -1211,10 +889,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### Time reaches `State` with the next input
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub fixes after review (p43,
-  commit cb7548e). Changes "Reconcile runs only after inputs that may change desired
-  state" above for inputs past a deadline
-  ([daemon-core.md §4.1](daemon-core.md#41-statehandle)).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** `handle` treats any input at or past `next_deadline()` as a Tick too: it
   fires the timers that are due and runs `reconcile` once, whatever the input was. The
   deadline is reported only until then, so one that can't be acted on (credit or a
@@ -1230,9 +905,7 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
 
 ### `DropConn` and `CloseClient` on every exit
 
-- **Decided:** 2026-10-22, tech lead, accepted from the hub fixes after review (p43,
-  commit cb7548e). Changes what the two effects mean
-  ([daemon-core.md §4.1](daemon-core.md#41-statehandle)).
+- **Decided:** 2026-10-22, tech lead. Evidence: [daemon-core.md §4.1](daemon-core.md#41-statehandle).
 - **What:** `State` owns every lifecycle and `run.rs` only mirrors it. `DropConn` means
   the connection is gone from the hub, whether it closed or was dropped as wedged;
   `CloseClient` goes out whenever a started control client leaves the state, whether the
@@ -1249,72 +922,25 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   registered until the hub next sends to it. `http/ws.rs` sends `Closed` on every path
   but a panic or the runtime's shutdown, so no machinery was added.
 
-### An unwatched window's close broadcasts `sessionsChanged`, once per input
+### One reporter per endpoint coalesces session-change hints
 
-- **Decided:** 2026-10-22, tech lead, in the brief for the hub refactor (p51, commit
-  97f8c39). Adds to "One reporter per endpoint for renames and session changes" above
-  and answers the gap in "The web prunes its tabs against `sessions` listings" below
+- **Decided:** 2026-10-22, tech lead.
+- **What:** the endpoint's lowest-id ready control client is the sole reporter for
+  session changes and window adds or closes. The hub broadcasts at most one
+  `sessionsChanged` per input and the web debounces relisting
   ([daemon-core.md §4.5](daemon-core.md#45-control-clients)).
-- **What:** when the endpoint's reporter hears `%window-close` or
-  `%unlinked-window-close` for a window the hub holds no entry for (no watch is on it,
-  in any phase), the hub sets a flag; the reporter's `%sessions-changed` sets the same
-  flag; and `handle` broadcasts one `sessionsChanged` at the end of an input that set
-  it. Closing a watched window is still `windowClosed` with no relist, and a client
-  that isn't the reporter sends nothing. The web already relists on `sessionsChanged`,
-  debounced, and prunes against the listing. Measured on real tmux 3.4:
-
-  | Action | `sessionsChanged` sent, before → after |
-  |---|---|
-  | kill an unwatched window | 0 → 1 |
-  | kill a 4-window session | 1 → 1 (not 5) |
-  | move an unwatched window | 0 → 1 |
-  | kill the watched window | `windowClosed`, no relist |
-
-  Throwaway unit probes also showed the non-reporting client sends none, and two
-  separate chunks send two.
-- **Why:** the hub tracks a window only while a watch is on it, so a kill under a tab
-  that isn't on screen sent nothing, and the tab was found dead only on the next connect
-  or sheet. The close notification already reaches the reporter; a flag turns it into
-  the hint the web's listing needs, with no window state and no tmux command. The flag
-  is cleared per input so one kill that closes many windows is one hint.
-- **Cost:** "once" means once per input. A burst split across two reads of the pump's
-  pipe sends two, which the web's debounce absorbs.
-- **Rejected:**
-  - A Locate per unwatched window: work and state for windows nobody views, which "A
-    watch exists only while its tab is on screen" avoids.
-  - A broadcast per closed window: five for a 4-window session.
-  - A timed debounce in the hub: a new timer, and the web already debounces.
-- **Changed 2026-10-25:** every window close from the reporter broadcasts it, since the hub holds no windows (daemon-core §4.5).
-
-### `Starting` is folded into `Locating { after, on }`
-
-- **Decided:** 2026-10-22, tech lead, from the structural review (p49), applied in p51
-  (commit 97f8c39). Changes the phases of "How ownership and Locate interact" and the
-  state diagram of [daemon-core.md §4.2](daemon-core.md#42-views-owners-and-locate).
-- **What:** a window's phases are `Locating { after, on }`, `Bound` and `Orphaned`. `on`
-  is the control client the window was found to belong to, which may still be starting
-  or waiting out a crash delay; the Locate runs on it once it is `Ready`. `join` always
-  goes to `Locating` with `on` set, and the loop in `client_ready` that moved waiting
-  windows out of `Starting` is gone, because `learned` and `located` already redo its
-  server check. `on` moved from the Locate record into the phase, so "`on` is set only
-  while locating" holds by construction and the `on = None` resets in `bind` and
-  `release_windows` are gone. `Window::client()` (the owner when `Bound`, `on` when
-  `Locating`, none when `Orphaned`) replaces four hand-written matches. About 24 lines
-  fewer for `Starting` alone.
-- **Why:** `Starting` was a `Locating` window with a client to wait for, kept as a second
-  phase beside a separate `on` field that had to be cleared by hand wherever a window
-  left the phase. One phase carrying `on` has one set of exits, and the field cannot
-  outlive the phase. Forcing the respawn's "awaited" check to false fails the two crash
-  tests, so the tests cover the fold.
-- **Rejected:** keeping `Starting` as its own phase.
-- **Changed 2026-10-25:** a view's phases are `Checking`, `Locating`, `Bound` and `Orphaned`; `after` and `on` are gone with moved-window rebinding (daemon-core §4.2).
+- **Why:** tmux sends notifications to every control client; broadcasting each copy
+  would duplicate the hint. The hub holds only watched views, so without a hint an
+  unwatched window's close or move was invisible to listings. On tmux 3.4, the hint
+  made one notification for an unwatched window close and one for a four-window
+  session close, not one per window.
+- **Rejected:** a Locate and state per unwatched window; a broadcast per closed window;
+  a timed hub debounce when the web already debounces; broadcasting every client's
+  copy of the notification.
 
 ### Reserved credit stays a counter, with a debug check
 
-- **Decided:** 2026-10-22, tech lead, from the structural review (p49), applied in p51
-  (commit 97f8c39). The brief was to derive each connection's reserved credit from the
-  work in flight instead of keeping a counter, unless that cost more than about 50 ns
-  per chunk; it did ([daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox)).
+- **Decided:** 2026-10-22, tech lead. Evidence: [daemon-core.md §4.6](daemon-core.md#46-credit-and-the-outbox).
 - **What:** `Conn.reserved` stays a counter. Debug builds derive what it must be (a
   capture reservation per watch a snapshot in flight reserved for and per history
   capture in flight, plus the listing's) and `debug_assert_eq!` it for every connection
@@ -1335,51 +961,9 @@ Decided by Jimmy, 2026-10-21 unless an entry gives another date.
   about +100 ns loaded); a `State`-level map of captures (a second structure mirroring
   `pending`).
 
-### Other moves of the hub refactor
-
-- **Decided:** 2026-10-22, tech lead, from the structural review (p49), applied in p51
-  (commit 97f8c39). Hot-path cost measured against a clone of the previous commit: at
-  parity (+0 to 10 ns per chunk).
-- **What:**
-  - **`tmux/reply.rs`.** Each format tmux is asked to print sits beside the parser of its
-    reply, moved out of `command.rs`, `session.rs` and `oneshot.rs`; `ServerInstance`
-    has `FromStr`, which the hub's `parse_server` uses. A pure move: the commands'
-    text is byte-identical, and the fixture replays, which require the exact lines,
-    pass. The formats were not changed to `#{pid}-#{start_time}`, which would mean
-    re-recording every fixture.
-  - **`tmux/fake.rs` and hub tests that assert ops.** The hub tests' fake tmux splits
-    lines into commands, decodes `display-message` and `capture-pane`, expands formats
-    from a lookup of tmux variables and frames replies
-    ([daemon-core.md §8](daemon-core.md#8-testing)). The 22-field state row and the 33
-    command-string literals in the tests are gone; assertions build their op lines with
-    `command::op`. The review's probe, quoting the Locate target, used to fail 22 of 23
-    hub tests and now fails none.
-  - **One `due()`.** The control clients' timers come from one `due()`, which feeds
-    both `next_deadline` and `timers`. Snapshot spacing stays out of it: it has no timer
-    action of its own (the input that crosses it is dirty, and reconcile snapshots), and
-    putting it in made `timers` scan every watch on every chunk, +35 to 45 ns per chunk
-    (3 connections). It is chained into `next_deadline` only, and its formula now
-    lives once, in `Watch::spaced_until`, which reconcile's eligibility also uses.
-  - **`state.rs` split further** into `credit.rs`, `names.rs` and `time.rs`, pure
-    moves; `state.rs` went from 1,140 to 952 lines. Credit and names alone left it at
-    1,024.
-  - **Smaller:** `quote` and `named` share `command::literal`; the auth store's `read`
-    and `read_async` share `loaded`; the real-tmux tests share `setup`, `SERIAL`,
-    `tmux()` and `socket()` in `tests/support/tmux_server.rs` (`hub_real`'s socket prefix
-    became `tether-test-`) and use `hub::INBOX` instead of a literal 128.
-- **Why:** each removes a place where two components had to agree (a format and its
-  parser, a command's spelling and a test's copy of it, two encodings of the spacing
-  rule) or a file that held three concerns.
-- **Rejected:**
-  - Narrowing `FromConn::Client`: it needs a second enum mirroring `ClientMsg`, or a
-    split wire enum that changes the generated TypeScript, just to remove one ignored
-    match arm.
-  - Spacing inside `due()` (above).
-
 ## Daemon service, as built
 
-Decided 2026-10-22 by the tech lead, accepted from the p40 build (commit b1dcb8c), which
-found each point while running the daemon.
+Decided 2026-10-22 by the tech lead.
 
 ### The connection's own replies are bounded by a queue of 16, not charged to credit
 
@@ -1424,53 +1008,20 @@ found each point while running the daemon.
   tracing-journald adds a dependency for nothing.
 - **Rejected:** `WatchdogSec` with a keep-alive timer; tracing-journald.
 
-### `dir` on `newWindow` and `newSession` passes through until `src/fs/` exists
+### Paste cleanup follows the runtime lock and socket binds
 
-- **What:** [daemon-core.md §5.3](daemon-core.md#53-json-messages) says the connection
-  checks `dir` against the file roots. `src/fs/` doesn't exist yet, so the build
-  passes `dir` to tmux unchecked, with a TODO in `src/http/.context/TODO` and in the
-  spec. The check lands with `src/fs/`.
-- **Rejected:** none recorded.
-
-### `tether serve` is Linux-only for now (superseded)
-
-- **What:** the daemon needs tailscaled's LocalAPI unix socket for the login allowlist
-  and the Funnel check. The macOS Tailscale apps (App Store and standalone) have no
-  such socket, so `tether serve` won't start there. The Mac is for recording the 3.7b
-  fixtures and building the iOS app ([plan.md](plan.md#product-rules)).
-- **Rejected:** a macOS daemon that skips the LocalAPI checks: it would run with no
-  login allowlist and no Funnel check.
-- **Superseded:** by "A Mac can host tether, behind a path secret" (2026-10-24): a Mac
-  daemon reads LocalAPI through the proof-token transport.
-
-### Shutdown waits for the hub's pumps
-
-- **What:** the hub's task handle completes only after every pump task has, so
-  `main` exits after the `tmux -C` clients have been closed through stdin
-  ([daemon-core.md §4.7](daemon-core.md#47-public-interface)). Fixes the build, whose
-  hub handle completed before its pumps finished, so the process exit SIGKILLed the
-  clients.
-- **Why:** §7 says shutdown closes the control clients' stdin. tmux treated the SIGKILL
-  as an ordinary disconnect (checked), but the spec's rule is the clean one.
-- **Rejected:** leaving it: the daemon exiting before its pumps.
-
-### The paste directory is emptied after the port is bound (superseded)
-
-- **What:** the daemon binds `127.0.0.1:<port>` first, then empties
-  `$XDG_RUNTIME_DIR/tether/` ([daemon-core.md §3.4](daemon-core.md#34-commands-commandrs)).
-- **Why:** a daemon started by mistake emptied the directory and then failed to bind,
-  deleting a running daemon's in-flight paste files. Found in the live run.
-- **Rejected:** emptying first, as the build did.
-- **Superseded:** the browser-auth runtime uses a private runtime directory and two Unix
-  sockets. It holds the runtime lock, binds both sockets, then empties only `paste/`
-  ([daemon-core.md §3.4](daemon-core.md#34-commands-commandrs)).
+- **Decided:** 2026-10-22, tech lead.
+- **What:** the daemon holds its runtime lock and binds its sockets before emptying
+  only its private `paste/` directory ([daemon-core.md §3.4](daemon-core.md#34-commands-commandrs)).
+- **Why:** a mistakenly started second daemon once emptied the directory before its
+  bind failed, deleting the running daemon's in-flight paste files.
+- **Rejected:** cleaning the directory before establishing exclusive ownership.
 
 ## iOS app
 
 ### Snapshots apply after earlier writes drain
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p17 #1). Verified against
-  `@xterm/headless` 6.0.0 by p17.
+- **Decided:** 2026-10-21, tech lead.
 - **What:** one serialized write pipeline per terminal in `web/term/`; a snapshot runs
   `reset(); resize(); write(restore)` only after every earlier write's callback fired.
 - **Why:** bytes still queued inside xterm.js parse after `reset()` and can switch on a
@@ -1478,55 +1029,34 @@ found each point while running the daemon.
 - **Rejected:** replacing the terminal instance per snapshot (renderer and WebGL
   context churn on every tab switch).
 
-### Bridge cleanup
-
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #12); message shapes by
-  design (p21).
-- **What:** `keyboardState` dropped (use `viewport.keyboard`); `keyboard { show }`
-  folded into `focus` (`terminal`, `hidden`); `active { host }` dropped, native asks the
-  page with `activeTab()` when an upload starts; the app-wide lock is `lock { locked }`,
-  per-host enrolment is `enrolled` in `hosts`; `hostRejected { host }` reports a 4401
-  to native. `web/input/` folds into `web/native/`.
-- **Rejected:** keeping `auth { host, state }`, which mixed the app lock with per-host
-  enrolment; native mirroring the active tab.
-
 ### Upload paths are queued per tab
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p17 #7).
-- **What:** the web queues an insertion for the tab the upload started from, applied
-  when that tab is watched again, dropped with a notice if it closed.
-- **Rejected:** inserting into whatever tab is active (the wrong terminal); keeping
-  background watches open for uploads.
+- **Decided:** 2026-10-21, tech lead; window targeting, 2026-10-25.
+- **What:** a path inserted from Files or an image paste targets the originating tab
+  and the window it showed when the action began. A connecting or hidden eligible tab
+  can queue the insertion until watched; a failed watch, closed target or disconnected
+  target is reported without redirecting the path to another tab.
+- **Why:** uploads may finish after the user switches tabs or the session follows a
+  different window; the path must go where the user intended.
+- **Rejected:** inserting into whichever tab or window is current after upload; keeping
+  background watches open just for uploads.
 
 ### Host content on its own origin
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p17); origin naming and the gate
-  mechanism by design (p21).
+- **Decided:** 2026-10-21, tech lead and design.
 - **What:** proxied host content comes from `tether-app://h-{host}/…`, the UI from
   `tether-app://ui/`, so the UI's `script-src 'self'` never covers a daemon response.
   The scheme handler adds `Access-Control-Allow-Origin: tether-app://ui`. Native
   proxies a host's requests only after its `/auth/info` reported a compatible protocol
-  range in this app session.
+  range in this app session. Native asks `/auth/info` itself on the host's first
+  proxied request (2026-10-27).
 - **Why the gate uses `/auth/info`:** the WebSocket, and so `welcome`, lives in the web;
-  `/auth/info` reports the same range.
-- **Amended 2026-10-27:** native asks `/auth/info` itself, on a host's first proxied
-  request. The original assumed native already called it each session, but native calls
-  it only at enrolment and the web's token lane never does, so the gate stayed shut and
-  Files said "speaks a different version" against a same-protocol daemon. Rejected:
-  checking every host at launch (a round trip per host before anything is used).
+  `/auth/info` reports the same range. Native otherwise calls it only at enrolment, so
+  the gate remained shut for the app's token lane. Rejected: checking every host at
+  launch (a round trip per host before anything is used).
 - **Rejected:** host content under `tether-app://ui/h/{host}/…` (same origin as the
   UI, so a proxied script could run as the app); the web reporting `welcome` results
   over the bridge (native's gate would trust web state).
-
-### Native input and accessory
-
-- **Decided:** 2026-10-21, design (iOS shell).
-- **What:** a `UIKeyInput` first responder; the accessory holds the key row, compose
-  field and paste control only.
-- **Rejected:** a hidden `UITextView` or `UITextInput` (a shadow buffer and diffing to
-  undo corrections the pane already received); the tab bar and suggestion strip in
-  the accessory (the tab bar would exist twice, and the chips would mirror web state
-  over the bridge).
 
 ### XcodeGen for the project
 
@@ -1537,10 +1067,7 @@ found each point while running the daemon.
 
 ### The web asks native to recreate the web view: `recreateWebView`
 
-- **Decided:** 2026-10-22, tech lead, accepted from the web host-layer build (p42,
-  commit a43014f). Adds a row to the bridge table
-  ([ios-shell.md](ios-shell.md#the-bridge)); the spec had only native reloading on a
-  content-process kill.
+- **Decided:** 2026-10-22, tech lead. Evidence: [ios-shell.md](ios-shell.md#the-bridge).
 - **What:** `recreateWebView` is a web → native message with no data and no reply. The
   web sends it after two consecutive connect timeouts on a host's socket (the first
   timeout opens a new socket at once; any `welcome` resets the count). Native discards
@@ -1554,163 +1081,43 @@ found each point while running the daemon.
 - **Names:** `lifecycle.phase` stays `active` and `background`, the spec's names; the
   web host-layer brief called the first one "foreground".
 
-### Native keeps the saved tab list
+### Native persists the web-owned workspace
 
-- **Decided:** 2026-10-21, tech lead (review round 2, not adopted).
-- **What:** `saveTabs` stays native. The hypothesis that WKWebView `localStorage` on
-  the custom scheme survives a content-process kill is unverified and needs the
-  device.
+- **Decided:** 2026-10-21, tech lead.
+- **What:** native persists the web-owned saved workspace without maintaining a second
+  tab model; the web restores it after a WebKit content-process restart.
+- **Why:** survival of WKWebView `localStorage` on the custom scheme after a content-
+  process kill was unverified, so native persistence owns the recovery boundary.
+- **Rejected:** depending on that unverified web-storage behavior alone.
 
 ### The web prunes its tabs against `sessions` listings
 
-- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b).
-  Changes the design note of "Closure is a broadcast fact" above, which had tabs close on
-  `windowClosed` and `serverExited` only, and corrects the daemon-core spec, which said
-  `windowClosed` "closes every tab on the window, watched or not"
-  ([plan.md](plan.md#reconnect)).
-- **What:** `windowClosed` reaches only windows that have a watch, because the hub holds
-  a window only while a watch is on it. The web asks each host for a listing on every
-  connect and prunes its tabs against it, and against every later listing; a tab whose
-  `WindowRef` isn't in the listing closes.
-- **Why:** only the tab on screen is watched (the resource budget: nothing held for
-  panes nobody views). Running the build against a real daemon, a window killed under a
-  tab that wasn't on screen sent nothing, and its tab closed only once it was selected
-  and watched. The listing is the one answer that covers every window, and the web
-  already fetches it for the sheet.
-- **Rejected:** the daemon tracking every window of every open tab (a Locate and
-  state per unwatched tab, which is what "a watch exists only while its tab is on
-  screen" avoids); watching every tab (votes and resizes for windows nobody sees);
-  leaving it, so a dead tab is found on selection (the pill claims a window that is
-  gone); the daemon diffing listings to send `windowClosed` (it would keep a copy of
-  the listing).
-- **Extended 2026-10-22 (p51):** the daemon now sends `sessionsChanged` when tmux closes
-  or moves a window nobody watches, so the web's relisting follows the kill; see "An
-  unwatched window's close broadcasts `sessionsChanged`, once per input" above.
-
-- **Changed 2026-10-25:** tabs are sessions; a tab goes when no session in the listing
-  has its `SessionRef` ("One tab per session, like `tmux attach`").
-
-### A host entry carries its base URL
-
-- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b). Adds
-  `baseURL` to the `hosts` message and to `boot.hosts`
-  ([ios-shell.md](ios-shell.md#boot-and-host-payloads)).
-- **What:** a native host entry is `{ id, name, baseURL, enrolled }`, `baseURL` being
-  `https://<magicdns-name>`. The web derives the WebSocket URL from it and never builds a
-  URL from `name`.
-- **Why:** `name` is a label (`/auth/info.name` is the config key `name`, else the
-  machine name), not the host's DNS name, and the build had to guess
-  `wss://<name>/ws`. `HostStore` already keeps `baseURL`.
-- **Rejected:** the web turning `name` into a URL (breaks when the label differs from
-  the MagicDNS name).
-
-### `boot.tabs` is `SavedTab`, and `settings` is a free record
-
-- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b), whose
-  shapes these are. Both go into `Bridge.swift` and its fixtures
-  ([ios-shell.md](ios-shell.md#boot-and-host-payloads)).
-- **What:** `SavedTab` is `{ id, host, window: WindowRef, name }`. `settings` is an
-  object of JSON values, with no keys defined yet.
-- **Why:** a saved tab carries what the web needs to restore it without asking the
-  daemon, and its title. No setting exists yet, so a typed struct would be invented
-  fields; the first setting defines its key.
-- **Rejected:** a typed `Settings` struct now.
-
-### Native persists which tab was active
-
-- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b). Extends
-  "Native keeps the saved tab list" above; the field names are the design's pick
-  ([ios-shell.md](ios-shell.md#boot-and-host-payloads)).
-- **What:** `saveTabs { tabs, active }` and `boot.active` carry the id of the tab on
-  screen; at boot it is the active tab, and an absent or unknown id means the first.
-- **Why:** the build opened on the first tab, so the app reopened somewhere other than
-  where Jimmy left it. Native already stores the list, so the id costs one field.
-- **Rejected:** always the first tab (the build's default); the web keeping the id in
-  its own storage (the same unverified `localStorage` survival that put the list in
-  native).
-
-### Tab titles follow `windowRenamed`
-
-- **Superseded:** 2026-10-25; the shown window's name arrives in `watching` ("The daemon
-  follows the window; the client never re-watches").
-
-- **Decided:** 2026-10-22, tech lead, from the web boot build (p45, commit b115c2b).
-- **What:** a tab's title is its window's name and is updated by `windowRenamed`; the
-  new name is saved with the tab.
-- **Why:** the build took the title from the listing when the tab opened and never
-  changed it, so a rename in tmux left the pill stale, and the daemon already sends the
-  rename.
-- **Rejected:** a title fixed at open.
+- **Decided:** 2026-10-22, tech lead; session tabs, 2026-10-25.
+- **What:** on each connection and later listing, the web closes a terminal tab whose
+  `SessionRef` is absent. A failed or refused listing prunes nothing; the main-server
+  listing never prunes scratch tabs. The daemon's session-change hint prompts a relist.
+- **Why:** only the tab on screen is watched, so a session closed under a hidden tab
+  cannot depend on a watch event. A listing already used by the session sheet covers
+  open tabs without tracking all of them in the daemon.
+- **Rejected:** watching every tab (unseen windows would vote and resize); holding a
+  daemon-side watch and Locate per hidden tab; waiting until the user selects the dead
+  tab; maintaining a second listing in the daemon to diff closures.
 
 ### The tmux size sits inside every safe-area inset, and a `keyboard` viewport keeps the full-screen insets
 
-- **Decided:** 2026-10-22, tech lead, from the web fixes (p52, commit 0342137). Settles
-  the open question in [ios-shell.md](ios-shell.md#keyboard-geometry) and drops the
-  "vertical safe area" open risk.
-- **What:** `collapsedHeight` is the web view's height with the keyboard hidden, which
-  is the full screen, safe-area bands included. The web computes the tmux size from it
-  and the width less the safe area: the columns from `width` less the left and right
-  insets, each side at least 4 px (`--term-edge`); the rows from `collapsedHeight` less
-  the top and bottom insets, the tab bar and the suggestion strip. Every `viewport`,
-  `keyboard` ones included, carries the `safeArea` of the full-screen layout.
-- **Why:** the sizer and the CSS padding (`--safe-*`) both use the numbers in
-  `viewport`. A web view that ends above the keyboard has a bottom inset of 0 in its
-  own `env()`, and a `rotation` viewport with that value would give the rows of a
-  layout with no home-indicator band while the keyboard is up. The 4 px edge keeps text
-  off the bezel in portrait, where the side insets are 0. It costs one column there
-  (56 to 55 at 393 pt wide) and none in landscape, where the insets already exceed it.
-- **Rejected:** live insets in a `keyboard` viewport (the bottom-inset case above); a
-  wider edge (another column on a 393-pt phone).
-- **Changed 2026-10-22 (p66):** the rows no longer subtract the suggestion strip; see
-  "The suggestion strip pans the terminal like the keyboard and never resizes tmux"
-  below.
-
-### The keyboard pan belongs to the renderer and follows the cursor
-
-- **Decided:** 2026-10-22, tech lead, from the web fixes (p52, commit 0342137). Fills
-  in the pan that [plan.md](plan.md#layout) and [ios-shell.md](ios-shell.md#keyboard-geometry)
-  promise.
-- **What:** `term/xterm.ts` watches the terminal area's height and the cursor and
-  slides the terminal up by `cursorPan` (`term/size.ts`): just far enough that the
-  bottom of the cursor row meets the bottom of the area, never down, never past the last
-  row, zero while every row fits. The slide animates only when the area resizes, with
-  the keyboard's duration and curve; a cursor move jumps. Measured against a real daemon
-  with the keyboard shown: tmux stays 55×44 in portrait and 104×20 in landscape; with
-  the cursor on the last row the terminal slid 388 px (44 rows × 16 px less the 316 px
-  visible); cursor on row 18 slid 0 and on row 19 slid 4 px; hiding the keyboard slid
-  it back to 0.
-- **Why:** the keyboard shortens the area without resizing tmux ("never for the
-  keyboard", [plan.md](plan.md#product-rules)), so the rows under the keyboard are
-  covered and the cursor must stay above them. The area's height already says whether
-  the keyboard is up, so the pan needs no flag.
-- **Cost:** xterm's scrollbar moves with the slide, so part of it is hidden while the
-  keyboard shows.
-- **Rejected:** a keyboard flag in `App` driving the pan (the container's height already
-  says it); snapping the pan to whole rows (leaves a gap under the cursor row, where the
-  plan says "just above").
-
-### The suggestion strip pans the terminal like the keyboard and never resizes tmux
-
-- **Decided:** 2026-10-22, design, from the suggestion strip build (p66). Changes
-  [ios-shell.md](ios-shell.md#keyboard-geometry), whose sizing paragraph subtracted the
-  strip from the tmux rows, and "The tmux size sits inside every safe-area inset…"
-  above, which listed it in the rows.
-- **What:** the strip sits under the tab bar, right above the accessory, and shows only
-  while the keyboard is up and the tab is live. It shortens the terminal area as the
-  keyboard does, and `cursorPan` slides the terminal to keep the cursor row in view.
-  The tmux rows are `collapsedHeight` less the top and bottom insets and the tab bar;
-  the strip is not in them, and its appearing or going sends no resize.
-- **Why:** the strip exists only "while suggestions exist"
-  ([plan.md](plan.md#layout)), so counting it would resize tmux whenever chips came or
-  went. Resizing for the keyboard is already refused for this reason: a SIGWINCH reflows
-  the app and the laptop ([tmux setup](#tmux-setup)). The pan already handles an area
-  shorter than the terminal, so the strip needs no new mechanism.
-- **Cost:** with the keyboard up in landscape, about 50 px of terminal were left before
-  the strip and about 8 px are left with it, and the cursor row can be clipped. That is
-  open: one option is to put the chips in the bar row in landscape, which needs a
-  design decision.
-- **Rejected:** subtracting the strip from the tmux rows, as the spec said (the resizes
-  above).
+- **Decided:** 2026-10-22, tech lead.
+- **What:** every native viewport carries the full-screen safe-area insets, including
+  when the keyboard is up. tmux is sized from the full-screen stable height less the
+  top and bottom insets and resting dock, and from the width less side insets, each at
+  least 4 px ([ios-shell.md](ios-shell.md#keyboard-geometry)). The keyboard and
+  suggestion strip never enter the tmux size.
+- **Why:** a web view ending above the keyboard reports a zero bottom inset of its own;
+  using that value on rotation would compute rows without the home-indicator band. The
+  4 px minimum edge keeps text off the bezel and cost one column on a 393 pt portrait
+  view, none in landscape.
+- **Rejected:** live web-view insets during keyboard display (they lose the bottom
+  safe area); a wider edge (another column on a 393 pt phone); subtracting the
+  transient suggestion strip (it would resize tmux whenever chips appear or disappear).
 
 ## Auth
 
@@ -1724,19 +1131,24 @@ found each point while running the daemon.
   already gives); a session token derived from the device token (would bring back
   minting, expiry and refresh for no protection the transport doesn't give).
 
-### Keychain: one item for every host
+### Keychain: one item for all hosts
 
-- **Decided:** 2026-10-21, design (auth).
-- **Rejected:** one item per host (one prompt for all hosts would depend on an
-  evaluated `LAContext` covering several reads); a plain item behind an app-level
-  `evaluatePolicy` (Face ID becomes a screen in front of the token instead of the key
-  to it); `.biometryAny` (a face added later can unlock); `.userPresence` (the
-  passcode stands in for Face ID).
+- **Decided:** 2026-10-21, design; lifecycle policy by tech lead, 2026-10-24.
+- **What:** one `tether.tokens` Keychain item stores the host-token map with
+  `WhenPasscodeSetThisDeviceOnly` and `.biometryCurrentSet`. One background Keychain
+  read unlocks all hosts, and tokens stay in memory until lock. On background, a short
+  task lets the web close sockets; the user selects the relock interval.
+- **Why:** one read avoids repeated biometric prompts without putting a screen in
+  front of an independently accessible token. Short app switches need not force an
+  immediate reauthentication.
+- **Rejected:** an item per host (one prompt for all would depend on an evaluated
+  `LAContext` covering several reads); an app-level `evaluatePolicy` in front of a
+  plain item; `.biometryAny` (a newly added face can unlock); `.userPresence` (the
+  passcode stands in for Face ID); locking on every background transition.
 
 ### Auth is functions over one state file
 
-- **Decided:** 2026-10-21, tech lead (review round 2, p16 #9, p17 #8); file name and
-  layout by design (p21).
+- **Decided:** 2026-10-21, tech lead and design.
 - **What:** every check reads, parses and scans `auth.toml` (devices and the pending
   enrolment with its wrong-try counter), written atomically under the flock; consuming
   the code and adding the device is one write. The axum middleware lives in `http/`;
@@ -1757,19 +1169,16 @@ found each point while running the daemon.
 
 ### No `Origin` check (native lane only)
 
-- **Decided:** 2026-10-21, design (auth); superseded for browser/node requests by
-  [browser authentication](#browser-authentication-enrolled-tailnet-nodes).
-- **Why:** origin checks stop cross-site hijacking of ambient credentials, and tether
-  has none on the native lane: no cookies, and a bearer token a foreign page can't
-  read. Enrolled node requests carry ambient node identity and now require exact
-  Origin and fetch metadata checks.
+- **Decided:** 2026-10-21, design.
+- **What:** the native-token lane does not require an Origin check. The browser/node
+  lane requires exact Origin and fetch metadata checks.
+- **Why:** Origin checks protect ambient credentials from cross-site use. Native bearer
+  tokens are not ambient credentials a foreign page can read; enrolled node identity is
+  ambient, so browser requests require the additional checks.
 
 ### An unreadable `auth.toml` fails closed but retryable: 503 and close 4503
 
-- **Decided:** 2026-10-22, tech lead, from the p40 build (commit b1dcb8c), which found
-  that a file that doesn't parse made every token check fail as "not enrolled". Changes
-  how "Auth is functions over one state file" reports a file that fails closed
-  ([auth.md](auth.md#state-on-disk)).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** when the token check can't read or parse `auth.toml`, HTTP gets `503
   auth_unavailable` and a WebSocket upgrade completes and closes with `4503` (live
   sockets at their next re-check). The app keeps its token, doesn't mark the host "not
@@ -1784,43 +1193,10 @@ found each point while running the daemon.
   functions over one state file" rejected, and a removed device would stay valid while
   the file is broken); failing open.
 
-### The auth error codes and `/auth/info.name`, as built (error contract superseded)
-
-- **Decided:** 2026-10-22, tech lead, documenting the p40 build.
-- **What:**
-  - The original errors besides `bad_code` and `auth_required`: `forbidden` (403, the Tailscale
-    check), `bad_request` (400, 415, 422, a body that isn't the route's JSON),
-    `internal` (500, the enrolment transaction failed), and `auth_unavailable`
-    (503). Browser admission adds `bad_origin`, `node_refused`, `not_enrolled` and
-    `identity_unavailable` in the shared `HttpError` contract
-    ([auth.md](auth.md#endpoints), [fs.md](fs.md#errors)).
-  - `/auth/info.name`, and with it `welcome.host.name`, is the config key `name`, else
-    the machine name from tailscaled's MagicDNS name. No spec named a source.
-  - At that point the config keys included `port` (default 7850), `name`, and
-    `[tmux] program, socket_name, socket_path`; browser auth removes `port`, which
-    older config files continue to parse as an ignored key ([plan.md](plan.md#config)).
-- **Rejected:** none recorded; the spec was silent.
-
-### The startup Funnel check reads LocalAPI (superseded)
-
-- **Decided:** 2026-10-22, design (p40).
-- **What:** the earlier port-based daemon read `/localapi/v0/serve-config` at startup
-  and refused to run if Funnel was on for its port. This rule is superseded by the
-  browser-auth canonical-origin check: it reads Serve config from the shared cell,
-  refuses Funnel for node admission, and does not make LocalAPI availability a startup
-  gate.
-- **Why:** the JSON is the same as `tailscale serve status --json`, there is no
-  subprocess to run on an overloaded box, and the client already exists for the login
-  allowlist.
-- **Rejected:** shelling out to `tailscale serve status --json`.
-- **Superseded:** the startup refusal and port-specific check; see
-  [browser authentication](#browser-authentication-enrolled-tailnet-nodes).
-
 ## File API
 
-Decided 2026-10-22 by design (p53), writing [fs.md](fs.md), revised after the p56
-review. The product calls behind it are Jimmy's
-([Files](#files-view-and-upload-now-three-write-operations-in-v2)).
+Decided 2026-10-22 by design, writing [fs.md](fs.md). The product calls behind it
+are Jimmy's ([Files](#files-view-and-upload-now-three-write-operations-in-v2)).
 
 ### One resolution function that returns a checked descriptor
 
@@ -1847,7 +1223,9 @@ review. The product calls behind it are Jimmy's
   directory strictly below `$HOME`; `config.toml` may name any directory.
 - **Why:** stating what the roots protect against (a mis-tap, a crafted symlink, a
   viewer bug) is what makes showing names outside them safe. Confining the app below
-  `$HOME` keeps it from widening the scope to `$HOME` itself (`~/.ssh`) or to `/`.
+  `$HOME` keeps it from widening the scope to `$HOME` itself (`~/.ssh`) or to `/`. A symlink outside the roots is listed with
+  its target kind, size and mtime, but opening it is refused: listing reveals no
+  contents.
 - **Rejected:** a picker that lists files too (reveals more than choosing a directory
   needs); a picker free of `$HOME` (no use case, and `/proc` and `/etc` become
   browsable); `$HOME` as a root from the app (defeats the scope); treating roots as
@@ -1880,7 +1258,7 @@ review. The product calls behind it are Jimmy's
   breaking "an older daemon reads a newer config"); a separate `config.lock` in
   `~/.config/tether` (clutter in a dotfiles directory); renaming over the symlink
   (silently replaces the dotfiles link with a copy).
-- **Added 2026-10-22 (tech lead, from the security review p65, fixed in p68): a link to
+- **Added 2026-10-22 (tech lead, from the security review): a link to
   nothing is refused, not written through.** A `config.toml` that is a dangling
   symlink, or whose directory (or a directory above it) is one, gets `409
   config_read_only`; the link, its target and the directories on the way are left as
@@ -1921,7 +1299,8 @@ review. The product calls behind it are Jimmy's
 - **What:** each page re-reads the directory with names and `d_type`, `stat`ing only
   symlinks and `DT_UNKNOWN` entries, up to 5,000 entries or 1 MiB of names; sorts
   directories first, then case-folded names; and `stat`s the 200 entries on the page.
-  Dotfiles are filtered on the server unless `hidden=1`. Link targets aren't
+  The scan cap counts every entry read, including filtered dotfiles. Dotfiles are
+  filtered on the server unless `hidden=1`. Link targets aren't
   root-checked until opened. The `$HOME` picker is the same listing, directories only.
 - **Why:** sorting needs the whole directory, and holding it between pages would be
   state for a viewer nobody may come back to. A symlinked directory must sort as a
@@ -1953,7 +1332,8 @@ review. The product calls behind it are Jimmy's
   `If-Range`. The body is exactly the length `fstat` gave at open; a file that shrinks
   mid-stream aborts the response. A producer task feeds the body through a channel of
   one chunk, and a send that waits 30 s aborts the response. Sent pages are dropped
-  with `posix_fadvise(DONTNEED)`.
+  with `posix_fadvise(DONTNEED)` from the response start through the latest chunk
+  for files over 8 MiB.
 - **Why:** the viewers and AVFoundation send single ranges only; an ETag from `stat`
   costs nothing and changes when the file does. Without the send deadline, a paused
   player holds its slot, and the daemon's shutdown, forever, because hyper stops
@@ -1963,17 +1343,20 @@ review. The product calls behind it are Jimmy's
   whole file); `If-None-Match` and `304` (WebKit doesn't cache custom-scheme
   responses, so nothing would send it); tower-http's `ServeFile` (plan.md keeps
   `/fs/raw` custom so the root check and the limits are tether's).
-- **Amended** by [Raw drops the page cache from the response start](#raw-drops-the-page-cache-from-the-response-start):
-  the drop covers everything read so far, not each chunk.
+- **Evidence:** on Linux with `MemoryHigh=48M`, dropping each 64 KiB chunk kept large
+  readahead folios resident (a 1 GiB download left 44.6 MB cached); dropping from the
+  response start kept streaming cache at or below 260 KB. Dropping through the end of
+  the file was rejected because it evicts the readahead needed by the next chunk.
 
 ### Uploads: raw body, server-chosen UTC name, part file then no-replace rename
 
 - **What:** `POST /fs/upload?name=…` with the bytes as the body, 128 MiB cap, one at a
   time, a 30 s idle timeout. The file is `YYYYMMDD-HHMMSSZ-xxxx.<ext>` in
   `uploads_dir`, written as a 0600 `.tether-upload-*.part` file, flushed with
-  `fdatasync` and `DONTNEED` every 8 MiB, and renamed without replacing; no final
+  `fdatasync` and `DONTNEED` every 2 MiB, and renamed without replacing; no final
   `fsync`. `uploads_dir` is created before the roots are read. The response is
-  `201 { path, size }`.
+  `201 { path, size }`. A filesystem without a no-replace rename fails the upload
+  rather than falling back to a racy check-then-rename.
 - **Why:** a raw body streams straight to disk with nothing to parse; taking only the
   extension from the client's name keeps paths, quotes and dotfiles out of the folder
   and out of the path typed into the terminal; the part file means an agent never sees
@@ -1986,43 +1369,29 @@ review. The product calls behind it are Jimmy's
   read the local offset in a multithreaded process on Linux); a final `fsync` (the
   phone still has the photo); 2+ uploads at once (native sends one at a time, and each
   costs a hyper read buffer).
-- **Amended** by [Uploads flush every 2 MiB, and the ceiling counts them](#uploads-flush-every-2-mib-and-the-ceiling-counts-them):
-  the flush interval is 2 MiB, not 8.
+- **Evidence:** dirty pages count toward the unit and cannot be reclaimed until
+  written. An 8 MiB interval held up to 8.2 MB dirty in a measured 120 MiB upload;
+  2 MiB bounds that allocation at the cost of more `fdatasync` waits. Rejected:
+  retaining 8 MiB without counting the dirty pages in the ceiling.
 
-### The file API's limits, socket buffers, and the memory ceiling
+### Socket buffers are bounded on the local Serve hop
 
-- **Superseded in part by:** [Blocking lanes](#blocking-lanes).
-- **What:** 4 of the 8 blocking threads, 1 scan, 2 raw responses, 1 upload, 64 KiB
-  chunks, 10 s slot waits with at most 8 waiting; std file calls in `spawn_blocking`,
-  not `tokio::fs::File`. `SO_SNDBUF` and `SO_RCVBUF` of 64 KiB on every accepted
-  socket (axum's `ListenerExt::tap_io`). About 3 MB for the file API and 2 MB of kernel
-  socket buffers in the ceiling, taking it to ~64 MB; the budget run reads the unit's
-  `memory.peak`.
-- **Why:** a slow disk must not starve auth or pastes of blocking threads;
-  `tokio::fs::File` buffers up to 2 MiB per file; hyper's per-connection buffers (up
-  to ~400 KiB) dominate each response's cost. `MemoryMax` charges kernel socket
-  buffers, which RSS doesn't show: a stalled loopback reader let 4 MiB queue in one
-  sender's buffer on the dev box (`tcp_wmem` max 4 MiB, measured by p56), and the
-  WebSockets were never counted either. Each of tether's sockets is the loopback hop
-  from `tailscale serve`, where 64 KiB per round trip is over 1 GB/s, so the small
-  buffers don't slow the phone.
-- **Rejected:** unbounded concurrency (the ceiling has no room); refusing raw requests
-  at once when slots are full (AVFoundation and lazy image loads would fail instead of
-  waiting a moment); 3 raw slots (no room in the ceiling); the kernel's default
-  socket buffers (up to 4 MiB each, uncounted); larger buffers for raw responses only
-  (p57, on the reading that the socket runs to the phone; it ends at tailscaled);
-  dropping the pages of every file read (evicts pages a build is using: only files
-  over 8 MiB).
-- **Amended** by [Uploads flush every 2 MiB, and the ceiling counts them](#uploads-flush-every-2-mib-and-the-ceiling-counts-them):
-  the file API's share is ~5 MB, not ~3, and the ceiling ~62 MB.
+- **Decided:** 2026-10-22, design.
+- **What:** accepted sockets use 64 KiB `SO_SNDBUF` and `SO_RCVBUF` limits; file I/O
+  uses bounded lanes and route slots ([fs.md](fs.md#limits)).
+- **Why:** Linux cgroup memory accounting includes kernel socket buffers, not just
+  process RSS. On the dev box, a stalled loopback reader let 4 MiB queue in one
+  default sender buffer. The socket is the local hop to Tailscale Serve, so 64 KiB per
+  round trip does not throttle the phone's network connection.
+- **Rejected:** the kernel default buffer sizes (an unaccounted per-socket cost); larger
+  raw-response buffers on the assumption that the socket reaches the phone directly.
 
 ### `dir` on `newWindow` and `newSession` is checked for shape, not roots
 
 - **What:** the connection calls `fs::check_dir`: an absolute path of at most 4,096
   bytes with no NUL that `stat`s as a directory. It is passed to tmux as given. A
   refusal is `error { badRequest }` with a message naming the cause. This replaces the
-  root check daemon-core §5.3 named and the pass-through recorded in
-  [Daemon service, as built](#dir-on-newwindow-and-newsession-passes-through-until-srcfs-exists).
+  root check daemon-core §5.3 named.
 - **Why:** the roots scope the file API; tmux already runs as Jimmy. The web's
   start-directory prompt (`askDir` in `web/app/app.ts`) offers the tab's cwd or any
   typed path, and the default config has no roots, so a root check would refuse a new
@@ -2044,56 +1413,19 @@ review. The product calls behind it are Jimmy's
   ([auth.md](auth.md#carrying-the-token)).
 - **Rejected:** answering `OPTIONS` in the daemon (it would open a CORS path that
   auth.md keeps shut for browsers on the tailnet).
-- **Added** (from the web file-manager run, p62): the handler also sends
+- **Added** (from the web file-manager run): the handler also sends
   `Access-Control-Expose-Headers: Content-Range, ETag`. The CORS rules let a
   cross-origin page read only safelisted response headers, so without it the web can't
   read a file's size or ETag from a `206`. The gap can't show in dev mode, where the
   Vite proxy makes everything same-origin. Rejected: none recorded.
 
-### Raw drops the page cache from the response start
-
-- **Decided:** 2026-10-22, tech lead, from the file API build (p58, commit ed9c637).
-  Amends the `DONTNEED` rule in
-  [Raw: single Range, strong ETag…](#raw-single-range-strong-etag-from-stat-exact-length-no-304).
-- **What:** after each chunk of a file over 8 MiB, the producer calls
-  `posix_fadvise(DONTNEED)` on the range from the response's first byte to the current
-  position, not on the chunk.
-- **Why:** measured on the dev box (Linux 7.1, ext4, a scope with `MemoryHigh=48M`): a
-  per-chunk drop of 64 KiB dropped nothing, because the kernel reads ahead in large
-  folios and keeps any folio that extends past the dropped range. A 1 GiB download left
-  44.6 MB of page cache and the scope's `memory.peak` at 49.6 MB, past `MemoryHigh`.
-  Dropping from the start: `memory.peak` 5.6–6.0 MB, ≤ 260 KB cached while streaming, at
-  1.6 GB/s with no extra CPU (1.01 s for 1 GiB).
-- **Rejected:** the per-chunk drop (above); dropping to the end of the file (evicts the
-  readahead, so the next chunk reads from disk twice).
-
-### Uploads flush every 2 MiB, and the ceiling counts them
-
-- **Decided:** 2026-10-22, tech lead, from the p58 build (commit ed9c637), whose
-  measurement the spec had missed. Amends the 8 MiB flush in
-  [Uploads: raw body…](#uploads-raw-body-server-chosen-utc-name-part-file-then-no-replace-rename)
-  and the ~3 MB file API row in
-  [The file API's limits…](#the-file-apis-limits-socket-buffers-and-the-memory-ceiling).
-- **What:** an upload runs `fdatasync` and `DONTNEED` every 2 MiB. The upload's row in
-  fs.md's memory table includes those 2 MiB of dirty pages, taking the file API from ~3
-  to ~5 MB and the daemon's ceiling from ~60 to ~62 MB
-  ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)).
-- **Why:** dirty pages are charged to the unit and can't be reclaimed until written, so
-  they are real memory that the table counted as 0.5 MB. With the 8 MiB flush, a
-  120 MiB upload at 60 MB/s held up to 8.2 MB dirty and the scope peaked at 12.9 MB.
-  Shortening the interval cuts that to a quarter and makes the row honest; the cost is
-  four times as many `fdatasync` waits. The 2 MiB figure is a pick, not yet measured:
-  the budget run reads the scope's `memory.peak` during an upload.
-- **Rejected:** keeping 8 MiB and counting 8 MiB (the ceiling would pass 64 MB); keeping
-  8 MiB uncounted (the measured peak was 12.9 MB against 0.5 MB in the table).
-
 ### `main` stops the hub explicitly at shutdown
 
-- **Decided:** 2026-10-22, tech lead, from the p58 build (commit ed9c637). Extends
-  [Shutdown waits for the hub's pumps](#shutdown-waits-for-the-hubs-pumps).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** once `http::serve` returns, `main` calls `HubHandle::stop`, then waits up to
   2 s for the hub task. `stop` makes the hub close its control clients as the last
-  handle's drop does ([daemon-core.md §4.7](daemon-core.md#47-public-interface), §7).
+  handle's drop does; the hub handle ends only after its pumps close control-client
+  stdin ([daemon-core.md §4.7](daemon-core.md#47-public-interface), §7).
 - **Why:** axum's graceful shutdown never force-closes a connection. A raw response whose
   reader has paused keeps its connection task, which holds a `Ctx` and so a `HubHandle`,
   past `serve`'s 2 s wait, and the hub ends only when every handle is gone. Measured: a
@@ -2101,78 +1433,20 @@ review. The product calls behind it are Jimmy's
   2 s"). With `stop` it takes 2.0 s, exits 0 and closes a live `tmux -C` client cleanly.
 - **Rejected:** leaving it (the 4 s, exit 1 above). Nothing else is recorded.
 
-### Codes the file API's spec left open
-
-- **Decided:** 2026-10-22, tech lead, accepting the p58 build's picks (commit ed9c637).
-- **What:**
-  - An upload body that stalls past the idle timeout, or breaks because the client
-    disconnected, answers `400 bad_request`.
-  - An `uploads_dir` that isn't absolute or `~/` is reported `ok: false` in `Roots`, and
-    an upload answers `409 not_a_directory`.
-  - The directory scan cap counts every entry read, including the hidden ones the
-    filter then drops (and files, in the picker).
-  - A filesystem without the no-replace rename (`RENAME_NOREPLACE`, `RENAME_EXCL`) fails
-    the upload with `500 internal` and no fallback.
-- **Why:** the first two reuse the nearest existing code rather than add one (a client
-  that disconnected can't read the answer anyway). The scan cap exists to bound one
-  page's cost, and reading a dotfile costs the same as reading any other entry. A
-  fallback for a filesystem without the flag (check then rename) could replace a file,
-  which an upload never does.
-- **Rejected:** a distinct code for a stalled or broken upload body; a scan cap that
-  counts only kept entries (a directory of dotfiles would be read in full for one
-  page); a check-then-rename fallback.
-
-### `fs::open` takes a `Scope`; `Want::Parent` waits for v2; `slots.rs` is a module
-
-- **Decided:** 2026-10-22, tech lead, accepting the p58 build's differences from the
-  spec (commit ed9c637).
-- **What:** `fs::open(&Scope, path, Want)` replaces `fs::open(&[PathBuf], …)`. A `Scope`
-  is the canonical directories plus the refusal to answer outside them, with
-  constructors for the effective roots, `$HOME` (the picker) and, for completion, `/`.
-  `Opened` holds a `File`, not an `OwnedFd`. `Want` has `Dir` and `File`; `Parent`
-  arrives with the first v2 write route. `src/fs/slots.rs` holds the fs permits and
-  `Slots::blocking`, and is in fs.md's module table.
-- **Why:** the picker has to answer `outside_home` where the roots answer
-  `outside_roots`, and a slice can't carry that. `Parent` would be dead code until a
-  write route exists. The raw producer and the upload writer take an fs slot per chunk,
-  so `src/fs/` needs the slots and stays free of axum.
-- **Rejected:** building `Parent` now (dead code).
-
-### A symlink out of the roots is listed with its target's size and mtime
-
-- **Decided:** 2026-10-22, tech lead, on the p58 build's question (commit ed9c637).
-- **What:** the listing reports a link's target kind, size and mtime without checking the
-  target against the roots, so a link to `/etc/passwd` shows that file's size. Opening
-  it is `outside_roots`.
-- **Why:** roots are a scope, not an authorization boundary
-  ([Roots are a scope…](#roots-are-a-scope-the-home-picker-shows-directory-names-only)),
-  and a listing returns no contents. The spec already said the listing doesn't check
-  each target.
-- **Rejected:** hiding out-of-root links from the listing (the p58 build offered it; the
-  tech lead kept them listed).
-
-### macOS file paths are written but untested
-
-- **Decided:** 2026-10-22, tech lead, recording the p58 build's gap (commit ed9c637).
-- **What:** the `F_GETPATH` descriptor-path lookup and the `RENAME_EXCL` rename carry no
-  macOS test. No Apple target is installed on the dev box, and CI builds macOS only at
-  release. Another platform fails closed. fs.md lists it as an open risk; the fs tests
-  run on the Mac before it is relied on.
-- **Rejected:** none recorded.
-
 ## Completion
 
-Decided 2026-10-22 by design (p60), writing [complete.md](complete.md), revised after
-the p61 review. The product calls behind it are Jimmy's
-([Shell integration](#shell-integration)); the route and the cwd source are in
-[Completion is HTTP, and cwd comes from tmux](#completion-is-http-and-cwd-comes-from-tmux).
+Decided 2026-10-22 by design, writing [complete.md](complete.md). The product calls
+behind it are Jimmy's ([Shell integration](#shell-integration)); see the
+[request and cwd decision](#the-request-is-before-after-cwd-and-a-chip-only-extends-what-is-typed).
 
 ### The request is `{before, after, cwd}`, and a chip only extends what is typed
 
-- **What:** the client sends the input before and after the cursor as two strings,
+- **What:** completion is `POST /complete` outside the hub. The client sends the input
+  before and after the cursor as two strings,
   and `cwd` or null. Each chip carries `insert`, the literal text typed at the cursor,
   with no control characters; every source matches by prefix, so no chip deletes.
-  Changes `{line, cursor, cwd}` in the entry above.
+  The current prompt's OSC 7 path is preferred; a tmux window subscription supplies cwd
+  without the shell snippet and in TUIs.
 - **Why:** a cursor index needs a character unit both JavaScript (UTF-16) and Rust
   (UTF-8 bytes) agree on; two strings need none. Prefix-only chips make the diff
   against what's typed a plain suffix, which the client sends like typed text, and
@@ -2180,7 +1454,9 @@ the p61 review. The product calls behind it are Jimmy's
 - **Rejected:** `{line, cursor}` (the unit problem); a `shell` field (the client
   can't know the shell; the daemon picks the history file); replace ranges with a
   delete count and fuzzy matches (backspaces through readline and vi modes behave
-  differently, and the counts need the same unit agreement).
+  differently, and the counts need the same unit agreement); using only OSC 7 (no cwd
+  without the snippet or inside TUIs); querying completion through the hub (the hub
+  would have to run the completion work).
 
 ### History: one file, parsed into a cached index, ranked by entry age
 
@@ -2197,10 +1473,12 @@ the p61 review. The product calls behind it are Jimmy's
   one shell); time-based recency (no timestamps in bash's default format); detecting
   the format from content (plain zsh and bash lines look the same, and only zsh's
   needs unmetafying).
-- **Amended 2026-10-22 (p68):** the dedup map holds at most 12,000 distinct lines, and
-  command ranking sums the kept lines only; see "History scores at most 12,000
-  distinct lines" below. A history chip is inserted as written, unescaped; see "Chips
-  are escaped literals…" below.
+- **Memory bound:** score at most 12,000 distinct lines, newest first, keeping 10,000;
+  older occurrences contribute only to already-scored lines. A margin of 2,000 cannot
+  change the kept lines: the maximum accumulated score is 289 times a line's newest
+  occurrence, and `289 × 2^(-2000/200) < 1`. The unbounded map reached 17.6–18.8 MB
+  peak on a 1 MiB history of short distinct lines; the capped map reached 1.5–2.0 MB.
+  History chips remain unescaped shell syntax.
 
 ### The snippet appends history after each command
 
@@ -2235,7 +1513,7 @@ the p61 review. The product calls behind it are Jimmy's
   cache, while the unit's ceiling already sits at its 64 MB `MemoryMax`
   ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)). Scoped, the
   unit's peak rose 1.1 MB per run, for about 27 ms of scope setup inside the 300 ms
-  timeout. Its threads also leave the unit's `TasksMax`. The review (p61) found two
+  timeout. Its threads also leave the unit's `TasksMax`. The review  found two
   things the bare command needs: the default description is the command line, so
   every run's arguments, the words Jimmy typed, reached the user journal; and a kill
   landing before `systemd-run` execs (5–20 ms after spawn) leaked an empty scope that
@@ -2249,8 +1527,7 @@ the p61 review. The product calls behind it are Jimmy's
 
 ### carapace is installed by hand: pinned, checked against checksums, in `~/.local/bin`
 
-- **Decided:** 2026-10-22, design (p60); carried into plan.md and
-  [running.md](../running.md#set-up-completion) with the follow-ups to the spec.
+- **Decided:** 2026-10-22, design. Evidence: [running.md](../running.md#set-up-completion).
 - **What:** as Jimmy, never system-wide: carapace-bin v1.8.0's `linux_amd64` tarball,
   checked against the release's `checksums.txt`, with `carapace` in `~/.local/bin`.
   `[complete] carapace` names another binary; otherwise it is `carapace` on the
@@ -2274,7 +1551,7 @@ the p61 review. The product calls behind it are Jimmy's
 - **Why:** one run serves every keystroke until the stem changes. An empty current
   word, as first written, returns no flags (`git checkout ""` gives refs only; `-`
   gives the 40 flags), nothing after a `/` (`origin/m`) and no multi-part values
-  (`chmod u+`); the review (p61) measured all three. Latest-wins matches typing,
+  (`chmod u+`); the review  measured all three. Latest-wins matches typing,
   where the older answer is already stale; a runner that owns the child keeps the
   phone's aborts from killing every run. The TTL lets new git branches appear and
   stops a command that always times out from costing 300 ms per keystroke.
@@ -2284,29 +1561,19 @@ the p61 review. The product calls behind it are Jimmy's
   never gets chips); an LRU with no expiry (branches go stale); trying every command
   (a scope and a process for every unknown command); routing every word with a `/` to
   paths (`git checkout origin/m` needs carapace).
-- **Amended** by [Completion, as built](#completion-as-built): a request whose key is
-  cached kills no run.
+- **Cached requests:** a cache hit kills no run for another key: no new run is needed,
+  so cancelling one would discard useful work.
 
-### Completion takes two blocking slots, and the unit pins glibc's mmap threshold
+### The unit pins glibc's mmap threshold
 
-- **Superseded in part by:** [Blocking lanes](#blocking-lanes).
-- **What:** an index slot (history, PATH) and a directory slot (`check_dir`,
-  listings), each permit held inside its blocking closure.
-  `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072` in the unit.
-- **Why:** a listing stuck on a hung mount holds only the directory slot, so history
-  and commands keep working and threads don't pile up. glibc raises its dynamic mmap
-  threshold after the first large free, so later indexes landed in the heap and
-  stayed resident after the idle drop (checked with a C probe on the dev box's glibc:
-  without the tunable the second 1.1 MiB block came from the heap, with it every one
-  was mmapped).
-- **Rejected:** one shared slot (a hung listing stops every source); `check_dir`
-  outside any slot (stuck threads pile toward the pool's 8); `malloc_trim` or
-  `mallopt` (an `unsafe` FFI call under `#![forbid(unsafe_code)]`).
-- **Scope, found in the p63 build:** the tunable reaches only the glibc binary that
-  `cargo install` builds and the unit runs. The Linux release binaries are static musl
-  (`release.yml`) and ignore it; musl's allocator is unmeasured. With the tunable the
-  daemon's anon RSS after an idle drop was 1.51 MB (0.33 MB above baseline); without it
-  1.80 MB (1.39 MB above). complete.md, plan.md and running.md say so.
+- **Decided:** 2026-10-22, design.
+- **What:** the systemd unit sets `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072`.
+  It applies to the glibc binary, not static musl release binaries.
+- **Why:** glibc raises its dynamic mmap threshold after a large free, so later
+  completion indexes can remain resident in the heap after the idle drop. A probe on
+  the dev box's glibc showed the second 1.1 MiB block from the heap without the tunable
+  and every block mmapped with it.
+- **Rejected:** `malloc_trim` or `mallopt`, which require an unsafe FFI call.
 
 ### Path chips list names in any readable directory
 
@@ -2343,51 +1610,13 @@ the p61 review. The product calls behind it are Jimmy's
   other traps); wrapping the marks in tmux's DCS passthrough (not needed: control mode
   sees them raw); OSC 7 as the only cwd source (already rejected above: no cwd without
   the snippet or inside TUIs).
-- **Amends** [Completion is HTTP, and cwd comes from tmux](#completion-is-http-and-cwd-comes-from-tmux):
-  tmux's cwd stays the source without the snippet, but an OSC 7 from the current
-  prompt is now preferred.
 - **The bash wrapper** makes an existing `PROMPT_COMMAND` an array on bash 5.1+ and
   joins it with newlines before that: joined with `;`, one ending in `&` broke every
-  prompt and one ending in a comment swallowed the B hook (p61).
-
-### Completion, as built
-
-- **Decided:** 2026-10-22, design, documenting the completion build (p63) and the web
-  file manager run (p62). Changes [complete.md](complete.md) where the spec was silent
-  or said otherwise.
-- **What:**
-  - **The slab is in the ceiling.** The `PATH` scan and directory listings leave about
-    2.4 MB of reclaimable dentry and inode slab charged to the unit. complete.md's
-    memory table has a row for it (completion ~11 to ~14 MB) and the daemon's ceiling
-    goes from ~62 to ~65 MB ([daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)),
-    about 1 MB past `MemoryMax`.
-  - **A cached key kills no run.** The runner is asked only after the cache misses, so
-    a request whose answer is cached leaves the run in flight for another key going.
-    The spec said any other key kills it.
-  - **Dedup keeps the first chip whole.** A carapace chip with the same `insert` as a
-    history chip is dropped with its description and trailing space.
-  - **`~` and `=` stay unescaped** in a path chip's `insert`, so a name starting with
-    one, completed at the start of a word, is expanded by the shell.
-  - **A long `cwd` is `413`, not `400`.** The 4 KiB body cap is checked before the
-    4,096-byte `cwd` cap, and the body holds more than `cwd`. A body that isn't the
-    route's JSON gets axum's status (415, 422 or 400) with `bad_request`, as fs's
-    routes do.
-- **Why:** the slab is memory the unit is charged for, and the table without it
-  promised a margin the unit didn't have. A cached request needs no run, so killing
-  one for it would only throw away work. The other three are what the code does and
-  what the order of its checks gives; nothing better was found to change them to.
-- **Rejected:** leaving the slab out because it is reclaimable (the budget run reads
-  `memory.peak`, which includes it, and it counts toward `MemoryHigh`); the other
-  items: none recorded.
-- **Changed 2026-10-22 (p68):** `~` and `=` are now escaped everywhere, and commands
-  are escaped too; see "Chips are escaped literals…" below.
+  prompt and one ending in a comment swallowed the B hook.
 
 ### Chips are escaped literals, with `~` and `=` escaped everywhere
 
-- **Decided:** 2026-10-22, tech lead, from the security review of the completion build
-  (p65), fixed in p68. Reverses the "`~` and `=` stay unescaped" item of "Completion,
-  as built" above, and extends the path chips' escape set to commands and carapace
-  values ([complete.md](complete.md#escaping)).
+- **Decided:** 2026-10-22, tech lead.
 - **What:**
   - One encoder, `context::literal`, writes every command, path and carapace `insert`;
     `chip()` applies it, so no source can skip it. It backslash-escapes every ASCII
@@ -2421,68 +1650,9 @@ the p61 review. The product calls behind it are Jimmy's
   leaving commands unescaped (the `;` above); escaping history lines (shell syntax, as
   above). Other encodings: none recorded.
 
-### History scores at most 12,000 distinct lines
-
-- **Decided:** 2026-10-22, tech lead, from the security review of the completion build
-  (p65), fixed in p68. Amends the memory side of "History: one file, parsed into a
-  cached index…" above ([complete.md](complete.md#history)).
-- **What:** entries are read newest first, and the first 12,000 distinct lines (the
-  10,000 kept plus a margin of 2,000) get a score; an older entry only adds to a line
-  already scored. The word index has one entry per distinct first word of the kept
-  lines, pointing into them, with no copied text, so command ranking sums the scores
-  of the kept lines only. Which 10,000 lines are kept does not change: a line left out
-  is, at its newest, at least 2,000 entries older than each of the first 10,000
-  scored, a line's weights sum to at most 289 times its newest one, and 289 × 2^(-2000/200)
-  is below 1. The proof is in the comment on `SCORED` in `src/complete/history.rs`.
-- **Why:** the map, and the per-line structures built from it, grew with the file's
-  distinct lines, and a 1 MiB read of short lines holds about 150,000 of them. On the
-  reviewer's file (149,796 `hNNNNN` lines, 1,048,572 bytes), release build, with the
-  unit's glibc tunable, measured by the transient scope's `memory.peak`:
-
-  | Build | Peak memory rise | `VmHWM` rise | Request time |
-  |---|---|---|---|
-  | before | 17.6–18.8 MB | 16.6–17.2 MiB | 67–70 ms |
-  | with the cap | 1.5–2.0 MB | 0.9–1.0 MiB | 23–24 ms |
-
-  The worst case with the cap is 10,400 lines of 101 bytes, the largest kept index:
-  2.9 MB on the first parse and 3.9 MB on a rebuild with the old index held, within
-  complete.md's ~4 MB history allowance. The dedup map is at most 12,000 entries, about
-  0.4 MB.
-- **Checked:** a throwaway comparison with the uncapped ranking on random histories
-  gave 40 of 40 identical rankings, then was deleted. With a margin of only 50, 3
-  rounds differed, so the comparison does catch a wrong cap.
-- **Rejected:** leaving the map unbounded (the table above); a margin of 50 (the
-  comparison above found rankings that differ).
-
-### Parser errors are logged by kind and position, never by message
-
-- **Decided:** 2026-10-22, tech lead, from the same review (p65), fixed in p68.
-  Extends "Logs carry framing metadata only" above to completion
-  ([complete.md](complete.md#logging)).
-- **What:** a carapace JSON failure logs one of four fixed phrases (bad syntax, an
-  unexpected shape, cut short, a read error) and the line and column, as "an
-  unexpected shape at line 1, column 57". serde's own message is never logged. Every
-  other log line in `src/complete/` and `src/fs/` was checked: none logs a parser's
-  message, and config parse errors already log a line number only.
-- **Why:** serde's `Display` quotes the input it choked on, and carapace's output can
-  echo the words Jimmy typed. With `RUST_LOG=debug`, a typed word inside malformed
-  JSON reached the debug line and the `--list` warning, against the rule that typed
-  text is never logged.
-- **Rejected:** logging serde's message (above). Other options: none recorded.
-
-## Documentation
-
-### Specs state the current rule; this log keeps the history
-
-- **Decided:** 2026-10-21, tech lead (review round 2).
-- **What:** this log; specs without review citations or draft narration; plan.md as
-  the product and UX spec plus the index; prior art, the Rust-versus-Go comparison and
-  the agent keybinding table moved to [research/](research/); each constant in one
-  table; one term per concept (`watch`, not `viewer`).
-
 ## Batched pipe reads for control clients
 
-- **Decided:** 2026-10-22, tech lead (from the p34 experiment, measured on the dev box).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** the pump reads a control client's stdout through tokio's pipe `Receiver`,
   registered with epoll only while waiting on a quiet pipe. While output is sustained
   it leaves epoll (`into_nonblocking_fd`) and reads at most 4 turns per 2 ms, each
@@ -2501,7 +1671,7 @@ the p61 review. The product calls behind it are Jimmy's
 
 ## Never send `respawn-pane` over control mode
 
-- **Decided:** 2026-10-22, tech lead (found by p34 on tmux 3.4).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** tether never sends `respawn-pane` on a control client.
 - **Why:** with a control client attached and the pane flooding, `respawn-pane -k`
   sent over control mode kills the whole tmux server (4 of 4 runs), taking every
@@ -2509,7 +1679,7 @@ the p61 review. The product calls behind it are Jimmy's
 
 ## Blocking lanes
 
-- **Decided:** 2026-10-22, tech lead (p72, `a5e231c`).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** the Tokio blocking pool has 8 threads split into four lanes: fs 4 (10 s
   wait, 8 waiting callers shared across fs slots and blocking calls), index 1 (300 ms),
   dir 1 (300 ms), auth 2 (10 s, no waiter cap). Every blocking call uses its lane;
@@ -2528,7 +1698,7 @@ the p61 review. The product calls behind it are Jimmy's
 
 ## Shared HTTP error contract
 
-- **Decided:** 2026-10-22, tech lead (p72, `a5e231c`).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** every route refusal uses `proto::HttpError` and the JSON body
   `ErrorBody { error: HttpError, reason?, node? }`. Browser admission adds
   `bad_origin`, `node_refused`, `not_enrolled` and `identity_unavailable` to that
@@ -2543,7 +1713,7 @@ the p61 review. The product calls behind it are Jimmy's
 
 ## Shared file primitives
 
-- **Decided:** 2026-10-22, tech lead (p72, `a5e231c`).
+- **Decided:** 2026-10-22, tech lead.
 - **What:** `files::Stamp`, `Dir`, `Temp`, the state-directory lock and TOML error-line
   extraction serve auth, config writes, uploads, history, PATH and file listings. `Temp`
   has no `Drop` cleanup; callers clean up explicitly on a blocking lane, and the upload
@@ -2553,34 +1723,17 @@ the p61 review. The product calls behind it are Jimmy's
 - **Rejected:** unlinking from `Drop`, which can block the runtime thread; keeping stamp,
   lock and temp-write implementations duplicated in `fs` and `auth`.
 
-## No shared base32 helper
-
-- **Decided:** 2026-10-22, tech lead (p72, `a5e231c`).
-- **What:** auth's Crockford enrolment-code and lowercase host-id encodings, and paste-name
-  encoding, remain separate.
-- **Why:** the copies encode different alphabets/values and express different
-  contracts.
-- **Rejected:** a helper crossing `fs` and `auth`, which reintroduces their dependency;
-  a nearly empty shared module that only hides two purpose-specific encoders.
-
 ## Browser/mobile client direction and portable design record
 
-- **Decided:** 2026-10-22, Jimmy (layout approval and mobile local-draft requirement).
-- **What:** support desktop browser, mobile browser, and native iPhone. Promote
-  the [client contract, mockup, and research](client/README.md) into this repository.
-  That contract supersedes conflicting navigation/layout rules in the original plan.
-  Desktop has a three-icon rail; mobile prioritizes terminal space and ordinary
-  browser keyboard input. Both mobile clients need local multiline drafts while
-  the keyboard is open. Native focus and backend constraints remain in force.
-- **Why:** a Mac session must be able to build the iPhone client without private
-  work-directory artifacts or conversation history; normal browsers are first-class
-  clients, not developer terminal harnesses.
-- **Rejected:** native-only access; expanded desktop sidebar; Files in terminal +;
-  custom browser keyboard; dot separators/status markers. Detailed alternatives
-  are in [decision reconciliation](client/browser-review-decisions.md).
-- **Not settled by approval:** touch implementation, wrap-preserving snapshot/history,
-  production browser auth/serving, draft retention after insert/tab closure, and
-  hardware behavior. See the research gates before coding those boundaries.
+- **Decided:** 2026-10-22, Jimmy.
+- **What:** desktop browser, mobile browser/PWA and native iPhone are supported clients.
+  Their shared [client contract, mockup and research](client/README.md) live in the
+  repository so each platform can build from the same record.
+- **Why:** a Mac session must be able to build the iPhone client without private work
+  artifacts or conversation history; ordinary browsers are first-class clients, not
+  terminal test harnesses.
+- **Rejected:** native-only access. Detailed alternatives are in
+  [decision reconciliation](client/browser-review-decisions.md).
 
 ## Installable phone browser
 
@@ -2631,12 +1784,8 @@ the p61 review. The product calls behind it are Jimmy's
   canonical-origin rule closes the raw TCP-forward and same-origin co-resident-app
   paths.
 - **Costs:** an enrolled node is trusted whole, including every browser, app and OS
-  account on it. On Tailscale 1.100 and later, changing Serve after publishing a Unix
-  target requires the operator to be allowed to run `sudo tailscale`. The operator
-  remains trusted and can replace the publication.
-- **Changed:** by "Linux setup publishes as the operator" (2026-10-25): setup writes
-  Serve through LocalAPI with Jimmy's operator grant; the earlier root-publishes-each-
-  Unix-user cost is superseded.
+  account on it. The operator remains trusted and can replace the publication; Linux
+  setup publishes through LocalAPI after the operator grant.
 - **Rejected:**
   - A replayable browser cookie: any HTTPS service on the same hostname could replay it.
   - A token in browser storage: injected script could read it, and media requests cannot
@@ -2655,19 +1804,14 @@ the p61 review. The product calls behind it are Jimmy's
     admission, not choose between several.
   - Reading security state at startup or shell boot: it misses changes while the
     daemon runs.
+  - Shelling out to `tailscale serve status --json`: LocalAPI provides the same Serve
+    configuration without a subprocess.
   - Closing a live socket on its first failed whois re-check: a slow LocalAPI would
     drop every connection; removal itself is checked without whois.
   - Ignoring unknown device-row fields: a future scoped or expiring row could be read
     as a full-power device by an older daemon.
   - Public HTTPS or passkeys in this change: they need a separate future lane and
     security design.
-- **Changes:** the older “No `Origin` check” applies only to native-token requests;
-  the daemon now serves the browser shell; it binds locked private Unix sockets rather
-  than a TCP port; `port` is ignored; startup does not require LocalAPI or refuse
-  Funnel; the check refuses Serve Funnel requests and node admission when the
-  canonical origin is unsafe. The shared HTTP error type now carries browser
-  admission's four codes rather than separate hand-built bodies. Refused raw device
-  rows survive unrelated auth-file writes and can be removed by name.
 
 ### Tailnet-state retries back off from 2 s to 30 s
 
@@ -2783,26 +1927,6 @@ the p61 review. The product calls behind it are Jimmy's
 - **Rejected:** separate dark and light scheme blocks, which would preserve Safari/iOS
   16.4 but double the token file and need careful handling to prevent flashes.
 
-## W0 design-system refinements
-
-- **Decided:** 2026-10-23, tech lead.
-- **What:** blue, not green, is the accent and selection channel. Selected rows use a
-  blue-tinted fill and weight; green remains connected status. The phone picker follows
-  the active theme; phone toasts sit above the bottom toolbar. The design uses one scale
-  per property for spacing, type, radii and icon sizes (16, 20 or 24 px); touch targets
-  are at least 44 px. Tab labels keep the window portion before the session portion and
-  fade at the scrolling edge. Interactive primitives share a tokenized focus ring;
-  rail and toolbar icons have tooltips on hover and keyboard focus. Desktop Home is a
-  centered `min(720px, 100% - 2 gutters)` column. Loading, empty, offline, error,
-  refused-session, permission and Enrol states are distinct.
-- **Why:** connection status and selection use separate visual channels; theme surfaces
-  remain coherent, and the chosen scales and states make the controls consistent and
-  usable across density and viewport changes.
-- **Rejected:** green selection, which conflates selection and connected status; a
-  permanently light picker sheet; toasts over phone tabs; per-element unscaled values;
-  labels that hide the window name first; unnamed focus rings and title-only icons; a
-  fixed 640 px Home column; or using empty-list appearance for loading and failures.
-
 ## Pre-push preflight checks pushed tips
 
 - **Decided:** 2026-10-23, tech lead.
@@ -2822,109 +1946,35 @@ the p61 review. The product calls behind it are Jimmy's
   contrast gate flaky.
 - **Rejected:** a blanket reduced-motion rule forcing every transition to 1 ms.
 
-## Home, picker and Settings details
-
-- **Decided:** 2026-10-23, tech lead.
-- **What:** the controller owns the sessions cache (`sessions/cache.ts`), so a save before
-  any screen mounts still writes the saved expansion. A new session or window opens its
-  tab from the next listing that holds it, because `created` carries references, not
-  names; after 5 s the form says it was created but has not appeared. Closing an overlay
-  by an action waits for the history pop before it activates a tab. Expansion keys are
-  `<tmux run>/<session id>`, so a restarted tmux does not inherit open groups, and a
-  listing drops the keys of vanished sessions. Open tabs have a sibling close button, and
-  a restoring tab reads "Checking…", or "Reconnecting…" while its host is unreachable.
-  An empty open-tabs list is one muted line. "Updating" sits beside the host heading and
-  fades in after 250 ms. Settings confirmations are overlays, so Back returns to
-  Settings. Clear local data deletes storage only; open tabs stay until closed. The
-  admitted state carries the device name, so Settings names it. The saved workspace
-  carries the host's last known name, so an offline launch says "Can't reach pop-os".
-- **Why:** each rule keeps one owner for a piece of state and keeps the list from moving
-  under the user's finger.
-- **Rejected:** a cache built by the first screen to ask (a save before then wrote an
-  empty expansion); inventing names from the form to open the tab at once; activating a
-  tab before the pop lands, which the pop then undoes; a status row above the list, which
-  shifts every row on each Home entry; the large empty-state block for no open tabs, which
-  pushed sessions down about 120 px; `<node>` copy that reads "this device" because the
-  name was unavailable; a separate host record in storage for the offline name.
-
 ## Terminal and desktop input details
 
 - **Decided:** 2026-10-23, tech lead.
-- **What:** the renderer, its element and every driver live in
-  `screens/terminal/terminals.ts`, outside Preact; the screen places the element and draws
-  state. Cmd combinations stay the browser's on every platform and Ctrl+Shift+C copies on
-  every platform, because telling macOS apart needs `navigator`, which only `platform/`
-  may read. Keystrokes batch for 8 ms into one `input` message. tmux is sized by one
-  formula over the stable box, the chrome measured from the surface only while no
-  software keyboard is up; the first `watch` waits for fonts and a measured box, so tmux
-  never sees 80x24. The surface stays hidden until the shown tab's own snapshot paints.
-  `limited` is a connection state: the reducer keeps the daemon's message, climbs the
-  backoff on each refusal, and Retry asks at once without resetting the count. A restored
-  tab reads "Checking…" in the reconnecting colour until a `watching` reply or the first
-  listing proves its window. The desktop toolbar ends with the host's name, coloured by
-  the active tab's connection. A paste is one `paste` message from a capture-phase
-  listener, refused over 256 KiB, and reported as "sent", never "inserted"; an image
-  paste uploads, then types the quoted path into the tab it was pasted in only if that tab
-  is live. `bufferText({ from, to })` joins rows by `isWrapped`.
-  `tests/fixtures/proto/keys.json` lists all 306 key names the handler can make.
-- **Why:** a screen that unmounts under an admission problem must not lose the buffer or
-  a watch (§6.5); the daemon answers a burst of inputs with a `busy` that names no
-  request, so characters vanished under load in WebKit; a native web view that shrinks
-  for the keyboard must never change tmux's size.
-- **Rejected:** a component that owns the renderer; a context provider in `app/` for state
-  one screen reads; a `mac` field on `Viewport` or a lint exemption for `navigator`; one
-  message per keystroke, and a longer batch window, which adds echo latency for nothing;
-  `visibility: hidden` for the blank surface (its input must stay focusable); clearing
-  the buffer on a tab switch; treating `limited` as a halt; resetting the backoff on
-  Retry; guessing wrap from row fullness.
+- **What:** the terminal renderer and tab drivers live outside the screen component.
+  Keystrokes batch for 8 ms into one `input` message. The first watch waits for fonts
+  and a measured stable box; keyboard geometry never determines tmux's size. A paste
+  is one `paste` message and is refused over 256 KiB. Other requests wait up to 5 s
+  for a socket, then 30 s for a reply; they are not automatically re-sent.
+- **Why:** a short deadline after sending can report a create as failed while the daemon
+  is still performing it, inviting a duplicate on retry. A dead socket is detected
+  separately. Unmounting a screen must not lose the terminal buffer or watch. A burst of
+  individual inputs could receive a daemon `busy` that named no request, dropping
+  characters in WebKit. Measuring the stable box avoids an initial 80×24 resize and
+  keeps a keyboard-shortened native view from resizing tmux.
+- **Rejected:** a component owning the renderer; one message per keystroke; a longer
+  batch window that adds echo latency without a need; one request timeout that either
+  abandons a slow sent request early or waits too long for a dead socket; sizing tmux
+  from the keyboard-shortened view.
 
 ## Files details
 
 - **Decided:** 2026-10-23, tech lead.
-- **What:** the `FileBrowser` no longer has Settings or a `$HOME` picker, so adding or
-  removing a root and moving `uploads_dir` happen in `config.toml` on the host (the roots
-  list says so); the `/fs/roots/*`, `/fs/uploads-dir` and `/fs/dirs` client methods stay in
-  `files/api.ts`. The router owns the Files place and `FileBrowser` follows it, so Back from
-  a preview to a loaded folder makes no request; `go("files")` returns to the last place and
-  the in-app back button is `toParent(place)`. Files does not open at the active tab's
-  directory. An upload's completion shows a row in a panel above the list, with "Insert path
-  into <tab>" and Preview, and does not navigate. The browser picks several files; one
-  request runs at a time and four are held, and a fifth is refused with "Wait for the
-  current uploads to finish". Progress uses `XMLHttpRequest`, since `fetch` has no upload
-  progress in Safari. The insert target is the tab active when the action starts, and a
-  closed target disables the offer. Rows are one grouped list with hairlines. The hidden
-  files toggle sits under the list. A Markdown document keeps its heading levels. Syntax
-  colours reuse the `--term-*` tokens. The viewer ships 14 grammars: bash, c, diff, go,
-  javascript, json, markdown, python, rust, swift, toml, tsx, typescript and yaml; `.jsx`
-  uses javascript.
-- **Why:** the file manager is for browsing and getting a path into a terminal; a folder
-  can hold hundreds of rows; jumping to a preview would pull the user out of the folder
-  they were in.
-- **Rejected:** keeping root editing in the app for a Settings lane (unused code, no UI);
-  jumping to the preview on upload completion; bordered cards for file rows; a single
-  upload per pick; demoting Markdown heading levels, which changes the document; plain
-  text for `.tsx` (the lead added the grammar, about 17 KB gzipped, loaded on demand);
-  Shiki's `typescript` grammar on JSX, which mis-colours it.
-
-## Add folder in Files
-
-- **Decided:** 2026-10-23, Jimmy.
-- **Changed:** 2026-10-25 by "Add folder becomes the path field": the dialog is
-  replaced by Files' path field.
-- **What:** Files adds "Add folder…" and a Remove button per root, reversing the removal
-  recorded in "Files details" (client-architecture.md §3.1). The picker browses `/fs/dirs` from
-  `$HOME`, directories only, one folder at a time, and adds with `POST /fs/roots/add`; Remove
-  confirms, then `POST /fs/roots/remove`. Both are router overlays on the Files destination (a
-  Dialog on desktop, the sheet on a phone). At `$HOME` the add button is disabled with its
-  reason, since the daemon refuses `$HOME` itself; other refusals (`outside_home` through a
-  symlink, a read-only `config.toml`) show in the dialog. Moving `uploads_dir` stays in
-  `config.toml`.
-- **Why:** a fresh install has no root and no way to add one without editing `config.toml` on the
-  host, which defeats a phone-first client.
-- **Rejected:** a text field for an absolute path (the phone keyboard, and no way to see what
-  exists); a free-roaming picker above `$HOME` (the daemon confines it); a Settings entry
-  (roots are Files' state, and Settings is for the device); swipe-to-remove (undiscoverable, and
-  no confirmation).
+- **What:** a completed upload offers Preview and an insert-path action instead of
+  navigating away from the folder. The browser can choose several files, uploads one
+  at a time and uses `XMLHttpRequest` for progress.
+- **Why:** jumping to a preview would pull the user out of the folder. Safari `fetch`
+  has no upload-progress reporting.
+- **Rejected:** automatically opening a preview on upload completion; limiting the
+  file picker to a single upload.
 
 ## The PWA is built by the Vite plugin
 
@@ -2936,7 +1986,7 @@ the p61 review. The product calls behind it are Jimmy's
   a file the daemon does not route (`SERVED` in `sw/vite-plugin.ts` mirrors `routes()` in
   `src/http/shell.rs`). `updates.apply()` checks for a new worker first and reloads when
   there is none, so the protocol-mismatch screen's Update button needs no extra wiring. A
-  cache miss for a shell path answers 404, not the network. The worker looks in its own
+  cache miss for a shell path falls back to the network. The worker looks in its own
   cache first, then in every `tether-shell-*`. A failed install deletes its half-filled
   cache. `createPwa(emit)` repeats the current state on every `check()`. A third update
   state, `reload`, means another page applied an update while this one keeps the previous
@@ -2947,10 +1997,11 @@ the p61 review. The product calls behind it are Jimmy's
 - **Why:** the worker needs the finished file list and its hash, which exist only after
   the main bundle and `public/` are written; a precached path the daemon 404s would fail
   every install; the schema banner's copy says changes are kept in memory, which is false
-  after a plain worker takeover.
+  after a plain worker takeover. A 404 for an uncached asset left a blank page when
+  `/` survived but one of its assets had been evicted.
 - **Rejected:** a second Rollup input (the list is not known yet); a post-build script
   (preflight needs a second step to remember); the Vite manifest hash for the cache name,
-  which ignores an icon or manifest change; network fallback for a missing shell path; a
+  which ignores an icon or manifest change; a
   `clients.claim`; reusing the schema banner for `reload`.
 
 ## One real-daemon e2e stack
@@ -2959,8 +2010,7 @@ the p61 review. The product calls behind it are Jimmy's
 - **What:** the real-daemon specs (`e2e/*/*.real.ts`) share `e2e/shared/stack.ts`: an
   isolated daemon with `--allow-login e2e`, a private tmux, Vite's dev server with the dev
   proxy, and a front proxy that stands in for Tailscale Serve and answers `/auth/info`
-  itself. They are opt-in: `pnpm e2e:real` needs tmux 3.4 and 3.7b under
-  `~/.cache/tether-tmux`. The harness suite's Playwright output goes to
+  itself. They are opt-in: `pnpm e2e:real` needs the local tmux builds. The harness suite's Playwright output goes to
   `test-results/<port>`. The dev proxy's `/auth/info` request carries the token and the
   caller's `Tailscale-User-Login`, which the daemon's Tailscale check requires.
 - **Why:** a browser cannot add `Tailscale-User-Login` to a WebSocket upgrade, so
@@ -2975,86 +2025,23 @@ the p61 review. The product calls behind it are Jimmy's
 
 - **Decided:** 2026-10-23, Jimmy.
 - **What:** closing a tab keeps its unsent local draft. The draft comes back when that
-  window is opened again, on the same device. At most 32 drafts are kept; the oldest
+  session is opened again, on the same device. At most 32 drafts are kept; the oldest
   goes first.
 - **Why:** closing a tab is often a tidy-up, not a decision to throw away text; losing
   a half-written prompt costs more than a bounded record in local storage.
 - **Rejected:** deleting the draft with its tab, which is simpler but loses text.
 
-## G2 fixes to the rebuilt web client
-
-- **Decided:** 2026-10-23, tech lead, from three G2 reviews and a browser probe of
-  `d051e21`.
-- **What:**
-  - *Every end of a tab sends `unwatch`.* `TabDriver` sends it from its `closed`
-    transition, the one place user close, pruning, a gone window and a removed host all
-    pass through, so the daemon's 2-per-connection watch cap and its tmux clients are
-    never leaked.
-  - *The driver owns sending the size.* It remembers the size the daemon last heard for
-    the watch and, on `watching`, sends a `resize` if the terminal's size differs, so a
-    rotation during an in-flight watch is not lost.
-  - *A failed watch backs off.* `watchEnded { error }` climbs the attempt count like a
-    refusal does and keeps the daemon's message for the status band.
-  - *Requests wait 5 s for a socket, then 30 s for the reply.* A create sent on a live
-    socket is not abandoned at 5 s: the daemon may be acting on it, and the user's retry
-    would then hit a duplicate. Dead sockets already fail every request as `lost` (25 s
-    silent). The failing run was a loaded machine (load average 100 to 170) and WebKit.
-  - *Insert path is offered only to a tab that is not reconnecting or limited*
-    (`AppView.tabsOffline`, set by the terminal lane). A path waiting for its watch is
-    dropped with a notice if the watch fails; the image-paste notice says whether the path
-    was typed or will be when the user returns.
-  - *Names with a C0 control or DEL are never inserted.* The path is typed as raw
-    `send-keys` bytes, so CR or LF would submit, as the daemon's own completion inserts
-    already refuse.
-  - *Markdown is sanitized by allowlist* (`ALLOWED_TAGS`, `ALLOWED_ATTR`), and a click
-    inside a document is always cancelled, with `a` and `area` forwarded to the link
-    handler. `<area>` had navigated the whole app off-site.
-  - *A finished Settings action closes both overlays in one `history.go(-n)`*
-    (`Router.closeAllOverlays`); two `back()` calls in one task close only one in WebKit.
-  - *`/` answers `503 busy` while a daemon behind Tailscale serve cannot read the
-    browser origin*, so the worker's precache retries instead of freezing a CSP without
-    `wss://<host>`. A daemon not behind serve (tests, dev) still serves `'self'` alone.
-  - *The shell cache falls back to the network for a path in no cache.* This reverses the
-    earlier "404, not the network": with `/` cached but an asset evicted, a 404 left a
-    blank page.
-  - *The storage-closed banner is hidden on Terminal*, like the update banners: in flow it
-    shrank the stable box and resized tmux. The workspace saves only when its saved form
-    changed. A file over 128 MiB is refused before sending, a second Upload tap removes
-    the first pick's listeners, `mailto:` hands off to the mail app, and Update after a
-    hard reload waits for the worker to activate.
-- **Home's "Another terminal is attached" notice was not a regression.** The e2e attached
-  a terminal and loaded Home without waiting for tmux to list the client; the page lists
-  once and does not poll, so a listing taken first never shows it. The stack's `attach` now
-  waits until tmux lists the client. Reproduced by loading the page first: it fails the same
-  way on the unchanged UI.
-- **Rejected:** a second `closeOverlay()` chained on `navigated` (every caller would need
-  it); making the request timeout longer but still one number (it would still fail a dead
-  socket late and a slow one early); dropping the request timeout (a daemon that never
-  replies would hold the form forever); `wss://<Host header>` in the CSP (the header is the
-  client's); rendering control characters as `$'..'` (a TUI does not parse it).
-
 ## Terminals owns the tab drivers and which tab is shown
 
-- **Decided:** 2026-10-23, tech lead, from the maintainability review of the web client at
-  `f5c8869` (finding H1, the third round on this seam).
-- **What:**
-  - *`Terminals` is the one owner of the drivers.* `sync()` covers and uncovers each from
-    `shownTab(workspace)` on every app change; the reducer's `cover`/`uncover` effects, the
-    controller's driver registry (`attachDriver`, `TabHandle`), `Terminals.shown` and the
-    `detach` map are gone. Native needs none of them: its input already reaches `Terminals`
-    through `Platform.subscribe`, and a native screen covering the terminal is Swift's state.
-  - *One eligibility rule for inserting a path.* `Terminals.canInsert(id)` and `insertPath(id,
-    path)` read the driver's state: connecting and live accept (the path waits for the
-    watch), reconnecting, limited and closed refuse. Files' Insert path and image paste both
-    use them, so a connecting tab no longer takes one and refuses the other. `insertPath`
-    returns `typed`, `queued` or `refused`; a refusal gets one notice, and `AppView.tabsOffline`
-    is gone. This replaces the `tabsOffline` rule of the G2 fixes.
-- **Why:** the controller and `Terminals` each kept a copy of the drivers and of which tab was
-  on screen, and each round fixed one copy's symptom (p96 M4, p96 L2, p97 #4).
-- **Rejected:** a port the terminal lane registers with the controller for Files (Files imports
-  `terminalsOf` directly, as every screen reaches its own core; a port would be the registry
-  again); keeping the reducer's effects and deleting only the controller's map (the reducer would
-  still compute "which tab is shown" a second time, from a diff).
+- **Decided:** 2026-10-23, tech lead.
+- **What:** `Terminals` owns tab drivers and derives which tab is shown from workspace
+  state. One insertion eligibility rule serves both Files and image paste: connecting
+  and live tabs accept a path; reconnecting, limited and closed tabs refuse it.
+- **Why:** keeping a controller registry and a second shown-tab state alongside the
+  terminal drivers made their lifecycles drift. Two insert checks also disagreed about
+  whether a connecting tab could receive a path.
+- **Rejected:** a second controller registry or port for drivers; separately deriving
+  shown state in the reducer and the terminal owner.
 
 ## Ctrl+Shift+F leaves the terminal
 
@@ -3075,204 +2062,32 @@ the p61 review. The product calls behind it are Jimmy's
 - **Rejected:** Ctrl+Shift+L (Edge's paste and go), Ctrl+Shift+U and E (GTK's Unicode and
   emoji input on Linux), Ctrl+Shift+Y (Firefox downloads), Escape (a shell and vim need it).
 
-## Native screen coverage pauses the terminal watch
+## Phone input and keyboard
 
-- **Decided:** 2026-10-23, after the p104 round-2 review.
-- **What:** Native includes the initial `covered` state in `boot` and sends
-  `lifecycle.covered { covered }` whenever a native screen covers or reveals Terminal.
-  The web represents it in `Lifecycle.covered`; `Terminals` uses the selected tab only when
-  it is not covered, so the existing driver path sends `unwatch` and later a fresh `watch`.
-  Browsers always report `covered: false`.
-- **Why:** `ios-shell.md` already required the web to unwatch beneath native screens, but
-  client-architecture §6.1 said Swift kept that state and the bridge had no signal. Without
-  one, the web cannot release the tab's tmux size while native covers it.
-- **Rejected:** Swift-only cover state. It leaves the web's `Terminals` unaware, so its one
-  watch owner keeps the active tab watched beneath native UI.
-
-## Phone input follows Termius: one keyboard toggle, a dock, a one-line field
-
-Jimmy ran the native keyboard spike on his iPhone on 2026-10-24 and changed the phone
-input design, then chose among four drawn dock variations. Entries marked Jimmy are his
-calls; the rest settle the structure his calls left open (design, spawns p110 and
-p112, and the tech lead). The record of his answers is in the work item's
-`phone-input-decisions.md`; his references are Termius screenshots and the dock
-variations canvas.
-
-### Only the keyboard toggle opens and closes the keyboard
-
-- **Decided:** 2026-10-24, Jimmy ("like termius"; "there should only be 1 place to
-  click to open and close the keyboard").
-- **What:** on touch, one control, the keyboard toggle, opens and closes the on-screen
-  keyboard, and stays visible in both states. A tap on the terminal never opens it,
-  closes it or moves focus: with app mouse mode on it is a click, without it nothing
-  happens (OSC 133 cursor placement aside, while the terminal input already has the
-  keyboard). Desktop click-to-focus is unchanged.
-- **Changes:** plan.md's earlier target that "nothing tether does closes the
-  keyboard", with a tap on the terminal or `[⌨]` bringing it back; and the gesture
-  table's "tap, no mouse mode: focus the owned input".
-- **Why:** a tap meant to scroll, select or click also opened the keyboard, and with
-  two ways to open it and a separate hide key there was no one place to look.
-- **Rejected:** tap-to-focus on the terminal (above); a toggle in the tab bar with a
-  separate hide key in the native key row (coder p109's interim edit), superseded by the
-  dock below.
-
-### The phone dock: one row at rest, the key row with the keyboard
-
-- **Decided:** 2026-10-24, Jimmy (a dock in every touch client, the phone browser
-  included; then variant 2 of four drawn, "one row at rest").
-- **What:** on touch, Terminal is full-bleed above a dock that is always visible and
-  rides on the keyboard when it is up. At rest the dock is one row: the tab chip (the
-  active tab's name and the open-tab count), the line field and the keyboard toggle.
-  While the keyboard is up, the key row sits above that row; the toggle stays at its
-  right end. Controls are small (34 px row items, 32 px keys), with the line field at
-  16 px so Safari doesn't zoom. Portrait and landscape share it. tmux is sized with the
-  resting row, so the key row appearing never resizes it.
-- **Changes:** reverses "custom browser keyboard" in the rejected list of
-  [Browser/mobile client direction](#browsermobile-client-direction-and-portable-design-record)
-  and the contract's "no custom strip" for the mobile browser. The key row supplements
-  the system keyboard; it is not the HTML keyboard rejected in
-  [Keyboard: native Swift shell first](#keyboard-native-swift-shell-first).
-- **Why:** the ordinary keyboard lacks Esc, Ctrl and Tab, which agent CLIs and shells
-  need; with the keyboard down none of them can be typed, so the key row costs no room
-  then. One row at rest leaves the terminal the most room, in landscape too, where a
-  stacked dock plus the keyboard and Safari's form bar left almost none.
-- **Rejected:** three rows always shown (tab row, line field row, key row with the
-  toggle), first as Termius draws it (layout A) and then compact (variant 1): Jimmy
-  wanted smaller controls and "i don't think we should EXACTLY copy termius"; tabs on
-  top (variant 4, "hard to reach"); a key row that follows the pane's program
-  (variant 3, deferred below); a key row in the native app only (the browser would stay
-  unable to send Esc or ^C); the keyboard-hidden toolbar plus a keyboard-open draft
-  editor (two layouts).
-
-### The key row's keys, and arrows by long-press
-
-- **Decided:** 2026-10-24, Jimmy (arrow keys off the row; the long-press, "long press
-  -> release -> highlight word -> can drag it further", with Termius's hold, vibration
-  and arrow motion pad); the fixed row and the arrow input settled by the tech lead
-  after his answers.
-- **What:**
-  - **One fixed key row**, most used first: esc, ↑, ↓, ^R, ^C, tab, ctrl, alt, `|`,
-    `~`, `/`, `-`, scrolling. ↑, ↓ and ^R are there because arrow use is "probably
-    mostly recalling commands", which the shell's own history does; ← and → go
-    ("i don't think the arrow buttons should be needed").
-  - **The long-press** on the terminal fires with a haptic. Held and dragged, it is the
-    arrow pad: arrows in the drag's direction, repeating while held. Released without
-    moving, it selects the word under the finger, with handles to drag the selection
-    further and tether's edit menu (Copy, Paste). No mouse event, in mouse-mode apps
-    too. Vertical swipes in alternate-screen apps still send ↑/↓.
-- **Why:** command recall is the shell's job (↑, ^R use its real history, desktop
-  commands included), so the line field keeps no history; one fixed row has fewer
-  moving parts (no daemon watch, protocol or client logic) than a row that follows the
-  program.
-- **Rejected:** ← and → keys; the spacebar trackpad ("kinda works, but not that well",
-  and unavailable to the native input view); a line-field command history.
-- **Deferred** (web/.context/FUTURE): smart keys that follow the pane's program
-  (needs a daemon watch of `pane_current_command` and protocol); swiping the tab chip
-  for the previous or next tab; a line-field command history; spacebar-trackpad
-  arrows.
-
-### The tab chip opens one session switcher
-
-- **Decided:** 2026-10-24, Jimmy (variant 2's tab chip, and other tmux sessions easy to
-  reach whether or not they are open as tabs; drawn as the Switcher board).
-- **What:** on the phone, the tab chip opens one sheet: Home and close in its header;
-  the open tabs as pills (a tap switches and closes the sheet; each has a close icon);
-  then every tmux session on the host with its windows, labelled "here" (the active
-  tab's window) and "open" (another open tab), never dots; and at the bottom, in thumb
-  reach, search (not auto-focused) and "+ New session". It replaces the phone's tab
-  row, its + and the phone picker sheet, and offers Home's creation actions. The
-  desktop is unchanged: top tabs, + and an attach-only picker.
-- **Why:** one place to switch, open, close and create keeps the resting dock to one
-  row, and the controls a thumb uses most sit at the bottom of the sheet.
-- **Rejected:** keeping the picker beside the switcher (two session lists on the
-  phone); auto-focusing search (the keyboard would cover the list on every open); the
-  sheet attach-only like the desktop picker (creation would need a trip to Home).
-
-### Two keyboard openers, one closer, with Termius's focus cues
-
-- **Decided:** 2026-10-24, Jimmy (his Termius screenshots: "note the difference when
-  the focus is different").
-- **What:** the toggle opens live typing to the terminal; a tap on the line field opens
-  line typing into the field; the toggle closes either; terminal taps open and close
-  nothing. With the terminal input holding the keyboard, the terminal cursor is a solid
-  block, the field shows its placeholder and Return is the plain key. With the field
-  holding it, the caret is in the field, the terminal cursor is a hollow outline and
-  Return is the blue send key (`enterkeyhint="send"`). The key row is the same in both.
-- **Why:** both inputs are needed (live keys for Tab completion, ^R, vim and y/n
-  prompts; the field for dictation and autocorrect), and the cues say which one typing
-  goes to without a label.
-- **Rejected:** the field as the only opener (loses live keys); a live mode toggled
-  inside the field (an extra tap for the same two modes).
-
-### One code per phone: the browser enrols the node, the app mints a token
-
-- **Decided:** 2026-10-26, Jimmy (custom scheme, handed over after the browser enrols).
-- **What:** the enrolment screen, once the browser has enrolled, offers "Open in the
-  tether app" with `tether://add?host=<origin>`. The app opens Add server with the host
-  filled and the code empty; Add posts `POST /auth/node/enroll` with an empty code. An
-  already-enrolled node answers with a native device token bound to that node, and
-  removing the node revokes it. A node that is not enrolled gets `not_enrolled`, and the
-  app asks for a code as before. The mint refuses any request carrying browser fetch
-  metadata, so page script on tether's origin cannot trade a same-origin request for a
-  portable token; it also replaces the node's earlier app token rather than adding
-  another, and a bound token stops working when its node row is gone.
-- **Why:** enrolment is per node (`/auth/node/enroll`), so one code covers the phone; the
-  app then needs a credential, not a code. It needs *a* credential because the terminal
-  WebSocket is created by the page, whose origin inside the app is `tether-app://ui`,
-  which the node lane refuses (`src/auth/node.rs`): a tokenless app cannot open a
-  terminal.
-- **Rejected:**
-  - Universal Links. The origin is a per-machine tailnet host that Apple's CDN cannot
-    reach to fetch the association file, and the wildcard development profile cannot
-    carry `com.apple.developer.associated-domains` without an explicit App ID.
-  - Handing off before the browser enrols, carrying the code. It spends the code on the
-    app and leaves the browser unenrolled — two codes per phone again.
-  - Allowlisting `tether-app://ui` as a node-lane origin. It widens the auth surface, and
-    the app still needs a token for its lock screen and uploads.
-
-### Add server separates the code and device name; the app handoff finishes itself (superseded)
-
-- **Decided:** 2026-10-26, Jimmy.
-- **What:** manual Add server is two steps: server and optional code, then the device
-  name and Add. The code is eight native one-character fields grouped four-and-four,
-  with a drawn separator; typing advances, Backspace on an empty cell clears the prior
-  cell, and pasting a whole code fills all eight. The browser's `tether://add` link
-  validates the host and immediately mints with empty code plus `UIDevice.current.name`;
-  after success it saves the host/token and dismisses server management. A locked app
-  queues the link until Face ID succeeds; an unlock failure is visible, `not_enrolled`
-  opens manual step 1 with the host and `tether enroll` instruction, and other failures
-  open the same step with the error. Manual Add errors stay with the name step, and Back
-  preserves the entered fields. Success dismisses the native sheet but does not select a
-  tmux session; the web still owns the route and active tab.
-- **Why:** the code is already available from the browser-enrolled node, so making its
-  app handoff stop at a form wastes the path Jimmy uses. Separating the device name
-  makes each step about one task. Eight real native fields give each cell its own tap
-  target and native editing boundary; the delegate can handle whole-code paste and
-  empty-cell Backspace without synthesizing a cursor over a single text field.
-- **Rejected:** one text field with a drawn overlay, which would need custom mapping from
-  cell taps to cursor positions and more cursor/selection state; keeping the device name
-  beside the server/code; making the app handoff wait for a manual Add tap.
-- **Supersedes:** the custom-scheme portion of "One code per phone: the browser enrols
-  the node, the app mints a token" above, which opened the host-filled Add form instead
-  of completing the mint.
-- **Superseded:** the app-handoff behavior by "The app handoff prefills the form and
-  waits" below.
+Jimmy made the phone-input calls after using the native keyboard on his iPhone;
+design and the tech lead settled the structure around them.
 
 ### The app handoff prefills the form and waits
 
 - **Decided:** 2026-10-26, Jimmy, after using the flow.
 - **What:** `tether://add?host=<origin>&code=<code>` opens Add server at step 1 with
   the HTTPS host and optional code filled in. It sends no request until the user taps
-  Next and then Add. A code goes through `POST /auth/enroll`; no code keeps the
-  already-enrolled node-mint path through `POST /auth/node/enroll` with `Origin` only.
+  Next and then Add. With a code, the app enrolls the node through `POST /auth/node/enroll {code}` and
+  then mints its token with an empty code. Without a code it uses the already-enrolled
+  node-mint path through `POST /auth/node/enroll` with `Origin` only.
   Wrong or expired codes and `not_enrolled` remain visible on the device-name step.
-  Manual two-step entry, the segmented code field, Back preserving both fields, and
-  `UIDevice.current.name` stay unchanged.
+  Manual Add is two steps: server and optional code, then device name. Eight native
+  code fields advance as the user types, handle whole-code paste and empty-cell
+  Backspace; Back preserves both steps and the default name is `UIDevice.current.name`.
 - **Why:** the link must prepare the form, not make an enrolment decision or send a
   credential before Jimmy confirms it. Sharing the manual Add path also keeps both
-  enrolment lanes behind the same explicit Next and Add taps.
+  enrolment lanes behind the same explicit Next and Add taps. Separating the device
+  name makes each step about one task; native code fields provide native tap targets
+  without synthesizing a cursor over a drawn overlay.
 - **Rejected:** automatically minting or enrolling when the deep link opens; the app
-  would submit before Jimmy reaches the form and the link would not wait for confirmation.
+  would submit before Jimmy reaches the form and the link would not wait for confirmation;
+  a single text field with a drawn code-cell overlay, which needs custom tap-to-cursor
+  mapping and selection state.
 
 ### A setup link belongs to the app, so Safari never enrols
 
@@ -3288,8 +2103,17 @@ variations canvas.
   and the PWA on it need none, and the app has its token.
 - **Why:** Jimmy does not want to enrol the browser. Making the app spend the code
   removes the Safari login entirely while keeping the design's one-code-per-phone
-  property, because the code is redeemed on the node rather than on a device.
+  property, because the code is redeemed on the node rather than on a device. The
+  app needs its own token because its web socket origin is `tether-app://ui`, which
+  the node lane refuses. An empty-code mint replaces that node's earlier app token;
+  removing the node revokes its bound token. Browser fetch metadata is refused for
+  minting, so a page cannot obtain a portable credential.
 - **Rejected:**
+  - Universal Links: Apple's CDN cannot fetch an association file from a tailnet-only
+    host, and a wildcard development profile cannot carry associated domains without
+    an explicit App ID.
+  - Allowlisting `tether-app://ui` for the node lane: it widens the auth surface and
+    the app still needs a token for its lock and uploads.
   - The browser enrols the node and the app only mints (the previous shape). It works,
     but it requires completing an enrolment in Safari first, which is the thing he does
     not want.
@@ -3300,38 +2124,9 @@ variations canvas.
     copy-paste; left out of this change because the app path already needs no code on an
     enrolled node.
 
-### No predictions on the line field
-
-- **Decided:** 2026-10-26, Jimmy, from the phone.
-- **Superseded as a mechanism:** 2026-10-26 by
-  [One keyboard: native owns line editing, web mirrors it](#one-keyboard-native-owns-line-editing-web-mirrors-it).
-  The outcome remains, but no longer depends on WebKit content-view trait overrides.
-- **Historical mechanism:** the web field's autocorrect / spellcheck attributes and
-  private WebKit content-view trait overrides attempted to remove the strip. The hook
-  failed on Jimmy's phone; the settled mechanism is the app's native text-field traits.
-- **Why:** a line is a command or a prompt for a shell or an agent. The predictions
-  corrected it as prose and took the row above the keyboard. Jimmy saw the strip on
-  his phone, which is what the checklist row was there to catch.
-- **Rejected:** attributes alone. They stop autocorrection but not the predictive bar
-  ([plan-review.md](plan-review.md) noted it), and WebKit consults the content view for
-  the traits the strip reads.
-- **Supersedes:** the "autocorrect and dictation stay on" half of
-  [Line field auto-capitalization is off](#line-field-auto-capitalization-is-off);
-  dictation stays.
-
-### Line field auto-capitalization is off
-
-- **Decided:** 2026-10-24, tech lead, confirmed by Jimmy.
-- **What:** `autocapitalize="off"` remains on the line field. Its former rule that
-  autocorrect stays on is superseded by the 2026-10-26 one-keyboard decision. Dictation's
-  own capitalization is accepted, since no attribute controls it.
-- **Why:** most lines are commands, where a capital first letter breaks the command.
-- **Rejected:** sentence capitalization (it suits agent prompts, but they read
-  lowercase fine).
-
 ### Phone paste: the line field's menu and the terminal's edit menu
 
-- **Decided:** 2026-10-24, design (p112), following from the one-row dock.
+- **Decided:** 2026-10-24, design.
 - **What:** the dock has no Paste button. In the browser/PWA line field, paste is the
   platform's own menu; in the app mirror, the long-press menu has Paste / Select all /
   Clear. One line is inserted for editing, text with a line break goes to the terminal
@@ -3349,195 +2144,81 @@ variations canvas.
 
 - **Decided:** 2026-10-24, Jimmy ("edit should be a single line editor"; Return sends
   the text and Enter and clears the box).
-- **What:** the dock's line field holds one logical line, visually wraps and grows from
+- **What:** the dock's compose field holds one logical line, visually wraps and grows from
   one to five lines before scrolling inside. Browser/PWA uses its textarea; the app uses
   a native editor with autocorrect, predictions, capitalization and spell checking off.
   Return sends its text to the active tab, then Enter, and clears it; the line target
   keeps the keyboard. An empty Return sends Enter. The unsent text is the
   tab's draft, saved per tab key; [Drafts of closed tabs are kept](#drafts-of-closed-tabs-are-kept)
   still applies to it.
-- **Changes:** replaces the multiline local draft editor whose Insert sent a paste
-  without Enter ([Browser/mobile client direction](#browsermobile-client-direction-and-portable-design-record),
-  terminal-interaction-design.md, client-architecture.md §7.4).
 - **Why:** on the phone the text box is for saying one thing to a shell or an agent
   and sending it; a separate Insert and a second Enter cost a tap each time.
 - **Rejected:** the multiline editor with Insert; Return inserting without Enter.
 
-### The dock is web, in every touch client
-
-- **Decided:** 2026-10-24, design (p110), confirming the tech lead's lean.
-- **What:** the web draws the whole dock, including the key row, the line mirror and the
-  toggle, in the browser, the PWA and the app. Native keeps one hidden
-  `KeyboardInput: UITextField` as first responder for terminal and line targets, reports
-  keyboard geometry and sizes the web view so the dock rides the keyboard, and draws
-  nothing above it. There is no compose field. Armed ctrl and alt live in the web
-  (`touch/modifiers.ts`) and reach native over the bridge; key-row haptics go over
-  `haptic`.
-- **Why:** the browser needs the dock anyway, so a native copy would be a second
-  implementation of the same controls, with the drift and double review that brings.
-  The web already owns everything else Jimmy looks at; iterating on the dock needs no
-  app rebuild.
-- **Rejected:** a native accessory key row and compose field (two implementations;
-  modifier state split between Swift and the web); a native `UITextField` overlaid on
-  the web dock for the line field (its frame would have to track web layout through
-  scroll, rotation and keyboard animation).
-- **Cost:** a key-row haptic crosses the bridge, unmeasured; a native touch-down
-  `prepare()` is no longer possible.
-
 ### One keyboard: native owns line editing, web mirrors it
 
-- **Decided:** 2026-10-26, Jimmy, after the first real-phone use:
+- **Decided:** 2026-10-26, Jimmy, after using the app on the phone:
   > "I still get predictions on the iphone app, and swapping between if i used the button or if i used the box is still really wonky (they do different things still)"
   > "I have to press the box twice to open the keyboard sometimes"
   > "it should just act like a text box / not be a text box / a local text box / and then also the predictions should go away"
-- **What:** one hidden `KeyboardInput: UITextField` owns first responder throughout Terminal.
-  The toggle selects `terminal`, where committed keys go directly to tmux; tapping the box
-  selects `line`, where native edits the line and the web mirrors its text, caret, selection
-  and marked composition. The toggle closes either target. The field disables autocorrection,
-  capitalization, spell checking, smart punctuation and inline prediction. Return is Send in
-  `line` and Return in `terminal`; sheet and Files fields remain WebKit-owned and keep their
-  ordinary keyboard. The mirror has tap-to-place, spacebar trackpad, and long-press Paste /
-  Select all / Clear; it has no selection handles. Both app and browser boxes wrap and grow
-  from one to five visual lines, then scroll inside, while remaining one logical line:
-  Return sends and paste with line breaks goes to tmux as one paste. Draft storage and send
-  outcomes remain web-owned. An interruption restores `line` as `line`.
-- **Restore after WebKit restart:** `Boot.focusMode` and the preserved route fragment
-  restore the target and screen. If the target is `line`, Boot also carries a tab-bound
-  `lineSnapshot` with native's current generation, text, selection and marked range.
-  `lineDrafts` reconciles that snapshot after its first list; events arriving before the
-  dock or store is ready are buffered and applied against the restored generation. This
-  keeps the web draft store authoritative without replacing newer unsaved native text.
-- **Bridge:** v4 adds `lineSet { gen, text, caret, tab }`, `lineEdit { gen, text, tab, selection, marked }`,
-  `lineReturn { gen, text, tab }`, `lineCaret { index }`, `lineInsert { text }` and `modifiers { armed }`;
-  it removes `lineField { rect }`. `lineSelectAll {}` is an additional request beyond the
-  proposal's listed contract: a menu action for native Select all needs an operation that
-  can select the text field's contents, which caret placement and setting text cannot express.
-- **Why:** both openers now reach the same keyboard and the same responder, so tap-to-edit
-  has no WebKit handoff or lending guard. Native's public text-field traits remove
-  predictions without a private WebKit swizzle; the web continues to own the buffer's
-  persistence, send path and error notes.
-- **Implementation choices:** the browser `LineInput` is a `<textarea>`, not an `<input>` as
-  the proposal assumed. An input cannot wrap into the required five-line box; a textarea
-  supports the visual growth while Return remains intercepted as Send and pasted newlines
-  retain the terminal-paste rule. `LineField` selects that browser editor or the native
-  mirror from `viewport.directInput`, the existing platform capability; `Platform` has no
-  environment-name switch to branch on.
-- **Bridge correction to the proposal:** `lineSet` also carries the owning `tab`. Native's
-  `activeTab` message arrives separately from `lineSet`; a WebKit restart between a tab
-  switch and its next buffer load could otherwise associate the old native copy with the
-  newly active tab. The snapshot uses the tab bound by the atomic line load, not whichever
-  `activeTab` message arrived last.
-- `lineEdit` carries the same tab binding so an edit delivered after a focus or tab change
-  updates its originating draft instead of being discarded by the new active target. The
-  web still rejects edits older than the most recently loaded generation for that tab.
-- **Return correction to the proposal:** `lineReturn` captures `text` and `tab` as well as
-  `gen`, then native clears into the next generation immediately. A buffered Return must send
-  the line present at the key press, not a later edit from the restored snapshot; the tab
-  makes a delayed Return independent of a subsequent switch. The web's same-generation
-  `lineSet` acknowledges the clear without overwriting native typing that arrived after it.
-- **Modifier routing:** the web's `apply()` is the only chord rule. With ctrl or alt armed,
-  native diverts only one grapheme inserted at a collapsed caret. The web sends it to tmux
-  if it forms a chord; otherwise it disarms and restores the character in the line via
-  `lineInsert` at the caret. Other insert shapes clear native's armed state and stay in
-  UIKit; their next `lineEdit` disarms the web-owned state. The browser field and key row
-  use the same `chord()` rule; a key-row character that is not chordable inserts into the
-  line only while line owns the keyboard and is never sent bare to tmux.
-- **Input layout and reload choice:** the hidden field uses `.default`, not `.asciiCapable`,
-  so locale IMEs and dictation remain available; explicit prediction, correction and
-  smart-edit traits stay `.no`. While the page is loading or reloading, Return remains in
-  the field and warns; native does not queue it for later delivery.
-- **Bundle cost:** the production check measured initial JS at 193.2 KiB gzipped after
-  adding the restore snapshot and event handoff. Raise the cap to 194 KiB rather than
-  code-splitting the dock-critical mirror into another request; this leaves 0.8 KiB of
-  measured headroom.
-- **Tech-lead corrections after reviews p304 and p306 (2026-10-26):** native is the sole
-  owner of line generations. `lineSet { text, caret, tab }` advances and returns the generation;
-  web never assigns it or echoes the native clear after Return. The app-started
-  `NativeLineInput` beside `LineDrafts` subscribes directly to platform events, waits for
-  draft hydration, reconciles the one boot snapshot and syncs any bound draft whose text
-  differs from native's last reported text. This replaces transition-specific loads and
-  removes the controller and component event queues/snapshot copies. If the page receiver
-  is not ready, Return remains in native and warns; Swift has no Return retry queue. The
-  web's `apply()` rule is the only chord authority. While armed, native diverts only a
-  one-grapheme insert at a collapsed caret; other insert shapes clear native's armed state
-  and go through UIKit, whose next `lineEdit` disarms the web state. A diverted character
-  becomes a tmux chord only when `apply()` recognizes it; otherwise the web disarms and
-  restores it with `lineInsert` at the caret. Browser inserts and key-row characters follow
-  that same rule; an unchordable key-row character inserts into the line only while line
-  owns the keyboard, never as bare terminal input.
-  Marked-text Backspace and Return stay with UIKit in either target. Selection mode takes
-  precedence over the native line resting mode and release restores the line target.
-- **Rejected:** JavaScript generation counters and same-generation acknowledgements;
-  per-send/per-clear/per-refusal sync calls; a line-event handler in React; separate
-  controller/component buffering and snapshot holders; a native character allowlist plus
-  web-side line-edit revert; diverting every committed insert to the terminal; routing an
-  unchordable insert as bare text; retrying a Return whose delivery cannot be known after the
-  page is ready.
-- **Rejected:** repairing two different responders and retaining the private swizzle; making
-  the box the only opener (which loses raw typing for vim, `less`, prompts and `y/n`); a
-  native field overlaid on the web dock; or a bare `UIKeyInput`, which cannot preserve IME
-  composition and text-field selection behavior.
-- **Supersedes:** [Native lends the line field to WebKit by touch location](#native-lends-the-line-field-to-webkit-by-touch-location)
-  and the mechanism of [No predictions on the line field](#no-predictions-on-the-line-field).
-  It refines [The dock is web, in every touch client](#the-dock-is-web-in-every-touch-client):
-  web still draws the dock, while native owns line editing in the app.
+- **What:** the web draws the dock in browser, PWA and app. In the app one hidden
+  `UITextField` is first responder for `terminal` and `line`: terminal input goes to
+  tmux; native edits the line and the web mirrors its text, selection and composition.
+  The mirror supports tap-to-place, spacebar trackpad and Paste / Select all / Clear,
+  but not selection handles. Native disables autocorrection, capitalization, spell checking, smart punctuation and
+  inline prediction; dictation and locale IMEs remain available. Sheet and Files fields
+  remain WebKit-owned. The browser uses a textarea; both boxes grow from one to five
+  visual lines while keeping one logical line. Return sends and pasted newlines go to
+  tmux as one paste. Draft persistence, send results and notices remain web-owned.
+- **Restore and routing:** native owns line generations. `lineSet` binds a draft and tab
+  atomically and returns the new generation. `lineEdit` and `lineReturn` identify their
+  originating tab; Return captures its text before native clears and advances. On a
+  WebKit restart, `Boot` carries the focus target and a tab-bound native line snapshot;
+  one app-started web owner waits for draft hydration, reconciles that snapshot and
+  buffers early events. If the page is not ready, Return stays in the native field with
+  a warning instead of being queued. Marked-text Backspace and Return stay in UIKit.
+  The web owns ctrl/alt chord interpretation; native diverts only a one-grapheme insert
+  at a collapsed caret, and an unchordable character returns to the line at the caret.
+- **Why:** one responder avoids the WebKit handoff and makes both typing targets use the
+  same keyboard. Public native text-field traits remove the predictive bar; attributes
+  alone did not remove it on the phone. Commands and prompts should not be corrected as
+  prose, and initial capitalization breaks most commands. A web dock avoids separate
+  browser and native implementations. A textarea wraps where an input cannot. Binding
+  edits and Return to a tab prevents late events or a restart sending text to another tab.
+- **Rejected:** a bare `UIKeyInput` (cannot preserve IME composition and text-field
+  selection); repairing separate responders with a private WebKit trait override; a
+  native field overlaid on the web dock (its frame must track web layout and keyboard
+  animation); a native copy of the dock (two implementations and split modifier state);
+  sentence capitalization; JavaScript generation counters, duplicate event buffers and
+  retrying a Return whose delivery is unknown; sending an unchordable character as bare
+  terminal input.
 
-### Native lends the line field to WebKit by touch location
+### Keyboard control and key-row routing follow the focus target
 
-- **Historical decision (superseded 2026-10-26):** design (p110).
-- The implementation below is deleted; its current replacement is the one-keyboard
-  decision above.
-- **What:** the web reports the line field's rect (`lineField { rect }`); a passive
-  native recognizer sees each touch-down before WebKit does, and a touch that begins
-  inside the rect lowers the guard, so WebKit takes first responder straight from
-  `TerminalInputView` on the tap. WebKit asks only after the touch ends, so the guard
-  stays down until the field's `focusin` confirms with `focus webText`, or 500 ms after
-  the touch ends (review p111 caught a guard raised at touch end, which would refuse
-  WebKit). Native removes WebKit's form accessory bar. The toggle from the field blurs it in the web, then sends `focus hidden`.
-- **Why:** the guard must keep refusing every other tap on the page. Native seeing the
-  touch itself has no race with WebKit's focus on the same tap.
-- **Rejected:** a `focus webText` sent on pointer-down (races WebKit's focus, as
-  client-architecture decision 12 found); the guard off on Terminal (any tap could
-  take first responder); a native overlay field (above).
-- **Risk:** the passive-recognizer ordering and the accessory-bar removal (no public
-  API) are unverified; both are on ios-shell.md's device checklist.
-
-### What the toggle raises, and where key-row keys go
-
-- **Decided:** 2026-10-24, design (p110); the character-key routing accepted by the
-  tech lead the same day.
-- **What:** with the keyboard down, the toggle raises it for the terminal input; with
-  either input holding it, the toggle lowers it. Tapping the line field gives it the
-  keyboard, as any text field. Key-row control keys (esc, ↑, ↓, ^R, ^C, tab) always go
-  to the terminal; character keys (`/ | ~ -`) go where typing goes, into the field at its
-  caret when it has the keyboard. An armed modifier sends a chordable character to the
-  terminal; an unchordable character is disarmed and remains in the line. A paste holding
-  a line break into the field goes to the terminal as one paste, without Enter. The toggle's
-  state follows the focus owner, not keyboard geometry.
-- **Changes:** for the four character keys, the wording of Jimmy's two-openers choice,
-  "the key row always sends to the terminal". Control keys still always do.
-- **Why:** the toggle stays a pure open/close control whose result never depends on a
-  remembered earlier state. Control keys have no meaning inside a one-line field
-  except caret moves the platform already gives, while the symbol keys are exactly the
-  ones that are slow to reach on the iOS keyboard.
-- **Rejected:** the toggle reopening whichever input last had the keyboard (hidden
-  state); the toggle switching between the inputs (then it isn't open/close); every
-  key-row key going to the field while it has focus (Esc and ^C would no longer reach
-  the program); every key-row key going to the terminal while the field has focus (a
-  `|` tapped mid-line would land at the shell prompt, outside the line being written);
-  flattening a multiline paste into one line (it changes the command).
+- **Decided:** 2026-10-24, design and tech lead; focus routing refined by Jimmy,
+  2026-10-27.
+- **What:** the keyboard control opens terminal input when the keyboard is down and
+  closes the keyboard when it is up. With compose focused, ← and → move its caret;
+  Escape and a terminal tap return focus to tmux without lowering the keyboard. ↑, ↓,
+  ^R, ^C and Tab go to tmux. Character keys go to the focused input; armed ctrl/alt
+  sends a chordable character to tmux, while an unchordable character stays in compose.
+  A pasted line break goes to tmux as one paste without Enter.
+- **Why:** the toggle has a predictable open/close function. Symbols are slow to reach
+  on iOS, so typing one while composing belongs at the compose caret. The focus cues
+  and key labels show where input will go.
+- **Rejected:** reopening the last hidden target (hidden state); making the toggle
+  switch inputs instead of open/close; every key-row character going to tmux while
+  composing; flattening multiline paste into one line (changes the command).
 
 ### Sheets lower the keyboard, and closing one gives it back
 
-- **Decided:** 2026-10-24, design (p112).
+- **Decided:** 2026-10-24, design.
 - **What:** opening a sheet or dialog on Terminal, the switcher included, moves focus
   into it and lowers the keyboard; leaving Terminal for Home or Files lowers it too.
   When a sheet closes, the input that held the keyboard gets it back: native raises it
   through the resting mode; the browser refocuses that input inside the closing tap,
   and leaves the keyboard down when the sheet closed without a tap (back gesture,
   Escape), since Safari raises the keyboard only inside a gesture.
-- **Changes:** ios-shell.md's earlier rule that the keyboard stays up under web
-  sheets.
 - **Why:** a sheet needs the screen: with the keyboard up the switcher's list would be
   a few rows, and keys typed while it is open would go to a terminal the user can't
   see. Giving the keyboard back on close keeps a switch of tabs from costing a toggle
@@ -3547,8 +2228,8 @@ variations canvas.
 
 ### Return sends a paste with Enter in the same tmux group, and the daemon confirms it
 
-- **Decided:** 2026-10-24, design (p110, revised in p112).
-- **What:** the line goes as one `paste { req, watch, text, enter: true }`. The daemon
+- **Decided:** 2026-10-24, design.
+- **What:** the line goes as one `paste { req, watch, window, text, enter: true }`. The daemon
   starts that tmux command list with `copy-mode -q` so the phone's latest action leaves
   any pane mode, then pastes and sends `Enter`, which tmux skips if the paste fails. It
   answers every paste exactly once: `pasted { req, watch }`, or
@@ -3556,9 +2237,8 @@ variations canvas.
   ([daemon-core.md](daemon-core.md#53-json-messages)). A refused or unanswered paste
   puts the line back into its tab's draft. A paste whose control client exited before
   answering is reported, never resent. The client keeps no timeout of its own: one
-  shorter than the daemon's answer would restore a line that ran (review p114). This closes the paste half of L4 ("refusals
-  carry no `req`"); it is built as its own daemon lane before or alongside P3a.
-- **Found in review (p111):** without an answer naming the paste, a `busy` refusal is
+  shorter than the daemon's answer would restore a line that ran.
+- **Failure avoided:** without an answer naming the paste, a `busy` refusal is
   dropped by the client, the Enter behind it is accepted, and the shell runs whatever
   was already on the prompt line while the field has cleared the user's line.
 - **Why:** one message, no extra round trip on a slow link, and no window where the
@@ -3567,86 +2247,47 @@ variations canvas.
   line delimited and the Enter outside it, so the Enter submits.
 - **Rejected:** preserving another client's copy mode for a phone paste with Enter (then
   tmux accepts Enter in the mode while the daemon reports the line sent); the client
-  sending `{ key: "Enter" }` after `pasted` (p110's first
-  version: a round trip per line, and the Enter can still meet a different prompt if
+  sending `{ key: "Enter" }` after `pasted` (a round trip per line, and the Enter can still meet a different prompt if
   something else typed in between; it stays the fallback if an agent CLI absorbs an
   immediate Enter); the text as literal `input` keystrokes (an agent CLI may read the
   burst as a paste and swallow the Enter); an Enter inside the pasted text (in bracketed
   mode it is a newline, not a submit); resending a paste whose answer was lost (it
   could run twice).
 - **Risk:** whether Claude Code and Codex submit on an Enter that immediately follows a
-  bracketed paste is unverified; a P3a gate.
+  bracketed paste is unverified on the target apps.
 
 ### The key row stays with a hardware keyboard
 
-- **Decided:** 2026-10-24, design (p110).
+- **Decided:** 2026-10-24, design.
 - **What:** the dock is the same with a hardware keyboard attached: the key row shows
   while an input holds focus, as with the on-screen keyboard.
 - **Why:** the browser cannot detect a hardware keyboard reliably, and one layout is
   easier to get right.
-- **Changes:** ios-shell.md's collapse to a thin strip.
 - **Rejected:** collapsing in native only (two layouts of one web dock).
-
-### The keyboard spike is retired
-
-- **Decided:** 2026-10-24, design (p110), confirming the tech lead's lean.
-- **What:** `ios/spikes/keyboard/` and `spike-1-keyboard.md` are deleted. The questions
-  that still matter (the guard through sheets, rotation and a killed web process; the
-  hidden-keyboard trick; WebKit's selection under the guard; geometry; terminal input
-  traits; hardware keys; keystroke latency; the Face ID Keychain item) and the new
-  line-field lending moved to the device checklist in ios-shell.md, run in P4.
-- **Why:** half of what it tested (the native accessory key row and compose field) no
-  longer exists, its harness is not tether's UI, and Jimmy found it could not judge the
-  UI quality that is now the bar. P3 builds the real dock against real tmux.
-- **Rejected:** updating the spike to the web dock (it would become a second copy of
-  P3a); running it as is (it tests the old design).
-
-### Vocabulary: dock, tab chip, line field, key row, keyboard toggle, switcher
-
-- **Decided:** 2026-10-24, design (p110, p112).
-- **What:** the **dock** is the touch stack at the bottom of Terminal; the **tab chip**
-  its control naming the active tab; the **line field** its one-line text field; the
-  **key row** its row of terminal keys, shown while the keyboard is up; the **keyboard
-  toggle** the one keyboard control. The **switcher** is the phone's session sheet
-  behind the tab chip; the **picker** is the desktop's attach-only modal. A **draft** is the line field's unsent text
-  for one tab. "Compose", "draft editor", "tab row" and "Insert" (for text) are retired.
-- **Rejected:** "line editor" and "edit box", which collide with the shell's own line
-  editor (zle, readline); "compose", tied to the removed multiline editor; "picker" for
-  the phone sheet, whose contents (tabs, creation) differ from the desktop picker's.
-
 
 ## Window size follows the client that acted last
 
-Jimmy was asked whether "the laptop can't grow a window the phone watches" was
-acceptable (plan.md "Still open"). The calls below are his; the mechanism and the
-client display are design (spawn p115), probed on tmux 3.4 and 3.7b
-([probe-latest-activity.md](research/probe-latest-activity.md)).
+Jimmy chose last-acted sizing; design settled and probed the mechanism on tmux 3.4
+and 3.7b ([probe-latest-activity.md](research/probe-latest-activity.md)).
 
 ### Whoever acted last gets the window's size
 
 - **Decided:** 2026-10-24, Jimmy ("just whoever has the last focus gets the focus and
   the size of the screen").
 - **What:** tmux's `window-size latest`, extended to tether. A watch **claims** its
-  window with `watch`, `resize`, `input` and `paste`, and its owner votes that watch's
-  size; when another tmux client acts there, the window **yields**: the vote clears,
+  window with `watch`, `resize`, `input` and `paste`, and its owner takes `latest`
+  and votes that watch's size; when another tmux client acts there, the window **yields**: the vote clears,
   the watch stays, and tmux sizes the window by `latest`
   ([daemon-core.md §3.6](daemon-core.md#36-sizing)).
-- **Changes:** "Sizing: client size at attach, a vote per watched window" above, whose
-  vote stood for as long as the tab was on screen and capped the window whoever was
-  `latest`, and "The cwd subscription's shape", whose `@W:#{pane_current_path}` value
-  gains the other clients' acts (below). The client size at attach stays.
 - **Rejected:** keeping the cap (the laptop could never take back a window the phone
   had on screen); `window-size smallest` (the laptop would always be phone-sized while
   the phone watched); `largest` (the phone would always get the laptop's size, the
   opposite of "whoever I'm using"); dropping the vote after N idle minutes (a timer
   where an act is the signal).
-- **Changed 2026-10-25:** a claim now makes tmux size the window to the watch exactly,
-  not only cap it: the owner takes `latest` with a same-session `switch-client` when it
-  starts voting ("tether takes tmux's `latest` with a same-session `switch-client`").
 
 ### "Acts" means input or bringing the tab on screen, not looking
 
-- **Decided:** 2026-10-24, design (p115).
+- **Decided:** 2026-10-24, design.
 - **What:** the phone claims when the user brings a tab on screen (opening, switching
   to it, returning from Home or Files, unlocking into it), on rotation or a font
   change, on every keystroke and paste, and on Fit. A tab that stays on screen claims
@@ -3661,16 +2302,15 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 - **Rejected:** input only (opening the phone would show a laptop-sized window until a
   key); any message on the watch, `history` included (scrolling back to read would
   shrink the laptop's layout); a `claim` message (`resize` already says "this is my
-  size", and Fit re-sends it); every `watch` claiming, reconnects included (review
-  p119: on a spotty link each blip would shrink the laptop's window mid-command, though
+  size", and Fit re-sends it); every `watch` claiming, reconnects included (on a
+  spotty link each blip would shrink the laptop's window mid-command, though
   nobody touched the phone).
 - **Cost:** `watch` carries a flag, and the client must tell a user's re-watch from its
   own.
 
 ### The other client's act is seen through the window subscription
 
-- **Decided:** 2026-10-24, design (p115). Probe:
-  [probe-latest-activity.md](research/probe-latest-activity.md).
+- **Decided:** 2026-10-24, design. Evidence: [probe-latest-activity.md](research/probe-latest-activity.md).
 - **What:** the `w<W>` subscription, which carried only the cwd, becomes the window
   subscription: it also lists, with tmux's client loop `L:`,
   each non-control client whose current window is `@W`, with its activity time, size
@@ -3681,50 +2321,16 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
   switching to the window, attaching, a terminal resize), costs nothing while nobody
   else types, adds no op, and reuses a subscription with the same lifetime. tmux
   already checks it once a second.
-- **Rejected:** tether becoming `latest` itself (only the session's current window can
-  be made `latest`, by switching the control client, which the laptop's session
-  shares; other windows can't, and a vote still caps); a `client-active` hook
+- **Rejected:** a `client-active` hook
   (`set-hook` changes Jimmy's tmux config and can't reach the daemon); polling
   `list-clients` (a timer in the daemon); one session-wide subscription (inside `L:` a
   client's window is the outer one, so it can't say which window a client is on, and
   its value would change whenever anyone typed anywhere); a separate `a<W>`
   subscription (a second op pair with the same lifetime); comparing activity times with
   the claim's time (one-second resolution; the phone's next act fixes a stale yield).
-- **Cost:** yielding lags the other client's act by up to about a second; a claim
-  still caps, so the phone gets the smaller dimension when the laptop's window has
-  fewer rows. Flags in the entry (review p119): without them, a focus-out, which
-  updates a client's activity but not `latest`, would yield.
-- **Changed 2026-10-25:** tether does become `latest`, for the session's current window,
-  which is the only window a claim is on now that tabs follow sessions; the cost "a
-  claim still caps" is gone. The subscription still detects the other client's act,
-  which is when the vote clears ("tether takes tmux's `latest` with a same-session
-  `switch-client`").
-
-### A window sized for another terminal is clipped, not scaled
-
-- **Decided:** 2026-10-24, design (p115).
-- **What:** the client draws the pane at tmux's size and its own font, from the left
-  edge. Wider content is cut off at the right; taller content follows the cursor
-  through the existing cursor pan, or anchors to the top while scrolled into history.
-  While the pane is larger the tab uses xterm's DOM renderer. After a second larger
-  than the size the tab sent, the status band says "Sized for another terminal" with
-  Fit, which re-sends the tab's size and so claims. A smaller pane sits in the
-  top-left corner with no band (client-architecture.md §5.4).
-- **Why:** a window sized for another terminal is for glancing: the left of each line
-  and the cursor area stay readable, and Fit is one tap away when Jimmy wants the whole
-  screen. The band needs nothing from the daemon: a claimed window is never larger
-  than the tab.
-- **Rejected:** scaling the font down to fit (200 columns on a 56-column phone is
-  unreadable at any floor, and a font change would feed the sizer and claim the window);
-  CSS scaling (blurs the WebGL renderer and breaks cell mapping); horizontal panning
-  (horizontal swipes belong to the system back gesture); centring a smaller pane
-  (text moves away from where the eye expects it); keeping WebGL at any pane size
-  (review p119: its canvas grows with the other terminal, about 17 M device pixels for
-  250×70 at 3×, past WebKit's canvas limit); a band shown the moment the pane is larger
-  (it would flash on every rotation, Fit and tab open).
-- **Changed 2026-10-25:** the band shows whenever the window's size differs from the
-  tab's, smaller included, and the daemon reports the window's size in `watching` ("The
-  band shows whenever the window isn't at this screen's size").
+- **Cost:** yielding lags the other client's act by up to about a second. A focus-out
+  updates client activity without making that client `latest`, so the flags prevent a
+  false yield.
 
 ### Files in landscape lowers the keyboard, as in portrait
 
@@ -3735,13 +2341,13 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 
 ### Touch scroll is JS momentum over xterm and a DOM history view
 
-- **Decided:** 2026-10-24, P3b build.
+- **Decided:** 2026-10-24.
 - **What:** one recognizer owns every touch on the terminal and a release coasts with an
   exponential decay (time constant 500 ms). The normal screen scrolls xterm's buffer by rows,
   then slides the terminal down onto a DOM view of tmux's older rows fetched on demand;
   full-screen and mouse-mode applications get wheel events or ↑/↓. A long-press hold with a
-  drag is the arrow pad; a release without moving selects the word in an immutable snapshot
-  of one DOM row per grid row.
+  drag extends the word selection in an immutable snapshot of one DOM row per grid row;
+  release shows the system handles and edit menu.
 - **Why:** the recognizer must tell a tap, a scroll and a hold apart before anything reaches
   tmux, which a native scroller cannot do; rows of fixed height keep the snapshot, the history
   and the canvas on one grid however the text wraps, and joining them at the wrap flags the daemon
@@ -3756,7 +2362,7 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 
 ### iOS Link resolves the socket without exposing host routing in page state
 
-- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **Decided:** 2026-10-24, tech lead.
 - **What:** a `HostLink` asks native with `{type:"socket", host}`; native replies with
   `{url, token}`, `{locked:true}` or `{notEnrolled:true}`. The URL is
   `wss://<stored host>/ws`. The URL and token stay inside that Link and are never
@@ -3764,12 +2370,13 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 - **Why:** the web must own the socket for direct frame delivery, but it does not need
   the native host registry or a second credential store.
 - **Rejected:** putting `baseURL` on `PlatformHost` (host routing leaks into ordinary
-  page state); WebSocket over `tether-app://` (a scheme handler cannot carry it); native
+  page state); deriving a URL from the host name (a user-visible label need not be
+  its MagicDNS name); WebSocket over `tether-app://` (a scheme handler cannot carry it); native
   `URLSessionWebSocketTask` (keep as fallback only if spike 3 finds stuck sockets).
 
 ### Native caches the web's active tab for keyboard batches
 
-- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **Decided:** 2026-10-24, tech lead.
 - **What:** web sends `activeTab { tab: TabKey | null }` when selection changes; native
   uses that cache to tag a whole coalesced keyboard batch. The web still drops input
   for a stale or closed tab.
@@ -3779,7 +2386,7 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 
 ### Host management has a typed native presentation request
 
-- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **Decided:** 2026-10-24, tech lead.
 - **What:** the web's Home/Settings host-management entry sends `manageHosts`; native
   presents the server sheet. Remove the floating native Servers control when that web
   entry lands.
@@ -3790,7 +2397,7 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 
 ### User Copy is not an OSC 52 server write
 
-- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **Decided:** 2026-10-24, tech lead.
 - **What:** bridge `copy { text }` always writes user-selected terminal text to the
   system pasteboard. Server-origin OSC 52 remains a separate, disabled web policy.
 - **Why:** applying the server-write gate to user-initiated Copy made the terminal's
@@ -3798,23 +2405,9 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 - **Rejected:** gating every copy through a native setting; conflating user and server
   clipboard provenance in one bridge message.
 
-### Restore the existing iOS auth and background policy
-
-- **Decided:** 2026-10-24, tech lead (P4a review, p142), per
-  [auth.md](auth.md#swift-side-keychain-item-and-app-lock).
-- **What:** one `tether.tokens` Keychain item stores the token map with
-  `WhenPasscodeSetThisDeviceOnly` and `.biometryCurrentSet`. Reading it is the Face ID
-  unlock, done off the main thread; tokens stay in memory until lock. Reset tokens is
-  explicit recovery. Background starts a short task so the web closes sockets; the app
-  locks only on foreground after more than five minutes away.
-- **Why:** one read unlocks all hosts without repeating prompts, while short app
-  switches do not force another biometric check.
-- **Rejected:** a Keychain item per host; app-level passcode authentication in front of
-  a separately protected token; locking at every background transition.
-
 ### Keep the Termius-quality keyboard layout without a WebKit bar
 
-- **Decided:** 2026-10-24, tech lead (P4a review, p142).
+- **Decided:** 2026-10-24, tech lead.
 - **What:** suppress the WebKit form accessory bar through the private
   `WKContentView` input-accessory path; if the class path is absent, leave the bar in
   place rather than fail the app. Keep the ^C/^D warning haptic for native hardware
@@ -3826,78 +2419,60 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 
 ### Defer the Debug dev-server asset source
 
-- **Decided:** 2026-10-24, P4a review (p142).
-- **What:** P4a always bundles its web assets. A Debug-only dev-server source/HMR path
+- **Decided:** 2026-10-24.
+- **What:** the app bundles its web assets. A Debug-only dev-server source/HMR path
   is deferred to `ios/.context/FUTURE`; the bundled CSP is not relaxed for it.
 - **Why:** the optional shortcut needs a separate trusted-origin, certificate, HMR and
   CSP check; desktop browser/Vite remains available for iteration.
 - **Rejected:** shipping an unverified dev-server route and broader CSP with the shell.
 
-### P3b touch state is per shown tab, in one object
+### Touch state belongs to the shown tab
 
-- **Decided:** 2026-10-24, tech lead, after the P3b reviews (p141 correctness, p144 structure).
-- **What:** the recognizer shell, scroll with momentum, history view and selection snapshot
-  live in `screens/terminal/view.ts`, which is told the shown tab and resets all of it when
-  that changes, on a snapshot, on `visibilitychange` and on a lost pointer capture. Its sends
-  are bound to the tab id they began on. Touches on the selection layer are left to the system
-  (handles, scrolling). History chunks overlap the oldest known row by one and restart the view
-  on a mismatch; wrap flags are carried across chunk and buffer seams; rows are dropped on return
-  to the newest line; a refused chunk waits 1.5 s. `Row` carries cells (exact for xterm rows).
-  The desktop wheel continues past xterm's top into the history; `scrolled` follows the renderer.
-  `term/buffer.ts` and `bufferText` are deleted (the touch copy path joins `Row`s).
-- **Why:** a coast or held pad is state of one tab on a surface every tab shares; resetting only
-  on the next snapshot let it type into the next tab. Resetting at the one place the shown tab
-  changes ends the class.
-- **Rejected:** capturing the tab id in the scroll control alone (patches one instance); keeping
-  a second logical-text path in `term/`; guessing cell widths from text for xterm rows.
+- **Decided:** 2026-10-24, tech lead.
+- **What:** one shown-tab owner holds the touch recognizer, momentum, history view
+  and selection snapshot. It resets them on a tab change, snapshot, visibility change
+  or lost pointer capture, and sends are bound to the tab on which they began. A history
+  chunk overlaps up to eight known rows and finds the matching run nearest its expected
+  position; wrap flags carry across chunk and buffer seams. The selection snapshot is
+  bounded relative to the visible rows, not the newest rows.
+- **Why:** a coast or gesture belongs to one tab on a surface shared by all tabs;
+  waiting for the next snapshot to reset it let input reach the next tab. tmux history
+  row numbers shift as output arrives, and a single repeated or blank row is an
+  ambiguous anchor. A snapshot bounded from the newest rows cannot select far up a
+  long scrollback.
+- **Rejected:** resetting only one scroll control instead of the shown-tab owner;
+  matching a single seam row; the daemon's history size as an anchor (it does not say
+  where known rows moved); guessing cell widths from text for xterm rows.
 
 ### Native lifecycle messages are full snapshots
 
-- **Decided:** 2026-10-24, P4a review (p142).
+- **Decided:** 2026-10-24.
 - **What:** app visibility, reachability, lock and native coverage travel together in a
-  complete `lifecycle` snapshot; `covered` is not a separate bridge event.
+  complete `lifecycle` snapshot; `covered` is not a separate bridge event. Native saves
+  focus requests while covered, applies the latest on uncover, and drops queued terminal
+  input while locked or covered.
 - **Why:** web admission and socket watching recompute one predicate from the current state,
-  without merging deltas that may arrive after a page restart.
+  without merging deltas that may arrive after a page restart. The web can unwatch
+  under a native cover and re-watch on return, releasing tmux sizing while hidden.
+  Input and focus must not bypass a native cover.
 - **Rejected:** a separate `lifecycle.covered { covered }` event alongside a partial lifecycle
-  update. Reconcile the earlier bridge table in the P4b design source before implementing it.
+  update; Swift-only cover state, which leaves the web watch owner unaware.
 
 ### Track expected token-item state without storing credentials in app preferences
 
-- **Decided:** 2026-10-24, P4a review (p142).
+- **Decided:** 2026-10-24.
 - **What:** a non-secret preference records whether a non-empty Keychain token map is
   expected. A missing expected item stays locked so the user can explicitly reset it;
-  Reset clears the marker while preserving saved host labels as not enrolled.
+  Reset clears the marker while preserving saved host labels as not enrolled. A 401
+  revokes only the exact token sent in the rejected request; while locked, a digest
+  suffices to identify it. Keychain work is serialized off the main thread and reuses
+  the successful unlock context until lock.
 - **Why:** Keychain can report an item as missing after a Face ID change, which must not
-  silently turn an auth recovery state into an ordinary un-enrolled state.
+  silently turn an auth recovery state into an ordinary un-enrolled state. A late 401
+  must not erase a newer credential for the same host.
 - **Rejected:** treating every missing item as an explicit reset (the recovery screen
-  becomes unreachable) or persisting any token data outside the one Keychain item.
-
-### P4a round-two review: gate focus, validate keys, and bind revocation to its token
-
-- **Decided:** 2026-10-24, implementation follow-up to review p148.
-- **What:** `FocusController` records focus requests while a native cover is up and
-  applies the latest request on uncover; queued terminal input is discarded while locked
-  or covered. `KeyMapper` omits Shift for names outside the daemon's shiftable set,
-  exhaustively checks mapped key codes and modifiers against `is_key_name`, and sends
-  Option plus printable non-alphanumeric ASCII as ESC-prefixed bytes (Option+Space is
-  `M-Space`). Keychain updates reuse the successful unlock's `LAContext` and all
-  Keychain operations run on a serial background queue; lock invalidates that context.
-  A 401 refusal carries the exact sent token and revokes only a matching stored token;
-  a refusal arriving while locked keeps only a token digest. Native media requests use
-  the cached `activeTab` bridge message rather than querying page state.
-- **Why:** review probes found that focus/input could bypass covers, Shift on Escape or
-  Backspace generated names rejected for the entire batch, and a late 401 could erase a
-  replacement credential. The one cached active-tab path keeps media and keyboard targets
-  consistent without a second WebKit crossing.
-- **Rejected:** restoring only the focus saved when the cover first appeared (it loses
-  requests made under the cover); accepting unvalidated named keys; deleting by host id
-  alone; and asking page JavaScript for its active tab a second time.
-
-### P3b round 2: the snapshot window, anchors, one shown rule
-- **Decided:** 2026-10-24, tech lead, after review p147.
-- **What:** the selection snapshot holds `[viewTop − 2,000, viewBottom]` rows with the 512 KiB budget counted up from the view's bottom, so a long-press works wherever the view is in a 5,000-row buffer (`renderer.rows(from, to)`). A history chunk is asked for with up to 8 rows already known (the oldest fetched, or xterm's first rows for the first chunk) and `anchor.ts` finds them in it, nearest to where they should be; the rows before them are the new ones. Only a later chunk that does not contain them restarts the view. `ScrollControl.scrolledChanged()` is the one place `scrolled` is reported and fetched rows are dropped on the way back to the newest line. The paste, copy and inserted-path concern is `Pastes` in `paste.ts`. The view resets on `shownTerminalTab` (selected and not covered by a native screen), the same rule its sends use.
-- **Why:** the window was anchored on the newest rows, so a view more than 2,000 rows up found nothing. One byte-row compare at a seam passed on blank or repeated rows and hid a shift; a run found nearest the expectation does not, and recovers a shift instead of discarding the history.
-- **Rejected:** the daemon's `historySize` for re-anchoring (it says the size, not where the known rows moved to, and the first chunk would still need xterm's rows); keeping two "shown" rules (a coast kept ticking under a native cover, every send dropped).
+  becomes unreachable), deleting a credential by host id alone, or persisting tokens
+  outside the one Keychain item.
 
 ### Guard the client subscription against unidentified tmux clients
 
@@ -3920,30 +2495,29 @@ client display are design (spawn p115), probed on tmux 3.4 and 3.7b
 
 ### Native uploads are named by the web, not guessed by native
 
-- **Decided:** 2026-10-24, tech lead, after the P4b review (p159). Bridge v2 had not shipped, so v2 changed in place.
-- **What:** `pickMedia { id, host }` and `readPasteboard { tab, id }` carry an id the web chose and the host to upload to; every `upload { id, progress, path?, error?, cancelled? }` event carries that id back, and the adapter routes events by id alone. A dismissed picker sends a terminal `cancelled` event. Native sends an upload's first event after its reply. Upload works with no tab open. Native keeps no tab for media, so `activeTab` serves keyboard batches only. This supersedes the `activeTab()` page callback in "Bridge cleanup" (already replaced by the cached `activeTab` message) and the cached-tab media targeting in "Native caches the web's active tab". A pasted image inserts its path into the tab pasted into (the user's intent is clear); a Files upload only offers "Insert path".
+- **Decided:** 2026-10-24, tech lead.
+- **What:** `pickMedia { id, host }` and `readPasteboard { tab, id }` carry an id the web chose and the host to upload to; every `upload { id, progress, path?, error?, cancelled? }` event carries that id back, and the adapter routes events by id alone. A dismissed picker sends a terminal `cancelled` event. Native sends an upload's first event after its reply. Upload works with no tab open. Native keeps no tab for media, so `activeTab` serves keyboard batches only. A pasted image inserts its path into the tab pasted into (the user's intent is clear); a Files upload only offers "Insert path".
 - **Why:** native chose the host and stream from its own cached state, so a pasted image could be claimed by an abandoned Files pick, and Upload did nothing with no tab or went to the active tab's host rather than Files'.
 - **Rejected:** a first-match by host (the bug); a host and optional tab on `pickMedia` with a version bump (the tab would only be echoed back, and the web already knows its target); native reporting `upload` events with `host` and `tab` for the web to match.
 
 ### Native draft conflicts: stored revision greater than the base
 
-- **Decided:** 2026-10-24, tech lead, after the P4b review (p159).
+- **Decided:** 2026-10-24, tech lead.
 - **What:** `DraftStore.put` returns `conflict` only when the stored revision is greater than `baseRevision`, as the browser does. The check runs in Swift, and client-architecture.md §5.6 says so.
 - **Why:** the web's base is the last revision it issued, so after one `failed` put the retry's base is ahead of the store. An equality check answered `conflict` and the reducer dropped the draft.
 - **Rejected:** moving the check to JS (the page cannot see the stored revision without another round trip).
 
 ### The app registers a stand-in `terminal` focus target
 
-- **Decided:** 2026-10-24, tech lead, after the P4b review (p159).
+- **Decided:** 2026-10-24, tech lead.
 - **What:** `FocusController.nativeTerminal()` returns a hidden element whose `focus()` and `blur()` announce themselves as DOM focus events (so owner tracking, dialog returns and the viewport's keyboard-drop rule work unchanged) and ask native for the resting mode. There is no separate native branch in `toggleKeyboard`.
 - **Why:** the keyboard toggle, leaving Terminal and returning from a dialog had one path in the browser and a special case in the app, which missed the dialog return.
 - **Rejected:** a `directInput === "native"` branch in the controller.
 
 ## The Mac front
 
-Decided 2026-10-24 by design (p171), within Jimmy's decisions above, revised after
-reviews p172 and p173, and simplified for Jimmy's answers (one account, a LaunchAgent,
-log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.md`.
+Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
+`.meridian/work/tether-mvp/mac-front-probes.md`.
 
 ### Publication and admission use one canonical-origin rule
 
@@ -3954,7 +2528,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   with `ServeConfig::canonical_origin(&target)` before any POST. A plan refused by
   this rule never writes; request admission applies the same rule to the current
   config.
-- **Why (review p184):** the previous publication-specific checks accepted configs
+- **Why :** the previous publication-specific checks accepted configs
   the canonical-origin rule later rejected (including a TCP forward and a handler at
   another port), so tether could publish a front that then refused every browser. One
   policy boundary prevents those checks from drifting apart.
@@ -3969,7 +2543,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   messages distinguish Funnel, a TCP forward on the HTTPS port, and a sibling handler
   at its real mount path. Never include proxy URLs in messages: a Mac proxy contains
   the path secret.
-- **Why (review p186):** returning only the offending target reference made a plan
+- **Why :** returning only the offending target reference made a plan
   report tether's newly invented `/_` handler instead of the app's real `/` handler,
   and hid the Funnel or TCP-forward condition that caused rejection.
 - **Rejected:** reconstructing the cause from the final message or logging an entire
@@ -4019,15 +2593,15 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   Jimmy logs in; the daemon takes it through `src/launchd.rs`, sets `FD_CLOEXEC`
   unconditionally, makes it non-blocking and hands it to tokio. `--publish` without it exits 78 with "no launchd socket
   `Listener`", since launchd's `ESRCH` means either "not a launchd job" or "no such
-  socket" (p175). The front is published on the MagicDNS name's port 443 only.
+  socket". The front is published on the MagicDNS name's port 443 only.
 - **Why:** the publication must not point at a port something else can bind while
   Jimmy uses it. If the daemon owned its listener, every crash, `kill -9`, jetsam kill
   or hub failure would free the port while Serve still pointed at it, and whatever
-  bound it would receive the iOS app's device token (review p172). launchd keeps the
+  bound it would receive the iOS app's device token. launchd keeps the
   port bound across all of those (probed). The iOS app adds a host by its MagicDNS
   name, so 443 is the port it uses.
 - **A socket launchd couldn't bind:** if a process holds the port when the agent
-  loads, launchd's bind fails silently and the job gets one unbound fd (probed, p177),
+  loads, launchd's bind fails silently and the job gets one unbound fd (probed),
   while Serve's entry from the last session points at that process. The daemon
   requires the socket at `127.0.0.1` with a non-zero port; otherwise it withdraws
   every tether-shaped handler (any port) from `Web["<name>:443"]`, trying for 2 s, and
@@ -4053,7 +2627,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   log above `debug`. A match strips the secret from the URI, so no later layer or log
   sees it. The check runs in the accept loop's per-request service, before the
   router: axum routes before `Router::layer` middleware runs, so a gate there would
-  see paths already routed as `/<secret>/…` (review p172).
+  see paths already routed as `/<secret>/…`.
 - **Why:** everything after the gate trusts headers that only Serve should be able to
   write. An empty 404 tells a local prober nothing about what listens.
 - **Rejected:** checking `Host` or the Tailscale headers first (they are forgeable,
@@ -4066,7 +2640,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   `X-Forwarded-Host` must equal it, both held in memory from the publication; before
   a publication, `503 identity_unavailable`.
 - **Why:** Serve passes a TCP target the browser's `Host` and sets `X-Forwarded-Host`
-  to the same value (probed by p170). The rule is a cheap filter like `serve.sock`'s
+  to the same value (probed). The rule is a cheap filter like `serve.sock`'s
   `localhost` check; the node lane still compares `X-Forwarded-Host` with the canonical
   origin. Holding it in memory keeps the native lane free of a LocalAPI read it
   doesn't otherwise need.
@@ -4087,9 +2661,9 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   path, rejected before for the e2e stack); resolving once at startup (a Tailscale
   restart would need a tether restart); the App Store lookup first (a process spawn on
   every reconnect on the common install); verifying who listens on LocalAPI's port
-  (an unprivileged process can't see root's sockets, p170); re-reading `ipnport`
+  (an unprivileged process can't see root's sockets); re-reading `ipnport`
   before every request, reconnecting on `401`/`403`, and exiting when the endpoint
-  the daemon published through changes (reviews p172, p173): they shortened another
+  the daemon published through changes (reviews): they shortened another
   account's hold on LocalAPI's old port, and a one-account Mac accepts the window
   ([auth.md](auth.md#threat-model)).
 
@@ -4111,34 +2685,26 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   serve target, so a Mac never shows the Linux `sudo tailscale serve` command. On a
   Mac `tether enroll` prints what the running daemon's `GET /auth/info` says over
   `local.sock`.
-- **Why (review p172):** a handler left under an old MagicDNS name would make the
+- **Why :** a handler left under an old MagicDNS name would make the
   serve target appear twice and refuse browsers; only the daemon knows its secret, so
   a separate computation in `tether enroll` couldn't apply the "named exactly once"
   rule.
 - **Rejected:** a file in the runtime directory recording the published origin for
   `tether enroll` (a second copy of state the daemon already serves).
 
-### tether never removes its Serve entry
+### The daemon never unpublishes; teardown removes its handlers
 
-- **What:** no exit path unpublishes. The next start replaces a stale handler; in
-  between Serve answers `502`. To stop tether, Jimmy runs `launchctl bootout` and then
-  `tailscale serve --https=443 off`, which removes tether's entry: tether refuses to
-  share it, so the whole entry is tether's. Stopping for good also removes the plist.
-  The one removal tether makes is the withdrawal below, at a start whose socket
-  launchd couldn't bind.
-- **Why:** unpublishing guarded the port from other accounts after a stop (reviews
-  p172, p173). On a one-account Mac, while Jimmy is logged out only trusted processes
-  run; after a deliberate stop, Tailscale's own command closes the window. A crash
-  needs nothing (launchd holds the port), and a logout needs only the next login's
-  start, which replaces the entry or withdraws it.
-- **Rejected:**
-  - Unpublishing on `SIGTERM`, with the publication task cancelled and joined first and
-    a 2 s compare-and-swap retry (p171–p173): a shutdown path, its race with a late
-    publish write, and a deadline, for no account that needs it.
-  - `tether unpublish [--port]` as the stop's second step: duplicates `tailscale serve
-    --https=443 off` for an entry that is tether's alone.
-- **Changed:** by "Teardown removes tether's Serve handlers" (2026-10-25): the daemon
-  still never removes its entry, and `tether teardown` does the whole stop.
+- **Decided:** 2026-10-24, design; teardown by tech lead, 2026-10-25.
+- **What:** the daemon never unpublishes on exit. The next start replaces a stale
+  handler; in between Serve answers `502`. If launchd could not bind the front, startup
+  withdraws the unsafe tether-shaped handlers. `tether teardown` stops the service,
+  removes only tether-matching Serve handlers and removes the service file.
+- **Why:** launchd holds the port across crashes. On a one-account Mac there is no
+  second login account to protect against after a stop, while teardown reverses setup
+  without removing other Serve entries.
+- **Rejected:** unpublishing on every daemon stop, with cancellation and a compare-and-
+  swap retry (extra shutdown state and a race with publication); asking Jimmy to clear
+  the whole HTTPS entry by hand; a separate unpublish command duplicating teardown.
 
 ## tether setup
 
@@ -4184,14 +2750,6 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   fix.
 - **Rejected:** restarting only when the service file changes.
 
-### Automatic setup uses only `~/.cargo/bin/tether`
-
-- **Decided:** 2026-10-25, lead (setup review findings).
-- **What:** background setup installs a service that runs only `~/.cargo/bin/tether`.
-- **Why:** both embedded service definitions use that fixed path and setup can verify
-  the invoked binary against it.
-- **Rejected:** templating Linux `ExecStart`; deferred under "Not in setup".
-
 ### systemd is the only automatic Linux service manager
 
 - **Decided:** 2026-10-25, lead (setup review findings).
@@ -4200,51 +2758,14 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Why:** no target host uses another service manager.
 - **Rejected:** adding OpenRC and runit support.
 
-### Mac background setup refuses a second login account
+### Setup prints privileged commands and copies links with OSC 52
 
-- **Decided:** 2026-10-25, lead (setup review findings).
-- **What:** background setup refuses to install on a Mac with another login account.
-- **Why:** the loopback front's local-process defences assume Jimmy is the Mac's only
-  user account.
-- **Rejected:** warning and proceeding with the second account present.
-
-### `/auth/info` reports `browserPending`
-
-- **Decided:** 2026-10-25, lead (setup review findings).
-- **What:** `/auth/info` has an explicit `browserPending` field while Mac publication
-  waits or retries; it is false on Linux.
-- **Why:** setup must distinguish a retrying publication from a final refusal while
-  `browserRefused` retains the latest error.
-- **Rejected:** inferring pending state from the error text.
-
-### Teardown removes tether's Serve handlers
-
-- **Decided:** 2026-10-25, lead (setup review findings).
-- **What:** `tether teardown` stops the service, withdraws only matcher-recognized
-  tether handlers, and removes the service file. The daemon still never unpublishes
-  on exit.
-- **Why:** teardown reverses setup while preserving other Serve entries and handlers.
-- **Rejected:** removing the publication on every daemon shutdown, or asking Jimmy to
-  clear the whole HTTPS entry by hand.
-
-### Setup's prompts, clipboard and QR
-
-- **Decided:** 2026-10-24, lead, on the design's open questions.
-- **Status:** The QR and code-in-link choices below supersede the QR decision here.
-- **What:**
-  - Setup prints each privileged command before it runs it, with no `[y/N]`; `sudo`'s
-    own prompt is the consent.
-  - It copies the link with OSC 52 when stdout is a terminal.
-  - The QR encodes the link alone.
-- **Why:**
-  - Jimmy asked to run setup and "copy the link". Every run of setup is a deliberate
-    act, so a confirmation adds a step and blocks no mistake.
-  - OSC 52 costs one escape sequence and reaches the clipboard over SSH.
-  - A code in the link needs web and iOS work, and leaves the code in browser history.
-- **Rejected:**
-  - A `[y/N]` before `sudo`.
-  - Shelling out to `pbcopy`, `wl-copy` or `xclip`: over SSH they copy on the server.
-  - A code in the QR.
+- **Decided:** 2026-10-24, tech lead.
+- **What:** setup prints each privileged command before running it; `sudo` supplies its
+  own prompt. When stdout is a terminal, setup copies the link with OSC 52.
+- **Why:** setup is a deliberate act, and OSC 52 can reach the clipboard over SSH.
+- **Rejected:** an additional `[y/N]` before `sudo`; `pbcopy`, `wl-copy` or `xclip`,
+  which over SSH copy on the server rather than the client.
 
 ### The app reports no keyboard inset, because its view moves
 
@@ -4281,27 +2802,14 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   for a one-use code that expires after 10 minutes.
 - **Rejected:**
   - A query string, which would reach the daemon and could be forwarded as a referrer.
-  - A deep link into the iOS app, which would not cover Safari and would require the
-    app to be installed.
+  - Making the setup link itself an iOS-only deep link, which would not cover Safari
+    and would require the app to be installed.
   - Keeping the plain link and separate code as the only browser path, which still
     requires entering the code on the phone and leaves the screen with multiple links.
 
-### Setup keeps platform policy behind one boundary
-
-- **Decided:** 2026-10-25, lead (setup review round 2).
-- **What:** `systemd.rs` and `launch_agent.rs` each own their setup and teardown host
-  state and expose one shared surface through the `platform` alias. Checks return a
-  validated tailnet value, and both setup modes share one success-report tail. Install
-  planning uses a distinct action type per platform, with the previous bytes carried by
-  a differing-file state.
-- **Why:** the setup sequence should express the shared workflow, not repeat it behind
-  paired `cfg` branches or recover validated facts by matching their raw form again.
-- **Rejected:** one cross-platform action enum with impossible variants and
-  `unreachable!` executor arms; separate report tails; wrappers used only by tests.
-
 ### Setup probes the daemon lock before changing host state
 
-- **Decided:** 2026-10-25, lead (setup review round 3).
+- **Decided:** 2026-10-25, tech lead.
 - **What:** the non-blocking probe uses the daemon's existing runtime flock. Background
   setup refuses before grants or installation when that lock belongs to a terminal run;
   an active service may be restarted. Teardown reports a terminal run that remains
@@ -4346,7 +2854,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 ### Setup's `401` names Tailscale's full-name check
 
-- **Decided:** 2026-10-25, lead (first Linux setup run on pop-os, review p210).
+- **Decided:** 2026-10-25, tech lead.
 - **What:** on a `401` from the Serve write, setup explains that tailscaled 1.98.9+
   checks `sudo --other-user=<full name> --list tailscale` with the account's full name
   (tailscale/tailscale#21204), suggests `sudo chfn -f $USER $USER` when the names
@@ -4364,40 +2872,35 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 ### Session listings omit client-attachment state
 
 - **Decided:** 2026-10-25, Jimmy.
-- **What:** Remove `attachedElsewhere` / `attached_elsewhere` from session listings and
-  stop querying tmux clients just to compute that value. Do not bump the wire protocol:
-  protocol 1 never shipped (v0.0.1 has no web, iOS or protocol code), and a v1 web peer
-  reads the missing field as false, so it only omits the note.
-- **Why:** Jimmy said the note is not useful; acted-last sizing makes a switch between
-  his laptop terminal and tether's resize harmless, and removing the value saves one
-  field per listed session and the tmux query that computed it.
-- **Rejected:** keeping the field for a possible future use (listing and wire cost with
-  no current reader); bumping to 2 while keeping minimum 1 (the daemon would claim a
-  range it does not shape messages for, the incompatible fixture stopped being
-  incompatible, and the Swift app version was left behind); setting minimum 2 (locks
-  out dev builds over a note); sending the field to v1 peers (per-version message
-  shaping for a misleading `false`).
+- **What:** session listings omit `attachedElsewhere` and do not query tmux clients to
+  compute it.
+- **Why:** Jimmy said the note is not useful; acted-last sizing makes switching between
+  laptop and tether harmless. Removing it saves a field and the tmux query per listing.
+  Removing the field alone needed no protocol bump: version 1 had not shipped, and a
+  v1 web peer treated the missing value as false. Protocol 2 was later required by
+  session watches, not by this field removal.
+- **Rejected:** retaining a field and query with no current reader; version-specific
+  shaping solely for an attachment note.
 
 ## Tabs follow a session
 
 ### One tab per session, like `tmux attach`
 
 - **Decided:** 2026-10-25, Jimmy, from first real use.
-- **What:** a tether tab is a tmux session. It shows the session's current window and
-  follows it when any client changes it (the laptop's prefix-n, a script, a window
-  exiting, tether's window switcher). Home, the picker and the switcher list sessions
-  only. A small window switcher, with the session's windows when it has two or more,
-  changes and creates windows. This replaces one tab per window, its window rows and
-  accordions (browser-behaviors.md, plan.md, daemon-core.md).
+- **What:** a tether terminal tab is a tmux session. It shows the session's current
+  window and follows it when any client changes it. Session lists show sessions, not
+  window rows; multi-window sessions offer window switching. The route to create a
+  window in a one-window session remains open.
 - **Why:** Jimmy, on Home listing "0: python / open / + New window" under every session:
   "default just list the session … by default it should just load the whole thing
-  (especially if there is only 1 window)".
-- **Rejected:** opening the session's active window as a fixed tab (today's model, one
-  tap shorter, but the tab stops matching what the laptop shows after a prefix-n).
+  (especially if there is only 1 window)". Jimmy does not split panes, so the tab shows
+  the current window's active pane.
+- **Rejected:** opening the session's active window as a fixed window tab: it would stop
+  matching the laptop's view after a prefix-n.
 
 ### The daemon follows the window; the client never re-watches
 
-- **Decided:** 2026-10-25, design (p222).
+- **Decided:** 2026-10-25, design.
 - **What:** a watch names a session. The hub keeps one view per watched session, owned
   by the control client attached to it; that client's `%session-window-changed` for its
   own session sets the view's current window, and a Locate on the owner
@@ -4409,6 +2912,8 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   asking tmux, which removes the moved-window rebinding the window model needed. The
   probe ([research/probe-session-follow.md](research/probe-session-follow.md)) showed
   the notification on 3.4 and 3.7b for every trigger, ahead of the new window's layout.
+  The owner's own Locate also orders its answer with its notifications; another client's
+  answer could miss an earlier change and bind a stale pane.
 - **Rejected:** the daemon telling the client and the client re-watching the new window
   (an extra round trip on every switch, on the connections where it hurts most); a
   session-scoped subscription carrying the acts and cwd in place of the per-window one
@@ -4416,113 +2921,40 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   a session subscription carrying only the current window id is kept, as the backstop
   for `swap-window`); grouped sessions so tether's window choice doesn't move the laptop
   (tether would create sessions in Jimmy's tmux, against "a window onto tmux, never its
-  owner").
-
-### A claim names a window and moves only by tether's own act
-
-- **Decided:** 2026-10-25, design (p222).
-- **What:** a view's claim is (watch, window), and its window is always the current
-  window or the one a `selectWindow` in flight is selecting (`selecting`). tmux
-  announces the switch after the group's reply and the owner's replies are ordered with
-  its notifications, so `selecting` clears at the group's failure or at the owner's
-  first `CurrentWindow` or Locate answer after the reply. `selectWindow` selects and
-  then takes `latest` with its vote, in one group; `newWindow` with a watch claims the created window. Any
-  change of current window (`CurrentWindow` from the notification or the current-window
-  subscription, a Locate answer naming another window) drops the claim unless the new
-  window is the claim's own; the old window's vote clears and the new window keeps its
-  size until the tab acts. Input aimed at a window that is no longer current claims
-  nothing; while `selecting` is set, input aimed at the window being left still goes
-  there but leaves the claim on the selected window, and `Acted` yields only the
-  claim's own window. A failed select drops the claim, and a select's reply triggers a
-  Locate, which ends `selecting` for a select of the window already current (review
-  p233).
-- **Why:** it is acted-last applied literally. The probe showed a control client's
-  `select-window` makes no client `latest`, so without the take the
-  selected window would keep the laptop's size; select then take reflows it once,
-  where a vote ahead of the select reflowed it twice (probe §16). A laptop prefix-n
-  then leaves the laptop's windows at the laptop's size.
-- **Review (p226):** an earlier draft only stopped counting a claim whose window was
-  no longer current, so a laptop's prefix-n then prefix-p brought the phone's vote back
-  onto a window the laptop had just switched to; and reconcile, still seeing the old
-  current window, cleared `selectWindow`'s own vote before tmux announced the switch.
-  Dropping the claim and holding `selecting` fix both.
-- **Rejected:** a session-wide claim that carries the phone's size to whatever window
-  becomes current (the laptop's prefix-n would land on a phone-sized window until its
-  next key); comparing tmux's `client_activity` with the claim time to guess who
-  switched (second resolution, two clocks, and a rule nobody could predict).
-- **Accepted cost:** with only the phone attached, typing `exit` shows the next window
-  at its old size, with the band, until the next keystroke claims it.
-- **Superseded in part** by "Claim targets and shown windows have different
-  lifetimes": a claim no longer stores a window, and a different `CurrentWindow`
-  during an unresolved selection waits for Locate instead of ending `selecting`. The
-  acted-last rule and the take after the select stand.
+  owner"); using failure of `display-message` to detect a missing target (tmux 3.4
+  succeeds with empty fields).
 
 ### Input, paste and inserted paths name the window the tab showed
 
-- **Decided:** 2026-10-25, design (p222).
+- **Decided:** 2026-10-25, design.
 - **What:** `input` and `paste` carry `window`, the window of the tab's latest
   `watching`, and the daemon sends to `-t @W`. Image paste and Files' insert capture
   the window with the tab.
 - **Why:** on a slow link the laptop can switch windows between a keystroke and its
   arrival; the key should land where the user was looking. A path inserted after an
   upload lands in the window it was pasted into, not whatever the session shows by
-  then; a gone window fails visibly, as a gone tab did.
+  then; a gone window fails visibly, as a gone tab did. Inserted paths with C0 control
+  characters or DEL are refused: raw CR or LF would submit the terminal input.
 - **Rejected:** targeting the session (`-t '$S:'`, tmux attach's own semantics, which
   sends a line typed for one window into another); refusing input whose window is no
   longer current (drops keys typed in the instant after a switch made elsewhere).
 
-### The window switcher: the phone's session sheet, the desktop's active pill
+### Session watches require protocol 2
 
-- **Decided:** 2026-10-25, design (p222).
-- **What:** on the phone, the session switcher sheet gains a "Windows in <session>"
-  block for the active tab's session: its windows when it has two or more, then
-  "+ New window". On the desktop, the active tab's pill holds a windows button that
-  opens a menu of the same rows and "New window". tmux's own prefix keys don't work
-  from tether on any platform, because `send-keys` writes to the pane past tmux's key
-  tables, so the menu is the desktop's switcher (review p227). The windows button shows on every
-  session, one-window sessions included: it is the desktop's only way to create a window,
-  and its window rows still appear only with two or more. Choosing a window runs
-  `select-window` on the session, so a laptop attached to it moves with it, as prefix-n
-  does. Home loses "+ New window"; the label is the session name, then the current
-  window's name even with one window (with tmux's automatic naming it names the running
-  program), set apart by spacing, never a dot or separator, the window truncating first.
-  Jimmy accepted the laptop moving, the button on one-window sessions and the window name
-  in every label on 2026-10-25.
-- **Why:** the chip already opens the sheet, so switching windows costs two taps, as
-  switching tabs does, with no new chrome on the terminal. A strip that appears with a
-  second window would change the terminal's height, and so resize tmux, whenever the
-  window count crossed one. Creating a window is something done from inside a session.
-- **Rejected:** a window strip above the phone terminal (a row of terminal lost, and a
-  tmux resize when it appears); a swipe on the dock to change windows (hidden); window
-  rows on Home that open a session at a window (the accordions Jimmy asked to remove);
-  matching window names in Home's search (a match that opens a different window than
-  the one searched for); "+ New window" per Home session row (a row action on a list
-  Jimmy wants plain); grouped sessions per tab so tether can show a window
-  without moving the laptop (tether creating sessions in Jimmy's tmux); hiding the
-  desktop windows button on one-window sessions (no way left to create a window); the
-  window name only when the session has two or more windows.
-
-### Protocol 2, bridge 3, and the old saved workspace is dropped
-
-- **Decided:** 2026-10-25, design (p222).
-- **What:** `PROTOCOL_VERSION` and `MIN_PROTOCOL` become 2, and so does Swift's
-  `DaemonProtocol.version`, which enrolment and the `/fs` scheme handler check; bridge
-  version 3 changes `TabKey` to name a session; a saved workspace of version 1 is
-  discarded whole on both platforms, with the drafts keyed by its window tabs, and its
-  `expanded` field is gone.
-- **Why:** a version-1 peer would send window watches the new daemon can't read: the
-  bump rule's "an older peer would act wrongly". The web is bundled with the app and
-  served by the daemon, so peers move together; a stale tab gets `incompatible` instead
-  of a 4003 loop. Migrating window tabs needs the session of each window, which the
-  saved workspace never recorded, and the cost of dropping is reopening a few sessions
-  once.
-- **Rejected:** a daemon range of 1..=2 with per-version watch handling (both models
-  kept alive); resolving old window tabs against the first listing (code that runs once,
-  for one user).
+- **Decided:** 2026-10-25, design.
+- **What:** session watches require protocol 2; the daemon rejects protocol-1 peers.
+  The window-tab workspace and its drafts are discarded rather than guessed into the
+  session model.
+- **Why:** a version-1 peer sends window watches the daemon cannot read. A stale peer
+  needs an incompatibility response rather than a protocol-violation reconnect loop.
+  The old workspace did not record each window's session, so migration would require
+  looking it up; reopening a few sessions is the cost of dropping it.
+- **Rejected:** keeping both wire models with per-version watch handling; resolving
+  old window tabs against a listing for a one-time migration.
 
 ### `%session-changed` closes the control client
 
-- **Decided:** 2026-10-25, design (p222).
+- **Decided:** 2026-10-25, design.
 - **What:** when tmux moves a control client to another session (its own destroyed
   under `detach-on-destroy off`), the hub closes it and checks the session, which
   reports `sessionClosed`. Only a `%session-changed` naming another session counts:
@@ -4547,7 +2979,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 ### The field heads Files, and Go opens
 
-- **Decided:** 2026-10-25, design (p222).
+- **Decided:** 2026-10-25, design.
 - **What:** one field at the top of Files on every platform, showing the current path
   at rest. Editing starts from the current path plus `/`. A row tap, a `/` after a name
   that isn't a folder, Tab, or → at the end accepts the prediction into the field
@@ -4557,7 +2989,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Keyboard:** the ordinary text keyboard, not `inputmode="url"`: the iPhone's URL
   keyboard has `/` on its first layer but no space bar, and folder names can hold
   spaces. With the empty-segment rule, Go right after an accept opens the accepted
-  folder (review p226, p227 found Go opening its first subfolder).
+  folder (a review found Go opening its first subfolder).
 - **Why:** at the top the field doubles as the path context Files already had, and the
   best match sits right under it, above the keyboard. A phone keyboard has no Tab, so
   the thumb's accept is the row tap, and `/` (which the user types anyway) accepts a
@@ -4571,7 +3003,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 ### One listing per folder, never one per keystroke
 
-- **Decided:** 2026-10-25, design (p222).
+- **Decided:** 2026-10-25, design.
 - **What:** completion filters listings the client holds. Entering a folder fetches its
   listing once, after typing pauses 250 ms, only for the folder the field settles on;
   listings are cached per host for the Files session (32 folders, shared with
@@ -4586,21 +3018,25 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 ### Add folder becomes the path field
 
-- **Decided:** 2026-10-25, design (p222); confirmed by Jimmy the same day.
+- **Decided:** 2026-10-25, Jimmy and design.
 - **What:** the path field completes under `$HOME` outside the roots from `/fs/dirs`,
   marking those rows "not added"; opening such a folder lists its subfolders under
   "Not one of your folders" with "Add this folder", keeping the dialog's refusals
   ($HOME itself, already added, outside `$HOME`, read-only `config.toml`). "Add folder…"
   starts the field at `~/`. The Add folder dialog and its one-folder-at-a-time browser
-  are deleted. This changes "Add folder in Files" (2026-10-23).
-- **Why:** the dialog was a second folder browser with its own field-less navigation;
+  are deleted.
+- **Why:** Jimmy wanted a fresh install with no root to be usable without editing
+  `config.toml` on the host. The dialog was a second folder browser with its own
+  field-less navigation;
   the path field now does what it did, faster. "Add folder in Files" rejected a path
   field because there was no way to see what exists; completion is that way.
-- **Rejected:** keeping the dialog beside the field (two ways to browse `$HOME`).
+- **Rejected:** keeping the dialog beside the field (two ways to browse `$HOME`);
+  browsing freely above `$HOME` (the daemon confines root selection); putting roots
+  in Settings (they are Files state); swipe-to-remove without confirmation.
 
 ### `swap-window` is caught by a current-window subscription
 
-- **Decided:** 2026-10-25, design (p222), from reviews p226 and p228.
+- **Decided:** 2026-10-25, design.
 - **What:** each owner with a view subscribes to its session's current window id
   (`refresh-client -B 'c::#{window_id}'`); a value naming another window becomes
   `CurrentWindow`, as the notification does.
@@ -4613,7 +3049,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   client types anywhere and can't say which window a client is on ("The other client's
   act is seen through the window subscription"); this value is a window id, which
   changes only when the current window does, and carries no clients. Probed on 3.4 and
-  3.7b (p231, p232): a line 0.2–0.7 s after each swap that changes the current window,
+  3.7b : a line 0.2–0.7 s after each swap that changes the current window,
   `-d` included, and none for typing, idling, a cwd change, a swap of two other windows
   or a window linked twice.
 - **Rejected:** `#{window_active}` in each `w<W>` value (an earlier fix: a window
@@ -4624,7 +3060,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 ### Scrollback names its pane
 
-- **Decided:** 2026-10-25, design (p222), from review p226.
+- **Decided:** 2026-10-25, design.
 - **What:** `historyChunk` carries `pane`; the client drops a chunk for any pane but its
   latest `watching.pane` and restarts its history cache when the pane changes.
 - **Why:** a window change made elsewhere swaps the pane under a tab mid-scroll; without
@@ -4634,16 +3070,12 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 ### tether takes tmux's `latest` with a same-session `switch-client`
 
-- **Decided:** 2026-10-25, Jimmy (typing, pasting or Fit in tether takes the window to
-  tether's size even when the laptop is smaller; laptop typing takes it back), design
-  (p229). Probes: [probe-latest-client.md](research/probe-latest-client.md) (p225, 3.4,
-  3.7b, 3.8) and [probe-session-follow.md](research/probe-session-follow.md) §9–14
-  (p231, 3.4 and 3.7b).
+- **Decided:** 2026-10-25, Jimmy and design. Evidence: [probe-latest-client.md](research/probe-latest-client.md), [probe-session-follow.md](research/probe-session-follow.md).
 - **What:** when a take is due, the owner **takes** `latest` before its vote: when it
   starts voting a window (a new claim, a claim after a yield, a claim on a window just
   made current, the first vote on a respawned client), when the window's size has moved
   off a standing vote since tmux last showed it at the vote (a laptop act the
-  subscription didn't report, review p233), and on every Fit. A take that leaves the
+  subscription didn't report, a review), and on every Fit. A take that leaves the
   window off the vote isn't repeated until the vote is cast again or Fit. The take is `switch-client -c '<client>' -t '$S' ;
   refresh-client -C '@W:CxR'`, its own name (from the startup line) and its own
   session, then the vote. `selectWindow`'s group is the select, then the take. A claiming
@@ -4651,7 +3083,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   is unchanged: another client's act clears the vote, and tmux has already made that
   client `latest` (daemon-core §3.6).
 - **Why:** under `window-size latest` a vote only caps, so the phone could never be
-  larger than the laptop's terminal: p216 reproduced a 274×53 browser held at the
+  larger than the laptop's terminal: a probe reproduced a 274×53 browser held at the
   laptop's 80×23 after typing. `server_client_set_session` sets `latest` for the
   session's current window on every `switch-client`, the session it is already on
   included; on 3.4 it does so after its own recalculation, so the vote after the
@@ -4668,7 +3100,7 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   - A take with every keystroke: each take runs the `client-session-changed` hook and
     sends a line to every other control client; the window's size says when tmux has
     stopped sizing by the vote.
-  - A take only when no vote stands (the first draft, review p233): a laptop key in the
+  - A take only when no vote stands (the first draft, a review): a laptop key in the
     same second as its last reported act makes it `latest` unreported, and typing on
     the phone would then never take the window back.
   - The switch alone, without the vote after it: 3.4 doesn't recalculate.
@@ -4688,27 +3120,27 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 ### The band shows whenever the window isn't at this screen's size
 
 - **Decided:** 2026-10-25, Jimmy ("Sized for another terminal" + Fit whenever tmux's
-  size differs from tether's, nothing when tether holds it), design (p229).
-- **What:** `ShownWindow` carries the window's `size`, from Locate and from each
-  `%layout-change`'s root, and `watching` is re-sent when it changes. The band shows
-  after the window's size has differed from the size the tab sent, in either
-  direction, for longer than the wait: one second or the last ping round trip plus
-  half a second, whichever is longer, restarted at each claiming send; Fit re-sends the size and takes `latest`. A smaller window still
-  sits in the top-left corner.
-- **Why:** with the take, a window this screen holds is exactly its size, so a
-  difference means another terminal holds it, whichever is larger. The p216 probe's
-  window was smaller than the browser, the case the old rule (band only when larger)
-  never covered.
-- **Rejected:** a `held` flag from the daemon (a second fact that can disagree with the
-  size on screen, which is what the band is about); comparing the pane's size (a split
-  pane is always smaller than its window); showing the band at once (it would flash on
-  every claim while the resize is on its way); a fixed one-second wait (review p233: a
-  round trip on a spotty link often takes longer, so every open and rotation would
-  flash it).
+  size differs from tether's, nothing when tether holds it), and design.
+- **What:** draw the pane at tmux's size and the chosen font, aligned left; wider
+  content is clipped, and a smaller window sits at top left. The band appears after
+  the window's size differs in either direction for longer than one second or the last
+  ping round trip plus half a second, whichever is longer. A claiming send restarts the
+  wait; Fit sends this screen's size and takes `latest`. A larger pane uses xterm's DOM
+  renderer; `watching` reports the window size.
+- **Why:** another terminal's window is for glancing, with Fit one tap away. Once
+  tether holds a window, the sizes match, so a mismatch identifies the situation
+  without another daemon flag. Waiting avoids a flash while a claim is in flight.
+- **Rejected:** scaling the font (a wide laptop terminal is unreadably small on a
+  phone and font changes feed the sizer); CSS scaling (blur and incorrect cell
+  mapping); horizontal panning (reserved for the system back gesture); WebGL for an
+  oversized pane (a 250×70 canvas at 3× reaches roughly 17 million device pixels,
+  past WebKit's canvas limit); a daemon `held` flag (a second fact that could disagree
+  with the size); comparing pane size (a split pane is always smaller); showing the
+  band immediately or after a fixed second (a slow round trip makes it flash).
 
 ### Late completion answers are kept; Back ends a path edit
 
-- **Decided:** 2026-10-25, design (p230 build, review p234).
+- **Decided:** 2026-10-25, design.
 - **What:** an answer for a folder the path field has left is never shown but is kept
   in the cache, not dropped. Editing the path is a `files/find` router overlay, so Back
   ends the edit before it leaves the folder. The first page a completion fetch gets is
@@ -4724,29 +3156,30 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 
 ### Claim targets and shown windows have different lifetimes
 
-- **Decided:** 2026-10-25, implementation review and runtime verification (p237,
-  p242, p243, p246; lead fixes).
+- **Decided:** 2026-10-25, tech lead.
 - **What:** a session view keeps the last coherent shown window/pane until its
   owner's Locate answers. Its claim target is the pending selection, otherwise
   the latest reported window once the view has bound, otherwise the shown window.
   Before first binding, a claim waits for Locate. Claims hold a watch and take
   intent, not another mutable copy of the window ID. The owner's tmux subscription
   state owns each window's cwd; `watching` reads the shown window's path from it.
+  A select is followed by taking `latest` and the vote in the same group; a change of
+  window by another client drops the old claim rather than carrying it to the new window.
 - **Why:** independently assigning claim windows in watch, resize and notification
   handlers left claims on windows the tab had already left. Updating only the
   shown window ID exposed new IDs with old names, panes and working directories.
-  Two notifications before the first Locate also dropped the initial claim.
+  Two notifications before the first Locate also dropped the initial claim. A session-
+  wide claim would carry the phone's size onto a window the laptop switched to;
+  selecting before taking and voting avoids two reflows.
 - **Rejected:** patching each handler separately (the same invariant still had
   multiple owners); making a view unbound during every switch (rejects input for
   the Locate round trip and discards a still-useful stream); retaining a per-view
-  cwd (belongs to a window, not to the session).
-- **Supersedes in part** "A claim names a window and moves only by tether's own act":
-  its stored claim window, and `selecting` ending at the first `CurrentWindow`
-  whatever window it names. Its acted-last rule and the take after the select stand.
+  cwd (belongs to a window, not to the session); a session-wide claim; comparing
+  `client_activity` to claim time (one-second resolution and two clocks).
 
 ### Report the first current-window subscription value
 
-- **Decided:** 2026-10-25, implementation review p246 and lead verification.
+- **Decided:** 2026-10-25, tech lead.
 - **What:** the first `c::#{window_id}` value emits `CurrentWindow`, just like later
   changed values. The hub ignores an observation matching its shown window when
   no transition is pending.
@@ -4755,14 +3188,6 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   merely confirms the shown window.
 - **Rejected:** a silent initial baseline (loses a real change); polling to repair
   it (the subscription already reports the needed fact).
-
-### New session-follow checks are temporary verification
-
-- **Decided:** 2026-10-25, Jimmy: “Temporary verification only”.
-- **What:** exercise new claim races, session/bridge contracts and window-switch
-  behavior with disposable checks; retain the evidence, not new regression cases.
-  Existing tests are migrated to the changed behavior.
-- **Rejected:** retaining a new focused regression suite without Jimmy's approval.
 
 ### The keyboard pan keeps the terminal bottom visible unless that would hide the cursor
 
@@ -4790,20 +3215,15 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   toggle redraws every TUI over a spotty link and resizes the laptop's view); cursor-only
   anchoring (hides harness status lines); bottom-only anchoring with no cursor guard (can
   push a cursor near the top off-screen).
-- **Supersedes:** the cursor-only pan anchor in "The keyboard pan belongs to the renderer
-  and follows the cursor" and "The suggestion strip pans the terminal like the keyboard
-  and never resizes tmux" above.
 
 ### The terminal long-press selects at once; arrows are keys; a tap near the cursor opens the keyboard
 
-- **Decided:** 2026-10-26, Jimmy, with the tech lead's call on the one open choice.
-  Round 3: "selection - yes" (drop the pad, long-press-drag selects, ← → in the key row);
-  and on keyboard-up typing, "if i clicked somewhere where I wanted to enter text, the
-  keyboard should open on its own". Round 4 (correction): "holding finger down and dragging
-  turns into the arrow pad IF YOU MOVE, but if you don't move i think it should select the
-  text, and then u can drag it with the things to the side (like termius)". Round 5:
-  "unless you think it would be better ur way to just remove the drag thing", settled by
-  removing it.
+- **Decided:** 2026-10-26, Jimmy, with the tech lead's call to remove the arrow pad.
+  Jimmy: "selection - yes"; "if i clicked somewhere where I wanted to enter text, the
+  keyboard should open on its own"; "holding finger down and dragging turns into the
+  arrow pad IF YOU MOVE, but if you don't move i think it should select the text, and
+  then u can drag it with the things to the side (like termius)"; "unless you think it
+  would be better ur way to just remove the drag thing".
 - **What:**
   - **No arrow pad.** The long-press highlights the word under the finger the moment it
     fires (haptic as before). Dragging while still held moves the selection's far end to
@@ -4827,15 +3247,16 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
     events, so WebKit's own long-press cannot take the touch and send `pointercancel`.
 - **Why:** the pad drew nothing, so a press meant to select looked like a dead control
   once the finger moved past 16 px; hold-to-select with a visible highlight is what iOS and
-  Termius do, and arrows as keys cost nothing in the terminal's gesture space. Typing
+  Termius do, and arrows as keys cost nothing in the terminal's gesture space. Jimmy had also
+  described selection as "long press -> release -> highlight word -> can drag it further". Typing
   where the cursor is should not need a trip to the toggle.
-- **Rejected:** keeping the pad and adding visuals (a second mode under one gesture, and
-  the jitter between select and pad stays); a line-field-aware opening when the line field
-  holds the keyboard (a tap near the cursor changes nothing then, as the keyboard is up).
-- **Supersedes:** "The key row's keys, and arrows by long-press" (the arrow pad, and "←
-  and → go"); "Two keyboard openers, one closer, with Termius's focus cues" ("terminal taps
-  open and close nothing"); and "Touch scroll is JS momentum over xterm and a DOM history
-  view" ("a long-press hold with a drag is the arrow pad").
+- **Rejected:** using only the keyboard toggle as an opener (Jimmy earlier wanted
+  "like termius" and "there should only be 1 place to click to open and close the
+  keyboard"); leaving ← and → off the row (Jimmy earlier said "i don't think the
+  arrow buttons should be needed" and recall was "probably mostly recalling commands");
+  using the spacebar trackpad for terminal arrows ("kinda works, but not that well");
+  keeping the pad and adding visuals (a second mode under one gesture, and
+  the jitter between select and pad stays).
 
 ## Client redesign
 
@@ -4854,8 +3275,6 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Rejected:** a settings-style Home without server cards; Home as a full-height detent
   of the session sheet; putting Settings directly on Home; an automatic jump for one
   server; retaining a Home tab strip alongside the open-tab rows.
-- **Supersedes in part:** “Home, picker and Settings details” and the Sessions/Files
-  Home navigation in “Browser/mobile client direction and portable design record”.
 
 ### Sessions and tabs share the phone sheet; desktop uses a popover
 
@@ -4874,9 +3293,6 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Rejected:** the tall sheet with tabs at the top and × on each; closing the sheet on
   every tab switch; a phone terminal tab strip with its own +; an attach-only desktop
   picker and a separate Files rail.
-- **Supersedes in part:** “The tab chip opens one session switcher”, including its
-  attach-only desktop picker and switch-and-dismiss behavior. The brief's earlier
-  terminal tab-strip proposal was reversed in round 6 before it became a spec.
 
 ### Terminal tabs continue to follow the current session window
 
@@ -4884,15 +3300,15 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **What:** a terminal tab remains a tmux session, opening on its current window and
   following it. Only sessions with multiple windows offer a window-switching control;
   on the phone it is within the sessions sheet. The exact control and the route for
-  creating a window in a one-window session remain open.
+  creating a window in a one-window session remain open. Selecting a window changes
+  the shared tmux session, so an attached laptop follows it; Jimmy accepted that.
 - **Why:** Jimmy uses windows infrequently and agreed that the current window makes more
   sense than selecting the first; the tab continues to match the session as other
-  clients change it.
+  clients change it. tmux prefix keys do not switch windows from tether: `send-keys`
+  writes to the pane past tmux's key tables.
 - **Rejected:** making each tab a fixed tmux window; selecting the first window on open;
-  a window switcher visible for every one-window session.
-- **Supersedes in part:** “The window switcher: the phone's session sheet, the desktop's
-  active pill”, specifically its always-available one-window control. It confirms “One
-  tab per session, like `tmux attach`”, rather than reversing that decision.
+  a window switcher visible for every one-window session; a separate phone window
+  strip, which would lose a terminal row and resize tmux as window count changes.
 
 ### Multiple Files tabs keep independent places
 
@@ -4906,7 +3322,6 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   without losing a folder or preview when switching.
 - **Rejected:** one Files destination shared by every tab; the earlier proposal of one
   Files tab per server; opening at the active terminal's cwd by default.
-- **Supersedes in part:** “Files details”, where the router kept a single Files place.
 
 ### A parent row and path field navigate Files
 
@@ -4921,6 +3336,8 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Decided:** 2026-10-27, Jimmy (“mermaid is important”).
 - **What:** render Mermaid in Markdown in this redesign rather than waiting for v2.
   Load it lazily, use strict mode, and sanitize the rendered content with DOMPurify.
+  Markdown uses an allowlist; clicks in a document are cancelled and links and image
+  maps are passed to the link handler, so a rendered `<area>` cannot navigate the app.
 - **Why:** diagrams are part of the documents Jimmy needs to read; untrusted rendered
   content must remain sanitized.
 - **Rejected:** deferring diagrams with the rest of repo-viewer parity; rendering
@@ -4953,9 +3370,9 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   an available compose box and no empty band. He accepted Safari's system form bar.
 - **Rejected:** a tab strip on the terminal; a session pill while typing; hiding or
   shrinking away the idle compose box; placing the key row above the box; reserving a
-  blank band beside the keyboard or home indicator.
-- **Supersedes:** the layout in “The phone dock: one row at rest, the key row with the
-  keyboard”. The earlier redesign tab-strip proposal was reversed in round 6.
+  blank band beside the keyboard or home indicator; copying the Termius dock exactly
+  (Jimmy: "i don't think we should EXACTLY copy termius"); tabs on top ("hard to reach");
+  the earlier "one row at rest" that also placed the compose field in the resting bar.
 
 ### The compose box and terminal make focus visible and switchable
 
@@ -4967,15 +3384,14 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   box caret; ↑, ↓, ^R, ^C, tab and other terminal keys still go to tmux, with their
   destination visible in the key row.
 - **Why:** a blinking box caret alongside the terminal cursor obscured where typing
-  went, and escaping the box previously required lowering the keyboard.
+  went, and escaping the box previously required lowering the keyboard. Jimmy asked to
+  "note the difference when the focus is different" in his Termius reference.
 - **Rejected:** two active typing cursors; forcing a keyboard close to return to tmux;
   a separate "type in the terminal" button in the compose row (Jimmy: "i dont think we
   need it": esc and a terminal tap already do it);
   sending esc and horizontal arrows to tmux while the box is focused; sending all the
-  key-row controls to the box.
-- **Supersedes in part:** “What the toggle raises, and where key-row keys go” and the
-  rejected line-aware tap in “The terminal long-press selects at once; arrows are keys;
-  a tap near the cursor opens the keyboard”.
+  key-row controls to the box; a field as the only keyboard opener, which loses live
+  typing for shell completion, vim and prompts.
 
 ### Bell attention: BEL in the stream, plus one runtime alert-bell hook
 
@@ -4990,9 +3406,9 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   `preferredNotifChannel: "terminal_bell"`); running.md documents it with the feature.
   The hook reaches Jimmy's live server only after his planned tmux restart. Show a
   connection indicator on the terminal only when not live; it is separate from the dot.
-- **Why:** an agent may need attention without the user watching its tab. Probes p310
-  and p314 showed the same behavior on 3.4, 3.7b and 3.8: BEL arrives in `%output`
-  with no separate notification; the global hook fires for current and other windows and
+- **Why:** an agent may need attention without the user watching its tab. Probes
+  showed the same behavior on 3.4, 3.7b and 3.8: BEL arrives in `%output` with no
+  separate notification; the global hook fires for current and other windows and
   can mark the session with `set-option -F`; `set-hook -a` keeps the user's own hooks.
 - **How the daemon learns of a marker:** a local `list-sessions -F` every few seconds,
   only while a device is connected, reporting changes only (Jimmy: "do u think we SHOULD
@@ -5000,14 +3416,11 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   process and a callback path into the daemon for no gain).
 - **Rejected:** reading tmux's `window_bell_flag` (shared with every client, cleared
   when any client looks, and not set for a current window while a client is attached);
-  `refresh-client -B` subscriptions (scoped to the control client's own session); polling
-  `list-sessions`; editing `.tmux.conf` or changing `monitor-bell`/`bell-action` to widen
+  `refresh-client -B` subscriptions (scoped to the control client's own session);
+  editing `.tmux.conf` or changing `monitor-bell`/`bell-action` to widen
   coverage; per-session hooks that would override a user's own session hook. Accepted
   limits: a session-level user hook shadows tether's global one, and `monitor-bell off`
   or an excluding `bell-action` suppresses it.
-- **Supersedes in part:** the ban on dot status markers in “Browser/mobile client
-  direction and portable design record”, and the always-colored terminal host indicator
-  in “Terminal and desktop input details”. It does not add an agent dashboard.
 
 ### Face ID relock is selectable, not disabled
 
@@ -5019,8 +3432,6 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   biometric boundary at launch and at the chosen relock points.
 - **Rejected:** disabling Face ID and re-saving tokens without biometry; fixed five-minute
   relock; calling the launch-only choice “Never”.
-- **Supersedes in part:** the fixed five-minute threshold in “Restore the existing iOS
-  auth and background policy”. The one-item and lock behavior otherwise remain.
 
 ### Compact phone headers
 
@@ -5053,7 +3464,6 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
 - **Rejected:** one host in the MVP with a layout that merely allows more later (the
   lead's lean), since it would ship Home and the sheet in a shape the product rule then
   changes.
-- **Supersedes:** "one host in the MVP" in plan.md's product rules.
 
 ### Invariants are separate from decisions; test tmux 3.4 and 3.8
 
@@ -5066,6 +3476,8 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   design and test coverage. Tailnet-only access is a product rule. Test coverage is tmux
   3.4, the oldest supported, and 3.8, the newest; recording 3.8 fixtures is open work.
 - **Why:** the specs mixed invariants with decisions, so a reader could not tell which
-  rules may change through this log.
+  rules may change through this log. Network polling and host work have different
+  costs: a local check that sends nothing over the network and runs only while a
+  client is connected can respect both constraints.
 - **Rejected:** treating tested tmux versions, the build process or the code structure
   as invariants; keeping 3.7b as the second tested version.

@@ -174,7 +174,7 @@ app, not in a throwaway spike.
   ours. A full custom `UITextInput` would fix that at several hundred lines of position,
   range and tokenizer code that `UITextField` already is.
 - **A visible native `UITextField` laid over the web dock.** Rejected on 2026-10-24
-  ([The dock is web](../decisions.md#the-dock-is-web-in-every-touch-client)): its frame
+  ([The dock is web](../decisions.md#one-keyboard-native-owns-line-editing-web-mirrors-it)): its frame
   would track web layout through scroll, rotation and the keyboard animation. Here the
   field is hidden and the web still draws the whole dock, so that objection does not
   apply.
