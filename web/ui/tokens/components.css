@@ -35,10 +35,8 @@
   /* The phone toast sits above the bottom bar (Home and Files' nav, the tools row, or the dock's row), never over its tabs. */
   --toast-offset: 0px;
 
-  /* The terminal surface's own stacking, inside its host: the long-press ring, then the selection snapshot over it. */
-  --z-term-ring: 2;
+  /* The terminal surface's own stacking, inside its host: the selection snapshot. */
   --z-term-selection: 3;
-  --touch-ring-size: 64px;
   /* Half the edit menu's widest form (Copy and Paste), so it never leaves the surface. */
   --edit-menu-half: 88px;
 

@@ -22,6 +22,8 @@ export class SelectionLayer {
 
   constructor(rows: readonly Row[], theme: TerminalTheme, readonly cellHeight: number) {
     this.element.className = styles.layer ?? "";
+    // Inert until the finger lifts (control.ts `release`), so WebKit's own long-press can't take the touch.
+    this.element.dataset["held"] = "";
     this.element.style.setProperty("--cell-height", `${String(cellHeight)}px`);
     this.element.setAttribute("role", "document");
     this.element.setAttribute("aria-label", "Terminal text for selection");
@@ -44,11 +46,13 @@ export class SelectionLayer {
     this.element.scrollTop = scroll;
   }
 
-  /** Selects characters `from` to `to` of one row's text. */
-  select(row: number, from: number, to: number): void {
-    const element = this.rows[row];
-    const start = element && locate(element, from);
-    const end = element && locate(element, to);
+  /** Selects from one point to another, in either order. */
+  select(a: RowPoint, b: RowPoint): void {
+    const [from, to] = a.row < b.row || (a.row === b.row && a.offset <= b.offset) ? [a, b] : [b, a];
+    const startRow = this.rows[from.row];
+    const endRow = this.rows[to.row];
+    const start = startRow && locate(startRow, from.offset);
+    const end = endRow && locate(endRow, to.offset);
     const selection = getSelection();
     if (!start || !end || !selection) return;
     const range = document.createRange();

@@ -79,25 +79,28 @@ for (const version of VERSIONS) {
       return await cellCentre(page, session, Math.floor((cols ?? 40) / 2), row);
     };
 
-    test("long-press, hold and drag is an arrow pad: arrows repeat while held, no mouse event, and none after release", async ({ page }) => {
-      const s = newSession("cat -vt");
+    test("long-press highlights the word at once, dragging extends it by cell, release shows the menu, Copy copies, and no mouse event or key reaches the pane", async ({ page, context }) => {
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      const s = newSession();
       const finger = await open(page, s);
-      const at = await mid(page, s);
-      await finger.down(at.x, at.y);
+      stack.tmux("send-keys", "-t", s, "echo alpha beta gamma", "Enter");
+      await paneIncludes(s, /^alpha beta gamma$/m);
+      const row = stack.tmux("capture-pane", "-p", "-t", s).split("\n").findIndex((l) => l === "alpha beta gamma");
+      const start = await cellCentre(page, s, 2, row); // inside "alpha"
+      const before = pane(s);
+      await finger.down(start.x, start.y);
       await page.waitForTimeout(550);
-      await finger.drag(at.x, at.y, at.x, at.y + 50);
-      await page.waitForTimeout(700);
-      await finger.drag(at.x, at.y + 50, at.x - 60, at.y + 5);
-      await page.waitForTimeout(500);
+      // Still held: the word is highlighted, the menu waits for the release.
+      expect(await page.evaluate(() => getSelection()?.toString())).toBe("alpha");
+      await expect(page.getByRole("menuitem", { name: "Copy" })).toHaveCount(0);
+      const end = await cellCentre(page, s, 13, row); // the "m" of "gamma"
+      await finger.drag(start.x, start.y, end.x, end.y, 6, 20);
+      expect(await page.evaluate(() => getSelection()?.toString())).toBe("alpha beta gam");
       await finger.up();
-      await paneIncludes(s, "^[[B");
-      expect(count(s, "^[[B")).toBeGreaterThanOrEqual(3);
-      await paneIncludes(s, "^[[D");
-      expect(pane(s)).not.toContain("^[[<");
-      const settled = pane(s);
-      await page.waitForTimeout(800);
-      expect(pane(s)).toBe(settled);
-      await expect(page.locator("[role=menu]")).toHaveCount(0);
+      await expect(page.getByRole("menuitem", { name: "Copy" })).toBeVisible();
+      await page.getByRole("menuitem", { name: "Copy" }).tap();
+      await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("alpha beta gam");
+      expect(pane(s)).toBe(before);
     });
 
     test("long-press released over a word selects it, Copy puts it on the clipboard, and nothing reaches the pane", async ({ page, context }) => {
@@ -208,23 +211,26 @@ for (const version of VERSIONS) {
       await paneIncludes(mouse, "^[[<0;10;8M^[[<0;10;8m");
     });
 
-    test("a tap in a plain shell sends nothing and never focuses; with the keyboard up it stays up", async ({ page }) => {
+    test("a tap on the cursor's row or one beside it raises the keyboard; a tap elsewhere or with it up never lowers it", async ({ page }) => {
       const shell = newSession();
-      const shellFinger = await open(page, shell);
+      const finger = await open(page, shell);
       await paneIncludes(shell, /\$ /);
       const before = pane(shell);
-      const there = await mid(page, shell, 8);
-      await shellFinger.down(there.x, there.y);
-      await shellFinger.up();
+      const keyboard = page.getByRole("textbox", { name: "Terminal keyboard" });
+      const far = await mid(page, shell, 8);
+      await finger.down(far.x, far.y);
+      await finger.up();
       await page.waitForTimeout(500);
       expect(pane(shell)).toBe(before);
-      await expect(page.getByRole("textbox", { name: "Terminal keyboard" })).not.toBeFocused();
-      // With the keyboard up, a tap keeps it up.
-      await page.getByRole("button", { name: "Show keyboard" }).tap();
-      await expect(page.getByRole("textbox", { name: "Terminal keyboard" })).toBeFocused();
-      await shellFinger.down(there.x, there.y);
-      await shellFinger.up();
-      await expect(page.getByRole("textbox", { name: "Terminal keyboard" })).toBeFocused();
+      await expect(keyboard).not.toBeFocused();
+      const below = await mid(page, shell, 1); // the row under the prompt
+      await finger.down(below.x, below.y);
+      await finger.up();
+      await expect(keyboard).toBeFocused();
+      // With the keyboard up, a tap far away keeps it up.
+      await finger.down(far.x, far.y);
+      await finger.up();
+      await expect(keyboard).toBeFocused();
     });
 
     test("a tap in vim with mouse on moves the cursor", async ({ page }) => {
@@ -304,7 +310,7 @@ for (const version of VERSIONS) {
       expect(pane(wheel)).not.toContain("^[[A");
     });
 
-    test("a coast and a held pad stop when the tab changes: the next tab's pane gets no arrows", async ({ page }) => {
+    test("a coast stops when the tab changes: the next tab's pane gets no arrows", async ({ page }) => {
       const s = newSession("sh -c \"printf '\\033[?1049h'; exec cat -vt\"");
       const next = newSession("cat -vt");
       const finger = await open(page, s);

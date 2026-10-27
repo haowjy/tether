@@ -74,8 +74,8 @@ One Preact app, three **platform adapters**, and one rule for each hard boundary
   Return sends its line and then Enter.
 - **Touch gestures have one owner.** A sans-IO recognizer decides between tap,
   scroll, long-press and cancel before anything reaches tmux or raises the keyboard.
-  A long-press held and dragged is the arrow pad; released, it selects text from a
-  bounded snapshot.
+  A long-press highlights the word under the finger at once; dragging while held extends
+  it, and lifting shows the edit menu. The text comes from a bounded snapshot.
 - **The PWA's service worker serves the shell from cache and nothing else.** It
   precaches the whole build and never touches `/ws`, `/auth`, `/fs` or `/complete`. A
   new version takes over only when Jimmy taps Update, and only the page he tapped
@@ -123,10 +123,10 @@ These are Jimmy's explicit choices. No lane changes them without his say:
   Tabs on top were rejected ("hard to reach").
 - The tab chip opens one switcher sheet: open tabs, then every session on the host,
   with search and New session at the bottom. It is the phone's only picker.
-- A long-press fires with a haptic; held and dragged it is the arrow pad, released it
-  selects a word.
-- Only the keyboard toggle opens and closes the keyboard; a tap on the terminal never
-  does.
+- A long-press fires with a haptic and selects the word at once; held and dragged it
+  extends the selection, released it shows the menu.
+- The keyboard toggle opens and closes the keyboard. A tap on the cursor's row or the row
+  above or below it also opens it; no tap closes it.
 - The line field is one line; Return sends the text and then Enter, and clears it.
 
 ## 2. Vocabulary
@@ -151,7 +151,6 @@ One name per concept. The code, the specs and the UI copy use these.
 | **draft** | The line field's unsent text for one tab key, saved locally | |
 | **key row** | The dock's row of terminal keys, shown above the resting row while the keyboard is up | an app-drawn keyboard; it supplements the system keyboard |
 | **keyboard toggle** | The one control that opens and closes the on-screen keyboard on touch, at the right of the resting row | |
-| **arrow pad** | A long-press held and dragged on the terminal: arrows in the drag's direction, repeating while held | the key row's ↑ ↓ |
 | **direct input** | Keystrokes that go to tmux as they are typed | the line field |
 | **terminal input** | The element that takes direct input: xterm's textarea, the owned input, or native's responder | the line field |
 | **admission** | Whether the daemon lets this client in (§4.2) | A credential. The browser holds none |
@@ -177,7 +176,7 @@ means kept with its tests; "Revise" names the change.
 | `term/pipeline.ts`, `term/index.ts` | **Keep**, unchanged. The pipeline gets no wrap map: L3 replays soft wraps inside the snapshot bytes, so xterm marks the continuation rows itself. `term/index.ts` gains the renderer API P3 needs (§11) | Serialized writes, renderer boundary |
 | `term/prompt.ts` | **Keep** | Tap-to-position on the prompt line reads its OSC 133 marks (plan.md "Cursor movement"; §7.6) |
 | `term/size.ts` | **Revise**: one formula over `Viewport` (§5.4), with no per-environment branch and no `reason`. A trailing 150 ms debounce is added | Rotation with the keyboard up must keep its rows (`size.test.ts` keeps that case) |
-| `term/xterm.ts` | **Revise**: stdin is on only when direct input is `xterm`. One renderer instance lives for the page's life and moves between layouts. `cursorPan` reads the pan area (§5.4), not `container.clientHeight` | It is hard-wired inert today; recreating it would lose the buffer; the browser's container never shrinks for the keyboard |
+| `term/xterm.ts` | **Revise**: stdin is on only when direct input is `xterm`. One renderer instance lives for the page's life and moves between layouts. `terminalBottomPan` reads the pan area (§5.4), not `container.clientHeight` | It is hard-wired inert today; recreating it would lose the buffer; the browser's container never shrinks for the keyboard |
 | `app/sync.ts` (`HostSync`) | **Revise** into `app/listing.ts`, the one listing fetcher (§6.3). It feeds `sessions/` and the workspace reducer, forwards `windowRenamed` as `renamed`, and retries a failed listing while any tab is `restoring` | Its triggers and debounce are right; a second fetcher in `sessions/` would double every listing |
 | `app/status.ts` (`describe`) | **Keep**, moved to `tabs/status.ts`, with copy for `limited`. Host copy (4005, admission) goes to `ui/hostProblem.ts` | Pure; tab-state copy belongs with the tab state |
 | `app/hosts.ts` | **Revise** into `net/hosts.ts`. The registry stays, and gains each host's admission state (§4). `TokenLink` moves into the native transport | The token is a native concern |
@@ -542,7 +541,8 @@ rows = floor((stableHeight − safeArea.top − safeArea.bottom − chrome.y) / 
 
 and recomputes whenever an input changes. `chrome` is the tether chrome in flow around
 the terminal in the keyboard-hidden layout (the rail, the tab strip, the dock's
-resting slot), measured by the terminal screen when layout or density changes. A
+resting slot), measured by the terminal screen in a short window after layout, density,
+width or the safe area change, and at the start, never per resize. A
 keyboard opening changes none of these inputs, so it never resizes tmux, and the sizer
 needs no event reason. Only the adapters differ, in how they define `stableHeight`:
 
@@ -562,9 +562,9 @@ needs no event reason. Only the adapters differ, in how they define `stableHeigh
   (see Keyboard detection), so Safari scrolling the page cannot lower it. `chrome.y` measures the dock without its bottom safe-area
   padding, which `safeArea.bottom` already counts.
 - **The pan area** is what remains visible of the terminal: `visibleHeight` minus the
-  translated dock. `cursorPan` reads this
-  number, not `container.clientHeight`, which in the browser never shrinks. Native keeps
-  passing its shrunken web view's height, as today.
+  key row and translated dock. `terminalBottomPan` reads this number, not `container.clientHeight`,
+  which in the browser never shrinks. Native passes its shrunken web view's height; a
+  changed `visibleHeight` also refreshes the measured area when `keyboardInset` remains 0.
 - **Applying a size.** Only the trailing size is sent, 150 ms after the last change, so
   dragging a window edge doesn't resize tmux for every cell. Fit (below) re-sends the
   current size at once. A tab's first `watch` waits
@@ -580,10 +580,12 @@ needs no event reason. Only the adapters differ, in how they define `stableHeigh
   the size the tab claims with, stay the tab's own.
   - **Larger:** the pane is anchored to the left edge and clipped at the right, with no
     horizontal pan (horizontal swipes stay the system's, §7.6). Rows below the box are
-    reached by the cursor pan, which already keeps the cursor row above the dock: the
-    terminal element is the pane's height, and the pan area is what is visible of it.
-    While the buffer is scrolled into history the pan anchors to the top, so no row is
-    skipped; back at the bottom it follows the cursor again. While larger, the tab
+    reached by the terminal-bottom pan, which keeps the last row above the dock unless
+    that would put the cursor above the area's top, in which case the cursor row meets
+    the bottom instead: the terminal element is the pane's height, and the pan area is
+    what is visible of it. While the buffer is scrolled into history the pan anchors to
+    the top, so no row is skipped; back at the bottom it keeps the last row visible.
+    While larger, the tab
     renders with xterm's DOM renderer and drops the WebGL addon, which returns once the
     pane fits: a WebGL canvas is the pane's size in device pixels, so a 250×70 laptop
     window at the phone's font and 3× density would be about 17 M pixels, past
@@ -1347,9 +1349,9 @@ follows from the focused element: plain for the terminal input
 (`enterkeyhint` unset; natively `returnKeyType = .default`), the blue send key for the
 field. W2's `term/index.ts` sets both cursor options for every terminal.
 
-**The key row** (`screens/terminal/dock/KeyRow.tsx`): one fixed row, esc, ↑, ↓, ^R,
-^C, tab, ctrl, alt, `|`, `~`, `/`, `-`, in a horizontal scroller. No ← or →: arrows
-come from the long-press arrow pad (§7.6). No row that changes with the pane's program.
+**The key row** (`screens/terminal/dock/KeyRow.tsx`): one fixed row, esc, ←, ↑, ↓, →, ^R,
+^C, tab, ctrl, alt, `|`, `~`, `/`, `-`, in a horizontal scroller. The arrows repeat
+while held. No row that changes with the pane's program.
 
 - Every key cancels its `pointerdown`, so a tap never moves focus, and acts on
   `pointerup` inside the key. Native also gets `haptic("key")` on `pointerdown`.
@@ -1473,7 +1475,7 @@ with `platform.clipboard`.
 
 **Touch** has one gesture owner, `touch/gesture.ts`. It is a sans-IO recognizer:
 pointer events go in; `tap`, `scroll(dy, velocity)`, `scrollEnd`, `longPress`,
-`arrowPad(direction)`, `padEnd`, `selectWord` and `cancel` come out. What a `tap` or a
+`selectMove(x, y)`, `selectEnd` and `cancel` come out. What a `tap` or a
 `scroll` means depends on the terminal's mouse mode, which the shell around the
 recognizer reads.
 The long-press rules are Jimmy's (2026-10-24). The long-press fires with
@@ -1483,11 +1485,12 @@ until it decides.
 | Resolved as | Then |
 |---|---|
 | `tap`, app mouse mode on (xterm's tracking mode, seeded by the snapshot) | press and release sent as one click at the tapped cell |
-| `tap`, no mouse mode | nothing: no focus change and no keyboard change. On the prompt's input row (OSC 133, `term/prompt.ts`), while owner `terminal` holds the keyboard, move the cursor there with ←/→ |
+| `tap`, no mouse mode | on the cursor's row or the row above or below it, with no input holding the keyboard, raise the keyboard for the terminal; otherwise no focus change. On the prompt's input row (OSC 133, `term/prompt.ts`), only if the terminal's own input already held the keyboard before the tap, move the cursor there with ←/→ |
 | `scroll`, normal screen | scroll the buffer with momentum; history as on desktop |
 | `scroll`, alternate screen or mouse mode | SGR wheel events, or ↑/↓ when the app has no mouse mode, scaled by velocity |
-| `longPress`, then drag | the arrow pad: arrows in the drag's direction, repeating while held, until release. No mouse event, in mouse-mode apps too |
-| `longPress`, released without moving | select the word under the finger and enter selection mode (focus owner `select`, native `setFocus("select")`); handles extend it |
+| `longPress` | at once: snapshot the screen and highlight the word under the finger. The snapshot layer is inert while the finger is down. No mouse event, in mouse-mode apps too |
+| `selectMove` (held finger moves) | the selection's far end follows by cell, across rows; the anchor word stays inside it |
+| `selectEnd` (lift) | enter selection mode (focus owner `select`, native `setFocus("select")`, sent now and not at the long-press) and show the edit menu; WebKit's handles extend it. Over a blank cell: Paste alone |
 | `cancel` (`pointercancel`, a system gesture) | nothing is sent |
 
 - **Rules from terminal-interaction-design.md.** A remote mouse-down is never sent on
@@ -1522,7 +1525,7 @@ until it decides.
   `selection/` the snapshot layer, the control and `EditMenu.tsx`, `rows/` the DOM rows both
   views draw. `view.ts` owns all four for the tab on screen (below). `term/` gained `mouse.ts`
   (report bytes), `rows.ts` and `lines.ts` (styled rows for the DOM views).
-- *One view per shown tab.* A coast, the arrow pad's repeat, the ring, a selection and the
+- *One view per shown tab.* A coast, a held selection drag, a selection and the
   fetched history are state of one tab on the surface every tab shares. `TerminalView` is told
   which tab is shown and resets all of it when that changes, on a snapshot, and when the app is
   hidden or a pointer is lost; its input is bound to the tab it began on and dropped if another
@@ -1859,7 +1862,7 @@ must change, `screens/picker/` (its sheet variant goes), and asks for the
 | **W3 Files** | `screens/files/`, `files/`, `platform/browser/uploads.ts`, `harness/files/`, `e2e/files/` | Folder list, preview with the kept viewers, inline video, upload, the insert-path offer | `files/` tests kept. Playwright: browse, preview, Back through folders and preview, upload then insert the quoted path into the captured tab, the target gone mid-upload, a fifth queued upload refused |
 | **W4 PWA** | `sw/` (including `vite-plugin.ts`), `public/`, `platform/browser/pwa.ts`, `harness/pwa/`, `e2e/pwa/` | Service worker, its build plugin (entry, precache list, manifest link and `theme-color` metas), `updates` and `install`, the Update banner's state, offline Home. The manifest template's content is handed to L2 | Built bundle served by the daemon through Serve, from an enrolled second machine: install in Chromium; offline launch; the multi-window and two-updates gates (§12); no API response in Cache Storage |
 | **P3a phone dock, owned input and switcher** (after W1, W2 and the paste-confirmation lane, §10) | `touch/owned-input.ts`, `touch/modifiers.ts`, `drafts/`, `ui/primitives/LineInput.tsx`, `screens/terminal/dock/`, `screens/switcher/`, `screens/picker/` (taken over from W1), `harness/dock/` (renamed from `harness/draft/`), `e2e/dock/`; the phone toolbar in `TerminalScreen.tsx`, which becomes the dock (its disabled keyboard button goes). W0 hand-offs below | The dock as chosen (one row at rest: tab chip, line field, toggle; the key row above it while the keyboard is up), the line field with drafts and Return, the key row with armed ctrl and alt, the one keyboard toggle, the focus cues; the owned input; the `line` focus owner; the switcher replacing the phone picker sheet and tab row. Built against real tmux, with UI quality as the bar | `drafts/` and `modifiers.ts` unit tests (caps, eviction, revisions, send states by `req`, arming). Playwright WebKit at phone size against a real daemon on scratch tmux 3.4 and 3.7b: Return runs `echo hi` once in zsh and bash and submits a prompt in Claude Code and Codex; a `busy` paste refusal puts the line back and no Enter runs; every key-row key and an armed ctrl+c reach tmux; a multiline paste into the field goes to the terminal unsent; a tab switch swaps drafts; reload restores one; the switcher switches by pill, opens a window from the list, closes a tab, filters, and creates a session. Simulator Safari: the toggle raises and lowers the keyboard from both inputs and a terminal tap changes nothing; the key row appears only with the keyboard; the cursor and Return-key cues follow the owner; tmux size is unchanged with the keyboard up and the prompt on tmux's last row stays above the dock; portrait and landscape. Screenshots of every dock and switcher state, keyboard up and down, reviewed against the mockup. The real-iPhone checklist (§12) queued for Jimmy |
-| **P3b gestures, scroll and selection** (after W2) | `touch/gesture.ts`, `touch/selection.ts`, `screens/terminal/selection/`, `harness/gesture/` | The recognizer (a tap without mouse mode does nothing to focus), touch scroll with history, wheel translation, tap-to-position, the long-press with its haptic, the arrow pad, word selection with handles and the selection layer, the edit menu (Copy, Paste) | Recognizer unit tests (tap, hold then release, hold then drag, release over a blank cell, scroll, cancel, long-press while streaming). Simulator probes against real tmux: a tap never changes the keyboard; the arrow pad moves the shell cursor and vim's, repeating while held, and sends no mouse event in a mouse-mode app; a released long-press selects a word, a drag extends it, Copy keeps logical newlines, Paste sends one paste without Enter; vertical swipe in less and vim sends ↑/↓ or wheel events; scroll in a shell, in less and in Claude Code. The selection-versus-click and logical-copy gates (§12) |
+| **P3b gestures, scroll and selection** (after W2) | `touch/gesture.ts`, `touch/selection.ts`, `screens/terminal/selection/`, `harness/gesture/` | The recognizer (a tap raises the keyboard only on or beside the cursor row), touch scroll with history, wheel translation, tap-to-position, the long-press with its haptic and held drag, word selection with handles and the selection layer, the edit menu (Copy, Paste) | Recognizer unit tests (tap, hold then release, hold then drag, release over a blank cell, scroll, cancel, long-press while streaming). Simulator probes against real tmux: a tap far from the cursor never changes the keyboard; ← and → move the shell cursor and vim's, repeating while held; a long-press selects a word at once, a drag extends it, Copy keeps logical newlines, Paste sends one paste without Enter; vertical swipe in less and vim sends ↑/↓ or wheel events; scroll in a shell, in less and in Claude Code. The selection-versus-click and logical-copy gates (§12) |
 | **W5 native adapter** (P4, after G3) | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v2, native transport, `saveWorkspace`, the draft store bridge, `lineField`, `readPasteboard`, `copy` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap Home search from Terminal with the keyboard up, the line field taken from `terminal` and `hidden`. Then ios-shell.md's device checklist on Jimmy's iPhone |
 
 **How a commit lands.** Coders don't commit (a tech-lead call). For each reviewed change:
@@ -2032,8 +2035,7 @@ Spec edits that land with the code (the lead applies them in the owning lane's c
 ## 14. Open questions for Jimmy
 
 None open from the phone dock. Settled on 2026-10-24 (decisions.md, "Phone input
-follows Termius"): the one-row dock with the switcher, the long-press arrow pad and word
-selection, the fixed key row, the focus cues, and auto-capitalization off in the line
+follows Termius"): the one-row dock with the switcher, the long-press word selection, the fixed key row, the focus cues, and auto-capitalization off in the line
 field.
 
 Earlier: **Drafts of closed tabs** (settled by Jimmy, 2026-10-23): kept, and back

@@ -58,6 +58,14 @@ const INPUT_BATCH_MS = 8;
 
 const instances = new WeakMap<AppController, Terminals>();
 
+/** The viewport inputs the tether chrome depends on; a keyboard changes none of them. */
+function chromeInputsChanged(a: Viewport, b: Viewport): boolean {
+  const sa = a.safeArea;
+  const sb = b.safeArea;
+  return a.layout !== b.layout || a.density !== b.density || a.directInput !== b.directInput || a.width !== b.width ||
+    a.stableHeight !== b.stableHeight || sa.top !== sb.top || sa.right !== sb.right || sa.bottom !== sb.bottom || sa.left !== sb.left;
+}
+
 /** The one terminal surface of this app. */
 export function terminalsOf(app: AppController): Terminals {
   let terminals = instances.get(app);
@@ -76,6 +84,8 @@ export class Terminals extends Store<TerminalsView> {
   private readonly drivers = new Map<string, TabDriver>();
   private readonly sizer: TerminalSizer;
   private viewport: Viewport;
+  /** True from the start until the first measurement lands, and briefly after the chrome's inputs change. */
+  private chromeWindow = true;
   private registered: HTMLElement | null = null;
   /** The tab whose snapshot is on the surface. Another tab's content never shows under a pill that isn't its own. Closing that tab clears it. */
   private painted: string | null = null;
@@ -126,6 +136,7 @@ export class Terminals extends Store<TerminalsView> {
       focusTerminal: () => { this.app.focus.focusTarget("terminal", true); },
       prompt: () => this.promptLine,
       keyboardHeld: () => this.app.focus.snapshot.owner === "terminal",
+      keyboardDown: () => this.app.focus.snapshot.owner === "none",
       selecting: (on) => { this.app.focus.selecting(on); },
       onScrolled: (scrolled) => { this.update({ scrolled }); },
       onMenu: (menu) => { this.update({ menu }); },
@@ -219,6 +230,7 @@ export class Terminals extends Store<TerminalsView> {
       if (viewport.scheme !== before.scheme) this.renderer?.setTheme(terminalTheme());
       if (viewport.density !== before.density) this.refont();
       if (viewport.directInput !== before.directInput) this.applyInput();
+      if (chromeInputsChanged(before, viewport)) this.openChromeWindow();
       this.measure();
     }
     for (const tab of workspace.tabs) {
@@ -240,7 +252,7 @@ export class Terminals extends Store<TerminalsView> {
       else driver.cover();
     }
     this.showPainted();
-    // What one tab had going on the surface (a coast, a held pad, a selection) is not the next tab's.
+    // What one tab had going on the surface (a coast, a held drag, a selection) is not the next tab's.
     this.view.show(shown);
   }
 
@@ -352,10 +364,22 @@ export class Terminals extends Store<TerminalsView> {
   }
 
   /**
-   * The tether chrome is whatever surrounds the surface in the keyboard-hidden layout: the
-   * stable box less the surface. While the keyboard is up, a native web view's surface is
-   * shorter for it, so the chrome is not measured then.
+   * The tether chrome is whatever surrounds the surface in the keyboard-hidden layout: the stable
+   * box less the surface. It changes only when layout, density, width or the safe area do
+   * (client-architecture.md §5.4), so it is measured in a short window after such a change and
+   * at the start; a keyboard shrinking a native web view's surface never opens one.
    */
+  private openChromeWindow(): void {
+    this.chromeWindow = true;
+    // Two frames: the change renders, then the surface lays out against it.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        this.measure();
+        this.chromeWindow = false;
+      });
+    });
+  }
+
   private measure(frame = 0): void {
     const { clientWidth: width, clientHeight: height } = this.element;
     if (width === 0 || height === 0) return;
@@ -363,8 +387,8 @@ export class Terminals extends Store<TerminalsView> {
       void this.createRenderer();
       return;
     }
-    const { viewport } = this;
-    if (!viewport.keyboard) {
+    if (this.chromeWindow) {
+      const { viewport } = this;
       const { top, right, bottom, left } = viewport.safeArea;
       this.sizer.setChrome({ x: viewport.width - left - right - width, y: viewport.stableHeight - top - bottom - height });
     }
@@ -378,6 +402,7 @@ export class Terminals extends Store<TerminalsView> {
 
   private becomeReady(): void {
     if (this.snapshot.ready) return;
+    this.chromeWindow = false;
     this.update({ ready: true });
     this.sync();
   }

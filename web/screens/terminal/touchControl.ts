@@ -1,7 +1,7 @@
 // The touch shell (client-architecture.md §7.6): pointer events in, the sans-IO recognizer in
 // the middle, the terminal's side effects out. A finger on the surface is this file's alone:
-// `pointerdown` is cancelled, so a touch never moves focus, raises or lowers the keyboard, or
-// reaches xterm as a mouse event; what it means is decided when it resolves.
+// `pointerdown` is cancelled, so a touch never moves focus, lowers the keyboard, or reaches xterm
+// as a mouse event; what it means is decided when it resolves (a tap near the cursor raises the keyboard).
 import type { HapticKind, InputEvent } from "../../platform/types";
 import type { PromptLine, TerminalRenderer } from "../../term";
 import { mouseInput } from "../../term/mouse";
@@ -9,7 +9,6 @@ import { GestureRecognizer, type GestureAction } from "../../touch/gesture";
 import { charsAcross } from "../../touch/selection";
 import type { ScrollControl } from "./scroll";
 import type { SelectionControl } from "./selection/control";
-import styles from "./Terminal.module.css";
 
 interface TouchDeps {
   element: HTMLElement;
@@ -21,12 +20,14 @@ interface TouchDeps {
   haptic(kind: HapticKind): void;
   /** Desktop direct input is xterm's textarea: a touch there is a click, which focuses it. */
   directInput(): "xterm" | "owned" | "native";
-  /** A tap focuses the terminal's input (desktop direct input only). */
+  /** Focuses the terminal's input: a desktop tap, or a touch tap on or beside the cursor row. */
   focusTerminal(): void;
   /** The shell's command line under the cursor (OSC 133), or null. */
   prompt(): PromptLine | null;
   /** The terminal's own input holds the keyboard. */
   keyboardHeld(): boolean;
+  /** No input holds the keyboard. */
+  keyboardDown(): boolean;
 }
 
 export class TouchControl {
@@ -38,9 +39,10 @@ export class TouchControl {
   /** Where the first finger went down: a wheel event's cell. */
   private origin = { x: 0, y: 0 };
   private scrolling = false;
+  /** A long-press began a selection and the finger has not lifted. */
+  private selecting = false;
   /** The touch that stopped a coasting scroll is that, and not a tap. */
   private stoppedCoast = false;
-  private ring: HTMLDivElement | null = null;
 
   constructor(private readonly deps: TouchDeps) {
     const { element } = deps;
@@ -55,7 +57,7 @@ export class TouchControl {
     element.addEventListener("contextmenu", (event) => { if (!this.deps.selection.owns(event.target)) event.preventDefault(); });
   }
 
-  /** Ends any gesture in progress: nothing it set going (the pad's repeat, the ring) outlives it. */
+  /** Ends any gesture in progress: a selection still being dragged goes with it. */
   cancel(): void {
     clearTimeout(this.timer);
     this.fingers.clear();
@@ -137,25 +139,28 @@ export class TouchControl {
         break;
       case "longPress":
         this.deps.haptic("rigid");
-        this.showRing(action.x, action.y);
-        break;
-      case "arrowPad":
-        this.deps.send([{ key: action.direction }]);
-        if (this.ring) this.ring.dataset["direction"] = action.direction;
-        break;
-      case "padEnd":
-      case "cancel":
-        this.hideRing();
-        this.scrolling = false;
-        break;
-      case "selectWord":
-        this.hideRing();
         selection.begin(action.x, action.y);
+        this.selecting = true;
+        break;
+      case "selectMove":
+        selection.extend(action.x, action.y);
+        break;
+      case "selectEnd":
+        this.selecting = false;
+        selection.release();
+        break;
+      case "cancel":
+        this.scrolling = false;
+        if (this.selecting) selection.dismiss();
+        this.selecting = false;
         break;
     }
   }
 
-  /** A short press, resolved: a click for an application that asked for the mouse, else nothing but the prompt's cursor. */
+  /**
+   * A short press, resolved. On the cursor's row or the row above or below it, with the keyboard down, it raises the
+   * keyboard for the terminal. Then a click for an application that asked for the mouse, else the prompt's cursor.
+   */
   private tap(x: number, y: number): void {
     const renderer = this.deps.renderer();
     if (this.deps.directInput() === "xterm") {
@@ -165,42 +170,28 @@ export class TouchControl {
     if (!renderer || !this.deps.scroll.atLatest) return;
     const cell = renderer.cellAt(x, y);
     if (!cell) return;
+    // Decided before focusing: the tap that raises the keyboard doesn't also move the cursor.
+    const held = this.deps.keyboardHeld();
+    if (this.deps.keyboardDown() && Math.abs(cell.row - renderer.cursor().row) <= 1) this.deps.focusTerminal();
     const mode = renderer.mouseMode();
     if (mode === "none") {
-      this.moveCursorTo(cell.col, cell.row);
+      if (held) this.moveCursorTo(cell.col, cell.row);
       return;
     }
     const events = mouseInput("tap", cell.col, cell.row, mode, renderer.mouseEncoding());
     if (events) this.deps.send(events);
   }
 
-  /** On the prompt's input row, while the terminal's own input holds the keyboard, a tap moves the cursor there. */
+  /** On the prompt's input row, a tap moves the cursor there; the caller has checked that the terminal's own input held the keyboard. */
   private moveCursorTo(col: number, row: number): void {
     const renderer = this.deps.renderer();
     const line = this.deps.prompt();
-    if (!renderer || !line || !this.deps.keyboardHeld()) return;
+    if (!renderer || !line) return;
     const cursor = renderer.cursor();
     if (row !== cursor.row || col === cursor.col) return;
     // The cursor moves a character a key, and a cell is not a character: wide text takes two cells, a combining mark none.
     const left = col < cursor.col;
     const keys = left ? charsAcross(line.before, cursor.col - col, "end") : charsAcross(line.after, col - cursor.col, "start");
     this.deps.send(Array.from({ length: keys }, () => ({ key: left ? "Left" : "Right" })));
-  }
-
-  private showRing(x: number, y: number): void {
-    this.hideRing();
-    const rect = this.deps.element.getBoundingClientRect();
-    const ring = document.createElement("div");
-    ring.className = styles.ring ?? "";
-    ring.style.left = `${String(x - rect.left)}px`;
-    ring.style.top = `${String(y - rect.top)}px`;
-    ring.setAttribute("aria-hidden", "true");
-    this.deps.element.append(ring);
-    this.ring = ring;
-  }
-
-  private hideRing(): void {
-    this.ring?.remove();
-    this.ring = null;
   }
 }

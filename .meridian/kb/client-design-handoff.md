@@ -38,8 +38,9 @@ These are the ones older documents contradict:
 - The line field holds one line; Return sends it to the tab it was written for, then
   Enter, and clears it. Its unsent text is that tab's draft. The Enter rides in the
   paste's own tmux group, and the daemon confirms each paste.
-- A long-press on the terminal is the arrow pad when held and dragged, and selects a
-  word when released; the key row has no arrow keys.
+- A long-press on the terminal selects the word under the finger at once; dragging while
+  held extends it, and lifting shows the menu. The key row has ← ↑ ↓ →. A tap on the
+  cursor's row (or one beside it) raises the keyboard when it is down.
 - A tab is a tmux session, like `tmux attach`: it shows the session's current window
   and follows it when any client changes it. Lists show sessions only. Input, paste
   and inserted paths go to the window the tab was showing when they started, never the

@@ -18,3 +18,4 @@
 }
 .layer::-webkit-scrollbar { display: none; }
 .layer ::selection { background: var(--term-selection); color: inherit; }
+.layer[data-held] { pointer-events: none; -webkit-touch-callout: none; }

@@ -65,7 +65,7 @@ export function Dock({ active }: { active: boolean }) {
   // A note belongs to the field it came from.
   useEffect(() => { setLocal(null); }, [tab?.id]);
 
-  // The cursor row stays visible above whatever the dock stacks over the terminal's bottom edge.
+  // The terminal pan ends above the dock and key row, even when native shrinks the web view.
   useLayoutEffect(() => {
     const strip = above.current;
     const resting = row.current;
@@ -90,7 +90,7 @@ export function Dock({ active }: { active: boolean }) {
       watch.disconnect();
       terminals.setPanArea(null);
     };
-  }, [active, viewport.keyboardInset, terminals]);
+  }, [active, viewport.keyboardInset, viewport.visibleHeight, terminals]);
 
   // Native lends the first responder to a touch inside this rect.
   useEffect(() => {

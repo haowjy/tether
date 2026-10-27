@@ -70,9 +70,10 @@ above the keyboard is the web view; native draws no accessory.
 
 ```text
 ┌──────────────────────────────────────┐
-│ terminal (web; same rows, pans so    │  WKWebView, frame ends at the
-│ the cursor row stays visible)        │  top of the keyboard
-│ esc ^R ^C tab ctrl alt | ~ / - [⌨]  │  web dock: fixed key row and toggle (keyboard up)
+│ terminal (web; same rows, keeps the  │  WKWebView, frame ends at the
+│ last row visible unless cursor needs │  top of the keyboard
+│ the bottom edge)                     │
+│ esc ← ↑ ↓ → ^R ^C tab … [⌨]         │  web dock: fixed key row and toggle (keyboard up)
 │ [main 2] [ Type or dictate a line ]   │  web dock: tab chip and one-line field
 ├──────────────────────────────────────┤
 │           iOS keyboard               │  system; WebKit's ⌃ ⌄ ✓ bar hidden
@@ -81,8 +82,7 @@ above the keyboard is the web view; native draws no accessory.
 
 With the keyboard down, the web view fills the screen and the dock, one row without the
 key row, sits on the bottom safe area. The toggle is in the key row while the keyboard
-is up and in this dock row while it is down. The fixed row has no arrow keys; the
-terminal's long-press arrow pad owns touch arrows. The dock's rules are in
+is up and in this dock row while it is down. The fixed row carries ← ↑ ↓ →. The dock's rules are in
 [browser-behaviors.md](client/browser-behaviors.md#phone-dock); native's part is to own
 the terminal input, lend the line field to WebKit, and size the web view.
 
@@ -232,8 +232,7 @@ the web view.
   ([plan.md](plan.md#autocorrect-and-text-input)). `UIKeyInput` conformers get "a small
   subset of keyboards", which is fine for a terminal.
 - `UIKeyInput` loses iOS's long-press-space trackpad (it needs `UITextInput`). Arrows
-  on touch come from the web's long-press arrow pad
-  ([plan.md](plan.md#cursor-movement)).
+  on touch are the web key row's ← ↑ ↓ → ([plan.md](plan.md#cursor-movement)).
 
 The [device checklist](#device-checklist) checks what this view really gets on iOS 26:
 the QuickType bar, Backspace on empty, the double-space period, swipe typing.
@@ -348,7 +347,7 @@ InputEvent = { text: string }    // literal text
 | State | First responder | Keyboard | Entered by |
 |---|---|---|---|
 | `hidden` | `TerminalInputView`, with an empty `inputView` | down | `focus hidden`: the keyboard toggle while an input holds the keyboard; a surface that needs the screen |
-| `terminal` | `TerminalInputView` | up | `focus terminal`: the keyboard toggle while the keyboard is down; restoration after an interruption. Never a tap on the terminal |
+| `terminal` | `TerminalInputView` | up | `focus terminal`: the keyboard toggle while the keyboard is down; a tap on the cursor's row or the row above or below it; restoration after an interruption. The tap's call runs from `pointerup` (the recognizer resolves a tap there); in the app native raises the keyboard, but whether Safari or the PWA raises WebKit's keyboard from `pointerup` is unverified (`research/ios-web.md` lists pointerdown, touchend and click as safe), on the device checklist |
 | `webText` | WebKit's content view, once the user taps a field | WebKit's own | a touch in the line field's rect while on Terminal (above); `focus webText` on any other destination or overlay |
 | `select` | WebKit's content view | down | `focus select`, only if selection needs it (below) |
 
@@ -358,8 +357,9 @@ InputEvent = { text: string }    // literal text
   and a terminal tap while hidden can't let WebKit take over or show the keyboard.
 - **The guard.** In `terminal` and `hidden`, `canResignFirstResponder` returns `false`
   unless `FocusController` is moving focus or a touch began in the line field's rect.
-  Taps on web content then can't take first responder. Scrolling, terminal taps,
-  tab-chip and key-row taps do not change keyboard visibility. A web sheet sends
+  Taps on web content then can't take first responder. Scrolling, tab-chip and key-row
+  taps do not change keyboard visibility; a terminal tap near the cursor raises it
+  (`focus terminal`), and none lowers it. A web sheet sends
   `focus webText` (the resting mode off Terminal), which lowers the keyboard; closing
   it sends the Terminal resting mode, which raises it again.
 - **Focus is owned separately from geometry.** A hardware keyboard can leave the
@@ -378,7 +378,10 @@ InputEvent = { text: string }    // literal text
   selection, handles and Copy menu, which may need WebKit's content view as first
   responder. The device checklist checks it with the guard on. If they don't work,
   selection mode sends `focus select`: the guard drops, WebKit selects, the keyboard
-  goes down, and native restores the earlier state when selection ends.
+  goes down, and native restores the earlier state when selection ends. Web sends
+  `focus select` when the finger lifts, not when the long-press fires: while it is down the
+  highlight is drawn and dragged by the web, over an inert layer (no pointer events, no
+  callout) so WebKit's own long-press cannot take the touch and cancel it.
 - **Native coverage gates focus and input.** While the lock screen or native server
   sheet covers the app, `FocusController.set` records web focus requests into the
   pre-cover state rather than changing the responder; uncovering applies the latest
@@ -428,20 +431,24 @@ Native sizes the web view, so the web never measures the keyboard.
   come from `width` minus the left and right insets, each side at least a 4 px edge
   inset (`--term-edge`) so text never touches the glass; the rows from
   `stableHeight` minus the top and bottom insets and the dock, at the current
-  cell size (`web/term/size.ts`; the daemon clamps what it receives,
+  cell size (`web/term/size.ts`). The web measures that chrome (the dock's resting slot,
+  the tab bar) only when layout, density, width or the safe area change, never from a
+  surface the shrinking web view has shortened (client-architecture.md §5.4; the daemon clamps what it receives,
   [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling)). **The strip is
   not subtracted:** it shows only while the keyboard is up and the tab is live, so
   counting it would resize tmux each time chips came or went. It shortens the terminal
-  area as the keyboard does, and the pan below keeps the cursor row in view. The edge
+  area as the keyboard does, and the pan below keeps the last rows in view. The edge
   inset costs a column in a 393-wide portrait view (56 to 55 columns, measured in the
   dev shim) and none in landscape, where the side insets are larger.
 - **The pan.** With the keyboard up, and with the strip showing, the terminal area
   (above the dock and strip) is shorter than the terminal's rows, and the terminal
-  keeps its rows ([plan.md](plan.md#layout)). The renderer (`web/term/xterm.ts`, `cursorPan`) slides
-  the terminal up just far enough that the bottom of the cursor row meets the bottom of
-  that area: never down, never past the last row, and not at all while every row fits.
-  The area's height and the cursor row decide it, so the web keeps no keyboard flag for
-  it, and it follows the cursor as well as the keyboard. The slide animates with the
+  keeps its rows ([plan.md](plan.md#layout)). The renderer (`web/term/xterm.ts`, `terminalBottomPan`)
+  slides the terminal so the last row meets the bottom of that area. If that would put
+  the cursor above the area's top, it instead puts the cursor row's bottom there. It
+  never pans down or past the last row, and does not pan while every row fits or while
+  scrolled into history. The area's height and cursor row decide the pan; the web keeps
+  no keyboard flag for it. The dock recomputes the area when `visibleHeight` changes,
+  including the app's native resize with `keyboardInset` still 0. The slide animates with the
   keyboard's curve and duration when the area changes size (`--ease-keyboard`,
   `--dur-keyboard`); a cursor move jumps, as text does.
 - `webView.scrollView`: `contentInsetAdjustmentBehavior = .never`, `bounces = false`,
@@ -462,7 +469,7 @@ triggers it when the bridge request arrives.
 | ctrl or alt armed or disarmed | medium impact | web, via `haptic` (`modifier`) |
 | ^C or ^D | warning notification | native for hardware keys; web requests `haptic` (`warning`) for the dock |
 | Tab switch | selection changed | web, via `haptic` |
-| Long-press fires (arrow pad or word selection) | rigid impact | web, via `haptic` |
+| Long-press fires (word selection begins) | rigid impact | web, via `haptic` |
 | Upload done / failed | success / error notification | native |
 
 ## The bridge

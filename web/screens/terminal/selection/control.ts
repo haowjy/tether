@@ -1,10 +1,11 @@
-// Selection mode (client-architecture.md §7.6): a long-press released over text freezes the
-// screen into a snapshot, selects the word under the finger in it, and leaves the rest to the
-// system's selection handles. Released over a blank cell it opens the edit menu with Paste
-// alone. New output goes on underneath; the snapshot is dropped on dismiss.
+// Selection mode (client-architecture.md §7.6): a long-press over text freezes the screen
+// into a snapshot and selects the word under the finger in it at once; the finger, still down,
+// drags the far end of the selection along; lifting it shows the edit menu and leaves the rest
+// to the system's selection handles. A long-press over a blank cell opens the edit menu with
+// Paste alone on release. New output goes on underneath; the snapshot is dropped on dismiss.
 import type { TerminalRenderer, TerminalTheme } from "../../../term";
 import { rowCells, rowText, type Row } from "../../../term/rows";
-import { budgetStart, MAX_SNAPSHOT_HISTORY_ROWS, wordAt } from "../../../touch/selection";
+import { budgetStart, cellSpan, MAX_SNAPSHOT_HISTORY_ROWS, wordAt } from "../../../touch/selection";
 import { SelectionLayer } from "./SelectionLayer";
 
 /** The edit menu: where it points, in the surface's coordinates, and whether there is a selection to copy. */
@@ -31,15 +32,30 @@ interface SelectionDeps {
   selecting(on: boolean): void;
 }
 
+/** What a drag needs of the long-press that began the selection. */
+interface Drag {
+  rows: readonly Row[];
+  /** The (fractional) row at the top of the host, and the screen's left edge and cell size, to turn a finger into a cell. */
+  topRow: number;
+  hostTop: number;
+  left: number;
+  cell: { width: number; height: number };
+  /** The word the long-press landed on: one end of the selection stays inside it. */
+  anchor: { row: number; from: number; to: number };
+}
+
 export class SelectionControl {
   private layer: SelectionLayer | null = null;
-  private menuOnly = false;
+  private menuOnly: { x: number; y: number } | null = null;
+  private drag: Drag | null = null;
+  /** The finger has lifted: until then the menu stays down. */
+  private released = false;
   private unsubscribe: (() => void) | null = null;
 
   constructor(private readonly deps: SelectionDeps) {}
 
   get active(): boolean {
-    return this.layer !== null || this.menuOnly;
+    return this.layer !== null || this.menuOnly !== null;
   }
 
   /** The selected text, logical lines; empty with no selection. */
@@ -52,7 +68,7 @@ export class SelectionControl {
     return target instanceof Node && this.layer?.element.contains(target) === true;
   }
 
-  /** A long-press ended at the client point (`x`, `y`). */
+  /** A long-press fired at the client point (`x`, `y`): select the word there. */
   begin(x: number, y: number): void {
     const { host } = this.deps;
     const renderer = this.deps.renderer();
@@ -76,21 +92,49 @@ export class SelectionControl {
     const index = Math.floor(topRow + (y - hostRect.top) / cell.height);
     const row = rows[index];
     const word = row && wordAt(rowCells(row), Math.floor((x - origin.left) / cell.width));
-    this.deps.selecting(true);
+    this.released = false;
     if (!word) {
-      this.menuOnly = true;
-      const surface = (host.parentElement ?? host).getBoundingClientRect();
-      this.deps.menu({ x: x - surface.left, top: y - surface.top - cell.height, bottom: y - surface.top + cell.height, below: y - surface.top < MENU_ROOM + cell.height, selection: false });
+      this.menuOnly = { x, y };
       return;
     }
     const layer = new SelectionLayer(rows, this.deps.theme(), cell.height);
     this.layer = layer;
+    this.drag = { rows, topRow, hostTop: hostRect.top, left: origin.left, cell, anchor: { row: index, from: word.from, to: word.to } };
     host.append(layer.element);
     layer.align(topRow);
-    layer.select(index, word.from, word.to);
+    layer.select({ row: index, offset: word.from }, { row: index, offset: word.to });
     this.unsubscribe = layer.onChange(() => { this.changed(); });
     document.addEventListener("keydown", this.escape);
-    this.changed();
+  }
+
+  /** The held finger moved to (`x`, `y`): the selection's far end follows it, by cell. */
+  extend(x: number, y: number): void {
+    const { layer, drag } = this;
+    if (!layer || !drag) return;
+    const { anchor } = drag;
+    const last = drag.rows.length - 1;
+    const row = Math.max(0, Math.min(last, Math.floor(drag.topRow + (y - drag.hostTop) / drag.cell.height)));
+    const cells = rowCells(drag.rows[row] as Row);
+    const at = cellSpan(cells, Math.max(0, Math.floor((x - drag.left) / drag.cell.width)));
+    const before = row < anchor.row || (row === anchor.row && at.from < anchor.from);
+    layer.select(before ? { row, offset: at.from } : { row: anchor.row, offset: anchor.from }, before ? { row: anchor.row, offset: anchor.to } : { row, offset: row === anchor.row ? Math.max(at.to, anchor.to) : at.to });
+  }
+
+  /** The finger lifted: the edit menu opens on what is selected, or over a blank cell. */
+  release(): void {
+    this.released = true;
+    // Native hands the touch to the web view's selection only now: while the finger is down the host owns it.
+    this.deps.selecting(true);
+    this.layer?.element.removeAttribute("data-held");
+    const { menuOnly } = this;
+    if (!menuOnly) {
+      this.changed();
+      return;
+    }
+    const { host } = this.deps;
+    const height = this.deps.renderer()?.cellSize()?.height ?? 0;
+    const surface = (host.parentElement ?? host).getBoundingClientRect();
+    this.deps.menu({ x: menuOnly.x - surface.left, top: menuOnly.y - surface.top - height, bottom: menuOnly.y - surface.top + height, below: menuOnly.y - surface.top < MENU_ROOM + height, selection: false });
   }
 
   dismiss(): void {
@@ -103,7 +147,8 @@ export class SelectionControl {
       this.layer.element.remove();
     }
     this.layer = null;
-    this.menuOnly = false;
+    this.drag = null;
+    this.menuOnly = null;
     if (!wasActive) return;
     this.deps.menu(null);
     this.deps.selecting(false);
@@ -111,7 +156,7 @@ export class SelectionControl {
 
   private changed(): void {
     const layer = this.layer;
-    if (!layer) return;
+    if (!layer || !this.released) return;
     // A tap on the snapshot, or anywhere that clears the selection, ends the mode.
     if (!layer.hasSelection()) {
       this.dismiss();

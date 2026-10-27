@@ -8,7 +8,7 @@ import { bufferRows } from "./lines";
 import type { MouseEncoding } from "./mouse";
 import { WritePipeline, type Snapshot } from "./pipeline";
 import { PromptTracker } from "./prompt";
-import { cursorPan } from "./size";
+import { terminalBottomPan } from "./size";
 import { createDesktopInput } from "./xterm-input";
 
 /** Context losses tolerated before settling on the DOM renderer. */
@@ -87,8 +87,8 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
   };
 
   // The keyboard shortens what is visible but never tmux: the terminal keeps its rows and
-  // slides so the cursor row stays in view. The pan area is what remains visible of the
-  // terminal (the screen sets it); the browser's container never shrinks for the keyboard.
+  // slides to put the last row at the pan area's bottom. If that would hide the cursor above
+  // the area, the cursor row meets the bottom instead. The browser's container never shrinks.
   // In history the pan anchors to the top, so no row is skipped; the cursor lives at the bottom.
   // The slide follows a resize with the keyboard's motion; a cursor move jumps, as text does.
   let panned = 0;
@@ -98,7 +98,7 @@ export function createXtermRenderer(container: HTMLElement, options: RendererOpt
     const element = term.element;
     const cell = cellSize();
     if (!element || !cell) return;
-    const next = scrolledUp ? 0 : cursorPan(term.buffer.active.cursorY, term.rows, cell.height, panArea ?? container.clientHeight);
+    const next = scrolledUp ? 0 : terminalBottomPan(term.buffer.active.cursorY, term.rows, cell.height, panArea ?? container.clientHeight);
     if (next === panned) return;
     panned = next;
     element.style.transition = animate ? "" : "none";

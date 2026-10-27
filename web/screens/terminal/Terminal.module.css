@@ -58,22 +58,3 @@
   bottom: var(--space-3);
   box-shadow: var(--shadow-1);
 }
-
-/* The long-press's ring: where the arrow pad is centred, lit on the side the finger pushes toward. */
-.ring {
-  position: absolute;
-  z-index: var(--z-term-ring);
-  width: var(--touch-ring-size);
-  height: var(--touch-ring-size);
-  margin: calc(var(--touch-ring-size) / -2) 0 0 calc(var(--touch-ring-size) / -2);
-  border: 2px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
-  pointer-events: none;
-  animation: ring-in var(--duration-1) var(--ease-out);
-}
-.ring[data-direction="Up"] { border-top-color: var(--color-accent); }
-.ring[data-direction="Down"] { border-bottom-color: var(--color-accent); }
-.ring[data-direction="Left"] { border-left-color: var(--color-accent); }
-.ring[data-direction="Right"] { border-right-color: var(--color-accent); }
-@keyframes ring-in { from { scale: 0.6; opacity: 0; } }

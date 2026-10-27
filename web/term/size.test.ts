@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Viewport } from "../platform/types";
-import { cursorPan, fitSize, TerminalSizer, terminalSize } from "./size";
+import { fitSize, TerminalSizer, terminalBottomPan, terminalSize } from "./size";
 
 const cell = { width: 7, height: 15 };
 const vp = (over: Partial<Viewport> = {}): Viewport => ({
@@ -105,19 +105,20 @@ describe("TerminalSizer", () => {
   });
 });
 
-describe("cursorPan", () => {
+describe("terminalBottomPan", () => {
   // 45 rows of 15 px = 675 px of terminal.
   it("stays put while every row fits", () => {
-    expect(cursorPan(44, 45, 15, 675)).toBe(0);
+    expect(terminalBottomPan(44, 45, 15, 675)).toBe(0);
   });
 
-  it("slides the cursor row's bottom to the bottom of what the keyboard leaves", () => {
-    expect(cursorPan(44, 45, 15, 300)).toBe(375); // last row: everything above slides
-    expect(cursorPan(30, 45, 15, 300)).toBe(165);
-    expect(cursorPan(5, 45, 15, 300)).toBe(0); // cursor near the top: no slide
+  it("slides the last row to the bottom unless that would hide the cursor", () => {
+    expect(terminalBottomPan(44, 45, 15, 300)).toBe(375); // last row: everything above slides
+    expect(terminalBottomPan(30, 45, 15, 300)).toBe(375); // parked cursor, footer rows stay visible
+    expect(terminalBottomPan(20, 45, 15, 300)).toBe(15); // cursor stays at the bottom instead
+    expect(terminalBottomPan(5, 45, 15, 300)).toBe(0); // cursor near the top: no slide
   });
 
   it("never slides past the last row", () => {
-    expect(cursorPan(60, 45, 15, 300)).toBe(375);
+    expect(terminalBottomPan(60, 45, 15, 300)).toBe(375);
   });
 });

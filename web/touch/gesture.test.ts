@@ -44,62 +44,19 @@ describe("GestureRecognizer", () => {
     expect(g.down(5, 5)).toEqual([]);
   });
 
-  it("hold then release without moving selects the word under the finger", () => {
+  it("a hold fires the long-press; the finger then drags the selection, and lifting ends it", () => {
     const g = rig();
     g.down(40, 60);
     g.wait(400);
-    g.move(44, 63); // inside the dead zone
+    g.move(44, 63);
+    g.move(200, 300); // far past the slop: still the selection, never a scroll
     g.up();
     expect(g.out).toEqual([
       { type: "longPress", x: 40, y: 60 },
-      { type: "selectWord", x: 44, y: 63 },
+      { type: "selectMove", x: 44, y: 63 },
+      { type: "selectMove", x: 200, y: 300 },
+      { type: "selectEnd" },
     ]);
-  });
-
-  it("hold then drag is the arrow pad: arrows in the drag's direction, repeating while held, none after release", () => {
-    const g = rig();
-    g.down(100, 100);
-    g.wait(400);
-    g.move(100, 100 + 30);
-    expect(g.out.at(-1)).toEqual({ type: "arrowPad", direction: "Down" });
-    const before = g.out.filter((a) => a.type === "arrowPad").length;
-    g.wait(1000);
-    expect(g.out.filter((a) => a.type === "arrowPad").length).toBeGreaterThan(before + 3);
-    expect(g.out.every((a) => a.type !== "selectWord" && a.type !== "tap" && a.type !== "scroll")).toBe(true);
-    g.up();
-    expect(g.out.at(-1)).toEqual({ type: "padEnd" });
-    const total = g.out.length;
-    g.wait(1000);
-    expect(g.out).toHaveLength(total);
-  });
-
-  it("changing direction sends that direction at once, and returning to the centre rests the pad", () => {
-    const g = rig();
-    g.down(100, 100);
-    g.wait(400);
-    g.move(100 - 40, 100);
-    expect(g.out.at(-1)).toEqual({ type: "arrowPad", direction: "Left" });
-    g.move(100 + 40, 100 + 2);
-    expect(g.out.at(-1)).toEqual({ type: "arrowPad", direction: "Right" });
-    g.move(102, 101);
-    const n = g.out.length;
-    g.wait(600);
-    expect(g.out).toHaveLength(n);
-    g.up();
-    // At rest in the dead zone: a release is the word selection, as if it never moved far.
-    expect(g.out.at(-1)).toMatchObject({ type: "selectWord" });
-  });
-
-  it("repeats faster the further out the finger is", () => {
-    const count = (distance: number): number => {
-      const g = rig();
-      g.down(0, 200);
-      g.wait(400);
-      g.move(0, 200 - distance);
-      g.wait(1000);
-      return g.out.filter((a) => a.type === "arrowPad").length;
-    };
-    expect(count(90)).toBeGreaterThan(count(24) * 2);
   });
 
   it("movement before the long-press fires is a scroll, and the long-press never fires", () => {
@@ -156,16 +113,13 @@ describe("GestureRecognizer", () => {
     pending.wait(1000);
     expect(pending.out).toEqual([{ type: "cancel" }]);
 
-    const pad = rig();
-    pad.down(100, 100);
-    pad.wait(400);
-    pad.move(100, 150);
-    pad.cancel();
-    const n = pad.out.length;
-    pad.wait(1000);
-    expect(pad.out).toHaveLength(n);
-    expect(types(pad.out.slice(-2))).toEqual(["padEnd", "cancel"]);
-    expect(pad.out.some((a) => a.type === "selectWord")).toBe(false);
+    const held = rig();
+    held.down(100, 100);
+    held.wait(400);
+    held.move(100, 150);
+    held.cancel();
+    expect(held.out.at(-1)).toEqual({ type: "cancel" });
+    expect(held.out.some((a) => a.type === "selectEnd")).toBe(false);
   });
 
   it("a second finger cancels the first and resolves nothing until both lift", () => {
@@ -189,6 +143,7 @@ describe("GestureRecognizer", () => {
       g.wait(10);
       g.move(50 + (i % 2), 50);
     }
-    expect(g.out).toEqual([{ type: "longPress", x: 50, y: 50 }]);
+    expect(g.out[0]).toEqual({ type: "longPress", x: 50, y: 50 });
+    expect(g.out.filter((a) => a.type === "longPress")).toHaveLength(1);
   });
 });

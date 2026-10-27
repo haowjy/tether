@@ -21,13 +21,8 @@ export function wordAt(cells: readonly string[], col: number): { from: number; t
   while (at > 0 && cells[at] === "") at--; // the second half of a wide character is its first
   const here = cells[at];
   if (here === undefined || here.trim() === "") return null;
-  const offsets: number[] = [];
-  let length = 0;
-  for (const cell of cells) {
-    offsets.push(length);
-    length += cell.length;
-  }
-  offsets.push(length);
+  const offsets = offsetsOf(cells);
+  const length = offsets[offsets.length - 1] ?? 0;
   if (SEPARATORS.includes(here)) return { from: offsets[at] ?? 0, to: offsets[at + 1] ?? length };
   const word = (index: number): boolean => {
     const cell = cells[index];
@@ -39,6 +34,29 @@ export function wordAt(cells: readonly string[], col: number): { from: number; t
   let end = at + 1;
   while (end < cells.length && word(end)) end++;
   return { from: offsets[start] ?? 0, to: offsets[end] ?? length };
+}
+
+/** Where each cell's text starts in the row's text, then the row's length. */
+function offsetsOf(cells: readonly string[]): number[] {
+  const offsets: number[] = [];
+  let length = 0;
+  for (const cell of cells) {
+    offsets.push(length);
+    length += cell.length;
+  }
+  offsets.push(length);
+  return offsets;
+}
+
+/** The text of the character at column `col`, as offsets into the row's text; a column past the end is the row's end. */
+export function cellSpan(cells: readonly string[], col: number): { from: number; to: number } {
+  let at = Math.min(col, cells.length);
+  while (at > 0 && cells[at] === "") at--; // the second half of a wide character is its first
+  let next = at + 1;
+  while (cells[next] === "") next++;
+  const offsets = offsetsOf(cells);
+  const end = offsets[offsets.length - 1] ?? 0;
+  return { from: offsets[at] ?? end, to: offsets[next] ?? end };
 }
 
 export interface TextPoint {

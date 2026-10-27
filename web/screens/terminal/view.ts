@@ -2,7 +2,7 @@
 // scroll with its momentum, the history rows above the buffer and the selection snapshot. All
 // of it is state of one tab on a surface every tab shares, so it lives in one object that is
 // told which tab is shown and drops everything when that changes or a snapshot repaints the
-// pane. Nothing here outlives the view it began on: a coast, the arrow pad's repeat or a
+// pane. Nothing here outlives the view it began on: a coast, a held drag or a
 // selection never reaches another tab's pane.
 import type { HapticKind, InputEvent } from "../../platform/types";
 import type { HistoryRow } from "../../tabs/driver";
@@ -30,6 +30,8 @@ interface ViewDeps {
   prompt(): PromptLine | null;
   /** The terminal's own input holds the keyboard. */
   keyboardHeld(): boolean;
+  /** No input holds the keyboard. */
+  keyboardDown(): boolean;
   /** Native keeps the web view's selection while a snapshot is up (`setFocus("select")`). */
   selecting(on: boolean): void;
   /** The view is above the newest line. */
@@ -83,7 +85,7 @@ export class TerminalView {
     this.reset();
   }
 
-  /** A snapshot repainted the pane, or the tab changed: stop the coast, the pad and the ring, and drop the selection and the fetched history. */
+  /** A snapshot repainted the pane, or the tab changed: stop the coast and any gesture, and drop the selection and the fetched history. */
   reset(): void {
     this.touch.cancel();
     this.selection.dismiss();

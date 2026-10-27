@@ -5,6 +5,12 @@ version section on release.
 
 ## [Unreleased]
 
+- On the phone, a long-press on the terminal now highlights the word under your finger
+  at once, and dragging while held extends the selection; the arrow pad is gone. ← and →
+  join ↑ and ↓ in the key row, repeating while held. A tap on the cursor's row, or the
+  row above or below it, opens the keyboard.
+- With the keyboard up, the terminal now keeps bottom status and footer rows visible; a
+  cursor near the top remains visible instead of being pushed off-screen.
 - A tab whose tmux client can't start no longer sits on `Connecting...`: after one retry
   it ends with an error naming the cause, including a version mismatch when known.
 - Enrolling in the browser asks for the code as eight cells, `▢▢▢▢ – ▢▢▢▢`, with the

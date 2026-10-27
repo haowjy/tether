@@ -25,16 +25,19 @@ export function fitSize(width: number, height: number, cell: CellSize): Size {
 }
 
 /**
- * How far to slide the terminal up, in CSS pixels, so the cursor row's bottom sits at the
- * bottom of the `visible` height: never down, never past the last row. The keyboard
- * shortens the view without resizing tmux, so the rows above are covered instead
- * (plan.md "Layout", keyboard shown). `visible` is the pan area: what remains visible of
- * the terminal, not its container's height, which in the browser never shrinks.
+ * How far to slide the terminal up, in CSS pixels, to put its last row at the bottom of
+ * the `visible` area. If that would put the cursor above the area's top, put the cursor
+ * row at the bottom instead. Never pan down or past the last row; do nothing when all
+ * rows fit. `visible` is the pan area, not the container's height (which does not shrink
+ * in the browser).
  */
-export function cursorPan(cursorRow: number, rows: number, cellHeight: number, visible: number): number {
+export function terminalBottomPan(cursorRow: number, rows: number, cellHeight: number, visible: number): number {
   const overflow = rows * cellHeight - visible;
   if (overflow <= 0) return 0;
-  return Math.min(overflow, Math.max(0, (cursorRow + 1) * cellHeight - visible));
+  const bottomPan = overflow;
+  const cursorTop = cursorRow * cellHeight - bottomPan;
+  if (cursorTop >= 0) return bottomPan;
+  return Math.min(bottomPan, Math.max(0, (cursorRow + 1) * cellHeight - visible));
 }
 
 /**

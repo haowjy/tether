@@ -6,8 +6,11 @@ scratch tmux session with two windows, not your own. Portrait first, then landsc
 1. **Toggle.** Dock at rest shows one row: chip, line field, keyboard icon; no key row. Tap the
    icon: keyboard rises on the first tap, key row appears, icon becomes "hide". Tap it again: keyboard
    drops. Tap the line field: keyboard rises for the field. Tap the icon: it drops.
-2. **Terminal taps.** With the keyboard up (either input) and down, tap the terminal: nothing
-   changes. Key-row taps never lower the keyboard.
+2. **Terminal taps.** With the keyboard down, tap the terminal far from the cursor: nothing
+   changes. Tap on the cursor's row or one beside it: the keyboard rises (this runs from
+   `pointerup`; in Safari and the PWA that it raises WebKit's keyboard is unverified, and the
+   tap must not also move the cursor). With the keyboard up, no tap lowers it. Key-row taps
+   never lower the keyboard.
 3. **Focus cues.** Terminal input: solid block cursor, plain Return key. Line field: hollow cursor,
    blue send key.
 4. **Safari's Done and arrows.** Done lowers the keyboard and the icon follows; one icon tap
@@ -60,13 +63,13 @@ the pane gets), `less` on a long file, `vim -c 'set mouse=a'`, and a shell with 
 of output (`seq 1 500`). Playwright covers the logic with injected touches; these are the
 things only a finger shows.
 
-18. **Haptic.** Press and hold on the terminal: a firm tap-like buzz as the ring appears, about
+18. **Haptic.** Press and hold on the terminal: a firm tap-like buzz as the word highlights, about
     a third of a second in, and not before. Scrolling or a quick tap never buzzes.
-19. **Arrow pad feel.** In `cat -vt`, hold, then drag: the first arrow comes the moment the
-    finger leaves the ring's centre, repeats faster the further out you push, changes direction at
-    once when you swing across, and stops the instant you lift. In a shell prompt it moves the
-    cursor along the line; in `vim` it moves vim's. No mouse bytes (`^[[<`) ever appear. Compare it
-    with Termius's motion pad: say what feels slower, faster or sticky.
+19. **Held drag.** Hold on a word, keep the finger down and drag across words and onto the
+    next line: the highlight stays under the finger the whole time (it must not flash and
+    vanish: that would mean WebKit's own long-press took the touch, and `focus select` should move
+    later still). The menu waits for the lift. ← and → in the key row move the cursor in a prompt
+    and repeat while held. No mouse bytes (`^[[<`) ever appear.
 20. **Release selects a word.** Hold and lift without moving: the word under the finger is
     highlighted, the system's selection handles appear on it (they must; if only the highlight
     shows, native handles don't work on a programmatic selection and the design needs its own

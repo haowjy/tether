@@ -18,8 +18,10 @@ type Spec =
 
 const KEYS: Spec[] = [
   { label: "esc", key: "Escape" },
+  { label: "←", name: "Left arrow", key: "Left", repeat: true },
   { label: "↑", name: "Up arrow", key: "Up", repeat: true },
   { label: "↓", name: "Down arrow", key: "Down", repeat: true },
+  { label: "→", name: "Right arrow", key: "Right", repeat: true },
   { label: "^R", name: "Control R", key: "C-r" },
   { label: "^C", name: "Control C", key: "C-c" },
   { label: "tab", key: "Tab" },

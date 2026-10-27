@@ -3490,15 +3490,14 @@ variations canvas.
 - **Rejected:** updating the spike to the web dock (it would become a second copy of
   P3a); running it as is (it tests the old design).
 
-### Vocabulary: dock, tab chip, line field, key row, keyboard toggle, switcher, arrow pad
+### Vocabulary: dock, tab chip, line field, key row, keyboard toggle, switcher
 
 - **Decided:** 2026-10-24, design (p110, p112).
 - **What:** the **dock** is the touch stack at the bottom of Terminal; the **tab chip**
   its control naming the active tab; the **line field** its one-line text field; the
   **key row** its row of terminal keys, shown while the keyboard is up; the **keyboard
   toggle** the one keyboard control. The **switcher** is the phone's session sheet
-  behind the tab chip; the **picker** is the desktop's attach-only modal. The **arrow
-  pad** is a long-press held and dragged. A **draft** is the line field's unsent text
+  behind the tab chip; the **picker** is the desktop's attach-only modal. A **draft** is the line field's unsent text
   for one tab. "Compose", "draft editor", "tab row" and "Insert" (for text) are retired.
 - **Rejected:** "line editor" and "edit box", which collide with the shell's own line
   editor (zle, readline); "compose", tied to the removed multiline editor; "picker" for
@@ -4653,3 +4652,76 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   behavior with disposable checks; retain the evidence, not new regression cases.
   Existing tests are migrated to the changed behavior.
 - **Rejected:** retaining a new focused regression suite without Jimmy's approval.
+
+### The keyboard pan keeps the terminal bottom visible unless that would hide the cursor
+
+- **Decided:** 2026-10-26, tech lead; Jimmy agreed either implementation works.
+- **What:** tmux keeps the keyboard-down size. When the visible terminal area is shorter
+  than its rows, `terminalBottomPan` moves the terminal so its last row meets the area's
+  bottom. If that offset would put the cursor above the area's top, it instead puts the
+  cursor row at the bottom, as before. It never pans past the last row, does nothing while
+  all rows fit, and does not pan while scrolled into history. The dock refreshes its area
+  when `Viewport.visibleHeight` changes, including the native app's keyboard resize where
+  `keyboardInset` remains 0. The tether chrome is measured from the surface in a short
+  window after layout, density, directInput, width, stable height or the safe area change,
+  and at the start, as client-architecture.md §5.4 says; a keyboard changes none of those,
+  so a shrinking web view never becomes chrome.
+- **Why:** full-screen harnesses often park the cursor above their input/status/footer
+  rows; cursor-only anchoring hides those rows. The cursor guard keeps an editor cursor
+  near the top visible. Recomputing from `visibleHeight` makes the app use the geometry
+  native actually changed instead of waiting on `keyboardInset` or a strip size change;
+  measuring the short surface as chrome on every resize could also resize tmux during its
+  frame animation before the final viewport message arrived. Guards that compared
+  `visibleHeight` with `stableHeight` or checked the focus owner were rejected: they patched
+  a per-resize derivation, and the first misfired at fractional zoom, where the visual
+  viewport is a fraction below the rounded stable height.
+- **Rejected:** resizing tmux to the visible rows while the keyboard is up (each keyboard
+  toggle redraws every TUI over a spotty link and resizes the laptop's view); cursor-only
+  anchoring (hides harness status lines); bottom-only anchoring with no cursor guard (can
+  push a cursor near the top off-screen).
+- **Supersedes:** the cursor-only pan anchor in "The keyboard pan belongs to the renderer
+  and follows the cursor" and "The suggestion strip pans the terminal like the keyboard
+  and never resizes tmux" above.
+
+### The terminal long-press selects at once; arrows are keys; a tap near the cursor opens the keyboard
+
+- **Decided:** 2026-10-26, Jimmy, with the tech lead's call on the one open choice.
+  Round 3: "selection - yes" (drop the pad, long-press-drag selects, ← → in the key row);
+  and on keyboard-up typing, "if i clicked somewhere where I wanted to enter text, the
+  keyboard should open on its own". Round 4 (correction): "holding finger down and dragging
+  turns into the arrow pad IF YOU MOVE, but if you don't move i think it should select the
+  text, and then u can drag it with the things to the side (like termius)". Round 5:
+  "unless you think it would be better ur way to just remove the drag thing", settled by
+  removing it.
+- **What:**
+  - **No arrow pad.** The long-press highlights the word under the finger the moment it
+    fires (haptic as before). Dragging while still held moves the selection's far end to
+    the cell under the finger, across rows, inside the snapshot; release shows the handles
+    and the edit menu (Copy / Paste; Paste alone over a blank cell). No mouse event, in
+    mouse-mode apps too. The pad's states, dead zone, range and repeat speeds, and the
+    ring that drew nothing useful, are deleted.
+  - **← and → join the key row**: esc, ←, ↑, ↓, →, ^R, ^C, tab, ctrl, alt, `|`, `~`, `/`,
+    `-`. They repeat while held as ↑ and ↓ do. The four sit together in a keyboard
+    cluster's order rather than ←→ apart from ↑↓, which a thumb on one row reads as one
+    control.
+  - **A tap on the cursor's row, or the row directly above or below it, raises the
+    keyboard for the terminal** (the toggle's action) when it is down. The cursor is
+    tmux's (xterm `cursorY`); scrolled back into history it is off screen and nothing
+    opens. In app mouse mode the tap is still sent as a click and also opens the keyboard.
+    A tap never lowers the keyboard; taps elsewhere keep their meaning. The tap that
+    raises the keyboard does not also move the prompt's cursor: that happens only when the
+    terminal's input held the keyboard before the tap.
+  - **`focus select` goes to native when the finger lifts.** The highlight and the drag
+    are the web's while the finger is down, over a snapshot layer that takes no pointer
+    events, so WebKit's own long-press cannot take the touch and send `pointercancel`.
+- **Why:** the pad drew nothing, so a press meant to select looked like a dead control
+  once the finger moved past 16 px; hold-to-select with a visible highlight is what iOS and
+  Termius do, and arrows as keys cost nothing in the terminal's gesture space. Typing
+  where the cursor is should not need a trip to the toggle.
+- **Rejected:** keeping the pad and adding visuals (a second mode under one gesture, and
+  the jitter between select and pad stays); a line-field-aware opening when the line field
+  holds the keyboard (a tap near the cursor changes nothing then, as the keyboard is up).
+- **Supersedes:** "The key row's keys, and arrows by long-press" (the arrow pad, and "←
+  and → go"); "Two keyboard openers, one closer, with Termius's focus cues" ("terminal taps
+  open and close nothing"); and "Touch scroll is JS momentum over xterm and a DOM history
+  view" ("a long-press hold with a drag is the arrow pad").

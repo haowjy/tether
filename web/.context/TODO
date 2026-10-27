@@ -14,3 +14,12 @@ Must-do (client-architecture.md §11):
   `select` and the long-press callout were built but not exercised: the Simulator takes no touch
   or key input from the agent shell. They are on `ios-shell.md`'s Device checklist and the
   checklist (18 to 29).
+
+- Chrome is measured at start and in a two-frame window after layout, density, width,
+  stableHeight or safe area change (terminals.ts `openChromeWindow`). A Banner (host problem,
+  offline, Update ready) that is showing at that moment is counted in the chrome until the
+  next such change, so tmux keeps a row or two fewer than it could after the banner goes.
+  Banners appearing later are not subtracted (like the status strip; the pan keeps the
+  bottom in view). Same family: a rotation while the app's keyboard is up measures chrome
+  from a shortened surface. Fix by measuring chrome from the in-flow chrome elements
+  (dock resting slot, tab bar) rather than stable box less surface.

@@ -345,8 +345,11 @@ No rename/kill controls, extended-key/files sheet, or suggestion UI is part of t
 minimal pass.
 
 Keyboard opening does not resize tmux: tmux is sized with the resting dock in place and
-the keyboard down, and the terminal pans to reveal the cursor above the dock while
-respecting platform safe areas.
+the keyboard down, and the terminal keeps its last row at the bottom of the visible area
+above the dock's key row and resting row. If that would put the cursor above the area's
+top, the cursor row meets the bottom instead. The pan never goes past the last row, does
+nothing while every row fits, and is off while scrolled into history; platform safe areas
+are respected.
 
 ## Keyboard
 
@@ -356,10 +359,13 @@ On touch, the dock's keyboard toggle is the only tether control that opens and c
 the on-screen keyboard. It stays visible in either state: with the keyboard down it
 raises it for the terminal input, and with either input holding the keyboard it lowers
 it. A tap on the dock's line field brings the keyboard up for the field, as any text
-field does. Terminal taps never change focus or the keyboard: with app mouse mode on,
-a tap is sent as a click; without it, a tap does nothing, except that OSC 133
-prompt-row cursor placement may move the cursor while the terminal input already has
-the keyboard. Scroll, selection, tab changes and reconnects leave the keyboard as it is.
+field does. A tap on the terminal never lowers the keyboard. With the keyboard down, a
+tap on the cursor's row or the row directly above or below it raises it for the terminal
+input, as the toggle does (not while scrolled back into history, where the cursor is off
+screen). Taps elsewhere keep their meaning: with app mouse mode on, a tap is sent as a
+click (near the cursor it also raises the keyboard); without it, a tap does nothing,
+except that OSC 133 prompt-row cursor placement may move the cursor while the terminal
+input already has the keyboard. Scroll, selection, tab changes and reconnects leave the keyboard as it is.
 Opening a sheet lowers it; the native app raises it again when the sheet closes, as
 after any interruption, and the browser leaves it down. Desktop
 click-to-focus is unchanged. The native mechanics are in
@@ -418,11 +424,11 @@ after Tab, ↑ or readline edits.
 ### The key row
 
 Shown above the dock's resting row while the keyboard is up, the same in the browser,
-the PWA and the app. One fixed row, most used first: esc, ↑, ↓, ^R, ^C, tab, ctrl, alt,
-`|`, `~`, `/`, `-`, scrolling horizontally. ctrl and alt arm the next key; ↑ and ↓ repeat
-while held. Control keys always go to the terminal; character keys go where typing
-goes. There are no ← and → keys: the long-press arrow pad gives all four
-([Cursor movement](#cursor-movement)). Command recall is the shell's own (↑, ^R),
+the PWA and the app. One fixed row, most used first: esc, ←, ↑, ↓, →, ^R, ^C, tab, ctrl,
+alt, `|`, `~`, `/`, `-`, scrolling horizontally. The arrows sit together in the order of
+a keyboard's cluster, after esc. ctrl and alt arm the next key; the arrows repeat while
+held. Control keys always go to the terminal; character keys go where typing goes. The
+terminal has no other arrow input on touch ([Cursor movement](#cursor-movement)). Command recall is the shell's own (↑, ^R),
 including commands typed on the desktop; the line field keeps no history. Details are
 in [Phone dock](client/browser-behaviors.md#phone-dock).
 
@@ -486,12 +492,10 @@ Core MVP. Spikes 5–8 prototype these before feature work.
 
 ### Cursor movement
 
-- **The arrow pad:** a long-press on the terminal fires with a haptic; keep holding
-  and drag, and the drag's direction sends arrows, repeating while held, like Termius's
-  motion joystick. It is the one arrow input on touch, and it sends no mouse event in
-  mouse-mode apps. Releasing without moving selects a word instead
-  ([Select, copy and paste](#select-copy-and-paste)). (iOS's long-press-space trackpad isn't available to the native input view, and isn't
-  mapped in the browser.)
+- **Arrows** are the key row's ← ↑ ↓ → ([The key row](#the-key-row)). A long-press on the terminal selects text and sends no mouse event, in
+  mouse-mode apps too ([Select, copy and paste](#select-copy-and-paste)). (iOS's
+  long-press-space trackpad isn't available to the native input view, and isn't mapped in
+  the browser.)
 - **Tap to position** on the current prompt line: the column delta between cursor and
   tap, sent as ←/→. Only when the OSC 133 marks (or the prompt regex) show a shell
   prompt and the tap is inside the input region; single line only in the MVP.
@@ -499,10 +503,12 @@ Core MVP. Spikes 5–8 prototype these before feature work.
 ### Select, copy and paste
 
 The [researched interaction design](client/terminal-interaction-design.md) is the
-current direction. A long-press released without moving selects the word under the
-finger, with handles to drag it further and tether's edit menu: Copy, and Paste, which
-sends the clipboard to the terminal as one paste without Enter. Released over a blank
-cell it opens the menu with Paste alone. It must not trigger a remote click. Prototype
+current direction. A long-press fires with a haptic and highlights the word under the
+finger at once. Dragging while still held moves the selection's far end to the cell under
+the finger, across rows, within the snapshot (the rows in view and those kept above them;
+no autoscroll at the edges). Releasing shows the handles to adjust it and tether's edit
+menu: Copy, and Paste, which sends the clipboard to the terminal as one paste without
+Enter. A long-press over a blank cell opens the menu with Paste alone on release. It must not trigger a remote click. Prototype
 native selection handles with a bounded, immutable logical-text snapshot; rendering
 one DOM node per physical terminal row is not enough to preserve copied newlines.
 Current snapshot restoration loses wrap metadata, so capture/restore must be resolved
