@@ -138,8 +138,9 @@ half-height over current tab             full-height from Home
   leaves its session running. + offers New session and Browse files; Browse files opens
   a new Files tab at the server's folder list (its roots).
 - Session rows mark the active tab's session “here” and other open sessions “open”.
-  An attention dot on tab buttons and session rows indicates a terminal bell; its tmux
-  mechanism and coverage are **pending probe** on 3.4 and 3.7b. The current-tab button
+  An attention dot on tab buttons and session rows marks a terminal bell since this
+  device last showed that tab; mechanism and coverage limits are in
+  [plan.md](../plan.md) (Bell attention). The current-tab button
   can surface attention from another tab. It is not a connection-status indicator.
 - New session prompts for an optional name and absolute start directory; blank uses
   tmux's defaults. Cancellation is harmless and server validation is authoritative.

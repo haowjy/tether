@@ -4977,18 +4977,30 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   rejected line-aware tap in “The terminal long-press selects at once; arrows are keys;
   a tap near the cursor opens the keyboard”.
 
-### Bell attention is a UI intent pending a real-tmux probe
+### Bell attention: BEL in the stream, plus one runtime alert-bell hook
 
-- **Decided:** 2026-10-27, Jimmy (“if we can find it”).
-- **What:** show an attention dot on session rows and tabs for a terminal bell, and
-  surface attention on the current-tab button. The mechanism, coverage and clearing
-  remain pending the tmux 3.4 and 3.7b probe. Show a connection indicator on the
-  terminal only when not live; it is separate from the bell dot.
-- **Why:** an agent may need attention without the user watching its tab, and a weak
-  connection needs a visible reconnecting state.
-- **Rejected:** promising bell coverage from `window_bell_flag` before probing whether
-  it exposes a bell in an unwatched one-window session; relying on connection color as
-  the attention signal.
+- **Decided:** 2026-10-27, Jimmy (“if we can find it”; the hook: “yes, although wait for
+  my tmux restart”; the agent setting: “okay with that change (but u need to also add it
+  to tether docs)”).
+- **What:** an attention dot on session rows, tabs and the current-tab button marks a
+  terminal bell since this device last showed the tab. The streamed tab's BEL comes from
+  pane output; other sessions are covered by one server-global `alert-bell` hook tether
+  appends at runtime and removes on stop, recording the session in a tether user option.
+  tether keeps "seen" itself. Users make agents ring BEL (Claude Code:
+  `preferredNotifChannel: "terminal_bell"`); running.md documents it with the feature.
+  The hook reaches Jimmy's live server only after his planned tmux restart. Show a
+  connection indicator on the terminal only when not live; it is separate from the dot.
+- **Why:** an agent may need attention without the user watching its tab. Probes p310
+  and p314 showed the same behavior on 3.4, 3.7b and 3.8: BEL arrives in `%output`
+  with no separate notification; the global hook fires for current and other windows and
+  can mark the session with `set-option -F`; `set-hook -a` keeps the user's own hooks.
+- **Rejected:** reading tmux's `window_bell_flag` (shared with every client, cleared
+  when any client looks, and not set for a current window while a client is attached);
+  `refresh-client -B` subscriptions (scoped to the control client's own session); polling
+  `list-sessions`; editing `.tmux.conf` or changing `monitor-bell`/`bell-action` to widen
+  coverage; per-session hooks that would override a user's own session hook. Accepted
+  limits: a session-level user hook shadows tether's global one, and `monitor-bell off`
+  or an excluding `bell-action` suppresses it.
 - **Supersedes in part:** the ban on dot status markers in “Browser/mobile client
   direction and portable design record”, and the always-colored terminal host indicator
   in “Terminal and desktop input details”. It does not add an agent dashboard.

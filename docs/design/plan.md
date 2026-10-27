@@ -46,7 +46,7 @@ his tailnet. It needs:
   markdown (MVP) and diffs (v2); edit, create and rename files (v2).
 
 Agent dashboards and notifications are out of scope: Jimmy's agent harness already
-handles notifications. A bell attention dot is intended, pending a real-tmux probe.
+handles notifications. A terminal bell does mark its tab and session with an attention dot (Bell attention below).
 Why tether is worth building, and which projects to study, is in [research/prior-art.md](research/prior-art.md).
 
 ## Product rules
@@ -154,8 +154,8 @@ card opens a full-height sheet with Back. Desktop has Home, tabs and + in its to
 + opens a session picker with New session and Browse files. Home and Browse files open
 new Files tabs at the selected server's folder list (its roots). Session search is local and refresh
 is event-driven. Only sessions with multiple windows offer switching in the sheet or
-desktop equivalent. A bell attention dot is intended on tabs and rows; its mechanism is
-pending a probe on real tmux. See [the interaction contract](client/browser-behaviors.md)
+desktop equivalent. A terminal bell puts an attention dot on its tab and session row
+(Bell attention below). See [the interaction contract](client/browser-behaviors.md)
 for behavior and open details. Scratch shells are outside this client pass.
 
 ### Reconnect
@@ -340,8 +340,8 @@ tabs and +. With the keyboard up the bar is replaced by an always-visible one-li
 compose box above the text-only key row, with Hide keyboard. The phone browser, PWA and
 native app share the web dock ([Phone dock](client/browser-behaviors.md#phone-dock)).
 
-Use actual tmux names and spacing, not dot separators. A bell attention dot is intended,
-pending probe; it does not stand for connection state. No rename/kill controls,
+Use actual tmux names and spacing, not dot separators. The bell attention dot does not
+stand for connection state. No rename/kill controls,
 extended-key/files sheet, or suggestion UI is part of this pass.
 
 Keyboard opening does not resize tmux: tmux is sized with the resting bar in place and
@@ -544,9 +544,24 @@ width.
   `tailscale serve`.
 - **Search (v2):** `@xterm/addon-search` over the live buffer, text search over loaded
   history, and a server-side search over `capture-pane` for the rest.
-- **Bell attention:** intended on tabs and session rows. Its tmux mechanism and coverage
-  are pending a probe on 3.4 and 3.7b; do not promise that every bell can be observed.
-  A general new-output activity dot remains v2.
+- **Bell attention:** a terminal bell (BEL) puts a dot on its tab, its session row and
+  the current-tab button, until this device shows that tab. For the tab on screen the
+  daemon finds BEL in the pane output it already streams. For every other session it
+  appends one server-global `alert-bell` hook at runtime (`set-hook -ga`, recording the
+  ringing session in a tether user option with `set-option -F`), removes only its own
+  hook entry when it stops, and never edits `.tmux.conf` or changes `monitor-bell` or
+  `bell-action`; behavior verified on tmux 3.4, 3.7b and 3.8 (decisions.md, "Bell
+  attention").
+  Coverage limits, stated rather than worked around: a session with its own session-level
+  `alert-bell` hook shadows the global one, and `monitor-bell off` or a `bell-action` that
+  excludes the window suppresses the hook. "Seen" is tether's own per-device state;
+  tmux's shared bell flags are never cleared for the phone. How the daemon learns a
+  marker changed without polling (a hook-run notification or a format subscription) is
+  settled in daemon-core.md before building. Agents must ring BEL: Claude Code does so
+  only with `"preferredNotifChannel": "terminal_bell"` in its settings, and Codex only in
+  some terminals; [running.md](../running.md) gains a section saying so when this ships.
+  Jimmy approved the hook (2026-10-27); it goes onto his live tmux server only after his
+  planned tmux restart. A general new-output activity dot remains v2.
 - **Typing latency on cellular:** spike 3 measures echo latency; at 200 ms or more,
   predictive local echo moves to v2.
 
@@ -841,7 +856,7 @@ The spikes come first. The native app's keyboard checks are in
 - Multi-host.
 - Paid Apple account: TestFlight, App Groups, the share extension.
 - New-output activity dots, scrollback search, tappable file paths, per-tab pan mode.
-  Bell-dot coverage is pending the real-tmux probe.
+  Bell-dot coverage beyond the global-hook limits above.
 - Predictive local echo, if spike 3 shows 200 ms+ echo on travel links.
 
 ### Later
