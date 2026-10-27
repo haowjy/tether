@@ -19,6 +19,8 @@
   --color-border: light-dark(var(--gray-3), var(--gray-9));
   --color-accent: light-dark(var(--blue-7), var(--blue-9));
   --color-on-accent: light-dark(oklch(0.99 0 0), oklch(0.2 0.03 245));
+  /* A bell since this device last showed the tab: its own colour, apart from the connection statuses. */
+  --color-attention: light-dark(var(--blue-7), var(--blue-9));
   --color-focus-ring: light-dark(var(--blue-7), var(--blue-9));
 
   /* Connection colour on a label, never a dot. The active pill is marked by fill and weight. */

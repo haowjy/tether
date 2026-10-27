@@ -1,7 +1,7 @@
 // The one listing fetcher (client-architecture.md §6.3): the only code that sends
 // `listSessions`. It joins each host as a TabPort and reports each reply once, to whoever
-// subscribes: the controller turns it into the workspace's `listing` event (pruning) and
-// sessions/ renders it (Home and the sessions overlay), so all see the same listing.
+// subscribes: the controller turns it into the workspace's `listing` event (pruning), the bell
+// marks, and sessions/ renders it (Home and the sessions overlay), so all see the same listing.
 import { RequestError, type Host, type TabPort } from "../net/host";
 import { backoffMs } from "../tabs/connection";
 import type { ServerMsg, TmuxListing } from "../proto/generated/messages";
@@ -14,6 +14,8 @@ export type ListingEvent =
   /** A `listSessions` was sent for a user-visible reason (not a `sessionsChanged` hint): rows read "Updating" until the answer. */
   | { type: "requested"; handle: string }
   | { type: "listed"; handle: string; listing: TmuxListing | null }
+  /** The daemon's `bell` message: marks that changed, or whether it can read tmux's bell state (daemon-core.md §4.8). */
+  | { type: "bell"; handle: string; bell: Extract<ServerMsg, { type: "bell" }>["data"] }
   /** Nothing decided: cached rows go stale and offer Retry. */
   | { type: "failed"; handle: string; reason: RequestError["reason"] };
 
@@ -85,6 +87,8 @@ export class ListingFetcher {
         if (msg.type === "sessionsChanged" && this.opts.visible()) {
           clearTimeout(state.relist);
           state.relist = setTimeout(() => { this.fetch(handle, false); }, RELIST_DELAY_MS);
+        } else if (msg.type === "bell") {
+          this.emit({ type: "bell", handle, bell: msg.data });
         }
       },
     };

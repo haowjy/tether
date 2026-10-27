@@ -5,14 +5,16 @@ import { ServerCard, type CardTab, type ServerCardProps } from "../../screens/ho
 
 const NO_OP = (): void => undefined;
 const tab = (id: string, label: string, meta?: string): CardTab => ({
-  id, icon: id.startsWith("files") ? "folder" : "terminal", label, meta, selected: false, onOpen: NO_OP, onClose: NO_OP,
+  id, icon: id.startsWith("files") ? "folder" : "terminal", label, meta, selected: false, bell: false, onOpen: NO_OP, onClose: NO_OP,
 });
 const TABS = [tab("t1", "tether agent"), tab("t2", "notes shell"), tab("files-1", "tether")];
 const NEW = <Button variant="quiet" icon="plus">New session</Button>;
-const base = { onRetry: NO_OP, onSessions: NO_OP, newSession: NEW };
+const base = { bellsUnavailable: false, onRetry: NO_OP, onSessions: NO_OP, newSession: NEW };
 
 const CARDS: ServerCardProps[] = [
   { ...base, notice: null, name: "pop-os", tabs: TABS, body: { kind: "ready", count: 9 }, onFiles: NO_OP },
+  { ...base, notice: null, name: "pop-os (a bell rang in notes)", tabs: [TABS[0] as CardTab, { ...(TABS[1] as CardTab), bell: true }], body: { kind: "ready", count: 9 }, onFiles: NO_OP },
+  { ...base, notice: null, bellsUnavailable: true, name: "pop-os (bell tracking unavailable)", tabs: [TABS[0] as CardTab], body: { kind: "ready", count: 9 }, onFiles: NO_OP },
   { ...base, notice: null, name: "pop-os (no tabs)", tabs: [], body: { kind: "ready", count: 2 }, onFiles: NO_OP },
   { ...base, notice: null, name: "pop-os (loading)", tabs: [], body: { kind: "loading" }, onFiles: NO_OP },
   { ...base, notice: null, name: "pop-os (list failed)", tabs: [], body: { kind: "failed" }, onFiles: NO_OP },

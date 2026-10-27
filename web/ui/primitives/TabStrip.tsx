@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { cx } from "../cx";
 import { useFocusRef } from "../focus";
+import { BellDot } from "./BellDot";
 import { IconButton } from "./IconButton";
 import styles from "./TabStrip.module.css";
 
@@ -21,6 +22,8 @@ export interface Pill {
   tone: PillTone;
   /** The connection state in words, so colour is never the only signal. */
   state: string;
+  /** A bell rang in the tab's session since this device last showed it. */
+  bell: boolean;
 }
 
 interface TabStripProps {
@@ -80,12 +83,13 @@ function PillView({ pill, active, closable, onSelect, onClose }: { pill: Pill; a
         ref={focusRef}
         class={styles.select}
         aria-current={active ? "true" : undefined}
-        aria-label={`${pill.full}, ${pill.state}`}
+        aria-label={`${pill.full}, ${pill.state}${pill.bell ? ", bell rang" : ""}`}
         title={pill.full}
         onClick={() => { onSelect(pill.id); }}
       >
         <span class={styles.session}>{pill.session}</span>
         {pill.window !== "" && <span class={styles.window}>{pill.window}</span>}
+        {pill.bell && <BellDot class={styles.bell} />}
       </button>
       {closable && <IconButton icon="close" label={`Close ${pill.full}`} class={styles.close} onClick={() => { onClose(pill.id); }} />}
     </div>

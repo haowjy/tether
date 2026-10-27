@@ -1,5 +1,6 @@
 import { createContext, type ComponentChildren } from "preact";
 import { useContext } from "preact/hooks";
+import type { BellsState } from "../sessions/bells";
 import { FocusContext } from "../ui/focus";
 import { useStore } from "../ui/store";
 import { tabLabels, type TabLabel } from "../workspace/labels";
@@ -38,6 +39,12 @@ export function useOverlay(screen: string, name?: string): { open: boolean; para
 /** A slice of the app's view state (viewport, workspace, navigation, hosts), re-rendering only when that slice changes. */
 export function useAppView<S>(select: (view: AppView) => S, equal?: (a: S, b: S) => boolean): S {
   return useStore(useApp(), select, equal);
+}
+
+/** The bell marks and what this device has seen of them: the dots on pills, rows and the current-tab button. */
+export function useBells(): BellsState {
+  const app = useApp();
+  return useStore(app.bells, (s) => s);
 }
 
 /** A host's name for a host id, falling back to the id while the host is unknown. */

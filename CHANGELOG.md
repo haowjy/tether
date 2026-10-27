@@ -5,6 +5,7 @@ version section on release.
 
 ## [Unreleased]
 
+- A terminal bell in any tmux session puts a dot on that session's tab, its row in the session lists, Home's tab rows and the current-tab button, until you open the tab on that device (the tab you are looking at never gets one). tether reads bells with one tmux `alert-bell` hook it installs while the daemon runs, only while a device is connected, so a bell shows within about 5 seconds. A session whose tmux settings hide bells says so, and a host that can't read tmux says "Bell tracking unavailable on this host". Claude Code rings only with `"preferredNotifChannel": "terminal_bell"`; [running.md](docs/running.md) has the details and limits.
 - The session list stays correct when a tmux window name contains a line break (tmux 3.4 allows it): the break shows as `\n`, and a listing the host can't read as a whole is an error instead of a list with windows missing.
 - Settings has an Appearance choice (System, Light or Dark) and a terminal text size (Small,
   Default, Large, Larger). The choice is kept on the device and applies everywhere, including the

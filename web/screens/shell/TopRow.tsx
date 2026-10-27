@@ -1,4 +1,4 @@
-import { useApp, useAppView, useHostName } from "../../app/context";
+import { useApp, useAppView, useBells, useHostName } from "../../app/context";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { TabStrip } from "../../ui/primitives/TabStrip";
 import { useStore } from "../../ui/store";
@@ -20,12 +20,13 @@ export function TopRow() {
   const dock = useAppView((v) => v.viewport.directInput !== "xterm");
   const statuses = useStore(terminals, (s) => s.tabs);
   const hostName = useHostName();
+  const bells = useBells();
   const screen = screenOf(workspace);
   const current = activeTab(workspace);
   const terminal = terminalTabOf(workspace, workspace.active);
   const running = screen === "terminal" && terminal !== null && statuses[terminal.id]?.state.kind !== "live";
   const now = useNow(running);
-  const pills = tabPills(workspace.tabs, statuses, hostName, screen === "terminal" ? workspace.active : null, now);
+  const pills = tabPills(workspace.tabs, statuses, hostName, screen === "terminal" ? workspace.active : null, now, bells);
   const look = terminal && lookOf(terminal, statuses[terminal.id], hostName(terminal.host), screen === "terminal", now);
 
   // On a touch screen with a desktop layout (an iPad), a press on the row must not take the keyboard's focus from the owned input (§6.5).

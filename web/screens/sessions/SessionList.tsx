@@ -2,9 +2,11 @@
 // per the contract): a heading with the host's name, then loading, error, no-server, empty,
 // no-match or one row per session. A view over the cache's state; it fetches and navigates nothing.
 import { Fragment, type ComponentChildren } from "preact";
+import type { BellLook } from "../../sessions/bells";
 import type { HostSessions } from "../../sessions/cache";
 import { matching, windowCount } from "../../sessions/groups";
 import type { SessionListing, TmuxListing } from "../../proto/generated/messages";
+import { BellDot } from "../../ui/primitives/BellDot";
 import { Button } from "../../ui/primitives/Button";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { RovingList } from "../../ui/primitives/RovingList";
@@ -12,9 +14,10 @@ import { Row } from "../../ui/primitives/Row";
 import { Spinner } from "../../ui/primitives/Spinner";
 import styles from "./SessionList.module.css";
 
-/** What a session's row says about it: its tab is the one on screen ("here"), open ("open"), or neither. In words, never dots. */
+/** What a session's row says about it: its tab is the one on screen ("here"), open ("open"), or neither, in words; and the bell dot or the words that no dot can appear. */
 export interface RowState {
   state: "here" | "open" | null;
+  bell: BellLook;
 }
 
 /** The active tab's windows: the "here" session with several lists them beneath its row. */
@@ -29,6 +32,8 @@ export interface SessionListProps {
   hostName: string;
   /** The host can't be reached at all (admission), as opposed to a listing that failed. */
   unreachable: boolean;
+  /** The daemon can't read tmux's bell state on this host. */
+  bellsUnavailable: boolean;
   sessions: HostSessions | undefined;
   query: string;
   rowOf: (session: SessionListing) => RowState;
@@ -48,7 +53,7 @@ function Heading({ hostName, status }: { hostName: string; status: ComponentChil
 }
 
 export function SessionList(props: SessionListProps) {
-  const { hostName, unreachable, sessions, query, rowOf, active, onOpen, onRetry } = props;
+  const { hostName, unreachable, bellsUnavailable, sessions, query, rowOf, active, onOpen, onRetry } = props;
   const listing = sessions?.listing;
   const failure = sessions?.failure ?? null;
   let status: ComponentChildren = null;
@@ -61,6 +66,9 @@ export function SessionList(props: SessionListProps) {
     );
   } else if (sessions?.updating && listing !== undefined) {
     status = <span class={styles.updating}>Updating</span>;
+  }
+  if (bellsUnavailable) {
+    status = <>{status}<span>Bell tracking unavailable on this host</span></>;
   }
 
   let body: ComponentChildren;
@@ -105,13 +113,13 @@ export function SessionList(props: SessionListProps) {
       ) : (
         <RovingList label={`Sessions on ${hostName}`} class={styles.list}>
           {shown.map((session) => {
-            const { state } = rowOf(session);
+            const { state, bell } = rowOf(session);
             return (
               <Fragment key={session.id}>
                 <Row
                   roving
                   icon="sessions"
-                  label={session.name}
+                  label={<>{session.name}{bell.ring && <BellDot class={styles.bell} />}</>}
                   meta={
                     <>
                       <span>{windowCount(session.windows.length)}</span>
@@ -121,6 +129,7 @@ export function SessionList(props: SessionListProps) {
                   selected={state !== null}
                   onClick={() => { onOpen(listing, session); }}
                 />
+                {bell.hidden && <p class={styles.hidden}>tmux settings hide bells in this session</p>}
                 {state === "here" && active && session.windows.length > 1 && (
                   <div class={styles.windows} role="group" aria-label={`Windows in ${session.name}`}>
                     {session.windows.map((w) => {

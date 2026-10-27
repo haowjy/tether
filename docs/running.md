@@ -207,6 +207,40 @@ cause.
 Renaming the Mac in Tailscale needs a restart: rerun `tether setup --background`. macOS has no
 cgroup, so `memory_budget_mib` only sizes the counts.
 
+## Get a dot when an agent rings the bell
+
+A terminal bell (the BEL character) in any tmux session puts a dot on that session's tab, its
+row in the session lists and the current-tab button, until you open that tab on this phone.
+Whatever rings the bell is the source, so the agent has to ring it:
+
+- **Claude Code** rings the bell only when its settings say so. In `~/.claude/settings.json`
+  (or the project's `.claude/settings.json`) set `"preferredNotifChannel": "terminal_bell"`.
+  Without it Claude Code sends no bell and no dot appears.
+- **Codex** rings the bell only in some terminals, so inside tmux it may not ring at all.
+  Check by running it in a pane and watching for the dot on another device or tab.
+- Anything else rings with `printf '\a'`, which is the quickest way to test.
+
+tether does this with one tmux `alert-bell` hook, which it installs while the daemon runs and
+removes when it stops cleanly. It never edits `.tmux.conf` or your own `alert-bell` hooks, or
+changes `monitor-bell` or `bell-action`. The dot is per device: opening the tab on this phone
+clears it here and nowhere else, and tmux's own bell marks are left alone. A bell takes up to
+5 seconds to show, and tether reads for bells only while a device is connected.
+
+What it cannot see, and says so:
+
+- A session whose bells tmux settings keep from the hook: `monitor-bell off`, a
+  `bell-action` other than `any` (`current` and `other` count), or its own `alert-bell`
+  hook on the session. Its row says "tmux settings hide bells in this session" instead of
+  staying quiet.
+- Bells from before this device first listed a session: its first count is taken as already
+  seen, so a dot means a bell since then. Bells while tmux restarts, and until the first
+  device connects after that, are lost too: the hook is installed only while a device is
+  connected (or the daemon started with tmux already running).
+- With two tether daemons on one tmux server, the first to stop removes the shared hook, and
+  the other loses bells until it next reinstalls it, when a device connects to it.
+- If tether cannot read tmux at all, the server says "Bell tracking unavailable on this
+  host".
+
 ## Set up completion
 
 Nothing here is needed to run tether. Without the snippet the app guesses where the

@@ -1,0 +1,8 @@
+.dot {
+  display: inline-block;
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--color-attention);
+}

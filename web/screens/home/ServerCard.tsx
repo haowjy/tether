@@ -2,6 +2,7 @@
 // what its state offers: All N sessions, Files, or Retry. One card for one server or several. A view
 // over props, so the harness can draw every state; `Home` derives them from the host and the cache.
 import type { ComponentChildren } from "preact";
+import { BellDot } from "../../ui/primitives/BellDot";
 import { Button } from "../../ui/primitives/Button";
 import { IconButton } from "../../ui/primitives/IconButton";
 import type { IconName } from "../../ui/primitives/Icon";
@@ -28,6 +29,8 @@ export interface CardTab {
   /** The tab's connection when it isn't fine: "Checking…", "Reconnecting…". */
   meta: string | undefined;
   selected: boolean;
+  /** A bell rang in the tab's session since this device last showed it. */
+  bell: boolean;
   onOpen: () => void;
   onClose: () => void;
 }
@@ -38,6 +41,8 @@ export interface ServerCardProps {
   body: CardBody;
   /** What is wrong with the server, when something is: its host banner. */
   notice: ComponentChildren;
+  /** The daemon can't read tmux's bell state on this server: said in words, never a silent dot-free tab. */
+  bellsUnavailable: boolean;
   /** Looks at the server again: admission when it can't be reached, the sessions otherwise. */
   onRetry: () => void;
   onSessions: (opener: HTMLElement) => void;
@@ -51,7 +56,7 @@ function Note({ children }: { children: ComponentChildren }) {
   return <p class={styles.note}>{children}</p>;
 }
 
-function Body({ name, body, onRetry, onSessions, newSession }: Omit<ServerCardProps, "tabs" | "onFiles" | "notice">) {
+function Body({ name, body, onRetry, onSessions, newSession }: Omit<ServerCardProps, "tabs" | "onFiles" | "notice" | "bellsUnavailable">) {
   const retry = <Button variant="secondary" icon="refresh" onClick={onRetry}>Retry</Button>;
   switch (body.kind) {
     case "offline":
@@ -93,7 +98,7 @@ function Body({ name, body, onRetry, onSessions, newSession }: Omit<ServerCardPr
   }
 }
 
-export function ServerCard({ name, tabs, body, notice, onRetry, onSessions, newSession, onFiles }: ServerCardProps) {
+export function ServerCard({ name, tabs, body, notice, bellsUnavailable, onRetry, onSessions, newSession, onFiles }: ServerCardProps) {
   return (
     <section class={styles.card} aria-label={name}>
       <div class={styles.head}>
@@ -101,9 +106,10 @@ export function ServerCard({ name, tabs, body, notice, onRetry, onSessions, newS
         <span class={styles.status} data-status={STATUS[body.kind]}>{STATUS_WORDS[STATUS[body.kind]]}</span>
       </div>
       {notice}
+      {bellsUnavailable && <Note>Bell tracking unavailable on this host</Note>}
       {tabs.map((t) => (
         <div key={t.id} class={styles.tab}>
-          <Row icon={t.icon} label={t.label} meta={t.meta} selected={t.selected} onClick={t.onOpen} />
+          <Row icon={t.icon} label={<>{t.label}{t.bell && <BellDot class={styles.bell} />}</>} meta={t.meta} selected={t.selected} onClick={t.onOpen} />
           <IconButton icon="close" label={`Close ${t.label}`} onClick={t.onClose} />
         </div>
       ))}

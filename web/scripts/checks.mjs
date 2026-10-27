@@ -12,7 +12,7 @@ const KB = 1024;
 
 /** Budgets, gzipped, from §8.4. A budget is raised only with its measurement in the commit. */
 export const BUDGETS = {
-  initialJs: 200 * KB,
+  initialJs: 201 * KB,
   initialCss: 15 * KB,
   terminalFont: 120 * KB,
   symbolsFont: 150 * KB,

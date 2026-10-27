@@ -19,11 +19,11 @@ import styles from "./Gallery.module.css";
 const ICONS: IconName[] = ["home", "back", "sessions", "folder", "plus", "close", "keyboard", "chevron", "chevronDown", "search", "terminal", "file", "refresh", "settings", "upload", "check", "alert", "image", "film", "external"];
 
 const PILLS: Pill[] = [
-  { id: "a", host: "h", kind: "terminal", session: "tether", window: "agent", full: "tether agent", tone: "live", state: "connected" },
-  { id: "b", host: "h", kind: "terminal", session: "notes", window: "shell", full: "notes shell", tone: "reconnecting", state: "reconnecting" },
-  { id: "c", host: "h", kind: "terminal", session: "a-very-long-session-name", window: "a-very-long-window-name", full: "a-very-long-session-name a-very-long-window-name", tone: "error", state: "limited" },
-  { id: "d", host: "h", kind: "terminal", session: "scratch", window: "vim", full: "scratch vim", tone: "gone", state: "closed" },
-  { id: "e", host: "h", kind: "terminal", session: "website", window: "dev", full: "website dev", tone: "idle", state: "not on screen" },
+  { id: "a", host: "h", kind: "terminal", session: "tether", window: "agent", full: "tether agent", tone: "live", state: "connected", bell: false },
+  { id: "b", host: "h", kind: "terminal", session: "notes", window: "shell", full: "notes shell", tone: "reconnecting", state: "reconnecting", bell: true },
+  { id: "c", host: "h", kind: "terminal", session: "a-very-long-session-name", window: "a-very-long-window-name", full: "a-very-long-session-name a-very-long-window-name", tone: "error", state: "limited", bell: false },
+  { id: "d", host: "h", kind: "terminal", session: "scratch", window: "vim", full: "scratch vim", tone: "gone", state: "closed", bell: false },
+  { id: "e", host: "h", kind: "terminal", session: "website", window: "dev", full: "website dev", tone: "idle", state: "not on screen", bell: false },
 ];
 
 function Section({ title, children }: { title: string; children: preact.ComponentChildren }) {

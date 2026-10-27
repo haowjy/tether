@@ -7,6 +7,7 @@
 .status[data-status="checking"] { color: var(--color-status-reconnecting); }
 .status[data-status="attention"] { color: var(--color-status-error); }
 .tab { display: flex; align-items: center; gap: var(--space-1); }
+.bell { margin-left: var(--space-2); }
 .tab > :first-child { flex: 1; min-width: 0; }
 .note { padding: 0 var(--space-1); font-size: var(--text-small); color: var(--color-text-muted); }
 .loading { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-1); color: var(--color-text-muted); }

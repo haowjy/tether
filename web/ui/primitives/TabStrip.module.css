@@ -46,4 +46,5 @@
 /* The session name is bold and the window's regular, set apart by space alone. The window name truncates first: it gives up width a hundred times faster than the session name. */
 .session { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 0.01 auto; font-weight: var(--weight-bold); }
 .window { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; margin-left: var(--space-2); font-weight: normal; }
+.bell { margin-left: var(--space-2); }
 .close { width: var(--tab-height); height: var(--tab-height); flex: none; color: var(--color-text-muted); }

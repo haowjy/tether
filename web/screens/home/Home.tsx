@@ -2,7 +2,7 @@
 // open tabs and what its state offers. Server-first: one server is not opened for you. The
 // gear opens Settings. Add server exists only where the platform manages servers (the app);
 // the browser has its one page origin.
-import { useApp, useAppView, useHostName } from "../../app/context";
+import { useApp, useAppView, useBells, useHostName } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
 import { Button } from "../../ui/primitives/Button";
 import { IconButton } from "../../ui/primitives/IconButton";
@@ -27,11 +27,13 @@ function HostCard({ host, tabs }: { host: HostClient; tabs: CardTab[] }) {
   const handle = host.entry.handle;
   const { body, files } = cardOf(host, useStore(app.sessions, (s) => s.hosts[handle]));
   const { hostId } = host;
+  const bellsUnavailable = useBells().unavailable[hostId ?? ""] === true;
   return (
     <ServerCard
       name={host.name ?? "the server"}
       tabs={tabs}
       body={body}
+      bellsUnavailable={bellsUnavailable}
       notice={body.kind !== "offline" && <HostBanner host={host} />}
       onRetry={() => { app.retryHost(handle); }}
       onSessions={(opener) => { app.openOverlay({ screen: "sessions", name: "server", params: { host: handle } }, opener); }}
@@ -47,9 +49,10 @@ export function Home() {
   const workspace = useAppView((v) => v.workspace);
   const statuses = useStore(terminalsOf(app), (s) => s.tabs);
   const hostName = useHostName();
+  const bells = useBells();
   const manageHosts = app.platform.manageHosts;
 
-  const rows = tabPills(workspace.tabs, statuses, hostName, null, Date.now()).flatMap((pill) => {
+  const rows = tabPills(workspace.tabs, statuses, hostName, null, Date.now(), bells).flatMap((pill) => {
     const host = hostOf(pill.host, hosts);
     if (!host) return [];
     const row: CardTab = {
@@ -58,6 +61,7 @@ export function Home() {
       label: pill.full,
       meta: pillMeta(pill),
       selected: pill.id === workspace.active,
+      bell: pill.bell,
       onOpen: () => { app.dispatch({ type: "activated", id: pill.id }); },
       onClose: () => { app.dispatch({ type: "closed", id: pill.id }); },
     };

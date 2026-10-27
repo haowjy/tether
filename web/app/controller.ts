@@ -5,11 +5,12 @@
 // listing, `sessions/cache.ts` the rows Home and the sessions overlay render. Screens reach each of them
 // through `useApp()`.
 import { HostRegistry, type HostClient } from "../net/hosts";
+import { BellMarks } from "../sessions/bells";
 import { SessionsCache } from "../sessions/cache";
 import { samePlace, type BootResult, type FilesPlace, type Lifecycle, type Platform, type Preferences, type UpdateState, type Viewport } from "../platform/types";
 import { Store } from "../ui/store";
 import { parseSavedWorkspace } from "../workspace/saved";
-import { activeTab, initialWorkspace, reduce, savedTabs, screenOf, type Route, type Screen, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
+import { activeTab, initialWorkspace, reduce, savedTabs, screenOf, shownTab, type Route, type Screen, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
 import { FocusController } from "./focus";
 import { ListingFetcher } from "./listing";
 import { Persist } from "./persist";
@@ -62,6 +63,7 @@ export class AppController extends Store<AppView> {
   readonly persist: Persist;
   readonly listing: ListingFetcher;
   readonly sessions: SessionsCache;
+  readonly bells: BellMarks;
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastUpdateCheck = 0;
   /** The listing surface on screen when the last listing was asked for; null when none is. */
@@ -131,6 +133,7 @@ export class AppController extends Store<AppView> {
       visible: () => this.snapshot.lifecycle.visible,
     });
     this.sessions = new SessionsCache();
+    this.bells = new BellMarks();
 
     this.applyViewport(boot.viewport);
     this.applyPreferences(boot.preferences);
@@ -144,11 +147,19 @@ export class AppController extends Store<AppView> {
     router.subscribe((entry) => { this.navigated(entry); });
     this.listing.subscribe((event) => {
       const client = this.hosts.get(event.handle);
+      const hostId = client?.hostId;
       if (event.type === "requested") this.sessions.requested(event.handle);
       else if (event.type === "listed") this.sessions.listed(event.handle, event.listing);
-      else this.sessions.failed(event.handle, event.reason);
-      if (event.type === "listed" && client?.hostId) this.dispatch({ type: "listing", hostId: client.hostId, listing: event.listing });
+      else if (event.type === "failed") this.sessions.failed(event.handle, event.reason);
+      if (!hostId) return;
+      if (event.type === "listed") {
+        this.bells.listed(hostId, event.listing);
+        this.dispatch({ type: "listing", hostId, listing: event.listing });
+      } else if (event.type === "bell") this.bells.changed(hostId, event.bell);
+      else if (event.type === "failed" && event.reason === "tmux") this.bells.unreadable(hostId);
     });
+    // The tab on screen on a visible page counts as seen: a hidden page, a backgrounded app and Home show nothing.
+    this.subscribe(() => { this.bells.shown(this.snapshot.lifecycle.visible ? shownTab(this.snapshot.workspace) : null); });
     void this.checkUpdates();
   }
 

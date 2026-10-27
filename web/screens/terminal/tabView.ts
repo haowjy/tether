@@ -1,4 +1,5 @@
 // How a tab's connection reads on its pill, in the status band and on the host label.
+import { bellLook, type BellsState } from "../../sessions/bells";
 import { initialState } from "../../tabs/connection";
 import { describe, type Status, type Tone } from "../../tabs/status";
 import type { Pill, PillTone } from "../../ui/primitives/TabStrip";
@@ -46,14 +47,15 @@ export function tabPills(
   hostName: (hostId: string) => string,
   onScreen: string | null,
   now: number,
+  bells: BellsState,
 ): Pill[] {
   // tabLabels keeps the order of `tabs`, so the two line up.
   return tabLabels(tabs, hostName).flatMap((l, i): Pill[] => {
     const tab = tabs[i];
     if (!tab) return [];
-    if (tab.kind === "files") return [{ id: tab.id, host: tab.host, kind: tab.kind, session: l.session, window: "", full: l.full, tone: "idle" as const, state: "open" }];
+    if (tab.kind === "files") return [{ id: tab.id, host: tab.host, kind: tab.kind, session: l.session, window: "", full: l.full, tone: "idle" as const, state: "open", bell: false }];
     const look = lookOf(tab, statuses[tab.id], hostName(tab.host), tab.id === onScreen, now);
-    return [{ id: tab.id, host: tab.host, kind: tab.kind, session: l.session, window: l.window, full: l.full, tone: look.tone, state: look.state }];
+    return [{ id: tab.id, host: tab.host, kind: tab.kind, session: l.session, window: l.window, full: l.full, tone: look.tone, state: look.state, bell: bellLook(bells, tab.id).ring }];
   });
 }
 

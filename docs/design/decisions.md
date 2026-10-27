@@ -3954,3 +3954,10 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   and `bell-action` not `any` produce `covered: false`; a failed poll produces
   `available: false`. The daemon
   never edits a user's hooks or options to widen coverage, and removes only its own entry.
+- **Web: the dot, the per-device mark and the two unavailable strings are launch code.** The bell owner
+  (`sessions/bells.ts`), the dot on `Pill`, session rows and Home's tab rows, and the words for hidden and
+  unavailable bells are on every screen, so none of it can load later. **Budget:** initial JS 200 to 201 KB
+  (200.2 measured with the whole change; the build before it was under 200.0 with under 0.1 KB to spare).
+  "Seen" is in memory and bounded by the live sessions (each listing prunes it): a reload takes the first mark
+  it learns as seen, the same rule as a session never seen. Rejected: persisting seen marks (a second saved
+  shape, parsed in `workspace/saved.ts` and mirrored by the native bridge, for bells that rang while the page was closed).
