@@ -156,8 +156,12 @@ export interface Uploads {
   follow?(id: string, signal: AbortSignal): AsyncIterable<UploadEvent>;
 }
 
-/** `ready`: a new build waits for a tap. `reload`: another page applied an update, and this page keeps running the previous build. */
-export type UpdateState = "none" | "ready" | "reload";
+/**
+ * `ready`: a new build waits for a tap. `reload`: another page applied an update, and this page keeps
+ * running the previous build. `required`: this page asked for a file of its build and the daemon no
+ * longer has it.
+ */
+export type UpdateState = "none" | "ready" | "reload" | "required";
 export interface Updates {
   check(): Promise<void>;
   apply(): void;

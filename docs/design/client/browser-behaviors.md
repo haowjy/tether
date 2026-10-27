@@ -322,7 +322,7 @@ Browser image paste into a focused terminal follows the same upload pipeline. Ca
 
 The service worker serves the shell from its cache. On an offline launch the host card says “Can't reach pop-os” (the name is the last one saved), open tabs read “Reconnecting…”, and the listing shows its offline state. Nothing shows a pretend live terminal and nothing typed is queued. The worker never intercepts `/ws`, `/auth`, `/fs`, `/complete`, `/debug` or a non-GET request.
 
-A new build installs in the background and waits. Home and Files show “Update ready” with Update, never over the terminal; only the window that taps Update reloads. Another window shows “Reload to finish updating” with Reload, and keeps running its own build until then. A window two builds behind fails to fetch a lazy chunk and shows the designed “Update required”.
+A new build installs in the background and waits. Home and Files show “Update ready” with Update, never over the terminal; only the window that taps Update reloads. Another window shows “Reload to finish updating” with Reload, and keeps running its own build until then. A window whose build the host no longer has (two builds behind, or one behind when it opens its first diagram, since diagram files are not precached) fails to fetch a lazy chunk and shows the designed “Update required” with Reload, in the same place and never over the terminal.
 
 ## Keyboard ownership and navigation history
 

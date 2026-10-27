@@ -1807,14 +1807,14 @@ emitted file, stubs included:
 | Terminal font, regular and bold | 2 × 120 KB | JetBrains Mono NL subset to Latin, Latin-1, box drawing, block elements and Powerline |
 | Nerd Font symbols | 150 KB | a fallback file subset to the glyph ranges Jimmy's prompt and tmux status line use. It is listed after the core font in `--font-mono`, loaded after first paint, and the renderer clears its glyph atlas once it arrives |
 | Lazy chunks (markdown, Shiki core, viewers) | loaded on first use | precached by the service worker like everything else (§9.2) |
-| Mermaid (`files/render/mermaid.ts` and what only it loads: 115 files) | 1.4 MiB gz, apart from the shell | loaded when a Markdown preview holds a `mermaid` fence; embedded in the daemon but left out of the precache and the shell budget (`scripts/diagrams.mjs` finds them in the manifest). KaTeX is stubbed out |
+| Mermaid (`files/render/mermaid.ts` and what only it loads: 114 files, 921 KB gz at 12.1.0) | 1.4 MiB gz, apart from the shell | loaded when a Markdown preview holds a `mermaid` fence (`files/render/diagrams.ts`, in the shell, finds it); embedded in the daemon but left out of the precache and the shell budget (`scripts/diagrams.mjs` finds them in the manifest). KaTeX and elkjs are stubbed out; diagrams use the `dagre` layout |
 | Shiki grammars | an allowlist: shell, JSON, YAML, TOML, Markdown, TS/TSX/JS, Python, Rust, Go, Swift, C and diff | each is its own lazy chunk; `manualChunks` keeps Vite from emitting re-export stubs for them |
 | Whole embedded shell, diagram files not counted | ≤ 1.5 MiB gz, ≤ 64 files | the precached shell, so growth stays visible |
 | Everything embedded | ≤ 8 MiB raw, ≤ 192 files | the daemon's caps (`build.rs`), which Mermaid raised from 3 MiB and 128 |
 
 W0 measures the subsets and commits the font files together with the script that made
 them, so the build itself needs no Python. A budget is raised only with its measurement
-in the commit. The initial-JS cap is 197 KB: Mermaid's lazy-loading glue took it from 195.8 to 196.2 KB
+in the commit. The initial-JS cap is 197 KB: Mermaid's lazy-loading glue took it from 195.8 to 196.0 KB
 gzipped (2026-10-27); screen splitting remains the way to earn it back.
 
 ### 8.5 Mockup details improved
@@ -1871,10 +1871,12 @@ adapter registers it; the native app never does.
 | `/assets/*`, `/manifest.webmanifest`, icons | Cache first, looked up with `caches.match(request)` across every `tether-shell-*` cache, so a page still running the previous build finds its own chunks after a newer worker takes control. A path in no cache (evicted storage) goes to the network, which has the current build's |
 | `/ws`, `/auth/*`, `/fs/*`, `/complete`, `/debug`, any non-GET | never intercepted (`respondWith` is not called) and never cached |
 
-- **The precache list** is generated at build time and holds the whole build: every JS
-  and CSS chunk, the fonts, the icons and the manifest. The 1.5 MiB budget bounds it.
-  A lazy chunk is therefore always cached by the version that refers to it. A failed
-  dynamic import still shows "Update required" rather than a broken viewer.
+- **The precache list** is generated at build time and holds the build except the diagram
+  files (`scripts/diagrams.mjs`): every other JS and CSS chunk, the fonts, the icons and the
+  manifest. The 1.5 MiB budget bounds it. A lazy chunk is therefore cached by the version
+  that refers to it, except a diagram's, which needs the network. When the daemon answers
+  404 to a `/assets/` file the worker has no copy of, the worker posts `buildGone` to the
+  page that asked, and the page's `update` state becomes `required` ("Update required").
 - **Precaching respects the daemon's shell caps** (4 served at once, 16 waiting, then
   `503`). The worker is registered after the page's `load` event, so it never competes
   with first paint. It fetches at most 4 files at a time, and retries a `503` up to 3
@@ -1889,9 +1891,10 @@ adapter registers it; the native app never does.
   it, then writes its own. The record lives in Cache Storage, not worker memory, so it
   survives the browser terminating an idle worker. A cache left by a worker that waited
   and was superseded before activating is neither kept build, so it goes too.
-- **A page two builds behind** has a designed outcome: its next lazy chunk misses in
-  every cache, and it shows "Update required" with Reload. Nothing tracks which build
-  each page runs.
+- **A page whose build the daemon no longer has** (two builds behind, or one behind for a
+  diagram, which is not precached) has a designed outcome: its next lazy chunk misses in
+  every cache and the daemon, and it shows "Update required" with Reload. Nothing tracks
+  which build each page runs.
 
 ### 9.3 Update flow
 

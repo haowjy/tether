@@ -3,6 +3,7 @@ import type { FsApi, TextPreview } from "../../files/api";
 import type { FileRef } from "../../files/browser";
 import { HIGHLIGHT_MAX, highlightedLines, plainLines } from "../../files/render/code";
 import { linkTarget, renderMarkdown, type LinkTarget } from "../../files/render/markdown";
+import { mountDiagrams } from "../../files/render/diagrams";
 import { lazyImages } from "../../files/images";
 import { useAppView } from "../../app/context";
 import { formatSize } from "../../files/format";
@@ -90,8 +91,7 @@ export function MarkdownViewer({ api, file, onLink, describe }: { api: FsApi; fi
   useEffect(() => {
     const root = article.current;
     if (html === null || !root) return undefined;
-    const mounted = import("../../files/render/mermaid").then((m) => m.mountDiagrams(root, scheme));
-    return () => { void mounted.then((unmount) => { unmount(); }); };
+    return mountDiagrams(root, scheme);
   }, [html, scheme]);
   if (text.kind === "error") return <Failed error={text.error} describe={describe} />;
   if (text.kind === "loading" || html === null) return <Loading what="Loading the document" />;

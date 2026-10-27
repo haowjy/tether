@@ -82,7 +82,7 @@ export function budgetBreaches(files, manifest) {
   for (const f of files) {
     if (/tether-mono-(regular|bold).*\.woff2$/u.test(f.path) && f.gz > BUDGETS.terminalFont) out.push(`${f.path} is ${kb(f.gz)}, over ${kb(BUDGETS.terminalFont)}`);
     if (/tether-symbols.*\.woff2$/u.test(f.path) && f.gz > BUDGETS.symbolsFont) out.push(`${f.path} is ${kb(f.gz)}, over ${kb(BUDGETS.symbolsFont)}`);
-    if (f.gz > BUDGETS.file) out.push(`${f.path} is ${kb(f.gz)}, over the daemon's per-file cap`);
+    if (f.bytes > BUDGETS.file) out.push(`${f.path} is ${kb(f.bytes)} raw, over the daemon's per-file cap`);
   }
   const lazy = diagramFiles(manifest);
   const shell = files.filter((f) => !lazy.has(f.path));

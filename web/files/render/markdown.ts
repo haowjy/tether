@@ -52,6 +52,9 @@ const ALLOWED_TAGS = [
 /** `src` stays only until the image hook below turns it into `data-src`. */
 const ALLOWED_ATTR = ["href", "src", "alt", "title", "width", "height", "colspan", "rowspan", "align", "start"];
 
+/** A ```mermaid fence in rendered Markdown. */
+export const DIAGRAM_BLOCK = "pre > code.language-mermaid";
+
 /**
  * Markdown text → sanitized HTML. Images keep their resolved URL in `data-src` and load
  * as they scroll into view (images.ts); one from anywhere else loses its source.
@@ -60,7 +63,7 @@ export async function renderMarkdown(text: string, docUrl: string): Promise<stri
   const [{ default: MarkdownIt }, { default: DOMPurify }] = await Promise.all([import("markdown-it"), import("dompurify")]);
   const md = new MarkdownIt({ html: true, linkify: true });
   const purify = DOMPurify();
-  // A ```mermaid fence's class is the one a document keeps: mermaid.ts finds the block by it.
+  // A ```mermaid fence's class is the one a document keeps: diagrams.ts finds the block by it.
   purify.addHook("uponSanitizeAttribute", (node, data) => {
     if (node.nodeName === "CODE" && data.attrName === "class" && data.attrValue === "language-mermaid") data.forceKeepAttr = true;
   });

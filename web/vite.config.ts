@@ -43,8 +43,11 @@ const ALIASES: Record<string, string> = { bash: "shellscript" };
 /** KaTeX (260 KB raw) is what Mermaid loads for a `$$math$$` label; the stub makes that label fail with the "couldn't render" note instead. */
 const katexStub = fileURLToPath(new URL("files/render/omitted/katex.ts", import.meta.url));
 
+/** elkjs is 1.4 MB raw and only Mermaid's `elk` layout loads it; diagrams are laid out with dagre. */
+const elkStub = fileURLToPath(new URL("files/render/omitted/elk.ts", import.meta.url));
+
 export default defineConfig(({ mode }) => ({
-  resolve: { alias: [{ find: /^katex$/u, replacement: katexStub }] },
+  resolve: { alias: [{ find: /^katex$/u, replacement: katexStub }, { find: /^elkjs\/lib\/elk\.bundled\.js$/u, replacement: elkStub }] },
   // The daemon serves the build at its origin's root.
   base: "/",
   plugins: [preact(), serviceWorker(), forbidTestModules(), ...(mode === "harness" ? [harnessImages()] : []), ...(mode === "harness" || mode === "test" ? [] : [devProxy()])],

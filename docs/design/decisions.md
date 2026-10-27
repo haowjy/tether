@@ -3344,13 +3344,14 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 
 ### Mermaid ships in the daemon's shell, outside the precache and the shell budget
 
-- **Decided:** 2026-10-27, tech coder (build slice 6), where the spec left it open.
+- **Decided:** 2026-10-27, tech coder (build slice 6), where the spec left it open;
+  revised the same day after the security review (below).
 - **What:** Mermaid 12.1.0 (exact pin) loads only when a Markdown preview holds a
-  `mermaid` fence. Its chunks (115 files, about 1.3 MB gzipped, 6.9 MB raw with the app's)
+  `mermaid` fence. Its chunks (114 files, 921 KB gzipped)
   are embedded in the daemon like the rest of the build, but the service worker does not
   precache them and `checks.mjs` budgets them apart (1.4 MiB gzipped) instead of in the
   1.5 MiB / 64-file shell budget; a diagram on a spotty link costs one on-demand
-  download. Initial JS rose from 195.8 to 196.2 KB gzipped (the lazy-loading glue and
+  download. Initial JS rose from 195.8 to 196.0 KB gzipped (the lazy-loading glue and
   the code that lets a fence's class through), so its budget went from 196 to 197 KB.
   The daemon's embed caps rose from 3 MiB and 128 files to 8 MiB and 192 files
   (`build.rs`), because Mermaid alone is 4.7 MB raw; the per-file cap stays 1.5 MiB.
@@ -3364,11 +3365,28 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   The SVG Mermaid returns passes DOMPurify's SVG profile again, minus `foreignObject`
   and `image`, with `href` limited to in-document fragments and `@import` and non-fragment
   `url()` removed from its styles.
-- **Rejected:** precaching the diagram chunks (about 1.3 MB on every install, for a
+- **Review round:** every render starts from `mermaidAPI.reset()`, because a document's
+  config is stored before it is validated and one bad colour otherwise broke every later
+  diagram; `htmlLabels` and `layout` join Mermaid's `secure` keys, so frontmatter cannot
+  turn labels into the `foreignObject` the sanitizer removes; `a` is forbidden in the
+  SVG (a diagram link was a dead tab stop); the CSP is what refuses Mermaid's
+  pre-sanitize image fetches, and the module says so. Diagrams use the `dagre` layout
+  and elkjs (1.4 MB raw, 600 KB gzipped) is stubbed: diagram files fell from 1347 to 921 KB
+  gzipped, and the largest file is now 709 KB raw against the 1.5 MiB per-file cap.
+- **Diagrams need the network.** Their files are not precached, so a page one build
+  behind finds them gone. The worker reports a 404 for an `/assets/` file it has no copy
+  of (`buildGone`) and the app raises "Update required" with Reload, an `update` state
+  beside `ready` and `reload` (browser-behaviors.md "Offline and updates"). A load that
+  fails otherwise leaves a note under the fence, and the loader tries again on the next
+  document; Chromium keeps a failed module URL failed for the page's life, so there only
+  a reload recovers (Safari retries).
+- **Rejected:** precaching the diagram chunks (about 1 MB on every install, for a
   feature most documents don't use); a single Mermaid chunk (rolldown's `manualChunks`
   also pulls in each chunk's dependencies, including the sanitizer the app's entry
-  shares); stubbing the ELK layout (Mermaid 12 draws flowcharts through it);
-  loading Mermaid from a CDN (nothing loads from outside the host).
+  shares); keeping ELK (Mermaid 12.1 draws flowcharts with dagre when told to);
+  detecting the 404 in the page (Safari's import error carries no URL, and a probe of
+  the precached loader is answered from the cache); loading Mermaid from a CDN
+  (nothing loads from outside the host).
 
 ### Choose System, Light or Dark; use a black dark terminal
 

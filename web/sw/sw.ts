@@ -1,6 +1,8 @@
 // The service worker serves the shell from cache and nothing else (client-architecture.md
-// §9.2). It precaches the whole build and never touches /ws, /auth, /fs, /complete or any
-// non-GET. A new version installs, then waits: the page's Update button sends `skipWaiting`.
+// §9.2). It precaches the build except the diagram files (scripts/diagrams.mjs), which a page
+// fetches on demand; it never touches /ws, /auth, /fs, /complete or any non-GET. A new version
+// installs, then waits: the page's Update button sends `skipWaiting`. A page whose build is gone
+// from the daemon gets a 404 for a diagram file; the worker tells that page (`buildGone`).
 // Built as /sw.js by sw/vite-plugin.ts, which defines the two constants below.
 
 declare const __BUILD__: string;
@@ -77,9 +79,13 @@ async function activate(): Promise<void> {
  * The own build's copy wins; a page one build behind finds its own chunks in the other cache.
  * A file in neither (an evicted cache) goes to the network, which has the current build's.
  */
-async function fromCache(request: Request): Promise<Response> {
+async function fromCache(request: Request, clientId: string): Promise<Response> {
   const own = await (await caches.open(CACHE)).match(request);
-  return own ?? (await caches.match(request)) ?? fetch(request);
+  const found = own ?? (await caches.match(request));
+  if (found) return found;
+  const response = await fetch(request);
+  if (response.status === 404 && hashed(new URL(request.url).pathname)) (await sw.clients.get(clientId))?.postMessage({ type: "buildGone" });
+  return response;
 }
 
 sw.addEventListener("install", (event) => {
@@ -104,6 +110,6 @@ sw.addEventListener("fetch", (event) => {
       caches.open(CACHE).then((cache) => cache.match("/")).then((cached) => cached ?? fetch(request)),
     );
   } else if (isShellPath(url.pathname)) {
-    event.respondWith(fromCache(request));
+    event.respondWith(fromCache(request, event.clientId));
   }
 });

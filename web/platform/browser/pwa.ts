@@ -60,6 +60,11 @@ export function createPwa(emit: (event: PlatformEvent) => void): Pick<Platform, 
     hadController = true;
   });
 
+  // The worker saw the daemon answer 404 for a file of this page's build (sw.ts): a lazy chunk is gone.
+  container.addEventListener("message", (event: MessageEvent) => {
+    if ((event.data as { type?: unknown } | null)?.type === "buildGone") set("required");
+  });
+
   return {
     install,
     updates: {
