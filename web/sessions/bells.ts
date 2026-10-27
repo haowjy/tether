@@ -1,7 +1,8 @@
 // Bell attention on this device (daemon-core.md §4.8, §5.3; browser-behaviors.md). The daemon
 // says each session's bell mark; this device keeps the mark it last showed for each, and a tab
-// shows the dot while the two differ. "Seen" is local, in memory, and never sent: tmux's shared
-// bell flags are not the phone's. Everything is keyed by the tab id of the session, so a pill,
+// shows the dot while the two differ. "Seen" is local, never sent, and saved with the workspace
+// (app/persist.ts) so a bell rung while the page was closed still shows: tmux's shared bell
+// flags are not the phone's. Everything is keyed by the tab id of the session, so a pill,
 // a Home row and a session row look the same thing up.
 import { tabId } from "../platform/tabKey";
 import type { BellChange, BellState, ServerMsg, TmuxListing } from "../proto/generated/messages";
@@ -40,8 +41,15 @@ export class BellMarks extends Store<BellsState> {
   /** The tab on screen on a visible page; it counts as shown. */
   private onScreen: string | null = null;
 
-  constructor() {
-    super({ marks: {}, seen: {}, unavailable: {} });
+  /** `saved` is what the saved workspace holds: marks this device showed in an earlier page life. */
+  constructor(saved: Readonly<Record<string, number>>) {
+    super({ marks: {}, seen: saved, unavailable: {} });
+  }
+
+  /** Clear local data: every session's current mark counts as shown, so no dot outlives the clear. */
+  forget(): void {
+    const { marks, unavailable } = this.snapshot;
+    this.commit(marks, Object.fromEntries(Object.entries(marks).map(([id, m]) => [id, m.mark])), unavailable);
   }
 
   /**

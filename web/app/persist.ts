@@ -16,6 +16,7 @@ export class Persist {
   constructor(
     private readonly storage: PlatformStorage,
     private readonly tabs: () => Pick<SavedWorkspace, "tabs" | "active" | "lastTerminal">,
+    private readonly bellSeen: () => Record<string, number>,
   ) {}
 
   /** The controller says the page's host name, once `/auth/info` has told it. */
@@ -49,6 +50,7 @@ export class Persist {
       active: active !== null && this.cleared.has(active) ? null : active,
       lastTerminal: Object.fromEntries(Object.entries(lastTerminal).filter(([, id]) => !this.cleared.has(id))),
       ...(hostName !== null && { hostName }),
+      bellSeen: this.bellSeen(),
     });
   }
 

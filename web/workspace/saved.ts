@@ -29,5 +29,6 @@ export function parseSavedWorkspace(raw: unknown): SavedWorkspace | null {
   const seen = new Set<string>();
   const tabs = raw["tabs"].filter((t) => !seen.has(idOf(t)) && seen.add(idOf(t)));
   const last = isRecord(lastTerminal) ? Object.fromEntries(Object.entries(lastTerminal).filter((e): e is [string, string] => isString(e[1]))) : {};
-  return { version: 3, tabs, active, lastTerminal: last, ...(isString(hostName) && { hostName }) };
+  const bellSeen = isRecord(raw["bellSeen"]) ? Object.fromEntries(Object.entries(raw["bellSeen"]).filter((e): e is [string, number] => Number.isInteger(e[1]))) : {};
+  return { version: 3, tabs, active, lastTerminal: last, ...(isString(hostName) && { hostName }), bellSeen };
 }

@@ -155,15 +155,19 @@ half-height over current tab             full-height from Home
   device last showed that tab; mechanism and coverage limits are in
   [plan.md](../plan.md) (Bell attention). The current-tab button
   can surface attention from another tab. It is not a connection-status indicator.
-  - **Seen is per device.** The device keeps, per session, the bell mark it last showed
+  - **Seen is per device and saved.** The device keeps, per session, the bell mark it last showed
     (the `mark` in the `sessions` listing and the `bell` message, daemon-core.md §5.3),
     and a tab shows the dot while its session's mark differs from that. The tab on
     screen counts as shown: while a tab is the active tab on a visible page, an
     arriving mark is recorded as seen at once and no dot appears for it; a hidden page
     or a backgrounded app shows nothing, so the tab is not on screen and the dot
     appears. A tab that becomes the active tab records the current mark.
-  - **A session never seen yet** (first listing) has no dot: the first mark a device
-    learns is its baseline.
+  - **Seen survives a reload and a relaunch.** The marks are saved with the workspace (keyed by
+    host id, tmux server instance and session), so a bell rung while the page or app was away
+    shows its dot on return. Each listing drops the marks of sessions that are gone; Clear
+    local data resets them to the current marks.
+  - **A session this device has never seen** (nothing saved for it) has no dot: the first
+    mark it learns is its baseline.
   - **Not tracked, in words, never a silent dot-free tab.** When the listing or a
     `bell` message says `covered: false` for a session, its row says "tmux settings hide
     bells in this session". When the `bell` message carries `available: false` for the

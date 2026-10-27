@@ -102,6 +102,8 @@ export interface SavedWorkspace {
   lastTerminal: Record<string, string>;
   /** The host's last known name: an offline launch cannot ask `/auth/info`, yet still says "Can't reach pop-os". */
   hostName?: string;
+  /** Bell attention (sessions/bells.ts): the bell mark this device last showed, by tab id, for the sessions it has seen. */
+  bellSeen?: Record<string, number>;
 }
 
 export interface DraftRecord {

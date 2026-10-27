@@ -233,7 +233,8 @@ What it cannot see, and says so:
   hook on the session. Its row says "tmux settings hide bells in this session" instead of
   staying quiet.
 - Bells from before this device first listed a session: its first count is taken as already
-  seen, so a dot means a bell since then. Bells while tmux restarts, and until the first
+  seen, so a dot means a bell since then. What a device has seen is saved on it, so a bell
+  that rang while the page or app was closed still shows when you return. Bells while tmux restarts, and until the first
   device connects after that, are lost too: the hook is installed only while a device is
   connected (or the daemon started with tmux already running).
 - With two tether daemons on one tmux server, the first to stop removes the shared hook, and

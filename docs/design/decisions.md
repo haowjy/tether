@@ -3958,6 +3958,11 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   (`sessions/bells.ts`), the dot on `Pill`, session rows and Home's tab rows, and the words for hidden and
   unavailable bells are on every screen, so none of it can load later. **Budget:** initial JS 200 to 201 KB
   (200.2 measured with the whole change; the build before it was under 200.0 with under 0.1 KB to spare).
-  "Seen" is in memory and bounded by the live sessions (each listing prunes it): a reload takes the first mark
-  it learns as seen, the same rule as a session never seen. Rejected: persisting seen marks (a second saved
-  shape, parsed in `workspace/saved.ts` and mirrored by the native bridge, for bells that rang while the page was closed).
+  "Seen" is saved with the workspace (reversed 2026-10-27, Jimmy: before review): in memory only, a reload or
+  relaunch re-learned the current marks as the baseline, so a bell rung while the phone was away never showed,
+  which is the main use. The marks are `bellSeen` (tab id to mark) beside `hostName`, written by `Persist` and
+  parsed by `workspace/saved.ts` (an absent or odd value reads as empty); the native side stores the workspace
+  as opaque JSON, so no bridge change. They stay bounded: each listing prunes its host's marks to live sessions,
+  and the save drops hosts the device no longer lists. The first-mark-is-baseline rule now covers only a session
+  with nothing saved. Clear local data resets the marks to the current ones. Rejected: a separate storage key
+  (a second owner and writer).
