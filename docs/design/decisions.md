@@ -4836,3 +4836,180 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   and → go"); "Two keyboard openers, one closer, with Termius's focus cues" ("terminal taps
   open and close nothing"); and "Touch scroll is JS momentum over xterm and a DOM history
   view" ("a long-press hold with a drag is the arrow pad").
+
+## Client redesign
+
+### Home is server-first, with Settings behind a gear
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** Home has a card per server with status, its open terminal and Files tabs,
+  All sessions and Files; Add server and enrolment are on Home. One server uses the
+  same card and does not cause an automatic jump. Offline, no servers, no sessions and
+  tmux not running are distinct states. Home has no phone tab strip. A gear opens a
+  separate Settings screen for appearance, terminal text size, device/browser data and,
+  in the app, Face ID. The phone browser offers Add to Home Screen.
+- **Why:** Jimmy wanted a place to find and manage servers, rather than a screen that
+  looked like Settings without showing his servers or sessions. Listing open tabs in
+  each card makes a second tab strip on Home redundant.
+- **Rejected:** a settings-style Home without server cards; Home as a full-height detent
+  of the session sheet; putting Settings directly on Home; an automatic jump for one
+  server; retaining a Home tab strip alongside the open-tab rows.
+- **Supersedes in part:** “Home, picker and Settings details” and the Sessions/Files
+  Home navigation in “Browser/mobile client direction and portable design record”.
+
+### Sessions and tabs share the phone sheet; desktop uses a popover
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** a current-tab button opens a half-height sheet over the current phone tab;
+  Home opens a full-height sheet with Back. Its session list has search, server groups
+  and open markers. In the half-height sheet a horizontally scrolling strip at the bottom
+  has the open terminal and Files tabs, × on the active tab, and + for New session /
+  Browse files; the full-height sheet has no strip (Home lists the open tabs) and puts +
+  beside search. Swiping
+  scrolls the strip; tapping a tab switches the view behind without closing the sheet.
+  Desktop has Home, tabs and + across the top; + opens a session popover with the same
+  creation choices, not an attach-only modal.
+- **Why:** Jimmy can see a switch happen in the background and reach tabs and creation
+  in the thumb zone. The current-tab button leaves the terminal with less chrome.
+- **Rejected:** the tall sheet with tabs at the top and × on each; closing the sheet on
+  every tab switch; a phone terminal tab strip with its own +; an attach-only desktop
+  picker and a separate Files rail.
+- **Supersedes in part:** “The tab chip opens one session switcher”, including its
+  attach-only desktop picker and switch-and-dismiss behavior. The brief's earlier
+  terminal tab-strip proposal was reversed in round 6 before it became a spec.
+
+### Terminal tabs continue to follow the current session window
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** a terminal tab remains a tmux session, opening on its current window and
+  following it. Only sessions with multiple windows offer a window-switching control;
+  on the phone it is within the sessions sheet. The exact control and the route for
+  creating a window in a one-window session remain open.
+- **Why:** Jimmy uses windows infrequently and agreed that the current window makes more
+  sense than selecting the first; the tab continues to match the session as other
+  clients change it.
+- **Rejected:** making each tab a fixed tmux window; selecting the first window on open;
+  a window switcher visible for every one-window session.
+- **Supersedes in part:** “The window switcher: the phone's session sheet, the desktop's
+  active pill”, specifically its always-available one-window control. It confirms “One
+  tab per session, like `tmux attach`”, rather than reversing that decision.
+
+### Multiple Files tabs keep independent places
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** any number of Files tabs may coexist, including several on a server. Each
+  keeps its own folder or open file locally and uses that name as its label. Home Files
+  and Browse files open a new tab at the selected server's folder list (its roots); existing tabs
+  are reached in Home or the tab strip. A new tab starts at the folder list rather than
+  `$HOME`, because outside a root the file API lists subfolders only.
+- **Why:** Files is a peer of the terminal, and Jimmy can keep more than one place open
+  without losing a folder or preview when switching.
+- **Rejected:** one Files destination shared by every tab; the earlier proposal of one
+  Files tab per server; opening at the active terminal's cwd by default.
+- **Supersedes in part:** “Files details”, where the router kept a single Files place.
+
+### A parent row and path field navigate Files
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** Files retains its path field and uses a “‹ parent” row at the top of the
+  list, absent at a root; swipe Back also navigates back.
+- **Why:** moving up stays in the list and does not need another row of chrome.
+- **Rejected:** a separate up button in the path bar; folder accordions.
+
+### Keep Mermaid in the Markdown viewer
+
+- **Decided:** 2026-10-27, Jimmy (“mermaid is important”).
+- **What:** render Mermaid in Markdown in this redesign rather than waiting for v2.
+  Load it lazily, use strict mode, and sanitize the rendered content with DOMPurify.
+- **Why:** diagrams are part of the documents Jimmy needs to read; untrusted rendered
+  content must remain sanitized.
+- **Rejected:** deferring diagrams with the rest of repo-viewer parity; rendering
+  Mermaid without the existing strict and sanitization boundaries.
+
+### Choose System, Light or Dark; use a black dark terminal
+
+- **Decided:** 2026-10-27, Jimmy, approving the redesign direction.
+- **What:** Settings offers System / Light / Dark on the app and browsers. System
+  follows the device; explicit choices override it. The approved dark direction uses a
+  true-black terminal and neutral greys. The native app and web use the same effective
+  scheme.
+- **Why:** Jimmy wanted a selectable light and classic dark appearance rather than
+  being limited to the phone's current system choice.
+- **Rejected:** system-only appearance and the existing blue-tinted dark terminal.
+  True black was the brief's assumption, not a separately recorded comparison with
+  near-black.
+- **Extends:** “Browser theme tokens set the minimum browser floor”; the choice now
+  participates in selecting the effective scheme.
+
+### Phone dock: current tab at rest, compose above keys when typing
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** with the keyboard down the bar has the current-tab button, tab count and
+  keyboard control, without a tab strip or +. With it up, no session pill shows; an
+  always-visible compose box sits above a text-only key row with Hide keyboard. The row
+  meets the keyboard, except for Safari's system form bar, and the resting bar meets the
+  bottom inset. Files and previews use the same current-tab bar.
+- **Why:** Jimmy wanted the session sheet behind a button, the keys nearest the thumbs,
+  an available compose box and no empty band. He accepted Safari's system form bar.
+- **Rejected:** a tab strip on the terminal; a session pill while typing; hiding or
+  shrinking away the idle compose box; placing the key row above the box; reserving a
+  blank band beside the keyboard or home indicator.
+- **Supersedes:** the layout in “The phone dock: one row at rest, the key row with the
+  keyboard”. The earlier redesign tab-strip proposal was reversed in round 6.
+
+### The compose box and terminal make focus visible and switchable
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** the idle compose box has no caret while the terminal cursor is solid. When
+  composing, the box has a ring, caret and Send, the terminal cursor is hollow, and
+  Send keeps box focus. A terminal tap or esc returns
+  typing to tmux without lowering the keyboard. While composing, ← and → move the
+  box caret; ↑, ↓, ^R, ^C, tab and other terminal keys still go to tmux, with their
+  destination visible in the key row.
+- **Why:** a blinking box caret alongside the terminal cursor obscured where typing
+  went, and escaping the box previously required lowering the keyboard.
+- **Rejected:** two active typing cursors; forcing a keyboard close to return to tmux;
+  a separate "type in the terminal" button in the compose row (Jimmy: "i dont think we
+  need it": esc and a terminal tap already do it);
+  sending esc and horizontal arrows to tmux while the box is focused; sending all the
+  key-row controls to the box.
+- **Supersedes in part:** “What the toggle raises, and where key-row keys go” and the
+  rejected line-aware tap in “The terminal long-press selects at once; arrows are keys;
+  a tap near the cursor opens the keyboard”.
+
+### Bell attention is a UI intent pending a real-tmux probe
+
+- **Decided:** 2026-10-27, Jimmy (“if we can find it”).
+- **What:** show an attention dot on session rows and tabs for a terminal bell, and
+  surface attention on the current-tab button. The mechanism, coverage and clearing
+  remain pending the tmux 3.4 and 3.7b probe. Show a connection indicator on the
+  terminal only when not live; it is separate from the bell dot.
+- **Why:** an agent may need attention without the user watching its tab, and a weak
+  connection needs a visible reconnecting state.
+- **Rejected:** promising bell coverage from `window_bell_flag` before probing whether
+  it exposes a bell in an unwatched one-window session; relying on connection color as
+  the attention signal.
+- **Supersedes in part:** the ban on dot status markers in “Browser/mobile client
+  direction and portable design record”, and the always-colored terminal host indicator
+  in “Terminal and desktop input details”. It does not add an agent dashboard.
+
+### Face ID relock is selectable, not disabled
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** keep the Keychain and Face ID lock, with a Settings choice of 5 min, 1 hour
+  (default), or At launch. At launch means one unlock per process launch, not removal of
+  Face ID protection from the Keychain item.
+- **Why:** frequent prompts were annoying, while keeping Face ID preserves the token's
+  biometric boundary at launch and at the chosen relock points.
+- **Rejected:** disabling Face ID and re-saving tokens without biometry; fixed five-minute
+  relock; calling the launch-only choice “Never”.
+- **Supersedes in part:** the fixed five-minute threshold in “Restore the existing iOS
+  auth and background policy”. The one-item and lock behavior otherwise remain.
+
+### Compact phone headers
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** use one 44 pt phone header row, with a back icon where the screen has a
+  parent and a 17 pt title; no large titles.
+- **Why:** Jimmy wanted Settings higher and more vertical space for the content.
+- **Rejected:** large titles and a separate back/header row.

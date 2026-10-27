@@ -56,11 +56,11 @@ rebuilding the app.
 | Native (Swift) | Web (`web/`, in the WKWebView) |
 |---|---|
 | Keyboard: the first responder, software and hardware keys | Terminal rendering (xterm.js), touch gestures, selection overlay |
-| Nothing drawn above the keyboard: one native `UITextField` responder with terminal/line targets and system keyboard traits | The dock: one row at rest (tab chip, mirrored line, toggle), and the fixed key row while the keyboard is up; the session switcher sheet; the terminal's edit menu (Copy, Paste) |
+| Nothing drawn above the keyboard: one native `UITextField` responder with terminal/line targets and system keyboard traits | The dock: current-tab button and keyboard control at rest; line mirror above the key row while the keyboard is up; the sessions sheet; the terminal's edit menu (Copy, Paste) |
 | Focus: who holds the keyboard; native owns terminal and line editing, WebKit owns sheet fields | File manager and viewers; the editor (v2) |
 | Keyboard geometry: sizing the web view | Host protocol: WebSocket per host, tabs, reconnect |
 | Auth: Face ID lock, tokens in the Keychain, lock screen | |
-| Hosts: host list, Add host and enrolment screens | Host picker in the session switcher (from the native host list) |
+| Hosts: host list, Add host and enrolment screens | Server cards and grouped sessions (from the native host list) |
 | Media: photo picker, camera, image paste, JPEG conversion, uploads; pasteboard reads and writes | Upload chips, path insertion through the normal input path |
 | Haptics, video player, share extension (later) | Requests for them, over the bridge |
 | Lifecycle and network signals; saved workspace | Reacting to them: reconnect, restore tabs |
@@ -73,16 +73,16 @@ above the keyboard is the web view; native draws no accessory.
 │ terminal (web; same rows, keeps the  │  WKWebView, frame ends at the
 │ last row visible unless cursor needs │  top of the keyboard
 │ the bottom edge)                     │
-│ esc ← ↑ ↓ → ^R ^C tab … [⌨]         │  web dock: fixed key row and toggle (keyboard up)
-│ [main 2] [ Type or dictate a line ]   │  web dock: tab chip and line mirror
+│ [ Type or dictate a line          ]  │  web dock: always-visible line mirror
+│ esc ← ↑ ↓ → ^R ^C tab … [⌨↓]         │  web dock: text-only key row and hide
 ├──────────────────────────────────────┤
 │           iOS keyboard               │  system; Return label follows target
 └──────────────────────────────────────┘
 ```
 
-With the keyboard down, the web view fills the screen and the dock, one row without the
-key row, sits on the bottom safe area. The toggle is in the key row while the keyboard
-is up and in this dock row while it is down. The fixed row carries ← ↑ ↓ →. The dock's rules are in
+With the keyboard down, the web view fills the screen and the current-tab button and
+keyboard control sit at the bottom safe area without a blank band. The toggle is in the
+key row while the keyboard is up and in the resting bar while down. The dock's rules are in
 [browser-behaviors.md](client/browser-behaviors.md#phone-dock); native's part is to own
 the terminal and line targets, keep WebKit first responder for sheet fields, and size the
 web view.
@@ -254,7 +254,8 @@ Standard user-driven paste remains required. The line mirror's Paste menu asks t
 - `pressesBegan`/`pressesEnded` on `KeyboardInput` handle hardware keys. In `terminal`,
   the mapped special keys and chords go to tmux and plain printing keys arrive through
   `UITextField`. In `line`, printable keys, ←/→, Backspace and ⌘V edit the buffer;
-  Return sends it; Esc, Tab, ↑/↓ and Ctrl chords go to tmux. With ctrl or alt armed,
+  Return sends it; Esc returns focus to the terminal, while Tab, ↑/↓ and Ctrl chords go
+  to tmux. With ctrl or alt armed,
   native diverts only a one-grapheme insert at a collapsed caret. The web applies the
   chord rule; a chordable character goes to tmux, while an unchordable one is disarmed
   and inserted back into the line at the caret. Other insert shapes stay in UIKit and
@@ -334,15 +335,16 @@ responder. Terminal's native responder stays the same object while its target ch
 | State | First responder | Keyboard | Entered by |
 |---|---|---|---|
 | `hidden` | `KeyboardInput`, with an empty `inputView` | down | `focus hidden`: the keyboard toggle while `terminal` or `line` owns it; a screen that needs the keyboard down |
-| `terminal` | `KeyboardInput` | up | `focus terminal`: toggle from `hidden`; a tap on the cursor row or the row above/below; restore after interruption |
+| `terminal` | `KeyboardInput` | up | `focus terminal`: toggle from `hidden`; a tap on the cursor row or the row above/below while down; a terminal tap or esc from `line` while up; restore after interruption |
 | `line` | `KeyboardInput` | up, Return labelled Send | `focus line`: tap the dock box; restore after interruption |
 | `webText` | WebKit content view | WebKit's | a sheet or Files screen needs its own field; overlay / destination opens |
 | `select` | WebKit content view | down | `focus select` when terminal selection needs WebKit |
 
 - **One responder, two targets.** Switching `terminal` ↔ `line` changes the mode and
   Return label, then calls `reloadInputViews()` on the same field. Tapping the dock box
-  in `terminal` keeps the keyboard up and switches to editing; tapping it in `hidden`
-  opens the keyboard directly in `line`.
+  in `terminal` keeps the keyboard up and switches to editing. The box appears only while
+  the keyboard is up; a terminal tap or esc in `line` returns
+  to `terminal` without hiding it.
 - **Hidden keeps native ownership.** `hidden` sets `KeyboardInput.inputView` to the
   empty view and reloads it. Hardware keys still arrive and route to the terminal; a page
   tap cannot steal first responder.
@@ -387,9 +389,14 @@ Native sizes the web view, so the web never measures the keyboard.
   `safeArea` and `keyboard`. Heights and insets are CSS-pixel-equivalent points. The
   native view moves above a docked keyboard, so the keyboard covers none of the web
   view: `keyboardInset` is 0 there, and the dock and sheets sit at the bottom of the
-  resized view without rising. Only the browser reports a nonzero value, the part of
+  resized view without rising. The key row sits flush against the keyboard. Only the
+  browser reports a nonzero value, the part of
   the page the keyboard hides; the web rises by exactly that. `keyboard` is how the
   keyboard-up chrome knows the frame it took was at least 120 pt.
+- **Appearance.** Settings offers System / Light / Dark. The app reports the effective
+  scheme to the web: System follows `traitCollection.userInterfaceStyle`, while an
+  explicit Light or Dark overrides it. Native chrome and the web use the same effective
+  scheme; a system trait change must not override an explicit choice.
 - **Every `viewport` carries the full-screen layout's `safeArea`, including while the
   keyboard is up.** The web view that ends above the keyboard has no bottom inset of its own
   (its `env(safe-area-inset-bottom)` is 0), but the web sizes tmux from `stableHeight`
@@ -510,9 +517,6 @@ HostEntry = { id: string, name: string, baseURL: string }
 PlatformHost = { handle: string, hostId: string | null,
                  name: string | null, pageOrigin: string | null }
 TabKey = { host: string, session: { server: string, session: string } }
-SavedWorkspace = { version: 2, tabs: { key: TabKey, session: string,
-                  window: string }[], active: string | null,
-                  files: SavedFilesPlace | null, hostName?: string }
 Boot = { bridgeVersion: 5, hosts: PlatformHost[],
          workspace: SavedWorkspace | null, viewport: Viewport,
          lifecycle: Lifecycle, focusMode: FocusMode,
@@ -540,10 +544,12 @@ the resulting draft and native selection state.
   `session` and `window` in a saved tab are the last names shown, for the label while
   restoring. Bridge version 5 carries this shape. Native stores the workspace
   and the drafts under v2 keys and deletes the v1 keys (window tabs) at launch, so the app
-  starts at Home with no tabs and no stale drafts. Nothing migrates; no id is guessed.
+  starts at Home with no tabs and no stale drafts. No window-tab id is guessed.
 - Native treats `SavedWorkspace` as an opaque snapshot and saves it as given. The web
-  owns tabs, their keys and the meaning of `active`; native does not turn the workspace
-  into a parallel tab model.
+  owns terminal and Files tabs, their identities, each Files tab's folder or preview,
+  and the meaning of `active`; native does not turn the workspace into a parallel tab
+  model. The revised persisted shape and migration from the single-Files-place workspace
+  remain to be specified before implementation.
 - The auth DTO fixtures are generated by the Rust fixture test and live beside Swift's
   tests in `ios/TetherKit/Tests/Fixtures/auth/`.
 
@@ -552,9 +558,9 @@ the resulting draft and native selection state.
 | Event (native signal) | What happens |
 |---|---|
 | Launch | Load the bundled UI; `ready` returns bridge-v2 `Boot`; the web restores `workspace` and starts host connections. If a token item exists or saved hosts indicate a missing item needs recovery, native covers the UI and attempts one Face ID read ([auth.md](auth.md#swift-side-keychain-item-and-app-lock)); a fresh app with no tokens opens without a prompt. |
-| Background (`scenePhase == background`) | Native starts a short background task and publishes `lifecycle { visible:false, online, locked, covered }`, then ends the task after the web callback or expiration. The web closes sockets. Native keeps tokens in memory until foreground after more than five minutes away. |
+| Background (`scenePhase == background`) | Native starts a short background task and publishes `lifecycle { visible:false, online, locked, covered }`, then ends the task after the web callback or expiration. The web closes sockets. Native keeps tokens in memory until a lock. |
 | A native screen covers the terminal (server list, Add host, or lock screen) | Native blurs any WebKit text field and covers the terminal. A server sheet sets `Lifecycle.covered`; the lock screen uses `Lifecycle.locked`. The web's single watch predicate unwatches the hidden active tab. On sheet dismissal native republishes the whole lifecycle snapshot. |
-| Foreground (`scenePhase == active`) | After more than five minutes in background, native drops its token map and attempts one Keychain read to unlock. A shorter trip restores focus without a prompt. The web recomputes admission and reconnects as needed. |
+| Foreground (`scenePhase == active`) | If the selected 5 min or 1 hour interval was exceeded, native drops its token map and attempts one Keychain read to unlock; At launch never relocks merely on foreground. Otherwise restore focus without a prompt. The web recomputes admission and reconnects as needed. |
 | Reachability change (`NWPathMonitor`) | Native updates `Lifecycle.online`; the web resets backoff/reconnects closed or stale sockets when `online` changes. |
 | Web content process killed (`webViewWebContentProcessDidTerminate`) | Native reloads the page; `boot` restores tabs from the native copy, which survives this; focus is restored |
 | Web asks for a fresh web view (`recreateWebView`, after two consecutive connect timeouts: iOS 26 can leave a new WebSocket stuck in CONNECTING after resume) | Native discards the `WKWebView` and loads a new one, then it follows the same path as a killed content process: `boot` restores tabs from the native copy, the web reconnects, focus is restored |
@@ -697,18 +703,19 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 | Area | Check |
 |---|---|
 | Covered focus | While the lock screen and server sheet are up, send each focus destination from web; no keyboard or terminal input appears above the cover, and uncovering restores the most recently requested destination |
-| Keyboard stays as set | Guard on: scroll and fling the terminal, tap it, tap the tab chip and key-row keys. The keyboard never changes, and typing goes to the tab on screen |
+| Keyboard stays as set | Guard on: scroll and fling the terminal; with the keyboard up, tap the terminal from the line field and use esc, ←/→ and tmux keys. The keyboard stays up and input goes to the intended target |
 | Restored without a tap | A web sheet opened and closed, the native server sheet, 10 s in the background, Notification and Control Center, a killed web content process: verify the intended focus and keyboard return; a line target returns as `line`, not `terminal` |
-| Hidden keeps input | Hidden with the empty `inputView`: no blank keyboard area; hardware keys still reach the terminal; taps on the page don't show the keyboard |
-| One keyboard / line target | From `terminal` and `hidden`, one tap on the box selects `line`; the keyboard stays up when switching targets; the toggle closes either mode. Confirm Return says Send in `line` and Return in `terminal`, and no first-tap is lost. Long press opens Paste / Select all / Clear; tap places the caret and spacebar trackpad follows it. The line wraps to five visual lines and scrolls internally. |
+| Hidden keeps input | Hidden with the empty `inputView`: no blank keyboard area; hardware keys still reach the terminal; only a tap on or beside the cursor opens the keyboard |
+| One keyboard / line target | With the keyboard up, one tap on the box selects `line`; a terminal tap or esc returns to `terminal` without hiding it, and Hide closes either mode. Confirm the idle box has no caret, the focused box has a caret and Send, the terminal cursor is solid or hollow as appropriate, and no first tap is lost. Send keeps line focus. Long press opens Paste / Select all / Clear; tap places the caret and spacebar trackpad follows it. The line wraps to five visual lines and scrolls internally. |
 | Selection | With `line` holding the native keyboard, verify whether WebKit's selection handles and Copy work; when they need WebKit, `focus select` must release it and release restores `line` |
 | Keyboard toggle / restore | Toggle raises `terminal` from hidden and closes `terminal` or `line`; system dismissal resets the web owner; selection and sheet close restore the expected mode. Background, native server sheet, 10 s in background, Notification / Control Center, and web-process restart restore `line` as `line` without a new tap. |
-| Geometry | The dock rides the keyboard without a jump, in both geometry variants; WebKit does not also scroll for the keyboard; tmux's size changes only on rotation, including a rotation with the keyboard up |
+| Geometry | The key row meets the keyboard with no blank band and the box sits above it, in both geometry variants; WebKit does not also scroll for the keyboard; tmux's size changes only on rotation, including a rotation with the keyboard up |
+| Appearance | System follows device changes; explicit Light and Dark survive them and agree in native chrome and web content |
 | Predictions / sheet fields | No predictive strip in the native `line` target. Search, rename and Files fields stay WebKit-owned with ordinary keyboard chrome. |
 | Line input | With ctrl armed, a single `c` sends `C-c`, a single `.` returns to the line at the caret, and a QuickType/autocorrection multi-character insert stays in the line and disarms. Dictation into the terminal target, including revisions that arrive after send-and-clear; Chinese/Korean composition and candidate Return (candidate acceptance must not send); spacebar trackpad; `lineEdit` latency per keystroke including held Backspace; 1→5-line growth and internal scroll. |
-| Hardware keys | In `line`, printable keys / ←/→ / Backspace / ⌘V edit; Return sends; Esc / Tab / ↑/↓ / Ctrl chords reach tmux. Verify terminal target still handles all existing keys, warning haptic on ^C/^D, and held-key repeat stops on release and deactivation. |
+| Hardware keys | In `line`, printable keys / ←/→ / Backspace / ⌘V edit; Return sends; Esc returns to terminal, while Tab / ↑/↓ / Ctrl chords reach tmux. Verify terminal target still handles all existing keys, warning haptic on ^C/^D, and held-key repeat stops on release and deactivation. |
 | Paste | The terminal edit menu's Paste with text and image, with "Allow Paste" set to Ask and Allow; the line menu inserts one-line text and sends text containing line breaks as one terminal paste; image route remains available. |
-| Keychain unlock ([auth.md](auth.md#recovery)) | One item holds the token map; one read prompts once and subsequent requests use memory only; after more than five minutes in background, unlock once; Reset tokens deletes the item and leaves every saved host not enrolled; after adding an alternate Face ID appearance, record the read's exact `OSStatus` |
+| Keychain unlock ([auth.md](auth.md#recovery)) | One item holds the token map; one read prompts once and subsequent requests use memory only. Check each relock setting on either side of its threshold and At launch across foreground and process restart. Reset tokens deletes the item and leaves every saved host not enrolled; after adding an alternate Face ID appearance, record the read's exact `OSStatus` |
 | Keychain update | With an existing token item and a successful unlock, add or remove a host; `SecItemUpdate` reuses the unlock's `LAContext`, raises no second Face ID prompt and leaves the UI responsive |
 
 ## Open risks

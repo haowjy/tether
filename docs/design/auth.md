@@ -48,8 +48,10 @@ execution for whoever passes it, so the checks guard against:
 - machines that only *look* like a tailnet node: devices behind a subnet router,
   tagged servers, nodes shared in from another tailnet, Funnel traffic from the
   internet ([Node identity](#node-identity));
-- someone holding the phone unlocked, or who adds a face to it, **for the native
-  app only** (the Face ID lock, `.biometryCurrentSet`);
+- someone holding the phone unlocked after the native app has locked, or who adds a
+  face before its next Keychain read, **for the native app only** (the Face ID lock,
+  `.biometryCurrentSet`). While the app remains unlocked, its cached tokens remain
+  usable; the selected relock interval sets that exposure;
 - a process on the server that forges headers to enrol itself (the enrolment code,
   readable only from a shell as Jimmy);
 - anything that passes the Tailscale check exhausting memory through HTTP (the
@@ -73,7 +75,9 @@ holding the 64 connection permits; other Unix users on a Linux box can't.
   those rules later fail, until the node is removed from tether. Removing the node
   revokes the token.
 - Anyone holding Jimmy's unlocked laptop or phone can use the browser client. A lock
-  screen drawn by the page would protect nothing the node isn't already sending.
+  screen drawn by the page would protect nothing the node isn't already sending. The
+  native app is also usable while it remains unlocked, including between background trips
+  shorter than the chosen interval, or until its process ends with At launch selected.
 - An HTTP response already streaming when its device is removed runs to its end
   ([Live sockets](#live-sockets-and-revocation)).
 - Removing a node in the Tailscale admin console takes effect in tether only once
@@ -996,20 +1000,22 @@ row fields means an older daemon never reads a guest row as a full device.
 stateDiagram-v2
   [*] --> Locked
   Locked --> Unlocked: read tokens item (Face ID)
-  Unlocked --> Locked: foreground after more than 5 minutes in background
+  Unlocked --> Locked: foreground after the selected background interval
 ```
 
-- **On launch when a token item exists or is expected**, and on foreground after more
-  than 5 minutes in the background. With no hosts or tokens the app opens without a
-  prompt. There is no "never", which would undo the lock. iOS can't run a timer in a
-  suspended app, so the check runs first thing on foreground, from the time the app
-  entered the background. On a normal background transition a short
+- **On launch when a token item exists or is expected**, and according to the Face ID
+  relock setting on foreground. The choices are **5 min**, **1 hour** (default), and
+  **At launch**: unlock once per app launch, with no time-based background relock. With
+  no hosts or tokens the app opens without a prompt. For the timed choices, iOS can't
+  run a timer in a suspended app, so the check runs first thing on foreground against the
+  time the app entered the background. On a normal background transition a short
   `beginBackgroundTask` window lets the web receive lifecycle and close its sockets; it
   does not lock the app.
 - **Locking** drops the tokens from native memory and tells the web (`lifecycle` with
   `locked: true`), which drops its copies. A native lock screen covers
-  the web view until the next read succeeds. If the background lasted over five minutes,
-  the foreground read is the unlock; a shorter trip restores without a prompt.
+  the web view until the next read succeeds. When a timed choice is exceeded, the
+  foreground read is the unlock; a shorter trip restores without a prompt. At launch
+  does not relock merely because the app returns from the background.
 - **Cancel, a failed match or biometry lockout:** the app stays locked with an Unlock
   button. Cancellation shows no error; other failures show a readable message. Nothing
   is deleted.

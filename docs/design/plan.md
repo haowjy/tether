@@ -34,8 +34,8 @@ and record decisions in decisions.md.
 A phone-first client for the tmux sessions on Jimmy's dev server, reached only over
 his tailnet. It needs:
 
-- **Tabs**, one per tmux session, like `tmux attach`, plus a session list for quickly
-  reopening one.
+- **Terminal tabs**, one per tmux session, like `tmux attach`, plus a session list for
+  quickly reopening one and Files tabs for browsing.
 - **Holding up on spotty travel connections:** no polling from the phone, a cheap
   reconnect that sends a fresh screen snapshot, and tabs that stay open
   ("reconnecting") until their tmux session is gone.
@@ -45,9 +45,9 @@ his tailnet. It needs:
   the terminal (MVP); view images and video with range streaming, view code and
   markdown (MVP) and diffs (v2); edit, create and rename files (v2).
 
-Agent status and notifications are out of scope: Jimmy's agent harness already
-handles notifications. Why tether is worth building, and which projects to study, is
-in [research/prior-art.md](research/prior-art.md).
+Agent dashboards and notifications are out of scope: Jimmy's agent harness already
+handles notifications. A bell attention dot is intended, pending a real-tmux probe.
+Why tether is worth building, and which projects to study, is in [research/prior-art.md](research/prior-art.md).
 
 ## Product rules
 
@@ -66,11 +66,11 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
   window tether stops holding with nobody else acting there keeps the size it had when
   tether attached until the laptop types ([daemon-core.md §3.6](daemon-core.md#36-sizing)). The keyboard
   never resizes it.
-- **Tabs:** 1 tab = 1 tmux session, as `tmux attach` is: it shows the session's current
-  window's active pane full screen and follows the current window when any client
-  changes it. A window switcher, with the session's windows when it has two or more,
-  changes and creates windows. Jimmy doesn't split panes; a split window shows its
-  active pane and follows it. Tabs never close on network loss.
+- **Tabs:** a terminal tab follows one tmux session, as `tmux attach` does: it shows
+  the current window's active pane and follows current-window changes from any client.
+  Only multi-window sessions offer a window switcher. Files tabs each remember a folder
+  or preview. Jimmy doesn't split panes; a split window shows its active pane and
+  follows it. Tabs never close on network loss.
 - **Shell:** shell-agnostic, with one OSC 133 snippet in his dotfiles and carapace for
   completion.
 - **Files:** project roots picked in the app; one uploads folder; HEIC converted on
@@ -142,26 +142,27 @@ tether's cgroup.
 
 ### Tabs and the session sheet
 
-One tab opens one tmux session and shows its current window, following it when the
-laptop, a script or tether's window switcher changes it; within the window it follows
-the active pane. The label is the actual session name, then the current window's
-name; identity is the stable server/session ID, never the display name. Lists show
-sessions only.
+A terminal tab opens one tmux session on its current window, follows it when the laptop,
+a script or tether changes the window, and follows the active pane inside it. Its label
+is the session name then the window name; identity is the stable server/session ID. Files
+is also a tab: any number can be open, each with its own saved folder or preview. Closing
+a tab never kills a tmux process.
 
-Desktop Terminal + opens the existing-session picker only; on the phone the dock's
-tab chip opens the session switcher. New session is on Home, and on the phone also in
-the switcher; New window is in the window switcher (the phone's switcher sheet, the
-desktop's active-tab menu). Both take an optional name and absolute start directory.
-Session search is local; refresh is event-driven. Another-client
-attachment does not identify a laptop. Closing a tab never kills its tmux process.
-See [the interaction contract](client/browser-behaviors.md) for the full behavior.
-Scratch shells are outside this minimal client pass.
+The phone's keyboard-down bar shows the current tab and a keyboard control; its button
+opens the half-height sessions sheet. Tabs and + sit at the sheet's bottom. Home's server
+card opens a full-height sheet with Back. Desktop has Home, tabs and + in its top row;
++ opens a session picker with New session and Browse files. Home and Browse files open
+new Files tabs at the selected server's folder list (its roots). Session search is local and refresh
+is event-driven. Only sessions with multiple windows offer switching in the sheet or
+desktop equivalent. A bell attention dot is intended on tabs and rows; its mechanism is
+pending a probe on real tmux. See [the interaction contract](client/browser-behaviors.md)
+for behavior and open details. Scratch shells are outside this client pass.
 
 ### Reconnect
 
-The phone repaints every tab from a fresh snapshot whenever it (re)watches it: after a
-reconnect, a tab switch, or returning from another screen. Only the tab on screen is
-watched.
+The phone repaints each terminal tab from a fresh snapshot whenever it (re)watches it: after a
+reconnect, a tab switch, or returning from another screen. Only the terminal tab on
+screen is watched.
 
 - Heartbeat while connected, and the daemon's idle timeout, are in
   [daemon-core.md §6](daemon-core.md#6-limits-and-the-memory-ceiling); nothing runs
@@ -212,7 +213,7 @@ Versions verified 2026-10-21 ([libraries.md](research/libraries.md),
 | Server-side emulator | none | xterm.js on the phone is the only emulator |
 | Renderer | xterm.js 6 with addons webgl, web-links, unicode11 | WebGL with DOM fallback; behind `term/`, so ghostty-web can be tried later |
 | App shell | Preact 11, Vite, TypeScript strict | |
-| File viewer | markdown-it + DOMPurify; Shiki on demand with a language allowlist; Mermaid on demand with `securityLevel: "strict"` (v2) | DOMPurify is mandatory: no Markdown parser sanitizes |
+| File viewer | markdown-it + DOMPurify; Shiki on demand with a language allowlist; Mermaid on demand with `securityLevel: "strict"` | DOMPurify is mandatory: no Markdown parser sanitizes |
 | Completion | carapace-bin 1.8, pinned; export JSON parsed loosely | absence or failure means no flag suggestions |
 
 ### Config
@@ -329,52 +330,44 @@ kernel kills tether before tmux or the agents), and
 
 ## Layout
 
-The [client interaction contract](client/browser-behaviors.md) and
-[interactive mockup](client/mockups/index.html) define current layout for all three
-clients. Desktop has a Home/Terminal/Files icon rail and top terminal tabs, without a
-back arrow. Mobile Home has Sessions/Files navigation; on touch, Terminal is
-full-bleed above a dock that is always visible. At rest it is one row: a tab chip that
-opens the session switcher (open tabs, every session, search and creation), a line
-field that grows from one to five visual lines and then scrolls inside, and the keyboard
-toggle. The field remains one logical line. While the keyboard is up, a key row sits
-above that row, and the dock rides on top of the keyboard. The phone browser, the PWA and
-the native app share the dock, drawn by the web
-([Phone dock](client/browser-behaviors.md#phone-dock)).
+The [client interaction contract](client/browser-behaviors.md) defines the redesign for
+the iPhone app, phone browser/PWA and desktop. Desktop has a top row with Home, terminal
+and Files tabs, + and server context; there is no rail. Phone Home is server-first, with
+settings behind a gear and no tab strip. The terminal, Files and preview use a resting
+bar with current-tab button and keyboard control. The current-tab button opens a
+half-height sessions sheet; from Home the sheet is full-height. Its bottom strip contains
+tabs and +. With the keyboard up the bar is replaced by an always-visible one-line
+compose box above the text-only key row, with Hide keyboard. The phone browser, PWA and
+native app share the web dock ([Phone dock](client/browser-behaviors.md#phone-dock)).
 
-Use actual tmux names, typography and color, not dot markers or dot separators.
-No rename/kill controls, extended-key/files sheet, or suggestion UI is part of this
-minimal pass.
+Use actual tmux names and spacing, not dot separators. A bell attention dot is intended,
+pending probe; it does not stand for connection state. No rename/kill controls,
+extended-key/files sheet, or suggestion UI is part of this pass.
 
-Keyboard opening does not resize tmux: tmux is sized with the resting dock in place and
-the keyboard down, and the terminal keeps its last row at the bottom of the visible area
-above the dock's key row and resting row. If that would put the cursor above the area's
-top, the cursor row meets the bottom instead. The pan never goes past the last row, does
-nothing while every row fits, and is off while scrolled into history; platform safe areas
-are respected.
+Keyboard opening does not resize tmux: tmux is sized with the resting bar in place and
+the keyboard down. The terminal keeps its last row at the bottom of the visible area above
+the keyboard-up controls. If that would put the cursor above the area's top, the cursor
+row meets the bottom instead. The pan never goes past the last row, does nothing while
+every row fits, and is off while scrolled into history; platform safe areas are respected.
 
 ## Keyboard
 
 ### Keyboard behaviour
 
-On touch, the dock's keyboard toggle is the only tether control that opens and closes
-the on-screen keyboard. It stays visible in either state: with the keyboard down it
-raises it for the terminal input, and with either input holding the keyboard it lowers
-it. In the app, one native `UITextField` owns the keyboard for both targets: the toggle
-selects `terminal`, where keys go to tmux; tapping the dock box selects `line`, where keys
-edit the draft. The browser and PWA use their own textarea editor for the line. A tap on
-the terminal never lowers the keyboard. With the keyboard down, a
-tap on the cursor's row or the row directly above or below it raises it for the terminal
-input, as the toggle does (not while scrolled back into history, where the cursor is off
-screen). Taps elsewhere keep their meaning: with app mouse mode on, a tap is sent as a
-click (near the cursor it also raises the keyboard); without it, a tap does nothing,
-except that OSC 133 prompt-row cursor placement may move the cursor while the terminal
-input already has the keyboard. Scroll, selection, tab changes and reconnects leave the keyboard as it is.
-Opening a sheet lowers it; a tap that closes it restores the held owner in that tap
-(native raises the same responder, and the browser refocuses its input). Escape or Back
-leaves the keyboard down. An interruption restores the native target, including `line`.
-Desktop
-click-to-focus is unchanged. The native mechanics are in
-[ios-shell.md](ios-shell.md#keyboard), the touch rules in
+On touch, Show keyboard raises terminal input and Hide keyboard lowers either target.
+In the app, one native `UITextField` owns the keyboard for both targets: `terminal` sends
+keys to tmux; tapping the compose box selects `line`, where keys edit its draft. The
+browser and PWA use a textarea for the line. While the keyboard is up, tapping the terminal
+or esc returns typing to tmux without lowering the keyboard. With
+the keyboard down, a tap on or beside the cursor row raises terminal input, except while
+scrolled into history. Mouse-mode taps still send a click; OSC 133 prompt-row cursor
+placement may move the cursor while terminal input already has the keyboard. Scroll,
+selection and reconnects do not toggle it.
+
+Opening a sheet lowers the keyboard; native restores the held owner when it closes. The
+browser refocuses inside the closing tap; Escape or Back leaves the keyboard down. An
+interruption restores the native target, including `line`. Desktop click-to-focus is
+unchanged. Native mechanics are in [ios-shell.md](ios-shell.md#keyboard), touch rules in
 [terminal interaction](client/terminal-interaction-design.md).
 
 ### Autocorrect and text input
@@ -433,22 +426,21 @@ after Tab, ↑ or readline edits.
 
 ### The key row
 
-Shown above the dock's resting row while the keyboard is up, the same in the browser,
-the PWA and the app. One fixed row, most used first: esc, ←, ↑, ↓, →, ^R, ^C, tab, ctrl,
-alt, `|`, `~`, `/`, `-`, scrolling horizontally. The arrows sit together in the order of
-a keyboard's cluster, after esc. ctrl and alt arm the next key; the arrows repeat while
-held. Control keys always go to the terminal; character keys go where typing goes. The
-terminal has no other arrow input on touch ([Cursor movement](#cursor-movement)). Command recall is the shell's own (↑, ^R),
-including commands typed on the desktop; the line field keeps no history. Details are
-in [Phone dock](client/browser-behaviors.md#phone-dock).
+Shown directly above the keyboard (above Safari's form bar) and below the compose box
+while the keyboard is up, the same in the browser, PWA and app. The text-only row scrolls
+horizontally and includes esc, ←, ↑, ↓, →, ^R, ^C, tab, ctrl and alt, plus Hide keyboard.
+While the line has focus, unmodified ← and → move its caret, esc returns focus to
+tmux, and ↑, ↓, ^R, ^C, tab and other terminal controls go to tmux. Visually distinguish destinations.
+In terminal mode the controls go to tmux; character keys go where typing goes. ctrl and
+alt arm the next key. Arrows repeat while held. Command recall is the shell's own (↑,
+^R), including commands typed on the desktop; the line field keeps no history. Details
+are in [Phone dock](client/browser-behaviors.md#phone-dock).
 
 - **^B sends one Ctrl+B.** tether's `send-keys` writes straight to the pane, past
   tmux's key bindings, so the prefix never intercepts it.
-- **No tmux-prefix key**, for the same reason; tmux actions (new window, rename, kill)
-  live in the app's UI.
+- **No tmux-prefix key**, for the same reason; tmux actions live in the app's UI.
 - More keys (⇧tab, esc esc, Ctrl+J newline) are candidates from what the agent CLIs
-  bind ([research/agent-keybindings.md](research/agent-keybindings.md)); the row
-  scrolls, so adding one costs no space.
+  bind ([research/agent-keybindings.md](research/agent-keybindings.md)).
 
 ### Sending keys and tmux.conf
 
@@ -552,24 +544,24 @@ width.
   `tailscale serve`.
 - **Search (v2):** `@xterm/addon-search` over the live buffer, text search over loaded
   history, and a server-side search over `capture-pane` for the rest.
-- **Activity dots (v2):** a dot on tabs with new output or a bell, from tmux format
-  subscriptions on `#{window_activity_flag}` and `#{window_bell_flag}`. A
-  subscription reports only windows in its control client's own session
-  ([probe](research/probe-locate-subscriptions.md)), so dots for other sessions need
-  more than one subscription; settled when built.
+- **Bell attention:** intended on tabs and session rows. Its tmux mechanism and coverage
+  are pending a probe on 3.4 and 3.7b; do not promise that every bell can be observed.
+  A general new-output activity dot remains v2.
 - **Typing latency on cellular:** spike 3 measures echo latency; at 200 ms or more,
   predictive local echo moves to v2.
 
 ## File manager
 
-Opened from `[⊞]` or `[<]`, as a sheet over the terminal; the keyboard stays put.
+Files opens as a tab from Home or the sessions sheet / desktop picker. Any number of
+Files tabs can be open, each remembering its own folder or file preview. A new one starts
+at the selected server's folder list (its roots); existing tabs are restored by selecting them.
 
 **Roots.** Project roots are chosen in Files: its path field completes folders under
 `$HOME` and adds one with "Add this folder", and each root has Remove
 ([interaction contract](client/browser-behaviors.md#files)). The uploads folder
 (`uploads_dir`, default `~/tether-uploads`) is browsable like a root and moves in
-`config.toml`. Both are saved in `~/.config/tether/config.toml`. A tab opens the file manager at its cwd (from
-`watching`) if that's inside a root, otherwise at the root picker. No file watcher:
+`config.toml`. Both are saved in `~/.config/tether/config.toml`. At home, when outside
+a root, only subfolders are shown through the picker until a root is added. No file watcher:
 listings are read on open, on pull-to-refresh, and after tether's own file operations.
 A path field heads the list: typed into, it completes the next existing folder from
 listings the client already holds, one request per folder entered, never one per
@@ -590,23 +582,23 @@ terminal input while open ([ios-shell.md](ios-shell.md#focus-one-controller-nati
 **Photo → terminal (MVP),** native ([ios-shell.md](ios-shell.md#files-and-sharing)):
 pick, take or paste a photo (`^V img`, or the file manager's upload button); HEIC is
 re-encoded to JPEG on the phone (quality 0.9, longest side 2048 px unless "send
-original"); it uploads to `uploads_dir` with a timestamped name; its quoted absolute
-path is typed into the tab it was started from, without Enter. The web shows no upload
-progress yet: it handles only the finished upload's path, so native's progress reports
-([ios-shell.md](ios-shell.md#files-and-sharing)) have no UI.
+original"); it uploads to `uploads_dir` with a timestamped name. An image pasted in a
+terminal inserts its quoted path there without Enter; a Files upload offers path insertion
+without automatically sending it. Target selection from a Files tab remains open
+([interaction contract](client/browser-behaviors.md#file-upload-and-path-insertion)).
 
 **Viewers:**
 
 | Viewer | Phase | Notes |
 |---|---|---|
 | Code | MVP | Shiki, on demand, language allowlist |
-| Markdown | MVP | markdown-it, sanitized with DOMPurify |
+| Markdown | MVP | markdown-it, sanitized with DOMPurify; Mermaid lazy-loaded in strict mode, its output also sanitized |
 | Images | MVP | zoom and pan, loaded lazily |
 | Video | MVP | native player over Range requests; no server thumbnails |
 | Binary | MVP | metadata; large files paged |
 | Diffs | v2 | from `git diff` / `git status` in the cwd |
 | PDFs | v2 | |
-| repo-viewer parity | v2 | Mermaid (lazy, strict), the folder image gallery, the hidden-file rules, gitignore handling; needed before repo-viewer is archived |
+| repo-viewer parity | v2 | folder image gallery, hidden-file rules, gitignore handling; needed before repo-viewer is archived |
 
 **Bandwidth:** only small listings load until something is tapped; image previews
 load as they scroll into view; upload has a "resize / send original" toggle.
@@ -716,10 +708,10 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
   app/            App context, controller (owns the sessions cache), router.ts, focus.ts,
                   listing.ts, persist.ts
   screens/
-    shell/        rail, destination frame and host banner
-    home/         open tabs, sessions list, creation dialogs and phone bottom nav
+    shell/        destination frame, top navigation and host banner
+    home/         server cards and settings entry
     picker/       the desktop session picker
-    switcher/     the phone session switcher
+    switcher/     the phone sessions sheet
     terminal/     tab strip, terminal surface, status band and the phone dock; terminals.ts
                   holds the renderer and every tab's driver outside Preact
     files/        folder list, preview, upload and path insertion
@@ -820,10 +812,10 @@ The spikes come first. The native app's keyboard checks are in
 - **Auth:** `tailscale serve` only, with the Funnel check; the login allowlist from
   LocalAPI; a device token per phone behind Face ID; one middleware on every route;
   strict CSP.
-- **Tabs and layout:** 1 tab = 1 session, following its current window; the window
-  switcher; collapsed and keyboard states; safe areas; the desktop's attach-only "+"
-  picker, the phone's session switcher, and creation actions; pinch font size per tab;
-  landscape.
+- **Tabs and layout:** 1 terminal tab = 1 session, following its current window; the window
+  switcher for multi-window sessions; collapsed and keyboard states; safe areas; the
+  desktop picker, phone sessions sheet, Files tabs and creation actions; pinch font size
+  per tab; landscape.
 - **Reconnect:** indefinite "reconnecting" with backoff and instant retry; the connect
   timeout with web view recreation; a snapshot on every (re)watch; prompt release of
   server state; WebGL context loss handled by recreating the renderer, with DOM
@@ -837,8 +829,8 @@ The spikes come first. The native app's keyboard checks are in
 - **Display:** xterm.js 6 WebGL, Nerd Font, `unicode11`, tappable URLs.
 - **Suggestion strip (deferred client UI):** backend completion capabilities do not
   require suggestion controls in the minimal client.
-- **Files:** browse the roots; view code, markdown and images; stream video in the
-  native player; photo pick or paste → uploads folder → path insert.
+- **Files:** browse the roots in tabs; view code, markdown with lazy strict Mermaid and
+  images; stream video in the native player; photo pick or paste → uploads folder → path insert.
 - **After the core MVP:** the scratch shell.
 
 ### v2
@@ -848,7 +840,8 @@ The spikes come first. The native app's keyboard checks are in
 - OSC 52 ↔ iOS clipboard and tmux-buffer sync. Snippets.
 - Multi-host.
 - Paid Apple account: TestFlight, App Groups, the share extension.
-- Activity and bell dots, scrollback search, tappable file paths, per-tab pan mode.
+- New-output activity dots, scrollback search, tappable file paths, per-tab pan mode.
+  Bell-dot coverage is pending the real-tmux probe.
 - Predictive local echo, if spike 3 shows 200 ms+ echo on travel links.
 
 ### Later

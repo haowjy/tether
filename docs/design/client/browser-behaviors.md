@@ -1,76 +1,94 @@
 # Tether browser and mobile interaction contract
 
-Status: approved interaction contract; implementation is staged across browser and native lanes, and the device-specific gates below remain. This contract supersedes conflicting navigation/layout rules in the earlier plan. The phone dock (tab chip, line field, keyboard toggle, and the key row while the keyboard is up) and the session switcher are specified below and shown in the mockup; their touch implementation remains to verify on an iPhone. See [README.md](README.md) for precedence and Mac setup.
+Status: interaction contract for the client redesign; implementation and device-specific gates remain. This contract supersedes conflicting navigation and layout rules in the earlier plan. The phone dock and sessions sheet are specified below; their touch implementation remains to verify on an iPhone. See [README.md](README.md) for precedence and Mac setup.
 
-Interactive mockup: [mockups/index.html](mockups/index.html). It predates tabs that follow a session and the Files path field: where its window rows, window tabs, accordions and Files layout differ from this contract, the contract wins. All sessions, terminal text, files, and creation are fictional; reload resets mock data. This mockup never connects to tmux. Do not use a live server with personal sessions for input probes.
+Interactive mockup: [mockups/index.html](mockups/index.html). It predates this redesign; where its navigation or layout differs from this contract, the contract wins. All sessions, terminal text, files, and creation are fictional; reload resets mock data. This mockup never connects to tmux. Do not use a live server with personal sessions for input probes.
 
 ## Product boundaries and vocabulary
 
 - Phone browser must support installation as a PWA with standalone launch; installation is optional for use, not for implementation scope. It shares browser behavior, preserves local drafts offline, and never queues terminal commands for later execution. See [browser setup](browser-setup.md) for research and gates.
-- Three environments: desktop browser, mobile browser, native iPhone app. Shared workspace behavior; platform-specific navigation and input. No three independent terminal implementations.
-- Host is the server, e.g. pop-os. Session is a real tmux session, e.g. a1 or bio2. A session contains windows; one of them is its current window. A tether tab opens one tmux session, as `tmux attach` does: it shows the session's current window (that window's active pane) and follows it when the current window changes, whichever client changed it.
-- Home, the picker and the switcher list sessions only, by their actual names. A tab's label is the session name, then the current window's name in regular weight; host is separate context. Mock names tether, notes, website, scratch demonstrate hierarchy only.
+- Three environments: desktop browser, mobile browser, native iPhone app. Shared workspace behavior; platform-specific navigation and input. No three independent terminal implementations. The native app has a host registry; a browser/PWA is currently bound to its page origin. A unified multi-server browser workspace and its Add server route need an origin/auth design before implementation; do not relax the existing browser boundary ([connection roadmap](connection-roadmap.md)).
+- Host is the server, e.g. pop-os. Session is a real tmux session, e.g. a1 or bio2. A session contains windows; one of them is its current window. A terminal tab opens one tmux session, as `tmux attach` does: it shows the session's current window (that window's active pane) and follows it when the current window changes, whichever client changed it. A Files tab holds one folder or file preview on a host.
+- Session lists use actual session names. A terminal tab's label is the session name, then the current window's name in regular weight; a Files tab uses its current folder or file name. Host is separate context.
 - Minimal initial product. No custom shortcut system, command palette, expanded desktop sidebar, split-pane management, SSH/SFTP/serial connection choices, or app-drawn keyboard: the dock's key row supplements the system keyboard and never replaces it.
 - Existing-session selection must be clearly distinct from session creation. Opening an existing session never creates another shell. Closing a tether tab never kills its tmux window, session, or process.
 - Connecting may resize a real tmux window. The setup must not suggest tether is read-only or isolated when connected to the user's server.
 
 ## Platform layout
 
-| Surface | Desktop browser | Mobile browser / iPhone app |
+| Surface | Desktop browser | Phone browser / PWA / iPhone app |
 | --- | --- | --- |
-| Primary navigation | Persistent 56px icon rail: Home, Terminal, Files. Active destination highlighted, titles and accessible labels. No expandable sidebar. | Home has bottom Sessions/Files navigation. Full-screen terminal has no rail or Home header. |
-| Terminal navigation | Single top row: open tabs with close icons, +. No redundant back arrow or keyboard button. | The dock's tab chip opens the session switcher, which holds Home, the open tabs and every session. No tab row and no +. |
-| Terminal area | All available space beside rail and below tabs. | Full-bleed above the dock, which sits on the keyboard when it is up. |
-| Session picker | Centered modal over current terminal, attach-only. | The session switcher: a tall rounded sheet over the current terminal (see [Session switcher](#session-picker-desktop-and-session-switcher-phone)). |
-| Keyboard | Direct physical-keyboard input; no separate developer textarea; no dock. | The dock: one row of tab chip, line field and keyboard toggle, with the key row above it while the keyboard is up. Same in the browser, the PWA and the app (see Phone dock). |
+| Primary navigation | One top row: Home, terminal and Files tabs, +, and server context. No rail. | Home is server-first. Terminal, Files and previews use the current-tab button to reach the sessions sheet; Home has no tab strip. |
+| Tabs | Top row, with × on the active tab only. + opens the session picker and creation actions. | With the keyboard down, the bar has the current-tab button and keyboard control. The open tabs and + are at the bottom of the sessions sheet, not on the terminal. |
+| Terminal | All available space below the top row. Direct physical-keyboard input; no dock. | Full-bleed above the dock. With the keyboard up, the compose box and key row replace the resting bar. |
+| Sessions | + opens a popover with search, sessions and New session / Browse files. | A half-height sheet over the current tab, or a full-height sheet with Back when entered from Home. |
 
-Safe areas and browser chrome are real platform constraints, not fake padding or simulated keyboards. Production must use measured visible viewport and prevent controls from being obscured. The mockup shows the dock with the keyboard down and up; its keyboard is a labelled placeholder. Mobile controls target at least 44px of touch area; the dock's visible controls are smaller (Jimmy), and the dock adds the bottom safe area only while the keyboard is down. Names truncate rather than widening the screen; the key row and the switcher's tab pills scroll horizontally.
+Safe areas and browser chrome are real platform constraints. Use the measured visible
+viewport and keep controls unobscured. Mobile controls target at least 44 px of touch
+area; the dock's visible controls may be smaller. Seat the resting bar at the bottom
+safe area without a blank band; add that inset only while the keyboard is down. The key
+row and the sheet's tabs scroll horizontally. Names truncate rather than widening the
+screen. Safari's own toolbar remains below the resting bar, and its form accessory sits
+between the key row and keyboard. Standalone PWA mode has no Safari toolbar.
 
 ## Visual treatment
 
-- Semantic colours provide light and dark values. Dark is the default; light follows
-  `prefers-color-scheme` unless the platform sets an explicit scheme on the document.
+- Settings offers System / Light / Dark on every surface. System follows the system
+  appearance; Light and Dark override it. Dark uses a true-black terminal and neutral
+  greys rather than blue-tinted terminal surfaces. Native and web appearance agree.
 - Blue is the selection/accent channel; green is reserved for connected status. Selected
-  navigation and rows use a blue-tinted fill and weight, not green text. Connection
-  state remains visible on its own label and never relies on selection color.
-- The phone switcher sheet uses the current theme's raised surface: dark with the dark
-  theme and light with the light theme. It is not permanently light.
-- The phone toast floats above the dock so it cannot cover the tab chip or the line field.
-- On desktop, Home is a centered column with width `min(720px, 100% - 2 gutters)`.
-- A tab's label is its session name in bold, then the current window's name in regular
-  weight, set apart by spacing alone: no dot, slash, colon or other separator. The window
-  name shows even when the session has one window. Labels keep the session name and
-  truncate the window name first; a fade at the scrolling edge signals clipped content. Icon-only rail and toolbar controls have
-  accessible names and tooltips on hover and keyboard focus.
-- Interactive controls share a 2 px focus ring with a 2 px offset. Spacing, type,
-  radii and icon sizes use one scale per property; icons are 16, 20 or 24 px.
+  rows use a blue-tinted fill and weight. Connection state is distinct from selection.
+- The phone sheet uses the current theme's raised surface. A toast floats above the dock
+  without covering its controls.
+- Home is a centered column on desktop, with width `min(720px, 100% - 2 gutters)`.
+  Phone screens use a single 44 pt header row, a back icon where the screen has a parent,
+  and a 17 pt title; no large titles.
+- A terminal tab's session name is bold and its current window name regular, separated
+  by spacing, including for a one-window session. Truncate the window name first. A Files
+  tab is labelled by its folder or open file. When multiple hosts are available, keep host
+  context accessible for otherwise ambiguous tabs. Icon-only controls have accessible
+  names and tooltips on hover and keyboard focus.
+- Interactive controls share a 2 px focus ring with a 2 px offset. Spacing, type, radii
+  and icon sizes use one scale per property; icons are 16, 20 or 24 px.
 - Loading, empty, offline, error, refused-session, enrolment and permission states are
-  distinct; failures must not look like empty content. Reduced motion shortens the
-  duration tokens. Do not globally force transitions to 1 ms, which animates theme
-  changes and makes contrast checks timing-dependent.
+  distinct; failures must not look like empty content. Reduced motion shortens duration
+  tokens. Do not globally force transitions to 1 ms.
 
-## Home: Sessions
+## Home
 
-Initial entry opens Home. Sessions is the initial Home destination. Desktop Home icon selects this screen; mobile back from terminal selects it.
+Home is a separate server-first screen, not a detent of the sessions sheet. It has no
+phone tab strip. Each server card shows its name and status and its open terminal and
+Files tabs; a row returns to that tab. “All N sessions” opens that server's sessions
+sheet; “Files” opens a new Files tab at that server's folder list (its roots). One and several
+servers use the same card; a single server does not auto-navigate past Home. Add server
+leads to enrolment. An offline server shows when last reached and Retry, distinct from an
+empty server; open tabs remain available as reconnecting. A restored terminal tab reads
+“Checking…” until a listing proves its session or “Reconnecting…” while unreachable.
+Phone Safari Home also offers Add to Home Screen instructions.
 
-1. Open tabs appears first. Row label is the session name and its current window's name. Tap or click opens the existing tab, not a duplicate. Its close icon removes that tab only. No destructive tmux action is exposed. A tab restored from the saved workspace reads “Checking…” until a listing proves its session, or “Reconnecting…” while the host is unreachable.
-2. Find a session filters the sessions by name, case-insensitively. It does not hide Open tabs. Empty result says no matching sessions. Filtering is local; do not poll tmux per keystroke.
-3. Existing sessions appear under host context, one row each: the name, and the window count as “N windows” (singular for one), not a bare number. Rows do not expand and list no windows. Home and picker use the same row renderer. A session open in a tab is marked “open”. Selecting a row opens or activates that session's tab and enters terminal view; the tab shows whatever window is current in tmux.
-4. The labelled “+ New session” button next to the available-session heading creates a NEW session; it is a separate action from opening an existing session. Prompt for name, allow cancellation. Creation succeeds into its first window. The form offers an optional start directory, defaulting to tmux’s default. New windows are created from a session's tab, in the window switcher (below), not on Home. The desktop picker stays attach-only; creation is on Home, and on the phone also in the session switcher. Name is optional; blank lets tmux name the target. Mockup generates an illustrative unique name and rejects duplicates for its simplified name-keyed state; it does not impose production name validation. Real server validation remains authoritative. The new tab opens from the next listing that holds the created session; if it has not appeared after 5 seconds the form says it was created but is not in the list yet. A refused start directory shows the daemon's message in the form. Start directory is optional absolute-path text with feedback; production verifies existence and authorization, and blank uses tmux default.
-5. Settings is the last row of Home. It opens a dialog (a sheet on a phone) with Remove this device, only where the host admits this device as a tailnet node; Clear local data, which deletes drafts and the saved workspace on this device and leaves open tabs until they are closed; and, on a phone that has not installed the app, the Add to Home Screen steps. Each destructive action confirms in its own overlay, so Back returns to Settings.
-6. No open tabs: show a short prompt to open an existing session, not a fake default session. No sessions/server: expose that state and retry; tether never starts the tmux server automatically. Network failure and empty server must be distinct in production.
+No servers shows enrolment instructions and Add server. A live server with no sessions
+shows New session; if tmux is not running, say so and offer no action that starts it.
+tether never starts Jimmy's tmux server. Server management includes adding, removing and
+re-enrolling a server. Settings is a separate screen reached from the Home gear, with
+appearance, terminal text size, this device/browser and local-data controls. The app also
+offers the Face ID relock setting ([auth.md](../auth.md#swift-side-keychain-item-and-app-lock));
+the phone browser has no Face ID setting. Clear local data deletes
+drafts and the saved workspace on this device, leaving currently open tabs until closed;
+destructive actions confirm independently. Remove this device is available only where the
+host admits this device as a tailnet node. Settings has Back to Home.
+
+The launch destination for a saved workspace remains open: reopening the last tab is the
+proposal; Home is used when no tabs are open.
 
 ## Terminal
 
 - Selecting a tab activates it; other tabs remain open. Opening a session already represented by a tab activates that tab. Implementation identity must use server/session IDs, not mutable display names.
 - **The tab follows its session.** When the session's current window changes (prefix-n on the laptop, the window switcher below, a window exiting, a script), the tab shows the new window: its snapshot replaces the old one in place and the label changes. The tab, its draft and its place in the tab order stay. Typing, the line field, paste and an inserted path go to the window the tab is showing on this screen, so keys sent just before a change made elsewhere still reach the window the user was looking at. Opening or activating a tab enters Terminal through the router; desktop focus lands on the terminal after that screen is rendered.
-- Closing an inactive tab leaves the active tab unchanged. Closing the active tab activates its right-hand neighbour, or the left-hand neighbour if it was last. On desktop only the active terminal pill shows a close icon; on the phone every pill in the switcher has one; all tabs can also be closed from Home. Active pill is scrolled into view when activated. Closing the last tab returns Home. The close icon never sends a kill command. Closing the last tab focuses the Home search on desktop; creation-dialog cancellation/Escape restores focus to the exact control that opened it.
-- Desktop Terminal rail icon returns to the last active tab. With none, it opens the session picker; dismissing leaves an explicit empty terminal state with the toolbar/+ still visible, and Home remains available. Empty copy says “Open a session with + or from Home.”
-- On the phone, the switcher's Home button and the system back gesture return to Home, preserving open tabs and active selection. There is no desktop back arrow because the rail already provides Home.
-- Desktop + directly opens the session picker; the phone's tab chip directly opens the switcher. There is NO intermediate menu and NO Files action in either. These were tried and explicitly removed.
-- Files is reached from Home on mobile or the desktop rail. Returning to Terminal preserves active tab and the running process.
+- Closing the active tab activates its right-hand neighbour, or the left-hand neighbour if it was last. Only the active tab shows ×, on desktop and in the phone sheet; it closes that tether tab, never its tmux session or process. Scroll the active tab into view. Closing the last tab returns Home. Creation-dialog cancellation/Escape restores focus to its opener.
+- The phone sheet's Home button and system back gesture return to Home, preserving open tabs and active selection. Desktop Home is in the top row. Desktop + opens the picker with creation actions; the phone current-tab button opens the sheet, whose + offers New session and Browse files.
+- Files opens as a tab from Home or the creation action; switching tabs preserves the terminal and running process.
 - Terminal output is not editable mock text masquerading as live input. The prototype says it is sample content and sends no input.
-- Connection status uses color on the tab and host label, not a dot: green for connected and amber for reconnecting. Active-tab shape/background and accessible state labels remain distinct from connection status; visible reconnect/error text prevents color from being the sole signal. Active-tab reconnecting state also appears as a compact overlay on the terminal, with Retry, so it does not disappear when the pill is clipped. The mock connection-state selector is outside the app and only demonstrates this appearance.
+- On the terminal, show connection status only when not live. Reconnecting/error is visible in text, with Retry, and is distinct from active-tab selection and the bell dot. Home server cards still show live or offline status.
 - Real connection states inherit the existing reconnect contract: disconnect does not silently close tabs; reconnect/error appears with the affected tab; viewing Home/Files must not kill tmux.
 - When the daemon refuses a socket for its connection cap (close code 4005), the host banner says “Too many connections to pop-os” with “Close tether in another browser or the app, then retry” and a Retry button, until a socket is welcomed. It is a host problem: the tabs keep their own “Reconnecting” state and the socket keeps its normal backoff.
 - Scroll behavior, paste, mouse handling, focus delivery, reconnect, server identity, tmux geometry ownership, and keyboard viewport behavior require implementation-phase verification. No claim of those working is made from static mockups.
@@ -83,63 +101,73 @@ Initial entry opens Home. Sessions is the initial Home destination. Desktop Home
 
 ## Session picker (desktop) and session switcher (phone)
 
-One sessions list, shown two ways. Both use Home's row renderer and search rules, fetch the listing when opened, and leave terminal selection intact underneath. Existing tmux sessions are the default content; the user need not create a session to connect.
+Both surfaces fetch sessions when opened, search locally by name without a request per
+keystroke, distinguish no matches from loading and errors, and mark sessions already open.
+With several servers, group the list by server; the session name and window count remain
+readable. Session rows open an existing session's tab or activate it, never create a shell.
+The dismissal behavior after selecting a session row in the phone sheet is open.
 
-**Desktop: the session picker**, a centered modal opened by +.
+**Desktop:** + opens a popover under the top row with search, sessions grouped by server,
+and New session / Browse files. Selecting a session opens or activates its tab and closes
+the popover. Escape or outside click dismisses without changing the active tab; focus
+returns to terminal input, or + when there is no tab. Search is auto-focused.
 
-- Shows heading, close icon, search, host context, and the session rows, as on Home. Attach-only: no creation.
-- A session row opens or activates its tab and dismisses the picker. No matches has explicit feedback.
-- Close icon, outside click, or Escape dismisses without changing the active tab. Focus returns to terminal input (or + if there are no tabs); selecting a session focuses terminal input. Modal focus is trapped within the picker. Search is auto-focused.
-
-**Phone: the session switcher**, a tall rounded sheet opened by the dock's tab chip. It is the phone's only picker; the phone's Terminal has no tab row and no +.
+**Phone:** the current-tab button opens a half-height sheet over the current terminal or
+Files tab, which remains visible behind it. From a server's “All N sessions” on Home, the
+sheet is full-height for that server, with Back to Home instead of Home. The half-height
+sheet has the tabs and + at its bottom; the full-height sheet has no tab strip (Home
+already lists the open tabs) and puts + beside its search field.
 
 ```text
-┌──────────────────────────────────────┐
-│ [⌂ Home]        Sessions         [×] │
-│ (tether  agent ×) (notes  shell ×)   │  open tabs, active one marked
-│ Windows in tether                    │  the active tab's session
-│   1: agent                     shown │  its current window
-│   2: shell                           │
-│   3: logs                            │
-│   + New window                       │
-│ tether                3 windows here │  the active tab's session
-│ notes                  1 window open │  open in another tab
-│ website                    2 windows │
-│ [ Find a session        ] [+ New]    │  thumb reach
-└──────────────────────────────────────┘
+half-height over current tab             full-height from Home
+┌──────────────────────────────────┐     ┌──────────────────────────────────┐
+│ current terminal / Files         │     │ [‹] [ Find a session        ] [+]│
+├──────────────────────────────────┤     │ sessions for this server         │
+│ [⌂ Home] [ Find a session     ]  │     │                                  │
+│ sessions, grouped by server      │     │                                  │
+│                                  │     │                                  │
+│ (a1 python ×) (b1 claude) … [+]  │     │                                  │
+└──────────────────────────────────┘     └──────────────────────────────────┘
 ```
 
-- **Header:** Home (returns to Home, keeping tabs) and a close icon.
-- **Open tabs** first, as pills in tab order, the active one marked. A tap switches to that tab and closes the sheet; each pill's close icon closes that tether tab only (never tmux).
-- **The window switcher** for the active tab's session next (Window switcher, below): its windows when it has two or more, then "+ New window".
-- **Every session on the host** next, one row each with Home's "N windows" count. The active tab's session is labelled "here", one open in another tab "open". Labels are words, never dots. A row opens or activates its tab and closes the sheet.
-- **At the bottom, in thumb reach:** the search field ("Find a session", the same filter as Home) and "+ New session", which opens Home's creation dialog. Search is not auto-focused, so opening the sheet never raises the keyboard; the user taps it when needed. While the search has the keyboard, the sheet's bottom sits on the keyboard (on Safari's form bar in the browser), as the dock does, and the list above it scrolls in what is left; in landscape that may be a few rows, which is enough to see the filter's matches.
-- **More than one host** (the app): a host selector heads the sessions list, from native's host list; the open tabs stay one list across hosts, each pill naming its host when there are several.
-- Close icon, a tap outside, the system back gesture or Escape dismisses without changing the active tab. Opening the sheet lowers the keyboard (Phone dock). Empty, offline and refused states render as on Home.
+- Search is not auto-focused. With its keyboard up, the sheet sits above the keyboard
+  (above Safari's form bar in the browser) and the list scrolls in the remaining space.
+- The bottom strip contains terminal and Files tabs in order, with the next tab peeking
+  when more remain; swipe scrolls the strip, tap switches the active tab behind the
+  sheet, and the sheet stays open. Only the active tab shows ×. Closing a terminal tab
+  leaves its session running. + offers New session and Browse files; Browse files opens
+  a new Files tab at the server's folder list (its roots).
+- Session rows mark the active tab's session “here” and other open sessions “open”.
+  An attention dot on tab buttons and session rows indicates a terminal bell; its tmux
+  mechanism and coverage are **pending probe** on 3.4 and 3.7b. The current-tab button
+  can surface attention from another tab. It is not a connection-status indicator.
+- New session prompts for an optional name and absolute start directory; blank uses
+  tmux's defaults. Cancellation is harmless and server validation is authoritative.
+  Open its tab from the next listing containing it; after 5 seconds say when it was created
+  but has not appeared. Show a refused directory's reason in the form. The server choice
+  for creation when several are available remains open.
+- A tap outside, the system back gesture or Escape dismisses the half-height sheet without
+  changing the active tab. Opening the sheet lowers the keyboard (Phone dock). Empty,
+  offline and refused states are distinct.
 
 ## Window switcher
 
-Changes which window the active tab's session shows, and creates windows. Choosing a window runs tmux's `select-window` on that session, so every terminal attached to the session moves with it, as with prefix-n in `tmux attach`; the tab then follows like any other change. The window list comes from the listing fetched when the switcher opens; "+ New window" shows at once, the rows' place reads "Loading windows" until the listing arrives, and a refused listing shows its reason in plain words with Try again.
-
-- **Rows.** One per window, in index order, as "index: name", the one the tab is showing (its latest `watching`, not the listing's `active`, which can be older) labelled "shown" (a word, never a dot or a separator). The rows appear only when the session has two or more windows; a one-window session shows "+ New window" alone. Choosing the shown window does nothing but close the switcher.
-- **+ New window** creates a window in this session with Home's creation form (optional name and start directory) and makes it the session's current window, as prefix-c does; the tab follows it and it is sized to this screen. A refused start directory shows the daemon's message in the form.
-- **Phone:** the "Windows in <session>" block of the session switcher (above). A row tap selects the window and closes the sheet; "+ New window" opens the creation form over it.
-- **Desktop:** the active tab's pill holds a windows button (a chevron after the label, beside the close icon; only the active pill has one), named "Windows in <session>", on every session, one-window sessions included, since it is the desktop's only way to create a window. It opens a menu anchored under the pill: the rows, then "New window". From the keyboard, Ctrl+Shift+F lands on the active pill and Tab reaches its windows button. In the menu, arrow keys move, Enter chooses, and Escape or a click outside closes it; focus returns to the terminal. tmux's own window keys (prefix-n, prefix-c) do not work from tether: input reaches the pane through `send-keys`, which skips tmux's key tables, so a typed Ctrl+B n arrives as ^B and n. The menu is the desktop's window switcher; a window changed in tmux by any other terminal is still followed.
-
-```text
-desktop, the active pill and its menu
- [tether  agent ⌄ ×] [notes  shell]  +
- ┌───────────────────┐
- │ 1: agent    shown │
- │ 2: shell          │
- │ 3: logs           │
- │ New window        │
- └───────────────────┘
-```
+A terminal tab opens on its session's current window and follows it as any client changes
+it. Only a session with more than one window offers a window-switching affordance; on the
+phone it is inside the sessions sheet, not terminal chrome. Expanding the active
+session row is proposed; the exact control remains open. Desktop also needs an
+equivalent way to switch multi-window sessions. Choosing a window runs tmux's
+`select-window` on the session, so every attached client moves with it. Rows are in actual index order as “index: name”; the latest `watching`
+window is marked “shown”. Load from the current listing, show loading and refusal with
+Try again, and selecting the shown window changes nothing. The route for creating a new
+window in a one-window session remains open. tmux prefix keys sent by tether reach the
+pane, not tmux's key tables.
 
 ## Files
 
-Files is one folder list under one path field. At rest the field shows where the user is; typed into, it finds a folder by completing its path, like VS Code's path entry; tapping rows still browses one folder at a time.
+Any number of Files tabs can be open, even on the same server. Each remembers its own folder or file preview locally and is labelled by that folder or file name. Home “Files” and the sheet/desktop “Browse files” always create a new tab at the selected server's folder list (its roots), since outside a root tether lists subfolders, not files; existing Files tabs are reached through their tab or Home row.
+
+Each Files tab presents one folder list under one path field. At rest the field shows where the user is; typed into, it completes folders; tapping rows browses one folder at a time.
 
 ```text
 phone, at rest                           phone, typing (keyboard up)
@@ -153,7 +181,7 @@ phone, at rest                           phone, typing (keyboard up)
 │   README.md               9.8 KB │     │ iOS keyboard, Return key "go"    │
 │ Show hidden files                │     │                                  │
 │ [Upload]                         │     │                                  │
-│ (Sessions)   (Files)             │     │                                  │
+│ [tether files   4 tabs        ⌃] │     │                                  │
 └──────────────────────────────────┘     └──────────────────────────────────┘
 ```
 
@@ -182,64 +210,118 @@ A `/fs/list` refused as outside the roots for a path under `$HOME` (a symlink le
 **Browsing by tap** is unchanged at rest:
 
 - Opens the current folder as a list. Returning from terminal preserves folder/preview context.
-- Folders open their contents, not an accordion. A parent-folder control moves up; at the configured root it is absent.
+- Folders open their contents, not an accordion. The first row is “‹ parent” (with the parent folder name); it moves up and is absent at a configured root. The system/browser back gesture also goes back.
 - Files open a preview. Back from preview returns to its containing folder.
 - Matching navigation treatment: same row height, padding, leading icon position, text size, metadata alignment, trailing chevron, and hover/focus treatment as session rows. Folder rows end with a right chevron (drill in); session rows have none (they open a tab). Files/folders are not falsely presented as expandable trees.
-- Roots are listed first at the top level, each with a Remove button that asks first ("Remove this folder?", nothing is deleted from disk) and a Remove-less Uploads row. Remove is a router overlay: Back, Escape and the backdrop close it, and focus returns to the control that asked (Add folder… when a removed row's button is gone). Moving the uploads folder still happens in `config.toml` on the host; the list says so. The Files rail button and Home's Files tab return to the last folder or preview; the in-app back button goes up one place, and the browser's Back returns to the previous one without a new request when its folder is still loaded.
+- Roots are listed first at the top level, each with a Remove button that asks first ("Remove this folder?", nothing is deleted from disk) and a Remove-less Uploads row. Remove is a router overlay: Back, Escape and the backdrop close it, and focus returns to the control that asked (Add folder… when a removed row's button is gone). Moving the uploads folder still happens in `config.toml` on the host; the list says so. Returning to a Files tab restores its folder or preview; the in-app back button goes up one place, and the browser's Back returns to the previous one without a new request when its folder is still loaded.
 - Folder rows show an icon, name and chevron; file rows add a size. A link that cannot open says why (“Broken link”, “Not a file”) and is disabled. A folder past the daemon's scan cap says it is too big to list in full. Further pages load as the end of the list nears the screen, with “Show more” as the fallback. Hidden files are behind a quiet toggle under the list.
-- Previews: code (14 grammars, plain text for the rest), Markdown (relative links open the file here, web links go to the browser, an address link hands off to the mail app; the document is cut down to an allowlist of prose, lists, tables, code, links and images, and no click inside it navigates the page itself), images (zoom and pan), video and audio (inline in the browser; native keeps its own player), and binary files (“Open as text”).
+- Previews: code (14 grammars, plain text for the rest), Markdown (relative links open the file here, web links go to the browser, an address link hands off to the mail app; an allowlist of prose, lists, tables, code, links and images is sanitized with DOMPurify, and no click inside it navigates the page itself), images (zoom and pan), video and audio (inline in the browser; native keeps its own player), and binary files (“Open as text”). Markdown Mermaid diagrams render with a lazily loaded renderer in strict mode, with rendered output sanitized by DOMPurify.
 - Loading and failure never look like an empty list: a spinner with words, or the refusal in plain words with “Try again”.
 - Root selection, permissions, size limits, and error handling remain governed by existing fs spec. Upload/path insertion route is specified below. No delete/move/rename controls are added.
 
 ## Persistence and input
 
-- Navigation between Home/Terminal/Files, sheets, and tabs preserves open tabs and process state. File context is retained within the preview session.
+- Navigation between Home, sheets and tabs preserves open tabs and process state. Each Files tab retains its own folder or preview, including across reload, locally on that device.
 - Home/list refresh runs on entry and on debounced sessionsChanged while visible; there is no polling or network search per keystroke. Fetch on picker or switcher open and reconnect, and prune tabs only from authoritative listings for the matching host and tmux endpoint. A listing from the same endpoint decides all that endpoint's tabs, including live tabs: matching sessions from the same tmux run remain; a different run at that endpoint closes the old run's tabs. A scratch endpoint is never touched by the main-endpoint listing, and a null listing (no server) decides nothing. One notice reports closures. The hub serializes one-shot requests and answers an overlapping request with `busy`, so a listing cannot straddle a window-creation reply. Explicit user retry handles list errors.
-- Production restores tabs after reload using validated session identities. An unavailable session must not be silently replaced with a same-named session from another server. A workspace saved before tabs followed sessions (format version 1, window tabs) is discarded whole at boot, with the drafts keyed by its window tabs: tether starts at Home with no tabs.
+- Restore terminal tabs after reload using validated session identities and Files tabs with their own host and saved folder or preview. An unavailable session must not be silently replaced with a same-named session from another server. A workspace saved before tabs followed sessions (format version 1, window tabs) is discarded whole at boot, with the drafts keyed by its window tabs: tether starts at Home with no tabs.
 - Mockup state is deliberately in-memory. Changing preview-platform selector is a presentation-only reset to Home, not a production control. Full reload returns fictional defaults.
 - Touch input follows Phone dock below. Desktop click-to-focus is unchanged.
 - Tab display keeps the session name visible and spends what width is left on the current window's name, which truncates first. Full combined name is the tooltip and accessible label. Window rows use the actual tmux window index, not array position; mock indices are illustrative. The server/session identity, not label, owns tab state through renames and window changes.
-- Icon-only toolbar and rail controls have accessible names/tooltips. Home's two bottom destinations retain small Sessions/Files captions; data and menus use text. Disabled controls must explain why; loading/error states should not look like an empty list.
+- Icon-only controls have accessible names/tooltips. Disabled controls must explain why; loading/error states must not look like an empty list.
 
 ## Phone dock
 
-On touch (`directInput` other than desktop xterm), Terminal ends in a dock that is always visible, with the keyboard up or down. At rest it is one row; the key row joins it only while the keyboard is up. The terminal is full-bleed above it; when the keyboard is up the dock rides on top of it, and the terminal pans so its last row meets the bottom of the visible area above the key row and dock. If that would put the cursor above the area's top, the cursor row meets the bottom instead. It never pans past the last row, when every row fits, or while scrolled into history. tmux is sized with the resting dock in place and the keyboard down, so opening the keyboard (and the key row with it) never resizes tmux. One web implementation serves the phone browser, the PWA and the native app, in portrait and landscape alike.
+On touch, Terminal is full-bleed above a dock shared by the browser, PWA and native app.
+With the keyboard down, the resting bar contains the current-tab button and Show keyboard.
+With it up, the resting bar disappears: the compose box is always visible above a text-only
+key row with Hide keyboard. Files and previews show only the current-tab button: they
+have no terminal input to raise. The terminal pans above the keyboard-up controls so its last row meets the bottom of the visible area;
+if that would put the cursor above the area's top, the cursor row meets the bottom instead.
+It never pans past the last row, when every row fits, or while scrolled into history. tmux
+is sized with the resting bar and keyboard down; showing the keyboard never resizes it.
 
 ```text
-keyboard down                                  keyboard up
-terminal, full-bleed      $ █                  terminal, panned     $ █
-───────────────────────────────────            ───────────────────────────────────
-[tether agent 3] [ Type or dictate ] [⌨]       esc ↑ ↓ ^R ^C tab ctrl alt | ~ / -    key row, scrolls
- bottom safe area                              [tether agent 3] [ Type or dictate ] [⌨]
-                                               iOS keyboard (Safari adds ⌃ ⌄ Done above it)
+keyboard down                              keyboard up
+terminal, full-bleed       $ █             terminal, panned       $ █
+───────────────────────────────            ───────────────────────────────────
+[a1 python   4 tabs  ⌃] [⌨]              [ Type or dictate a line          ]
+bottom safe area                           esc ← ↑ ↓ → ⇧tab tab ^C ^R ctrl alt ⏎ … [⌨↓]
+                                           iOS keyboard
+                                           (Safari's ⌃ ⌄ Done bar sits above it)
 ```
 
-- **Sizes.** Row items 34 px tall, key-row keys 32 px, small controls in the 30 px class, with touch areas extended to the row's height where they meet. The line field's font is 16 px, because Safari zooms into a focused field set smaller. The dock adds the bottom safe area only while the keyboard is down.
-- **Tab chip.** The active tab's session name, then its current window's name (which truncates first), and the number of open tabs. A tap opens the session switcher (Session switcher above); it is the phone's only way to change, open or close tabs from Terminal. With no tabs the chip reads "Sessions". In the desktop layout with touch input (an iPad without a trackpad), tabs stay at the top and the dock has no tab chip.
-- **Line field.** One logical line, placeholder "Type or dictate a line", wraps and grows from one to five visual lines, then scrolls inside. The browser/PWA uses a textarea with the platform editor; Return and line-break input send rather than storing a newline, except a composing IME candidate Return remains with the editor. In the app the web draws a `LineMirror` while one hidden native `UITextField` owns editing, with autocorrect, capitalization, spell checking, smart punctuation and inline prediction disabled. The mirror draws text, caret, selection and marked composition; tapping places the caret, the spacebar is a trackpad, and long press offers Paste / Select all / Clear (no selection handles). Return is Send in the app's line target and sends the text then Enter to the active tab, into the window it shows at that moment; it clears the field and keeps the keyboard for the next line. An empty Return sends Enter. A line that was not delivered comes back into the field with the reason. Paste is the dock's paste: one line is inserted for editing; text holding a line break goes to the terminal as one paste without Enter, with a notice; an image takes the image paste route. Clipboard reads capture the tab and window before a system prompt; if the target changes, paste falls back to that captured terminal target instead of editing the new line. The unsent text is the tab's draft: each tab has its own, and it survives keyboard hide, navigation and reload. With the tab not connected, Return keeps the text and says "Not connected". Delivery rules: [terminal-interaction-design.md](terminal-interaction-design.md#the-dock-line-field-key-row-and-one-keyboard-toggle).
-- **Key row**, shown only while the keyboard is up, above the resting row. One fixed row, most used first: esc, ←, ↑, ↓, →, ^R, ^C, tab, ctrl, alt, `|`, `~`, `/`, `-`, scrolling horizontally. Control keys (esc, the arrows, ^R, ^C, tab) always go to the terminal; the arrows repeat while held, ↑ and ↓ mostly for the shell's own history and ^R search (tether keeps no command history of its own). They are the only arrow input on touch. Character keys go where typing goes: into the line field at its caret when `line` owns the keyboard, else to the terminal. In the app the row inserts into the native field over `lineInsert`. ctrl and alt arm the next key, shown pressed until it is used or tapped again. A key-row tap never moves focus. The key row is the same with a hardware keyboard attached.
-- **One keyboard toggle**, at the right end of the resting row in both states. It is the only tether control that opens and closes the on-screen keyboard. With the keyboard down it raises it for the terminal input; with either `terminal` or `line` holding it, it lowers it. Its icon and label ("Show keyboard", "Hide keyboard") follow that state. A tap on the line field also opens the keyboard for `line`; in the app it switches the target on the same native responder.
-- **Focus cues.** With `terminal` holding the keyboard, the terminal cursor is a solid block, the line field shows its placeholder, and Return is the plain key. With `line` holding it, the caret is in the field, the terminal cursor becomes a hollow outline, and Return is Send (`enterkeyhint="send"` in browser/PWA; native `returnKeyType = .send`).
-- **A terminal tap never lowers the keyboard; one near the cursor raises it.** With the keyboard down, a tap on the cursor's row or the row directly above or below it raises the keyboard for the terminal input (the toggle's action; no opening while scrolled back into history). Other taps keep their meaning: with app mouse mode on, a tap is sent as a click (near the cursor it also raises the keyboard); without it, a tap does nothing, except that OSC 133 prompt-row cursor placement may move the cursor while the terminal input already has the keyboard. Scroll, selection and tab changes do not toggle the keyboard. Opening a sheet or dialog, the switcher included, lowers it, and so does leaving Terminal for Home or Files. When a sheet closes, the input that held the keyboard gets it back: the app raises it by itself, as after any interruption (a native sheet, background, a web process restart); the browser refocuses that input inside the tap that closed the sheet (a pill, a window row, the close icon or the backdrop), and leaves the keyboard down when the sheet closed without a tap (the back gesture, Escape).
-- **Safari's form accessory bar.** In the phone browser and PWA, iOS adds its own bar (⌃ ⌄ and Done) above the keyboard while a web input is focused, and a page cannot remove it. The dock sits above that bar. Done lowers the keyboard like the toggle does, and the toggle's state follows. In the app the native terminal/line responder is not a WebKit field; occasional sheet fields remain WebKit-owned and keep WebKit's ordinary keyboard and form bar.
+- **Sizes.** Row items 34 px tall, key-row keys 32 px, with touch areas extended to the
+  row's height where they meet. The compose box font is 16 px to avoid Safari zoom.
+  Add the bottom safe area only while the keyboard is down, with no blank band between
+  the controls and the inset or keyboard.
+- **Current-tab button.** Shows the active tab's name, open-tab count and any pending
+  attention dot; tapping opens the sessions sheet. Terminal labels include session and
+  current window; Files labels use folder or file. There is no terminal tab strip or +.
+  No session pill is shown while the keyboard is up.
+- **Compose box.** The line field is one logical line, placeholder “Type or dictate a
+  line”, wrapping and growing from one to five visual lines, then scrolling inside.
+  It remains visible while typing to tmux, idle without a caret; tapping it gives the
+  keyboard to the line. Browser/PWA uses a textarea; the app uses a native editor with
+  a web `LineMirror`, autocorrect, capitalization, spell checking, smart punctuation
+  and inline prediction disabled. The mirror draws caret, selection and marked
+  composition; tapping places the caret, the spacebar is a trackpad, and long press
+  offers Paste / Select all / Clear (no selection handles). Return or Send sends the
+  text then Enter to the active tab's shown window, clears it and keeps focus in the
+  box. Empty Return sends Enter. An undelivered line returns with its reason; a
+  disconnected tab keeps the draft and says “Not connected”. Each tab's draft survives
+  keyboard hide, navigation and reload. Delivery rules:
+  [terminal-interaction-design.md](terminal-interaction-design.md#the-dock-line-field-key-row-and-one-keyboard-toggle).
+- **Paste.** One line is inserted for editing; text holding a line break goes to the
+  terminal as one paste without Enter, with a notice; an image takes the image paste
+  route. Clipboard reads capture the tab and window before a system prompt; if the
+  target changes, paste falls back to that captured terminal target instead of editing
+  the new line. An IME candidate Return remains with the editor.
+- **Key row.** A fixed, horizontally scrolling text-only row: esc, ←, ↑, ↓, →, ⇧tab,
+  tab, ^C, ^R, ctrl, alt, ⏎, then `|`, `~`, `/`, `-`, with Hide keyboard fixed at its end. While the box owns focus, unmodified ← and →
+  move its caret and unmodified esc returns focus to the terminal; ↑, ↓, ^R, ^C, tab and other
+  terminal controls go to tmux. Distinguish the two destinations visually. In terminal
+  mode the controls go to tmux. Arrows repeat while held; ↑, ↓ and ^R use the shell's
+  own history. Character keys go where typing goes. ctrl and alt arm the next key,
+  shown pressed until used or tapped again; an armed chord goes to tmux. Except for
+  esc leaving the box, a key-row tap does not move focus. The row is the same with a
+  hardware keyboard attached.
+- **Keyboard control.** Show keyboard in the resting bar raises terminal input; Hide
+  keyboard in the key row lowers either target. The control's state follows focus and
+  system dismissal. Tapping the terminal or esc while composing
+  returns typing to tmux without lowering the keyboard.
+- **Focus cues.** Terminal target: solid terminal cursor; the idle box has no caret and
+  shows its draft or placeholder. Line target: box ring and caret, visible Send, hollow
+  terminal cursor, and Return labelled Send. There is exactly one active typing cursor.
+- **Terminal taps and sheets.** With the keyboard down, a tap on the cursor's row or the
+  row directly above or below it raises terminal input, except while scrolled into
+  history. With the keyboard up, a terminal tap switches from line to terminal without
+  hiding it. Mouse-mode taps still send a click; OSC 133 prompt-row cursor placement may
+  move the cursor while terminal input already owns the keyboard. Scroll and selection
+  do not toggle it. Opening a sheet or dialog lowers it, as does leaving Terminal for
+  Home or Files. On sheet close, native restores the held target; the browser refocuses
+  inside a closing tap and leaves the keyboard down after Back or Escape.
+- **Safari's form accessory bar.** The phone browser/PWA may put its own ⌃ ⌄ Done bar
+  between tether's key row and the keyboard; the page cannot remove it. Done lowers the
+  keyboard and the toggle follows. The native terminal/line responder is not a WebKit
+  field; WebKit-owned sheet fields retain their ordinary form bar.
 
 ## File upload and path insertion
 
-Keep the existing MVP outcome without adding Files to the picker or the switcher. In Files, upload uses the browser/native file picker into the configured uploads folder. Several files may be picked at once; one uploads at a time and at most four are held, and a fifth is refused with “Wait for the current uploads to finish”. A file over 128 MiB is refused before it is sent. Completion adds a row to the list, with progress while running, then the saved name, “Insert path into <active tab>” and Preview; the screen does not navigate away from the folder. A file preview has the same insert action for existing files. The action inserts a shell-escaped absolute canonical path into the named active tab without Enter, then returns to that terminal. It never executes the path.
+In a Files tab, upload uses the browser/native file picker into the configured uploads folder. Several files may be picked at once; one uploads at a time and at most four are held, and a fifth is refused with “Wait for the current uploads to finish”. A file over 128 MiB is refused before it is sent. Completion adds a row to the list, with progress while running, then the saved name, an insert-path action naming its terminal target, and Preview; the screen does not navigate away from the folder. A file preview has the same insert action for existing files. The action inserts a shell-escaped absolute canonical path into the named terminal tab without Enter, then returns to that terminal. It never executes the path. How the target is selected while a Files tab is active remains open.
 
-When there is no eligible connected tab, insertion is disabled with “Open a terminal tab first”; files still remain accessible. If the target disappears or disconnects, insertion fails visibly without sending into a different tab: the action is disabled while the target is reconnecting, refused for the session limit or closed, and a path still waiting for its watch is dropped with a notice if the watch fails. A tab that is still connecting, or live but not on screen, takes the path and types it when it is watching; the one eligibility rule is the driver's, shared by Files and image paste. A name holding a control character (CR, LF, ESC, ^C) is never inserted, because typed into a pane it would submit or act as a key; the notice sends the user to the terminal. The target tab and the window it shows are captured on click, not selected by matching names; the path goes to that window even if the tab has since followed its session elsewhere, and fails visibly if the window has closed. A tab that has not had its first `watching` yet (still connecting or restoring) has no window to capture, and types the path into the window its first `watching` names. User can return to Terminal to select a different tab and return to Files; preview context remains. Upload itself and actual bytes/path insertion are not implemented in this mockup; the existing-file preview action demonstrates the return route and reports simulated insertion.
+When there is no eligible terminal tab, insertion is disabled with “Open a terminal tab first”; files still remain accessible. If the target disappears or disconnects, insertion fails visibly without sending into a different tab: the action is disabled while the target is reconnecting, refused for the session limit or closed, and a path still waiting for its watch is dropped with a notice if the watch fails. A tab that is still connecting, or live but not on screen, takes the path and types it when it is watching; the one eligibility rule is the driver's, shared by Files and image paste. A name holding a control character (CR, LF, ESC, ^C) is never inserted, because typed into a pane it would submit or act as a key; the notice sends the user to the terminal. The target tab and the window it shows are captured on click, not selected by matching names; the path goes to that window even if the tab has since followed its session elsewhere, and fails visibly if the window has closed. A tab that has not had its first `watching` yet (still connecting or restoring) has no window to capture, and types the path into the window its first `watching` names. Returning to the Files tab preserves its preview context.
 
 Browser image paste into a focused terminal follows the same upload pipeline. Capture the exact target tab and the window it shows at paste start, upload supported image bytes into the configured uploads folder, then insert the quoted absolute canonical path into that same window through that tab, without Enter, even if the tab has since followed its session to another window. If the target is gone or disconnected when upload completes, keep the uploaded file available in Files and report the insertion failure; never redirect to a different active tab. Ordinary text paste remains terminal paste. Clipboard access depends on a user paste gesture and browser capabilities; unsupported image clipboard access gets an explanation and the Files upload route. This preserves the photo-paste MVP; actual clipboard handling remains a real-browser verification gate, not simulated by this mockup.
 
 ## Offline and updates
 
-The service worker serves the shell from its cache, so an offline launch opens Home: the host banner says “Can't reach pop-os” (the name is the last one saved), open tabs read “Reconnecting…”, and the listing shows its offline state. Nothing shows a pretend live terminal and nothing typed is queued. The worker never intercepts `/ws`, `/auth`, `/fs`, `/complete`, `/debug` or a non-GET request.
+The service worker serves the shell from its cache. On an offline launch the host card says “Can't reach pop-os” (the name is the last one saved), open tabs read “Reconnecting…”, and the listing shows its offline state. Nothing shows a pretend live terminal and nothing typed is queued. The worker never intercepts `/ws`, `/auth`, `/fs`, `/complete`, `/debug` or a non-GET request.
 
 A new build installs in the background and waits. Home and Files show “Update ready” with Update, never over the terminal; only the window that taps Update reloads. Another window shows “Reload to finish updating” with Reload, and keeps running its own build until then. A window two builds behind fails to fetch a lazy chunk and shows the designed “Update required”.
 
 ## Keyboard ownership and navigation history
 
-Desktop terminal focus owns keys only while terminal input is focused. Home search, creation forms, and Files controls own their own input. Overlay handling intercepts Escape only while an overlay is open; otherwise Escape belongs to terminal input. Tab activation, terminal return, and overlay dismissal restore terminal focus on desktop. Focus must not steal input from a focused text field. Only focus that must raise the software keyboard needs to happen synchronously inside the user's gesture. Other focus transitions may wait until navigation or the dialog has rendered; a phone dialog must not focus a text field and unexpectedly raise its keyboard.
+Desktop terminal focus owns keys only while terminal input is focused. Session search, creation forms, and Files controls own their own input. Overlay handling intercepts Escape only while an overlay is open; otherwise Escape belongs to terminal input. Tab activation, terminal return, and overlay dismissal restore terminal focus on desktop. Focus must not steal input from a focused text field. Only focus that must raise the software keyboard needs to happen synchronously inside the user's gesture. Other focus transitions may wait until navigation or the dialog has rendered; a phone dialog must not focus a text field and unexpectedly raise its keyboard.
 
 Accept browser-reserved shortcuts rather than adding a custom shortcut system or promising interception. Which combinations reach the page must be probed in Jimmy’s browsers before shipping; this contract does not claim an exhaustive reserved-key list. Browser/site navigation must never be intentionally hijacked to mimic a native terminal.
 
@@ -265,7 +347,7 @@ the initial build.
 
 ## Visual copy rule
 
-Do not use middle-dot separators in app chrome, labels, headings, or descriptive copy. Separate metadata with layout/spacing or write a short phrase. Do not use dot-shaped status markers either. Use color on existing labels/tab surfaces, with text for reconnect/error states and accessible connection labels.
+Do not use middle-dot separators in app chrome, labels, headings, or descriptive copy. Separate metadata with layout/spacing or write a short phrase. The bell attention dot is distinct from connection status, which uses text for reconnect/error states and accessible labels; its mechanism is pending probe.
 
 ## Text clipboard behavior
 
@@ -275,4 +357,4 @@ Terminal context uses a bold primary session name, regular window name, and smal
 
 ## Touch and clipboard research gate
 
-The researched interaction direction is in [terminal-interaction-design.md](terminal-interaction-design.md). A long-press on the terminal fires with a haptic and highlights the word under the finger at once; dragging while still held extends the selection to the cell under the finger, and releasing shows the handles and an edit menu with Copy and Paste; over a blank cell the menu has Paste alone. Paste sends the clipboard's text to the terminal as one paste, without Enter, and an image takes the image paste route; it is the terminal's paste on the phone, beside the line field's own paste menu. Safari shows its own Paste confirmation; the app may show iOS's "Allow Paste" prompt unless tether is allowed in Settings. It sends no mouse event, in mouse-mode apps too (Jimmy, 2026-10-24). Terminal selection has no spacebar-trackpad mapping; the app's line mirror separately uses the native field's spacebar caret trackpad. Vertical swipes in alternate-screen apps still send ↑/↓ or wheel events. Tap-to-click must respect application mouse mode and not fire during long-press selection or scrolling; a tap without mouse mode never lowers the keyboard and raises it only on or beside the cursor's row. Copy must preserve logical newlines, not visual wraps. L3 fixes snapshot restoration by replaying mapped wraps in daemon restore bytes, and history chunks carry their own map for copy; mobile selection still needs an app-owned interaction layer, not CSS selection on a canvas. Real iPhone Safari and native selection/keyboard/clipboard probes remain required.
+The researched interaction direction is in [terminal-interaction-design.md](terminal-interaction-design.md). A long-press on the terminal fires with a haptic and highlights the word under the finger at once; dragging while still held extends the selection to the cell under the finger, and releasing shows the handles and an edit menu with Copy and Paste; over a blank cell the menu has Paste alone. Paste sends the clipboard's text to the terminal as one paste, without Enter, and an image takes the image paste route; it is the terminal's paste on the phone, beside the line field's own paste menu. Safari shows its own Paste confirmation; the app may show iOS's "Allow Paste" prompt unless tether is allowed in Settings. It sends no mouse event, in mouse-mode apps too (Jimmy, 2026-10-24). Terminal selection has no spacebar-trackpad mapping; the app's line mirror separately uses the native field's spacebar caret trackpad. Vertical swipes in alternate-screen apps still send ↑/↓ or wheel events. Tap-to-click must respect application mouse mode and not fire during long-press selection or scrolling; a tap never lowers the keyboard; it raises it only on or beside the cursor's row while down, and returns focus from the box to the terminal while up. Copy must preserve logical newlines, not visual wraps. L3 fixes snapshot restoration by replaying mapped wraps in daemon restore bytes, and history chunks carry their own map for copy; mobile selection still needs an app-owned interaction layer, not CSS selection on a canvas. Real iPhone Safari and native selection/keyboard/clipboard probes remain required.

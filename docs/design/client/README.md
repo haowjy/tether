@@ -1,35 +1,32 @@
 # Client design and Mac handoff
 
 Start here when implementing the desktop browser, mobile browser, or iPhone client.
-The layout mockup is approved; it is not the working terminal client. The web client
-and the iPhone app are built; their keyboard, focus and touch behavior still wait on
-the [device checklist](../ios-shell.md#device-checklist).
+The interaction contract describes the approved redesign, which is not yet implemented.
+The older interactive mockup and built clients do not demonstrate the redesign; keyboard,
+focus and touch behavior also require the [device checklist](../ios-shell.md#device-checklist).
 
 ## Read in order
 
 1. [Interaction contract](browser-behaviors.md): navigation, sessions, tabs, files,
    creation, focus, naming, minimal controls, and visual rules.
-2. [Interactive mockup](mockups/index.html): desktop and mobile layouts with fictional
-   data. It has no daemon connection; the phone terminal shows the dock with the keyboard
-   down and up.
+2. [Interactive mockup](mockups/index.html): an older desktop and mobile layout with
+   fictional data and no daemon connection. The interaction contract takes precedence.
 3. [Touch, clipboard, the line field](terminal-interaction-design.md): proposed
    implementation direction, measured constraints, and real-device checks.
-4. [Decision reconciliation](browser-review-decisions.md): current rationale.
-   [Review dispositions](browser-review-resolution.md) are optional historical notes,
-   not implementation instructions.
+4. [Decision log](../decisions.md): current choices and their history.
+   [Earlier decision reconciliation](browser-review-decisions.md) and
+   [review dispositions](browser-review-resolution.md) are historical notes, not
+   implementation instructions.
 5. Existing [product plan](../plan.md), [native shell](../ios-shell.md),
    [daemon/protocol](../daemon-core.md), [auth](../auth.md), and [files](../fs.md).
 
 ### Which rules win
 
-This directory supersedes the older plan's native-only client scope and conflicting
-navigation/layout rules: desktop gets Home/Terminal/Files icon rail; mobile gets
-Sessions/Files Home and a compact full-screen terminal. Terminal + opens existing
-sessions, not Files; on the phone, the dock's tab chip opens the session switcher
-instead. Use actual tmux names. No dot separators or dot status markers. On touch,
-Terminal ends in the phone dock (at rest one row: tab chip, one-line field, keyboard
-toggle; the key row above it while the keyboard is up), the same in the phone browser,
-the PWA and the iPhone app.
+The [interaction contract](browser-behaviors.md) governs layout: desktop uses a top
+row with Home, tabs and +; phone Home is server-first, and the current-tab button opens
+the sessions sheet. Files is a tab. With the keyboard up the phone dock shows a compose
+box above the key row. The contract covers browser/PWA and native differences and the
+open implementation details. Older mockups and review notes do not override it.
 
 Existing subsystem security, resource budgets, tmux ownership, and native focus
 invariants still apply. Suggestion strips and dedicated media controls are deferred.
