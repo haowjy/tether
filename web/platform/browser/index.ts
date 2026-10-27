@@ -50,6 +50,7 @@ export function createBrowserPlatform(): Platform {
       setFocus: () => undefined,
       setLine: () => Promise.resolve(0),
       setLineCaret: () => undefined,
+      stepLineCaret: () => undefined,
       insertLine: () => undefined,
       selectAllLine: () => undefined,
       setArmedModifier: () => undefined,

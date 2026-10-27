@@ -126,6 +126,8 @@ export interface InputPlatform {
   setLine(text: string, caret: number, tab: TabKey): Promise<number>;
   /** Move the native caret or selection to the mirror's UTF-16 offset. */
   setLineCaret(index: number): void;
+  /** Move the native caret one character (UIKit's own step, so marked text and the 33 ms arrow repeat stay native's). */
+  stepLineCaret(step: -1 | 1): void;
   /** Insert one line at the native caret. */
   insertLine(text: string): void;
   /** Select the native editing copy's full text. */

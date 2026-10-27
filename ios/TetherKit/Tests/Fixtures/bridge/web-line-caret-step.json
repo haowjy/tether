@@ -1,0 +1,8 @@
+{
+  "direction": "webToNative",
+  "message": {
+    "type": "lineCaretStep",
+    "step": -1
+  },
+  "reply": null
+}

@@ -4,6 +4,7 @@
 // told which tab is shown and drops everything when that changes or a snapshot repaints the
 // pane. Nothing here outlives the view it began on: a coast, a held drag or a
 // selection never reaches another tab's pane.
+import type { Owner } from "../../app/focus";
 import type { HapticKind, InputEvent } from "../../platform/types";
 import type { HistoryRow } from "../../tabs/driver";
 import type { PromptLine, TerminalRenderer, TerminalTheme } from "../../term";
@@ -28,10 +29,8 @@ interface ViewDeps {
   focusTerminal(): void;
   /** The shell's command line under the cursor (OSC 133), or null. */
   prompt(): PromptLine | null;
-  /** The terminal's own input holds the keyboard. */
-  keyboardHeld(): boolean;
-  /** No input holds the keyboard. */
-  keyboardDown(): boolean;
+  /** Who holds the keyboard. */
+  owner(): Owner;
   /** Native keeps the web view's selection while a snapshot is up (`setFocus("select")`). */
   selecting(on: boolean): void;
   /** The view is above the newest line. */

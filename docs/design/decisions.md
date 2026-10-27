@@ -3673,3 +3673,32 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   tie-in).
 - **Cost:** the desktop's only New window path goes; `newWindow`'s creation form stays in the
   code, unreachable, for the lead to keep or delete.
+
+## Keyboard-up dock: one routing rule, and a native caret step
+
+- **Decided:** 2026-10-27, tech lead (slice 3, bridge v6).
+- **What:** the Dock is `resting` (current-tab button, Show keyboard) or `typing` (compose box
+  above the key row, Hide keyboard at the row's end), derived from the focus owner; the row is
+  one height in both, so the keyboard never resizes tmux. Where a key-row key goes is one pure
+  function, `routeKey(key, owner, armed)` (`web/touch/keyRoute.ts`): terminal input, a caret step,
+  focus the terminal (esc), or a line insert. The browser textarea and the native line take the
+  same decision, and the key row marks the keys it sends to the box. A caret step is a dock
+  callback: the textarea steps by grapheme (`Intl.Segmenter`); native gets `lineCaretStep(-1|1)`
+  and steps with UIKit's own positions (`position(from:in:offset:)`), so the text, the caret and
+  marked composition stay native's. While marked text is up the step is dropped: the composition
+  belongs to the keyboard until it commits. A hardware Esc in the native line does what the row's
+  esc does. A terminal tap with the keyboard up gives typing to the terminal wherever it lands.
+  esc and that tap use the existing `focusTarget("terminal")`.
+- **Also:** a blur that hands focus to the other input (terminal ⇄ line) is not a release; the
+  focus controller waits for the focus event that names the new owner. Reporting `none` between
+  the two rendered the dock at rest and hid the compose box before it could take the focus.
+  The desktop "New window" client path is deleted (`CreateDialog` creates sessions only);
+  `newWindow` stays in the daemon (`src/proto/.context/FUTURE`).
+- **Why:** two editors with their own copies of the table would drift; a native caret is
+  UIKit's to move, since the 33 ms arrow repeat would race a web-computed index against the
+  `lineEdit` echo.
+- **Rejected:** a web-computed caret index sent through `lineCaret` (that race, and it breaks
+  marked composition); committing the composition and then stepping (it ends a composition the
+  user did not end; revisit on device if dropping the step feels dead).
+- **Open:** "Send" as a visible button in the box is not built; the cue is Return labelled Send
+  in both editors. A native Send button needs a web-to-native Return message the bridge does not have.

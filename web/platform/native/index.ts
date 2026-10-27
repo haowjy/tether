@@ -46,6 +46,7 @@ export function createNativePlatform(post: Post = webkitPost): Platform {
       setFocus: (mode) => { bridge.setFocus(mode); },
       setLine: (text, caret, tab) => bridge.setLine(text, caret, tab),
       setLineCaret: (index) => { bridge.lineCaret(index); },
+      stepLineCaret: (step) => { bridge.lineCaretStep(step); },
       insertLine: (text) => { bridge.lineInsert(text); },
       selectAllLine: () => { bridge.lineSelectAll(); },
       setArmedModifier: (armed) => { bridge.modifiers(armed); },

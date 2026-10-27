@@ -76,6 +76,7 @@ export function LineField({ tab, label, onNote, inputRef }: LineFieldProps) {
         value={value}
         selection={selection}
         marked={bound ? nativeState.marked : null}
+        active={owner === "line"}
         disabled={!tab || !draftsReady}
         onCaret={(index) => {
           if (!tab) return;

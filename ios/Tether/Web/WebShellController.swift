@@ -318,6 +318,11 @@ final class WebShellController: UIViewController, WKNavigationDelegate, WKUIDele
             case .lineCaret:
                 terminalInput.setLineCaret(try request.field("index"))
                 reply(NSNull(), nil)
+            case .lineCaretStep:
+                let step: Int = try request.field("step")
+                guard step == -1 || step == 1 else { throw BridgeError.malformed }
+                terminalInput.stepLineCaret(step)
+                reply(NSNull(), nil)
             case .lineInsert:
                 let text: String = try request.field("text")
                 guard !text.contains(where: { $0.isNewline }) else { throw BridgeError.malformed }

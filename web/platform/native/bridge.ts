@@ -4,7 +4,7 @@
 import type { DraftRecord, FocusMode, HostEntry, InputEvent, Lifecycle, NativeLineSnapshot, SavedWorkspace, TabKey, TextRange, Viewport } from "../types";
 
 /** Bumped with every incompatible change here and in ios/TetherKit/.../Bridge.swift. */
-export const BRIDGE_VERSION = 5;
+export const BRIDGE_VERSION = 6;
 
 export interface Boot {
   bridgeVersion: number;
@@ -140,6 +140,10 @@ export class Bridge {
 
   lineCaret(index: number): void {
     this.fire({ type: "lineCaret", index });
+  }
+
+  lineCaretStep(step: -1 | 1): void {
+    this.fire({ type: "lineCaretStep", step });
   }
 
   lineInsert(text: string): void {

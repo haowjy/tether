@@ -9,6 +9,8 @@ interface LineMirrorProps {
   value: string;
   selection: TextRange;
   marked: TextRange | null;
+  /** The line owns the keyboard: the ring and the caret show. Idle, the box shows its draft or placeholder and no caret. */
+  active: boolean;
   disabled: boolean;
   onCaret: (index: number) => void;
   onPaste: () => void;
@@ -19,7 +21,7 @@ interface LineMirrorProps {
 const HOLD_MS = 500;
 const MOVE_PX = 9;
 
-export function LineMirror({ label, placeholder, value, selection, marked, disabled, onCaret, onPaste, onSelectAll, onClear }: LineMirrorProps) {
+export function LineMirror({ label, placeholder, value, selection, marked, active, disabled, onCaret, onPaste, onSelectAll, onClear }: LineMirrorProps) {
   const field = useRef<HTMLDivElement>(null);
   const hold = useRef<{ x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const [menu, setMenu] = useState(false);
@@ -87,6 +89,7 @@ export function LineMirror({ label, placeholder, value, selection, marked, disab
         aria-readonly="true"
         aria-disabled={disabled ? "true" : undefined}
         data-disabled={disabled ? "" : undefined}
+        data-active={active ? "" : undefined}
         onPointerDown={(event) => {
           if (disabled || event.button !== 0) return;
           setMenu(false);
@@ -113,14 +116,14 @@ export function LineMirror({ label, placeholder, value, selection, marked, disab
       >
         {value.length === 0 ? (
           <>
-            {selection.start === 0 && selection.end === 0 && <span class={styles.caret} data-caret="" aria-hidden="true" />}
+            {active && selection.start === 0 && selection.end === 0 && <span class={styles.caret} data-caret="" aria-hidden="true" />}
             <span class={styles.placeholder}>{placeholder}</span>
           </>
         ) : parts.map((part) => (
           <span key={`${String(part.start)}:${String(part.end)}`} class={part.selected ? styles.selected : undefined} data-composition={part.composition ? "" : undefined}>
-            {selection.start === selection.end && selection.start === part.start && <span class={styles.caret} data-caret="" aria-hidden="true" />}
+            {active && selection.start === selection.end && selection.start === part.start && <span class={styles.caret} data-caret="" aria-hidden="true" />}
             {value.slice(part.start, part.end)}
-            {selection.start === selection.end && selection.start === part.end && part.end === value.length && <span class={styles.caret} data-caret="" aria-hidden="true" />}
+            {active && selection.start === selection.end && selection.start === part.end && part.end === value.length && <span class={styles.caret} data-caret="" aria-hidden="true" />}
           </span>
         ))}
         {menu && (

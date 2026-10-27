@@ -17,7 +17,7 @@
   user-select: none;
   -webkit-touch-callout: none;
 }
-.field:focus { outline: none; border-color: var(--color-accent); }
+.field[data-active] { border-color: var(--color-accent); }
 .field[data-disabled] { opacity: 0.6; }
 .placeholder { color: var(--color-text-muted); }
 .caret {

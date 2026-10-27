@@ -272,6 +272,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
       setFocus: (mode) => { platform.focusRequests.push(mode); },
       setLine: () => Promise.resolve(0),
       setLineCaret: () => undefined,
+      stepLineCaret: () => undefined,
       insertLine: () => undefined,
       selectAllLine: () => undefined,
       setArmedModifier: () => undefined,

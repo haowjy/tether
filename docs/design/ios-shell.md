@@ -5,7 +5,7 @@
 > UI rules below. Subsystem invariants remain in force; touch, clipboard and the phone
 > dock retain explicit device gates.
 
-The native shell and web adapter implement bridge v5; the device-only checks below still
+The native shell and web adapter implement bridge v6; the device-only checks below still
 need Jimmy's iPhone.
 
 tether's phone client is a Swift app: a `WKWebView` runs the web UI (terminal, tabs,
@@ -288,7 +288,7 @@ generation and replies with it. Return captures the old generation, then native 
 and advances before sending the event. If the page is not ready, Return stays in the
 native field and warns; it is not queued. The platform forwards line events to subscribers,
 and the app-started owner buffers them only until draft hydration. The dock key row sends
-line characters to the native field via `lineInsert`. The web tells native when ctrl or alt
+line characters to the native field via `lineInsert` and its unmodified ← and → via `lineCaretStep`; `routeKey` (web) decides which keys go where, and native owns the text and caret, so the web never computes a native caret index. The web tells native when ctrl or alt
 is armed, so a one-grapheme insert at a collapsed caret can be routed as a terminal chord.
 
 ```text
@@ -454,7 +454,7 @@ triggers it when the bridge request arrives.
 
 ## The bridge
 
-Bridge version 5 has one `tether` message handler
+Bridge version 6 has one `tether` message handler
 (`WKScriptMessageHandlerWithReply`) and a page entry point, invoked in the page
 content world: `window.__tether.receive(messages)` accepts an array of native events.
 The native shell does not query page state; web sends `activeTab` when selection changes,
@@ -468,7 +468,7 @@ token to native solely for comparison and revocation, never into storage or logs
 
 | Web → native | Reply | Purpose |
 |---|---|---|
-| `ready` | `Boot { bridgeVersion: 5, hosts, workspace, viewport, lifecycle, focusMode, lineSnapshot }` | Start and restore the saved workspace (opaque JSON) and native keyboard target/editing copy if WebKit's content process restarted |
+| `ready` | `Boot { bridgeVersion: 6, hosts, workspace, viewport, lifecycle, focusMode, lineSnapshot }` | Start and restore the saved workspace (opaque JSON) and native keyboard target/editing copy if WebKit's content process restarted |
 | `socket { host }` | `{ url, token }`, `{ locked: true }` or `{ notEnrolled: true }` | Resolve the WebSocket endpoint and credential inside `HostLink`; keep both there except echoing the exact refused token to native for `hostRejected` |
 | `hostRejected { host, token }` | `null` | Clear that exact rejected token only, then re-publish `hosts` |
 | `recreateWebView` | `null` | Discard/reload the page after unrecoverable WebSocket connection failure |
@@ -477,6 +477,7 @@ token to native solely for comparison and revocation, never into storage or logs
 | `activeTab { tab: TabKey | null }` | `null` | Update native's cached target for coalesced keyboard batches |
 | `lineSet { text, caret, tab }` | Native generation | Load the web-owned draft into native's editing copy and bind it to the tab atomically; native advances its generation and returns it to the web owner |
 | `lineCaret { index }` | `null` | Move the native editing caret to a UTF-16 offset |
+| `lineCaretStep { step }` | `null` | `-1` or `1`: move the native caret one character left or right with UIKit's own text positions (a selection collapses toward the step); dropped while the keyboard has marked text |
 | `lineInsert { text }` | `null` | Insert a one-line key-row character or paste |
 | `lineSelectAll {}` | `null` | Select the native editing copy's full line for the mirror's menu |
 | `modifiers { armed }` | `null` | Keep native's one-shot ctrl/alt routing in step with the web's modifier owner |
@@ -517,7 +518,7 @@ HostEntry = { id: string, name: string, baseURL: string }
 PlatformHost = { handle: string, hostId: string | null,
                  name: string | null, pageOrigin: string | null }
 TabKey = { host: string, session: { server: string, session: string } }
-Boot = { bridgeVersion: 5, hosts: PlatformHost[],
+Boot = { bridgeVersion: 6, hosts: PlatformHost[],
          workspace: JSON | null, viewport: Viewport,
          lifecycle: Lifecycle, focusMode: FocusMode,
          lineSnapshot: NativeLineSnapshot | null }
@@ -541,7 +542,7 @@ the resulting draft and native selection state.
   bridge-safe form (`handle` resolves `tether-app://h-{handle}`, `pageOrigin: null`
   means token admission). Never send the base URL or token to JS.
 - A terminal tab is a tmux session, so `TabKey` names the session (server instance and
-  `$N`). Bridge version 5 carries `TabKey` in line, draft and active-tab messages; a Files
+  `$N`). Bridge version 6 carries `TabKey` in line, draft and active-tab messages; a Files
   tab has no `TabKey`, and `activeTab` is `null` while one is active.
 - Native stores the saved workspace as raw JSON under one key and never decodes it (Swift
   has no workspace types), so a newer web build's version round-trips. The web owns
@@ -706,6 +707,7 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 | Restored without a tap | A web sheet opened and closed, the native server sheet, 10 s in the background, Notification and Control Center, a killed web content process: verify the intended focus and keyboard return; a line target returns as `line`, not `terminal` |
 | Hidden keeps input | Hidden with the empty `inputView`: no blank keyboard area; hardware keys still reach the terminal; only a tap on or beside the cursor opens the keyboard |
 | One keyboard / line target | With the keyboard up, one tap on the box selects `line`; a terminal tap or esc returns to `terminal` without hiding it, and Hide closes either mode. Confirm the idle box has no caret, the focused box has a caret and Send, the terminal cursor is solid or hollow as appropriate, and no first tap is lost. Send keeps line focus. Long press opens Paste / Select all / Clear; tap places the caret and spacebar trackpad follows it. The line wraps to five visual lines and scrolls internally. |
+| Key row with the box focused | ← and → step the caret one character: a held arrow repeats at 33 ms without skipping or lagging, an emoji or accented letter is one step, a selection collapses toward the arrow. ↑ ↓ ^R ^C tab ⇧tab ⏎ reach tmux. esc and a terminal tap return typing to the terminal with the keyboard up. Exactly one cursor is live: the terminal's solid block or the box's caret, never both, and no tap is lost. During Chinese/Korean composition the row's ← → do nothing (note whether that feels dead and committing first would be better). Hardware ← → move the caret and hardware Esc returns to the terminal. The row marks esc ← → \| ~ / - as acting on the box. |
 | Selection | With `line` holding the native keyboard, verify whether WebKit's selection handles and Copy work; when they need WebKit, `focus select` must release it and release restores `line` |
 | Keyboard toggle / restore | Toggle raises `terminal` from hidden and closes `terminal` or `line`; system dismissal resets the web owner; selection and sheet close restore the expected mode. Background, native server sheet, 10 s in background, Notification / Control Center, and web-process restart restore `line` as `line` without a new tap. |
 | Geometry | The key row meets the keyboard with no blank band and the box sits above it, in both geometry variants; WebKit does not also scroll for the keyboard; tmux's size changes only on rotation, including a rotation with the keyboard up |
@@ -732,7 +734,7 @@ and fix this spec from them. The current Simulator cannot show the software keyb
 - **WKWebView adjusting for a keyboard it doesn't own**, fighting the frame resize.
   Device checklist, both geometry variants.
 - **Bridge latency under load**: unmeasured on iOS 26. Device checklist.
-- **Bridge web adapter** (bridge 5) (`web/platform/native/`) is built and decodes every
+- **Bridge web adapter** (bridge 6) (`web/platform/native/`) is built and decodes every
   shared fixture. Simulator-verified: boot, token socket to a real daemon, listing, Home
   safe area, background closes the socket and resume reconnects. Not verified (the
   Simulator takes no touch or key input from here): the keyboard toggle through

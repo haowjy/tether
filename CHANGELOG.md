@@ -15,6 +15,13 @@ version section on release.
   tabs and + (New session, Browse files) at the bottom. Tapping a session or a tab opens
   it behind the sheet and the sheet stays; Back, Escape or a tap outside closes it. The
   active session lists its windows under its row, with the shown one marked.
+- On the phone with the keyboard up, the compose box is always visible above the key row, and
+  the key row (esc ← ↑ ↓ → ⇧tab tab ^C ^R ctrl alt ⏎ | ~ / -, Hide keyboard fixed at its end)
+  replaces the bar. While the box holds the keyboard, ← and → move its caret by one character,
+  esc returns typing to the terminal and every other control reaches tmux; the keys that act on the
+  box are marked. Tapping the terminal also hands typing back without lowering the keyboard.
+  The terminal cursor is solid while it takes typing, hollow while the box does, and the idle box
+  shows no caret. The app's bridge moves to v6 (`lineCaretStep`), so update the app with the web.
 - The sessions sheet and the desktop + popover read "here" only for the tab on screen; on
   Home the open sessions all read "open". The desktop's "New window" dialog is gone with
   its only entry point: create windows with tmux's `prefix c`.

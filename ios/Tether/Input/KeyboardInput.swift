@@ -108,6 +108,21 @@ final class KeyboardInput: UITextField, UITextFieldDelegate {
         selectedTextRange = textRange(from: caret, to: caret)
     }
 
+    /// The key row's ← and →: one step with UIKit's own text positions, as a hardware arrow takes. A
+    /// selection collapses toward the arrow. While the keyboard composes (marked text) the step is
+    /// dropped, because the composition is the keyboard's until it commits.
+    func stepLineCaret(_ step: Int) {
+        guard mode == .line, markedTextRange == nil, let selection = selectedTextRange else { return }
+        let target: UITextPosition?
+        if selection.isEmpty {
+            target = position(from: selection.start, in: step < 0 ? .left : .right, offset: 1)
+        } else {
+            target = step < 0 ? selection.start : selection.end
+        }
+        guard let target else { return }
+        selectedTextRange = textRange(from: target, to: target)
+    }
+
     func selectAllLine() {
         selectedTextRange = textRange(from: beginningOfDocument, to: endOfDocument)
     }

@@ -1,8 +1,9 @@
 // The phone dock (client-architecture.md §7.4), the bottom of Terminal on touch in the browser,
-// the PWA and the app: at rest on the phone one row (current-tab button, keyboard toggle); while
-// an input holds the keyboard the line field replaces the button and the key row sits above. It rides on the keyboard but never resizes
-// tmux: its slot is in flow in the keyboard-hidden layout, and the lifted row is translated
-// out of the slot by `--keyboard-inset` (Dock.module.css).
+// the PWA and the app. It is one of two things, from who holds the keyboard: resting (the
+// current-tab button and Show keyboard) or typing (the key row and Hide keyboard, with the compose
+// box above). It rides on the keyboard but never resizes tmux: the row is the same height in both
+// and in flow in the keyboard-hidden layout, and the lifted dock is translated out of the slot by
+// `--keyboard-inset` (Dock.module.css).
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppView, useTabLabels } from "../../../app/context";
 import { Icon } from "../../../ui/primitives/Icon";
@@ -11,9 +12,10 @@ import { useStore } from "../../../ui/store";
 import { terminalTabOf } from "../../../workspace/state";
 import { terminalsOf } from "../terminals";
 import { CurrentTabButton } from "./CurrentTabButton";
-import { KeyRow } from "./KeyRow";
+import { KeyRow, type LineEditor } from "./KeyRow";
 import { LineField, type LocalNote } from "./LineField";
 import { lineDraftsOf } from "./lineDrafts";
+import { stepGrapheme } from "./caret";
 import { nativeLineOf } from "./nativeLine";
 import styles from "./Dock.module.css";
 
@@ -64,25 +66,26 @@ export function Dock({ active }: { active: boolean }) {
   const label = labels.find((l) => l.id === tab?.id);
   const nativeNote = useStore(nativeLine, (state) => state.note);
   const note = useNote(native ? nativeNote : local, tab?.id ?? null);
-  const holding = owner !== "none";
   const phone = viewport.layout === "phone";
-  // The phone with the keyboard down shows the current-tab button in the line field's place.
-  const resting = phone && !holding;
+  // The one derived value: no input holds the keyboard (resting), or one does (typing).
+  const typing = owner !== "none";
 
   // A note belongs to the field it came from.
   useEffect(() => { setLocal(null); }, [tab?.id]);
 
-  // The terminal pan ends above the dock and key row, even when native shrinks the web view.
+  // The terminal pan ends above the compose box and key row, even when native shrinks the web view.
   useLayoutEffect(() => {
     const strip = above.current;
-    const resting = row.current;
-    if (!active || !strip || !resting) {
+    const bar = row.current;
+    if (!active || !strip || !bar) {
       terminals.setPanArea(null);
       return;
     }
+    const root = document.documentElement;
     const update = (): void => {
       const covered = strip.offsetHeight;
-      const rowTop = resting.getBoundingClientRect().top;
+      const rowTop = bar.getBoundingClientRect().top;
+      root.style.setProperty("--dock-above-height", `${String(covered)}px`);
       // The row's own box already includes the CSS lift (--keyboard-inset), set before this render.
       if (covered === 0 && viewport.keyboardInset === 0) {
         terminals.setPanArea(null);
@@ -101,72 +104,61 @@ export function Dock({ active }: { active: boolean }) {
     };
     const watch = new ResizeObserver(scheduleUpdate);
     watch.observe(strip);
-    watch.observe(resting);
+    watch.observe(bar);
     return () => {
       watch.disconnect();
       cancelAnimationFrame(frame);
+      root.style.removeProperty("--dock-above-height");
       terminals.setPanArea(null);
     };
   }, [active, viewport.keyboardInset, viewport.visibleHeight, terminals]);
 
-  useLayoutEffect(() => {
-    const resting = row.current;
-    if (!phone || !active || !resting) return;
-    const root = document.documentElement;
-    const update = (): void => {
-      const height = `${String(resting.getBoundingClientRect().height)}px`;
-      if (root.style.getPropertyValue("--dock-row-height") !== height) root.style.setProperty("--dock-row-height", height);
-    };
-    update();
-    let frame = 0;
-    const scheduleUpdate = (): void => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(update);
-    };
-    const watch = new ResizeObserver(scheduleUpdate);
-    watch.observe(resting);
-    return () => {
-      watch.disconnect();
-      cancelAnimationFrame(frame);
-      root.style.removeProperty("--dock-row-height");
-    };
-  }, [active, phone]);
-
-  // Keep key-row characters in the same editing path on both platforms.
-  const insertIntoLine = (text: string): boolean => {
-    if (owner !== "line") return false;
-    if (viewport.directInput === "native") {
-      app.platform.input.insertLine(text);
-      return true;
-    }
-    const field = line.current;
-    if (!field) return false;
-    field.setRangeText(text, field.selectionStart, field.selectionEnd, "end");
-    field.dispatchEvent(new Event("input", { bubbles: true }));
-    return true;
+  // One editing path for the key row on both platforms. Native owns its text and caret, so a step is
+  // its own to take (UIKit's positions, marked text included); the browser's textarea steps by grapheme.
+  const editor: LineEditor = {
+    insert: (text) => {
+      if (native) {
+        app.platform.input.insertLine(text);
+        return;
+      }
+      const field = line.current;
+      if (!field) return;
+      field.setRangeText(text, field.selectionStart, field.selectionEnd, "end");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    step: (step) => {
+      if (native) {
+        app.platform.input.stepLineCaret(step);
+        return;
+      }
+      const field = line.current;
+      if (!field) return;
+      const { selectionStart: start, selectionEnd: end, value } = field;
+      const to = start !== end ? (step < 0 ? start : end) : stepGrapheme(value, start, step);
+      field.setSelectionRange(to, to);
+    },
   };
 
   return (
-    <div class={styles.slot} data-keyboard={holding ? "" : undefined}>
+    <div class={styles.slot} data-keyboard={typing ? "" : undefined}>
       <div class={styles.lift}>
         <div class={styles.above} ref={above}>
           <p class={styles.note} data-tone={note?.tone} role="status">{note?.text}</p>
-          {holding && <KeyRow insertIntoLine={insertIntoLine} />}
-        </div>
-        <div class={styles.row} ref={row}>
-          {resting && <CurrentTabButton />}
           {/* Mounted at rest too, so the draft and the field's refs outlive the keyboard; hidden, so nothing can focus it. */}
-          <div class={styles.line} hidden={resting}>
+          <div class={styles.compose} hidden={!typing}>
             <LineField tab={tab} label={label ? `Line for ${label.full}` : "Line"} onNote={setLocal} inputRef={line} />
           </div>
+        </div>
+        <div class={styles.row} ref={row}>
+          {typing ? <KeyRow editor={editor} /> : phone && <CurrentTabButton />}
           <DockButton
             kind="control"
             class={styles.toggle}
-            aria-label={holding ? "Hide keyboard" : "Show keyboard"}
-            disabled={!tab && !holding}
+            aria-label={typing ? "Hide keyboard" : "Show keyboard"}
+            disabled={!tab && !typing}
             onClick={() => { app.focus.toggleKeyboard(); }}
           >
-            <Icon name={holding ? "keyboardHide" : "keyboard"} size={20} />
+            <Icon name={typing ? "keyboardHide" : "keyboard"} size={20} />
           </DockButton>
         </div>
       </div>

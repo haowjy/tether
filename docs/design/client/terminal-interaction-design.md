@@ -48,6 +48,8 @@ On touch, Terminal ends in a dock shared by the phone browser, PWA and native ap
 | Key-row ↑, ↓, ^R, ^C, tab and other terminal controls | key row hidden | sent to the terminal | sent to the terminal |
 | Key-row character key (`\| ~ / -`) | key row hidden | sent to the terminal | inserted at the caret |
 
+Where a key-row key goes is one rule, `routeKey(key, owner, armed)` in `web/touch/keyRoute.ts`, shared by the browser textarea and the native line; the key row marks the keys it sends to the box. A caret step is the editor's own: the browser textarea steps by grapheme, and the app asks native (`lineCaretStep`), which steps with UIKit's positions and drops the step while the keyboard composes. An armed ctrl or alt turns even ← and → into the chord for tmux.
+
 In the app, the toggle, box tap, terminal tap and esc switch targets on the same responder: Show keyboard opens `terminal`, box tap opens `line`, and Hide keyboard closes either. After closing `line`, Show keyboard opens `terminal`. In browser/PWA the DOM line editor remains the target for the box tap. The box's terminal control also returns to terminal typing without hiding the keyboard.
 
 **Focus cues** show which target owns the keyboard. Terminal: the terminal cursor is a solid block; the idle box has no caret and shows its draft or placeholder; Return is labelled Return. Line: the box has a ring, caret and Send, the terminal cursor is a hollow outline, and Return is labelled Send (`enterkeyhint="send"` in browser/PWA; native `returnKeyType = .send`). The key row visually distinguishes keys that act on the box from keys that still go to tmux. There is one active typing cursor.

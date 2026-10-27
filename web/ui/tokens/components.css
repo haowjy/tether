@@ -5,14 +5,12 @@
   --row-pad-x: var(--space-3);
   --tab-height: 32px;
   --toolbar-height: 44px;
-  /* The phone dock's resting row: the current-tab button and the keyboard toggle. */
+  /* The phone dock's row, resting (current-tab button, Show keyboard) or typing (key row, Hide keyboard): one height. */
   --dock-height: 42px;
-  /* Dock reports its measured height when the one-line editor grows. */
-  --dock-row-height: var(--dock-height);
   --dock-control-height: 34px;
   --dock-key-height: 32px;
-  /* The key row above the resting row. */
-  --dock-keys-height: 40px;
+  /* Dock reports the height of what it puts above the row: the compose box and its note. */
+  --dock-above-height: 0px;
 }
 :root[data-density="touch"] {
   --row-height: 48px;
@@ -44,6 +42,6 @@
 }
 
 :root[data-layout="phone"] { --toast-offset: var(--toolbar-height); }
-:root[data-layout="phone"]:has([data-dock]) { --toast-offset: var(--dock-row-height); }
-/* The dock's key row, shown while an input holds the keyboard, is above its row. */
-:root[data-layout="phone"]:has([data-keyboard]) { --toast-offset: calc(var(--dock-row-height) + var(--dock-keys-height)); }
+:root[data-layout="phone"]:has([data-dock]) { --toast-offset: var(--dock-height); }
+/* The compose box, shown while an input holds the keyboard, is above the row. */
+:root[data-layout="phone"]:has([data-keyboard]) { --toast-offset: calc(var(--dock-height) + var(--dock-above-height)); }

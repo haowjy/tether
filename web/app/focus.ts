@@ -62,7 +62,13 @@ export class FocusController extends Store<FocusView> implements FocusPort {
     this.targets.set(target, element);
     if (target !== "terminal" && target !== "line") return;
     const focused = (): void => { this.update({ owner: target }); };
-    const blurred = (): void => { if (this.snapshot.owner === target) this.update({ owner: "none" }); };
+    // A blur that hands focus to the other input is a change of owner, not a release: the focus event that follows names the new owner.
+    // Reporting "none" in between would render the dock at rest, hiding the compose box before it can take the focus.
+    const blurred = (event: FocusEvent): void => {
+      const next = event.relatedTarget;
+      if (next !== null && next !== element && (next === this.targets.get("terminal") || next === this.targets.get("line"))) return;
+      if (this.snapshot.owner === target) this.update({ owner: "none" });
+    };
     element.addEventListener("focus", focused);
     element.addEventListener("blur", blurred);
     this.following.set(element, () => {

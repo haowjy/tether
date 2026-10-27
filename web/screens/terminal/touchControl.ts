@@ -2,6 +2,7 @@
 // the middle, the terminal's side effects out. A finger on the surface is this file's alone:
 // `pointerdown` is cancelled, so a touch never moves focus, lowers the keyboard, or reaches xterm
 // as a mouse event; what it means is decided when it resolves (a tap near the cursor raises the keyboard).
+import type { Owner } from "../../app/focus";
 import type { HapticKind, InputEvent } from "../../platform/types";
 import type { PromptLine, TerminalRenderer } from "../../term";
 import { mouseInput } from "../../term/mouse";
@@ -24,10 +25,8 @@ interface TouchDeps {
   focusTerminal(): void;
   /** The shell's command line under the cursor (OSC 133), or null. */
   prompt(): PromptLine | null;
-  /** The terminal's own input holds the keyboard. */
-  keyboardHeld(): boolean;
-  /** No input holds the keyboard. */
-  keyboardDown(): boolean;
+  /** Who holds the keyboard. */
+  owner(): Owner;
 }
 
 export class TouchControl {
@@ -167,12 +166,15 @@ export class TouchControl {
       this.deps.focusTerminal();
       return;
     }
+    // With the keyboard up, a tap anywhere takes typing from the compose box, history included; it moves nothing else.
+    const owner = this.deps.owner();
+    if (owner === "line") this.deps.focusTerminal();
     if (!renderer || !this.deps.scroll.atLatest) return;
     const cell = renderer.cellAt(x, y);
     if (!cell) return;
-    // Decided before focusing: the tap that raises the keyboard doesn't also move the cursor.
-    const held = this.deps.keyboardHeld();
-    if (this.deps.keyboardDown() && Math.abs(cell.row - renderer.cursor().row) <= 1) this.deps.focusTerminal();
+    // With it down, a tap near the cursor raises it. Decided before focusing: that tap doesn't also move the cursor.
+    const held = owner === "terminal";
+    if (owner === "none" && Math.abs(cell.row - renderer.cursor().row) <= 1) this.deps.focusTerminal();
     const mode = renderer.mouseMode();
     if (mode === "none") {
       if (held) this.moveCursorTo(cell.col, cell.row);

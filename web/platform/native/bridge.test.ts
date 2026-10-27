@@ -29,6 +29,7 @@ const calls: Record<string, (b: Bridge, m: Fixture["message"]) => unknown> = {
   activeTab: (b, m) => { b.activeTab(m["tab"] as never); },
   lineSet: (b, m) => b.setLine(m["text"] as string, m["caret"] as number, m["tab"] as never),
   lineCaret: (b, m) => { b.lineCaret(m["index"] as number); },
+  lineCaretStep: (b, m) => { b.lineCaretStep(m["step"] as -1 | 1); },
   lineInsert: (b, m) => { b.lineInsert(m["text"] as string); },
   lineSelectAll: (b) => { b.lineSelectAll(); },
   modifiers: (b, m) => { b.modifiers(m["armed"] as "ctrl" | "alt" | null); },

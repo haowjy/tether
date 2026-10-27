@@ -1,48 +1,52 @@
 // The dock's key row (client-architecture.md §7.4): one fixed row of the keys a phone keyboard
 // lacks, in a horizontal scroller. A tap never moves focus or lowers the keyboard (DockButton),
-// and a key acts on `pointerup` inside it. Control keys go to the
-// terminal; character keys go where typing goes; ctrl and alt arm the next key.
+// and a key acts on `pointerup` inside it. Where a key goes (tmux, or the compose box that holds
+// the keyboard) is `routeKey`'s decision, the same for both line editors; ctrl and alt arm the next key.
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
-import type { InputEvent } from "../../../platform/types";
 import { useApp, useAppView } from "../../../app/context";
 import { DockButton } from "../../../ui/primitives/DockButton";
 import { useStore } from "../../../ui/store";
+import { routeKey, type RowKey } from "../../../touch/keyRoute";
 import { terminalsOf } from "../terminals";
 import styles from "./Dock.module.css";
 
-/** `name` is set only where the visible label can't be read aloud as the key (the arrows, the caret chords). */
+/** `aria` is set only where the visible label can't be read aloud as the key (the arrows, the caret chords). */
 type Spec =
-  | { label: string; name?: string; key: string; repeat?: boolean }
-  | { label: string; modifier: "ctrl" | "alt" }
-  | { label: string; text: string };
+  | { label: string; aria?: string; key: RowKey; repeat?: boolean }
+  | { label: string; modifier: "ctrl" | "alt" };
 
 const KEYS: Spec[] = [
-  { label: "esc", key: "Escape" },
-  { label: "←", name: "Left arrow", key: "Left", repeat: true },
-  { label: "↑", name: "Up arrow", key: "Up", repeat: true },
-  { label: "↓", name: "Down arrow", key: "Down", repeat: true },
-  { label: "→", name: "Right arrow", key: "Right", repeat: true },
-  { label: "^R", name: "Control R", key: "C-r" },
-  { label: "^C", name: "Control C", key: "C-c" },
-  { label: "tab", key: "Tab" },
+  { label: "esc", key: { name: "Escape" } },
+  { label: "←", aria: "Left arrow", key: { name: "Left" }, repeat: true },
+  { label: "↑", aria: "Up arrow", key: { name: "Up" }, repeat: true },
+  { label: "↓", aria: "Down arrow", key: { name: "Down" }, repeat: true },
+  { label: "→", aria: "Right arrow", key: { name: "Right" }, repeat: true },
+  { label: "⇧tab", aria: "Shift tab", key: { name: "BTab" } },
+  { label: "tab", key: { name: "Tab" } },
+  { label: "^C", aria: "Control C", key: { name: "C-c" } },
+  { label: "^R", aria: "Control R", key: { name: "C-r" } },
   { label: "ctrl", modifier: "ctrl" },
   { label: "alt", modifier: "alt" },
-  { label: "|", text: "|" },
-  { label: "~", text: "~" },
-  { label: "/", text: "/" },
-  { label: "-", text: "-" },
+  { label: "⏎", aria: "Return", key: { name: "Enter" } },
+  { label: "|", key: { text: "|" } },
+  { label: "~", key: { text: "~" } },
+  { label: "/", key: { text: "/" } },
+  { label: "-", key: { text: "-" } },
 ];
 
 /** A held arrow repeats after this, then at this rate. */
 const REPEAT_AFTER_MS = 400;
 const REPEAT_EVERY_MS = 33;
 
-interface KeyRowProps {
-  /** Inserts a character at the line field's caret when the line field holds the keyboard. Returns false when it does not. */
-  insertIntoLine: (text: string) => boolean;
+/** What the compose box does for the keys routed to it. The editor that holds the text and caret decides how. */
+export interface LineEditor {
+  /** Insert a character at the caret. */
+  insert: (text: string) => void;
+  /** Move the caret one character. */
+  step: (step: -1 | 1) => void;
 }
 
-export function KeyRow({ insertIntoLine }: KeyRowProps) {
+export function KeyRow({ editor }: { editor: LineEditor }) {
   const app = useApp();
   const terminals = terminalsOf(app);
   const { modifiers } = terminals;
@@ -57,13 +61,18 @@ export function KeyRow({ insertIntoLine }: KeyRowProps) {
   const send = (spec: Spec): void => {
     if ("modifier" in spec) {
       modifiers.toggle(spec.modifier);
-    } else if ("text" in spec) {
-      const event = [{ text: spec.text } satisfies InputEvent];
-      // A chord goes to tmux; otherwise (disarmed by `chord`) the character goes where typing goes.
-      if (modifiers.chord(event)) return;
-      if (!insertIntoLine(spec.text)) modifiers.input(event);
-    } else {
-      modifiers.input([{ key: spec.key }]);
+      return;
+    }
+    const route = routeKey(spec.key, owner, armed);
+    switch (route.to) {
+      case "terminal": modifiers.input(route.events); break;
+      case "caret": editor.step(route.step); break;
+      case "focusTerminal": app.focus.focusTarget("terminal", true); break;
+      case "line":
+        // A character with no chord is typed unmodified, which uses the armed modifier up.
+        if (armed !== null) modifiers.disarm();
+        editor.insert(route.text);
+        break;
     }
   };
 
@@ -74,6 +83,8 @@ export function KeyRow({ insertIntoLine }: KeyRowProps) {
           key={spec.label}
           spec={spec}
           pressed={"modifier" in spec && armed === spec.modifier}
+          // The two destinations look different: a key whose tap lands in the compose box rather than in tmux.
+          acts={"key" in spec && routeKey(spec.key, owner, armed).to !== "terminal" ? "box" : undefined}
           onPress={() => { send(spec); }}
           onDown={() => { app.platform.haptic("modifier" in spec ? "modifier" : "key"); }}
         />
@@ -85,11 +96,12 @@ export function KeyRow({ insertIntoLine }: KeyRowProps) {
 interface KeyProps {
   spec: Spec;
   pressed: boolean;
+  acts: "box" | undefined;
   onPress: () => void;
   onDown: () => void;
 }
 
-function Key({ spec, pressed, onPress, onDown }: KeyProps) {
+function Key({ spec, pressed, acts, onPress, onDown }: KeyProps) {
   // A ref: pressing ctrl re-renders its own key between the pointer going down and up.
   const hold = useRef<{ delay?: ReturnType<typeof setTimeout>; every?: ReturnType<typeof setInterval>; repeated: boolean } | null>(null);
   const stop = (): void => {
@@ -104,7 +116,8 @@ function Key({ spec, pressed, onPress, onDown }: KeyProps) {
     <DockButton
       kind="key"
       pressed={pressed}
-      aria-label={"name" in spec ? spec.name : undefined}
+      aria-label={"aria" in spec ? spec.aria : undefined}
+      data-acts={acts}
       aria-pressed={"modifier" in spec ? pressed : undefined}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);

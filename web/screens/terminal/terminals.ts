@@ -14,6 +14,7 @@ import type { SessionRef, ShownWindow } from "../../proto/generated/messages";
 import { createXtermRenderer, type PromptLine, type TerminalRenderer } from "../../term";
 import { TerminalSizer } from "../../term/size";
 import { ArmedModifiers } from "../../touch/armed";
+import { routeKey } from "../../touch/keyRoute";
 import { createOwnedInput } from "../../touch/owned-input";
 import { Store } from "../../ui/store";
 import { terminalTheme } from "../../ui/theme";
@@ -134,8 +135,7 @@ export class Terminals extends Store<TerminalsView> {
       directInput: () => this.viewport.directInput,
       focusTerminal: () => { this.app.focus.focusTarget("terminal", true); },
       prompt: () => this.promptLine,
-      keyboardHeld: () => this.app.focus.snapshot.owner === "terminal",
-      keyboardDown: () => this.app.focus.snapshot.owner === "none",
+      owner: () => this.app.focus.snapshot.owner,
       selecting: (on) => { this.app.focus.selecting(on); },
       onScrolled: (scrolled) => { this.update({ scrolled }); },
       onMenu: (menu) => { this.update({ menu }); },
@@ -153,6 +153,9 @@ export class Terminals extends Store<TerminalsView> {
         for (const input of event.events) {
           if (line && "text" in input) {
             if (!this.modifiers.chord([input])) this.app.platform.input.insertLine(input.text);
+          } else if (line && "key" in input && routeKey({ name: input.key }, "line", this.modifiers.snapshot.armed).to === "focusTerminal") {
+            // A hardware Esc does what the key row's esc does.
+            this.app.focus.focusTarget("terminal", true);
           } else this.modifiers.input([input]);
         }
       } else this.drivers.get(id)?.input(event.events);
