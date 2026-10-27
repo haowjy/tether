@@ -60,6 +60,10 @@ export async function renderMarkdown(text: string, docUrl: string): Promise<stri
   const [{ default: MarkdownIt }, { default: DOMPurify }] = await Promise.all([import("markdown-it"), import("dompurify")]);
   const md = new MarkdownIt({ html: true, linkify: true });
   const purify = DOMPurify();
+  // A ```mermaid fence's class is the one a document keeps: mermaid.ts finds the block by it.
+  purify.addHook("uponSanitizeAttribute", (node, data) => {
+    if (node.nodeName === "CODE" && data.attrName === "class" && data.attrValue === "language-mermaid") data.forceKeepAttr = true;
+  });
   purify.addHook("afterSanitizeAttributes", (node) => {
     if (node.nodeName === "IMG") {
       const src = node.getAttribute("src");

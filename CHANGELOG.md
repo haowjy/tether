@@ -5,6 +5,9 @@ version section on release.
 
 ## [Unreleased]
 
+- Mermaid diagrams render in Markdown previews, in the app's light or dark theme. A wider
+  diagram scrolls inside its own box; one that doesn't parse stays as a code block with the
+  reason under it. The diagram code downloads the first time a document has a diagram.
 - On the phone, the terminal's bar is now the current tab's name, the open-tab count and
   Show keyboard; the tab strip and + moved into the sessions sheet. The button opens a
   half-height sheet over the tab with Home, search, every server's sessions, the open

@@ -6,10 +6,11 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { build, type Plugin } from "vite";
+import { diagramFiles } from "../scripts/diagrams.mjs";
 
 /** The files the daemon routes (`routes()` in src/http/shell.rs); a precached path outside them would fail every install. */
 const SERVED = /^(index\.html|manifest\.webmanifest|apple-touch-icon\.png|favicon\.ico|icons\/.+|assets\/.+)$/u;
-/** Build products no browser asks for. */
+/** Build products no browser asks for. The diagram files (scripts/diagrams.mjs) are served but not precached. */
 const NOT_SHELL = /^(sw\.js|\.vite\/.*)$/u;
 
 /** The dark and light `--color-bg` as hex; theme-color can't read the token. */
@@ -53,6 +54,7 @@ export function serviceWorker(): Plugin {
       order: "post",
       async handler() {
         if (!outDir || this.environment.config.command !== "build") return;
+        const lazy = diagramFiles(JSON.parse(readFileSync(join(outDir, ".vite/manifest.json"), "utf8")) as Parameters<typeof diagramFiles>[0]);
         const files = listFiles(outDir).filter((f) => !NOT_SHELL.test(f));
         const unserved = files.filter((f) => !SERVED.test(f));
         if (unserved.length > 0) throw new Error(`The build holds files the daemon does not serve, so the worker could not precache them:\n${unserved.join("\n")}`);
@@ -62,7 +64,7 @@ export function serviceWorker(): Plugin {
           configFile: false,
           root,
           logLevel: "warn",
-          define: { __BUILD__: JSON.stringify(hash.digest("hex").slice(0, 12)), __PRECACHE__: JSON.stringify(files.map(urlPath)) },
+          define: { __BUILD__: JSON.stringify(hash.digest("hex").slice(0, 12)), __PRECACHE__: JSON.stringify(files.filter((f) => !lazy.has(f)).map(urlPath)) },
           build: {
             write: false,
             target: "es2022",

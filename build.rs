@@ -3,9 +3,9 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const TOTAL_LIMIT: u64 = 3 * 1024 * 1024;
+const TOTAL_LIMIT: u64 = 8 * 1024 * 1024;
 const FILE_LIMIT: u64 = 1536 * 1024;
-const FILES_LIMIT: usize = 128;
+const FILES_LIMIT: usize = 192;
 
 fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));

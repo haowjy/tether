@@ -4,6 +4,7 @@ import type { FileRef } from "../../files/browser";
 import { HIGHLIGHT_MAX, highlightedLines, plainLines } from "../../files/render/code";
 import { linkTarget, renderMarkdown, type LinkTarget } from "../../files/render/markdown";
 import { lazyImages } from "../../files/images";
+import { useAppView } from "../../app/context";
 import { formatSize } from "../../files/format";
 import { languageFor } from "../../files/kinds";
 import { HttpRefusal } from "../../net/http";
@@ -77,6 +78,7 @@ export function MarkdownViewer({ api, file, onLink, describe }: { api: FsApi; fi
   const text = useText(api, file.path);
   const [html, setHtml] = useState<string | null>(null);
   const article = useRef<HTMLElement>(null);
+  const scheme = useAppView((v) => v.viewport.scheme);
   const docUrl = new URL(api.rawUrl(file.path), location.href).href;
   useEffect(() => {
     if (text.kind !== "done") return undefined;
@@ -85,6 +87,12 @@ export function MarkdownViewer({ api, file, onLink, describe }: { api: FsApi; fi
     return () => { live = false; };
   }, [text, docUrl]);
   useEffect(() => (html !== null && article.current ? lazyImages(article.current, null) : undefined), [html]);
+  useEffect(() => {
+    const root = article.current;
+    if (html === null || !root) return undefined;
+    const mounted = import("../../files/render/mermaid").then((m) => m.mountDiagrams(root, scheme));
+    return () => { void mounted.then((unmount) => { unmount(); }); };
+  }, [html, scheme]);
   if (text.kind === "error") return <Failed error={text.error} describe={describe} />;
   if (text.kind === "loading" || html === null) return <Loading what="Loading the document" />;
   return (

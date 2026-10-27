@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import preact from "@preact/preset-vite";
 import type { Plugin } from "vite";
 import { defineConfig } from "vitest/config";
@@ -39,7 +40,11 @@ const GRAMMARS = ["shellscript", "json", "yaml", "toml", "markdown", "typescript
 /** `bash` is Shiki's alias of the `shellscript` grammar. */
 const ALIASES: Record<string, string> = { bash: "shellscript" };
 
+/** KaTeX (260 KB raw) is what Mermaid loads for a `$$math$$` label; the stub makes that label fail with the "couldn't render" note instead. */
+const katexStub = fileURLToPath(new URL("files/render/omitted/katex.ts", import.meta.url));
+
 export default defineConfig(({ mode }) => ({
+  resolve: { alias: [{ find: /^katex$/u, replacement: katexStub }] },
   // The daemon serves the build at its origin's root.
   base: "/",
   plugins: [preact(), serviceWorker(), forbidTestModules(), ...(mode === "harness" ? [harnessImages()] : []), ...(mode === "harness" || mode === "test" ? [] : [devProxy()])],

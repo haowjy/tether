@@ -1,4 +1,4 @@
-export const BUDGETS: Record<"initialJs" | "initialCss" | "terminalFont" | "symbolsFont" | "shell" | "shellFiles" | "file", number>;
+export const BUDGETS: Record<"initialJs" | "initialCss" | "terminalFont" | "symbolsFont" | "shell" | "shellFiles" | "diagrams" | "file" | "embedRaw" | "embedFiles", number>;
 export function findCopyViolations(text: string): string[];
 export function findColourPrimitiveUses(path: string, text: string): string[];
 export function findColourLiterals(path: string, text: string): string[];

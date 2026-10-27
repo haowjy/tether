@@ -3342,6 +3342,34 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 - **Rejected:** deferring diagrams with the rest of repo-viewer parity; rendering
   Mermaid without the existing strict and sanitization boundaries.
 
+### Mermaid ships in the daemon's shell, outside the precache and the shell budget
+
+- **Decided:** 2026-10-27, tech coder (build slice 6), where the spec left it open.
+- **What:** Mermaid 12.1.0 (exact pin) loads only when a Markdown preview holds a
+  `mermaid` fence. Its chunks (115 files, about 1.3 MB gzipped, 6.9 MB raw with the app's)
+  are embedded in the daemon like the rest of the build, but the service worker does not
+  precache them and `checks.mjs` budgets them apart (1.4 MiB gzipped) instead of in the
+  1.5 MiB / 64-file shell budget; a diagram on a spotty link costs one on-demand
+  download. Initial JS rose from 195.8 to 196.2 KB gzipped (the lazy-loading glue and
+  the code that lets a fence's class through), so its budget went from 196 to 197 KB.
+  The daemon's embed caps rose from 3 MiB and 128 files to 8 MiB and 192 files
+  (`build.rs`), because Mermaid alone is 4.7 MB raw; the per-file cap stays 1.5 MiB.
+  The memory ceiling table counts the larger file-backed, reclaimable shell pages.
+- **Also:** KaTeX is replaced by a stub (a `$$math$$` label fails with the "couldn't
+  render" note), saving 260 KB raw. A diagram that fails to parse stays as its source in
+  a code block with "Diagram couldn't render: <first line of the error>" under it, and
+  Mermaid's own error drawing is removed from the page. Diagrams draw at their natural
+  width and scroll inside their own box (no zoom or pan). The theme is Mermaid's `neutral`
+  in light and `dark` in dark, not the app's tokens (Mermaid cannot read OKLCH).
+  The SVG Mermaid returns passes DOMPurify's SVG profile again, minus `foreignObject`
+  and `image`, with `href` limited to in-document fragments and `@import` and non-fragment
+  `url()` removed from its styles.
+- **Rejected:** precaching the diagram chunks (about 1.3 MB on every install, for a
+  feature most documents don't use); a single Mermaid chunk (rolldown's `manualChunks`
+  also pulls in each chunk's dependencies, including the sanitizer the app's entry
+  shares); stubbing the ELK layout (Mermaid 12 draws flowcharts through it);
+  loading Mermaid from a CDN (nothing loads from outside the host).
+
 ### Choose System, Light or Dark; use a black dark terminal
 
 - **Decided:** 2026-10-27, Jimmy, approving the redesign direction.

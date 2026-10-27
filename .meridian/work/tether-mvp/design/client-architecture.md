@@ -1782,8 +1782,8 @@ Today's build is 2.49 MiB gzipped (2,614,021 bytes in 52 files; 5.1 MB raw), alr
 within 0.5 MiB of the daemon's cap. Two 1.06 MB Nerd Font files make up 2.1 MB of the raw
 size, and 3.1 MB is JavaScript, most of it Shiki grammars (the C++ grammar alone is
 800 KB raw). Thirteen of the 52 files are 44-byte re-export stubs Vite emits for the
-grammars. The daemon embeds the shell within 3 MiB gzipped, at most 1.5 MiB per file
-and 128 files (browser auth, daemon-core "Static shell"). Every byte also crosses a weak
+grammars. The daemon embeds the build within 8 MiB raw, at most 1.5 MiB per file
+and 192 files (browser auth, daemon-core "Static shell"). Every byte also crosses a weak
 link on first load. Preflight enforces these budgets on gzipped output, and counts every
 emitted file, stubs included:
 
@@ -1794,13 +1794,15 @@ emitted file, stubs included:
 | Terminal font, regular and bold | 2 × 120 KB | JetBrains Mono NL subset to Latin, Latin-1, box drawing, block elements and Powerline |
 | Nerd Font symbols | 150 KB | a fallback file subset to the glyph ranges Jimmy's prompt and tmux status line use. It is listed after the core font in `--font-mono`, loaded after first paint, and the renderer clears its glyph atlas once it arrives |
 | Lazy chunks (markdown, Shiki core, viewers) | loaded on first use | precached by the service worker like everything else (§9.2) |
+| Mermaid (`files/render/mermaid.ts` and what only it loads: 115 files) | 1.4 MiB gz, apart from the shell | loaded when a Markdown preview holds a `mermaid` fence; embedded in the daemon but left out of the precache and the shell budget (`scripts/diagrams.mjs` finds them in the manifest). KaTeX is stubbed out |
 | Shiki grammars | an allowlist: shell, JSON, YAML, TOML, Markdown, TS/TSX/JS, Python, Rust, Go, Swift, C and diff | each is its own lazy chunk; `manualChunks` keeps Vite from emitting re-export stubs for them |
-| Whole embedded shell | ≤ 1.5 MiB gz, ≤ 64 files | half the daemon's cap, so growth stays visible |
+| Whole embedded shell, diagram files not counted | ≤ 1.5 MiB gz, ≤ 64 files | the precached shell, so growth stays visible |
+| Everything embedded | ≤ 8 MiB raw, ≤ 192 files | the daemon's caps (`build.rs`), which Mermaid raised from 3 MiB and 128 |
 
 W0 measures the subsets and commits the font files together with the script that made
 them, so the build itself needs no Python. A budget is raised only with its measurement
-in the commit. The initial-JS cap is 193 KB after the one-keyboard mirror measured
-192.3 KB gzipped (2026-10-26); screen splitting remains the way to earn it back.
+in the commit. The initial-JS cap is 197 KB: Mermaid's lazy-loading glue took it from 195.8 to 196.2 KB
+gzipped (2026-10-27); screen splitting remains the way to earn it back.
 
 ### 8.5 Mockup details improved
 

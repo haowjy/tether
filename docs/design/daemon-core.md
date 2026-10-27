@@ -1771,7 +1771,7 @@ at construction.
 | whois calls | 2 in flight daemon-wide, 16 distinct addresses waiting | the 17th: `503 busy` at once; joining an existing address takes no slot |
 | shell slots and waiters | 4 and 16 | the 17th waiter: `503 busy` at once |
 | shell stall | 30 s for the socket to take the next slice | aborted |
-| shell size | 3 MiB embedded, 1.5 MiB per file, 128 files | the build fails |
+| shell size | 8 MiB embedded, 1.5 MiB per file, 192 files | the build fails |
 
 **A cap refusal says which kind it is.** `busy` clears within a second or so, and the
 client retries soon. `watchEnded { reason: "limit", message }` is the control-client
@@ -1805,8 +1805,8 @@ as MiB, which overstates them by 5%. The default column is the 72-and-up tier.
 | completion, on: indexes, caches, a carapace launch | [complete.md](complete.md#memory-cpu-and-threads), less the slab | | 11.3 |
 | **unreclaimable ceiling** | | | **63.6** |
 | completion's dentry and inode slab (reclaimable) | measured | | 2.4 |
-| embedded shell pages (clean, file-backed, reclaimable) | at most the 3 MiB embedded | | 3 |
-| **ceiling** | | | **69.0** |
+| embedded shell pages (clean, file-backed, reclaimable) | at most the 8 MiB embedded | | 8 |
+| **ceiling** | | | **74.0** |
 
 By tier, the unreclaimable ceiling is 63.6 (72 and up), 58.3 (64–71), 53.0 (58–63),
 48.8 (53–57) and 37.5 (42–52). Each plus the 4 MiB headroom fits the lowest budget in
@@ -1923,7 +1923,7 @@ checks so a bookmark or cold PWA launch can load the code; the Tailscale login/F
 check and `Host: localhost` rule still apply on `serve.sock`.
 
 At build time `build.rs` runs the web production build, then embeds deterministic
-gzip and raw variants. The shell is bounded to 128 files, 3 MiB total and 1.5 MiB per
+gzip and raw variants. The shell is bounded to 192 files, 8 MiB total and 1.5 MiB per
 file; every build refuses a larger bundle. Four responses may stream at once and 16
 wait, in arrival order. A 30 s no-progress write deadline aborts a stalled client and
 releases its slot. Static files use content hashes for immutable caching; the root,

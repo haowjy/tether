@@ -5,20 +5,25 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
+import { diagramFiles } from "./diagrams.mjs";
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), "..");
 const KB = 1024;
 
 /** Budgets, gzipped, from §8.4. A budget is raised only with its measurement in the commit. */
 export const BUDGETS = {
-  initialJs: 196 * KB,
+  initialJs: 197 * KB,
   initialCss: 15 * KB,
   terminalFont: 120 * KB,
   symbolsFont: 150 * KB,
   shell: 1.5 * 1024 * KB,
   shellFiles: 64,
-  /** The daemon's own cap per embedded file. */
+  /** Everything only a Mermaid diagram loads (scripts/diagrams.mjs): fetched on demand, never precached. */
+  diagrams: 1.4 * 1024 * KB,
+  /** The daemon's own caps (build.rs), raw bytes: per embedded file, in total, and in file count. */
   file: 1.5 * 1024 * KB,
+  embedRaw: 8 * 1024 * KB,
+  embedFiles: 192,
 };
 
 /** Characters the visual copy rule bans anywhere in web/ outside tests (browser-behaviors.md). */
@@ -79,9 +84,16 @@ export function budgetBreaches(files, manifest) {
     if (/tether-symbols.*\.woff2$/u.test(f.path) && f.gz > BUDGETS.symbolsFont) out.push(`${f.path} is ${kb(f.gz)}, over ${kb(BUDGETS.symbolsFont)}`);
     if (f.gz > BUDGETS.file) out.push(`${f.path} is ${kb(f.gz)}, over the daemon's per-file cap`);
   }
-  const total = files.reduce((n, f) => n + f.gz, 0);
+  const lazy = diagramFiles(manifest);
+  const shell = files.filter((f) => !lazy.has(f.path));
+  const total = shell.reduce((n, f) => n + f.gz, 0);
   if (total > BUDGETS.shell) out.push(`the shell is ${kb(total)} gzipped, over ${kb(BUDGETS.shell)}`);
-  if (files.length > BUDGETS.shellFiles) out.push(`the shell has ${String(files.length)} files, over ${String(BUDGETS.shellFiles)} (stubs count)`);
+  if (shell.length > BUDGETS.shellFiles) out.push(`the shell has ${String(shell.length)} files, over ${String(BUDGETS.shellFiles)} (stubs count)`);
+  const diagrams = files.filter((f) => lazy.has(f.path)).reduce((n, f) => n + f.gz, 0);
+  if (diagrams > BUDGETS.diagrams) out.push(`the diagram files are ${kb(diagrams)} gzipped, over ${kb(BUDGETS.diagrams)}`);
+  const raw = files.reduce((n, f) => n + f.bytes, 0);
+  if (raw > BUDGETS.embedRaw) out.push(`the build is ${kb(raw)} raw, over the daemon's ${kb(BUDGETS.embedRaw)} cap`);
+  if (files.length > BUDGETS.embedFiles) out.push(`the build has ${String(files.length)} files, over the daemon's ${String(BUDGETS.embedFiles)}`);
   return out;
 }
 
@@ -120,8 +132,9 @@ function checkBuild() {
     return { path: relative(dist, file), bytes: statSync(file).size, gz: gzipSync(bytes, { level: 9 }).length };
   });
   const manifest = JSON.parse(readFileSync(join(dist, ".vite/manifest.json"), "utf8"));
-  const total = files.reduce((n, f) => n + f.gz, 0);
-  console.log(`shell: ${String(files.length)} files, ${kb(total)} gzipped`);
+  const lazy = diagramFiles(manifest);
+  const gz = (list) => kb(list.reduce((n, f) => n + f.gz, 0));
+  console.log(`shell: ${String(files.length - lazy.size)} files, ${gz(files.filter((f) => !lazy.has(f.path)))} gzipped; diagrams: ${String(lazy.size)} files, ${gz(files.filter((f) => lazy.has(f.path)))} gzipped`);
   return budgetBreaches(files, manifest);
 }
 
