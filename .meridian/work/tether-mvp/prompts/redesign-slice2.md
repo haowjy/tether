@@ -49,10 +49,22 @@ Load `/ui-implementation` and `/react-architecture` before writing UI.
 - Full-height sheet from Home is slice 4; don't build it.
 
 Delete what's replaced (Switcher, the old overlays, the dock chip/strip pieces, their
-styles) in the same commit. Update stale unit/Playwright tests; add no new permanent
-tests (Jimmy's rule), and delete temporary ones before committing. Update harness
-fixtures so the sheet renders with several sessions, a multi-window session, a Files
-tab and the empty/offline states, in both layouts.
+styles) in the same commit. There are no UI tests any more (Jimmy, 2026-10-27: "u
+should just make the code strong enough that it shouldn't happen or we shouldn't be able
+to question it in the first place (code structure over if statements)"): prefer a state
+model where a wrong state can't be represented over a guard for it. Update unit tests
+that pin replaced logic; add no new tests. Update harness fixtures so the sheet renders
+with several sessions, a multi-window session, a Files tab and the empty/offline states,
+in both layouts (for looking at, not for tests).
+
+Known interaction from slice 1's review (p333): while an overlay is open, a tab switch
+rewrites the current entry (`router.switchTab`); closing the overlay then replaces the
+entry, and the base entry below still names the old tab, so the next Back skips to Home
+through the stale-entry rule. The sheet will meet this on every strip/row tap. Decide
+whether the sheet should close by replacing its entry, or keep the base entry in step
+too, so Back after closing the sheet behaves as the spec says (Back closes the top
+sheet before leaving its parent destination; Back from a tab returns Home), and say
+what you chose.
 
 Docs in the same commit: `browser-behaviors.md` (the dismissal-after-row-tap open item
 is now settled: keeps the sheet; list not grid; windows under the active row; log each
@@ -61,8 +73,8 @@ in `decisions.md` as 2026-10-27, Jimmy's words in the plan), `client-architectur
 
 ## Verify
 
-`pnpm --dir web run check`, `pnpm --dir web run e2e`, `scripts/preflight.sh full`. In
-the harness (phone 390x844 and desktop), exercise by hand: open the sheet from the
+`pnpm --dir web run check`, `scripts/preflight.sh full`. No e2e run is needed for this
+slice (it doesn't change what the daemon or tmux sees). In the harness (phone 390x844 and desktop), exercise by hand: open the sheet from the
 current-tab button; tap a row (tab opens behind, sheet stays); tap and swipe the strip;
 close the active tab from the strip; + New session and Browse files; switch windows in
 a multi-window session; Back/Escape/tap-outside dismissal; sheet with the search

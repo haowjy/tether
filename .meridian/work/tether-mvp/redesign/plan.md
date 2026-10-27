@@ -182,3 +182,66 @@ keep their default (opus). Frontend: "probably sonnet is enough, maybe we need o
   question it in the first place (code structure over if statements)". No new UI test;
   review findings get a structural fix (make the state unrepresentable) before a guard.
   Asked whether the existing Playwright suite should go too: pending.
+- Slice 1 pushed (`0deedea`, all six commits preflighted on clean exports). Harness UI
+  tests deleted (`68eade2`); real-daemon e2e kept, opt-in, run only when a slice
+  changes the stream/protocol/tmux or to record performance (Jimmy: "it shouldn't be
+  running all the time either").
+- Slice 2 `c2086d4` local: review p335, harness probe p336. Slice 6 (Mermaid) p337 in
+  parallel, confined to `web/files/render/`, the preview, package/lockfile.
+- Slice 2 review p335: approve with notes; #1 again "one fact decided twice" (opener vs
+  form): the opener's overlay name chooses sheet/picker. Probe p336: desktop picker is
+  still a modal (2b), empty copy wrong. Fixes + 2b: p338 (from p334).
+- Slice 6 `1c93d31` local (Mermaid 12.1.0, strict, SVG re-sanitized, diagram chunks out
+  of the precache, 1.35 MB gz lazy). Security review p339.
+- Slice 2 fixes `0d55fbd` and 2b `2bbed88` local (p338). Lead calls: unreachable
+  desktop New-window client code deleted in slice 3's commit 0 (daemon message kept,
+  FUTURE note); "here" only for the tab on screen. Strict review of 2/2b p342 on a
+  frozen export (/tmp/tether-rev-s2).
+- Mermaid review p339: no script/navigation/off-host found; fixes p340 (reset per render,
+  `htmlLabels` secured, chunk-failure retry + build "Update required", forbid `a`, try
+  dagre over ELK, raw-byte cap check).
+- Slice 3 p341 (keyboard-up, key routing, bridge v6 `lineCaretStep`). Writers p340 and
+  p341 share the checkout on disjoint files.
+- p342 (strict, 2/2b): fit to push; its refactors (#1 Picker mounted in Shell, #3 one
+  anchored menu primitive, #4 `rowOf` + `NewActions(host)`, #5-#7) are slice 4's commit 1.
+- Mermaid fixes `b847e18` (p340): dagre instead of ELK (diagram files 1.35 → 0.92 MB gz),
+  "Update required" built. Re-check p344.
+- Slice 3 `229bbe4` + `f141158` (p341): bridge v6 `lineCaretStep`; verified on real tmux
+  3.4 from the browser; native device-unverified. Lead adds to slice 3's fix round:
+  visible Send in the compose box (native `lineSubmit`, folded into unpushed v6) and the
+  stale `e2e/dock/dock.real.ts`. Review p343.
+- Slice 4 p345 (Home cards, full-height sheet, Settings behind gear).
+- Mermaid re-check p344: fit to push (comment fix `ced2437`). Slice 3 review p343:
+  approve with notes; class: "one routing rule" had two mechanisms (held armed arrow
+  streamed plain arrows). Lead decision: with the box focused, a terminal tap only
+  returns typing (no click); logged in slice 3's fix commit. Fixes + visible Send
+  (`lineSubmit`, folded into unpushed v6) + the two stale real e2e files: p346.
+- Slice 4 `ca0d42f` (p342 refactors) + `40d8bab` (Home cards, full sheet, Settings
+  page) local; initial JS budget 197 → 198 KB (revisit after slice 5). Review p347
+  (correctness + strict), probe p348, on /tmp/tether-rev-s4.
+- Preflighting c2086d4..b847e18 for push.
+- Slice 3 fixes `f86cef7` + `7f954c3` (p346): one live-state dispatch, `tapAction`, Send
+  (`lineSubmit` in v6). Re-check p350: fit to push; follow-up p351 (one key executor,
+  LineField owns its editor, browser Send drops while composing).
+- Slice 4 fixes `a1af637` (p349): the cross-server bug was the test platform's
+  `openSocket` (one id for every handle); production identity already correct. Re-check
+  p352 on /tmp/tether-rev-s4b.
+- Initial JS budget crept 196 → 199 KB across slices 4-4 fixes: audit after slice 5.
+- Open for Jimmy (device): key-row ⏎ sends Enter to tmux while the box holds a line.
+- Pushed `fddb534` (slices 3, 4, dock follow-up, Row fix; all preflighted). Slice 5
+  `6ee6f52` (p352 notes) + `31cb04e` (preferences, relock, bridge v7) local. Review p354,
+  probe p355. Initial-JS audit p356 (196 → 200 KB gz). Text size resizes on the next tab
+  show (Settings is over Home); browser shows a pre-boot scheme flash for a non-system
+  choice (accepted for now).
+- Slice 5 review p354: not fit (stored appearance not applied at launch, confirmed on a
+  Simulator; relock on wall clock, corrupt value loosens, unguarded setPreference; double
+  claim after a text-size change). Lead decision: loosening relock needs a fresh native
+  Face ID evaluation. Probe p355: relock missing from the app fixture, focus ring clipped.
+  Fixes p357. JS audit rerun p358 (p356's codex sandbox refused /tmp writes).
+- JS audit p358: +3.2 KB gz is the new UI (ServerCard, ServerSheet, Settings, dock
+  editor); every lazy candidate is under 2 KB and the service worker precaches the shell
+  (the app loads from its bundle). Lead call: hold the budget at 200 KB, no splits.
+- Slice 5 fixes `330b389` (p357). Security re-check p359.
+- Slice 5 re-check p359: security holds (no way around the loosening gate); one Medium
+  regression, the second round of "sizer inputs while hidden": fixed in `cb34f11` (p360)
+  with one pending-until-laid-out rule; lead read the diff. Slices 1-6 complete.
