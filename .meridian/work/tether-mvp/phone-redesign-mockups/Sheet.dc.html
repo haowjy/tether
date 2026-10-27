@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sessions sheet</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.t-light{--bg:#eef0f4;--raised:#ffffff;--term-bg:#fafbfc;--hover:#e3e6ec;--sel:#dce7fb;--text:#171a21;--muted:#545a67;--border:#d6dae2;--accent:#2a5ec0;--onaccent:#ffffff;--term-fg:#262a33;--term-dim:#6d7380;--green:#2c7a47;--amber:#8a5900;--blue:#2a5ec0;--kb:#d0d3da;--scrim:rgba(20,24,33,.32);--danger:#b3261e}
+.t-dark{--bg:#0d0d0d;--raised:#171717;--term-bg:#000000;--hover:#242424;--sel:#1b2738;--text:#ececec;--muted:#a0a0a0;--border:#2d2d2d;--accent:#7db7f2;--onaccent:#0a1726;--term-fg:#d9d9d9;--term-dim:#8a8a8a;--green:#72d38f;--amber:#e6b85c;--blue:#7db7f2;--kb:#2a2a2c;--scrim:rgba(0,0,0,.6);--danger:#ff8a80}
+.s-phone{width:390px;height:844px;position:relative;overflow:hidden;background:var(--term-bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif}
+.s-term{position:absolute;inset:0 0 auto 0;height:360px;padding:54px 14px 0;box-sizing:border-box;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden}
+.s-tt{margin:0;font:12px/1.45 ui-monospace,"SF Mono",Menlo,monospace;color:var(--term-fg);white-space:pre}
+.s-dim{color:var(--term-dim)}.s-g{color:var(--green)}.s-a{color:var(--amber)}
+.s-scrim{position:absolute;inset:0;background:var(--scrim)}
+.s-sheet{position:absolute;left:0;right:0;bottom:0;top:330px;background:var(--raised);border-radius:20px 20px 0 0;display:flex;flex-direction:column;box-shadow:0 -8px 24px rgba(0,0,0,.18)}
+.s-sheet.s-full{top:54px}
+.s-handle{width:40px;height:5px;border-radius:3px;background:var(--border);margin:8px auto 6px}
+.s-head{display:flex;gap:8px;padding:4px 12px 8px}
+.s-ib{flex:none;width:44px;height:44px;border-radius:12px;border:0;background:var(--bg);color:var(--text);display:grid;place-items:center;padding:0}
+.s-search{flex:1;height:44px;border-radius:12px;background:var(--bg);display:flex;align-items:center;gap:8px;padding:0 12px;color:var(--muted);font-size:16px}
+.s-host{display:flex;align-items:baseline;gap:8px;padding:10px 10px 4px;font-size:13px;color:var(--muted);flex:none}
+.s-host b{color:var(--text);font-weight:680;font-size:14px}
+.s-live{color:var(--green);font-weight:560}
+.s-list{flex:1;min-height:0;overflow:hidden;padding:0 8px;display:flex;flex-direction:column}
+.s-row{display:flex;align-items:center;gap:10px;height:48px;padding:0 10px;border-radius:10px;border:0;background:none;color:var(--text);font:inherit;text-align:left;flex:none}
+.s-row.s-here{background:var(--sel)}
+.s-name{font-weight:680;font-size:15px;min-width:28px}
+.s-cmd{flex:1;color:var(--muted);font-size:15px}
+.s-wins{color:var(--muted);font-size:13px}
+.s-tag{font-size:12px;font-weight:560;color:var(--accent);border:1px solid currentColor;border-radius:6px;padding:1px 6px}
+.s-grid{flex:1;min-height:0;overflow:hidden;padding:4px 12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-content:start}
+.s-tile{height:64px;border-radius:12px;border:0;background:var(--bg);color:var(--text);font:inherit;text-align:left;padding:10px 12px;display:flex;flex-direction:column;justify-content:space-between;box-sizing:border-box}
+.s-tile.s-here{background:var(--sel)}
+.s-tile .s-top{display:flex;justify-content:space-between;align-items:center}
+.s-bar{background:var(--raised);border-top:1px solid var(--border);padding:8px 12px 34px;display:flex;gap:8px;align-items:center}
+.s-tabs{flex:1;min-width:0;display:flex;gap:8px;overflow:hidden;-webkit-mask-image:linear-gradient(to right,#000 78%,transparent);mask-image:linear-gradient(to right,#000 78%,transparent)}
+.s-tab{flex:none;display:flex;align-items:center;height:44px;border-radius:12px;background:var(--bg)}
+.s-tab.s-on{background:var(--sel)}
+.s-tabmain{background:none;border:0;font:inherit;color:var(--muted);font-size:15px;height:44px;padding:0 14px;display:flex;gap:6px;align-items:center;white-space:nowrap}
+.s-on .s-tabmain{color:var(--text);padding-right:4px}
+.s-tabmain b{font-weight:680;color:var(--text)}
+.s-x{background:none;border:0;color:var(--muted);width:36px;height:44px;display:grid;place-items:center;padding:0}
+.s-pop{position:absolute;bottom:102px;background:var(--raised);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.22);padding:6px;width:236px;display:flex;flex-direction:column}
+.s-pop h3{margin:6px 10px 4px;font-size:13px;font-weight:560;color:var(--muted)}
+.s-item{display:flex;align-items:center;gap:10px;height:44px;padding:0 10px;border-radius:8px;border:0;background:none;color:var(--text);font:inherit;font-size:15px;text-align:left}
+.s-item.s-here{background:var(--sel)}
+.s-item span.s-grow{flex:1}
+.s-dot{width:8px;height:8px;border-radius:4px;background:var(--accent);flex:none;margin-left:-4px}
+.s-sep{height:1px;background:var(--border);margin:4px 6px}
+</style>
+</helmet>
+<div class="{{rootClass}}">
+  <sc-if value="{{half}}" hint-placeholder-val="{{true}}">
+  <div class="s-term">
+<pre class="s-tt"><span class="s-g">●</span> Mars also has a fresh [Unreleased] entry
+  from #240, merged a few minutes ago.
+
+  Waiting for the coder spawn · 3s
+  ⎿  $ meridian spawn wait (4s · 4 lines)
+
+<span class="s-a">* Sock-hopping… (14m 57s · ↓ 11.9k tokens)</span>
+<span class="s-dim">──────────────────────────── tech-lead ─</span>
+›
+<span class="s-dim">──────────────────────────────────────────</span></pre>
+  </div>
+  <div class="s-scrim"></div>
+  </sc-if>
+
+  <div class="{{sheetClass}}">
+    <div class="s-handle"></div>
+    <div class="s-head">
+<sc-if value="{{half}}" hint-placeholder-val="{{true}}">      <button class="s-ib" aria-label="Home"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg></button></sc-if><sc-if value="{{full}}" hint-placeholder-val="{{false}}"><button class="s-ib" aria-label="Back to Home"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button></sc-if>
+      <label class="s-search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Find a session</label>
+    </div>
+    <sc-if value="{{isList}}" hint-placeholder-val="{{true}}">
+      <div class="s-list">
+        <sc-for list="{{groups}}" as="g" hint-placeholder-count="1">
+          <div class="s-host"><b>{{g.name}}</b><span class="{{g.statusClass}}">{{g.status}}</span><span>{{g.meta}}</span></div>
+          <sc-for list="{{g.sessions}}" as="s" hint-placeholder-count="7">
+            <button class="{{s.rowClass}}"><sc-if value="{{s.bell}}" hint-placeholder-val="{{false}}"><span class="s-dot"></span></sc-if><span class="s-name">{{s.name}}</span><span class="s-cmd">{{s.cmd}}</span><span class="s-wins">{{s.wins}}</span><sc-if value="{{s.open}}" hint-placeholder-val="{{false}}"><span class="s-tag">{{s.tag}}</span></sc-if></button>
+          </sc-for>
+        </sc-for>
+      </div>
+    </sc-if>
+    <sc-if value="{{isGrid}}" hint-placeholder-val="{{false}}">
+      <div class="s-host"><b>pop-os</b><span class="s-live">live</span><span>· 9 sessions · 3 open</span></div>
+      <div class="s-grid">
+        <sc-for list="{{sessions}}" as="s" hint-placeholder-count="8">
+          <button class="{{s.tileClass}}"><span class="s-top"><span class="s-name">{{s.name}}</span><sc-if value="{{s.open}}" hint-placeholder-val="{{false}}"><span class="s-tag">{{s.tag}}</span></sc-if></span><span class="s-cmd">{{s.cmd}} · {{s.wins}}</span></button>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{half}}" hint-placeholder-val="{{true}}">
+    <div class="s-bar">
+      <div class="s-tabs">
+        <div class="s-tab s-on">
+          <button class="s-tabmain" aria-label="a1 python, the tab on screen"><b>a1</b> python</button>
+          <button class="s-x" aria-label="Close tab a1 (the session keeps running)" title="Close tab (the session keeps running)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <div class="s-tab"><button class="s-tabmain"><b>g3</b> bash</button></div>
+        <div class="s-tab"><button class="s-tabmain"><b>b1</b> claude</button></div>
+      </div>
+      <button class="s-ib" aria-label="New tab"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    </div>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{showWindows}}" hint-placeholder-val="{{false}}">
+    <div class="s-pop" style="left: 12px">
+      <h3>Windows in a1</h3>
+      <button class="s-item s-here"><span class="s-grow">1  python</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg></button>
+      <button class="s-item"><span class="s-grow">2  zsh</span></button>
+      <div class="s-sep"></div>
+      <button class="s-item"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New window</button>
+    </div>
+  </sc-if>
+  <sc-if value="{{showNew}}" hint-placeholder-val="{{false}}">
+    <div class="s-pop" style="right: 12px">
+      <button class="s-item"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New session…</button>
+      <button class="s-item"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Browse files</button>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"layout":{"editor":"enum","options":["list","grid"],"default":"list"},"overlay":{"editor":"enum","options":["none","windows","new"],"default":"none"},"hosts":{"editor":"enum","options":["one","two"],"default":"one"},"height":{"editor":"enum","options":["half","full"],"default":"half"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const layout = this.props.layout ?? 'list';
+    const overlay = this.props.overlay ?? 'none';
+    const raw = [
+      ['a1', 'python', 2, 'here'], ['g3', 'bash', 1, 'open'], ['b1', 'claude', 1, 'open'],
+      ['a2', 'claude', 1, ''], ['a3', 'bash', 1, ''], ['b2', 'node', 3, ''],
+      ['b3', 'bash', 1, ''], ['c1', 'claude', 1, ''], ['c2', 'zsh', 1, '']
+    ];
+    const sessions = raw.map(function (r) {
+      return {
+        name: r[0], cmd: r[1], wins: r[2] + (r[2] === 1 ? ' window' : ' windows'),
+        open: r[3] !== '', tag: r[3], bell: r[0] === 'b1' || r[0] === 'c1',
+        rowClass: r[3] === 'here' ? 's-row s-here' : 's-row',
+        tileClass: r[3] === 'here' ? 's-tile s-here' : 's-tile'
+      };
+    });
+    const two = (this.props.hosts ?? 'one') === 'two';
+    const mac = [['dev', 'zsh', 1, ''], ['notes', 'nvim', 2, '']].map(function (r) {
+      return { name: r[0], cmd: r[1], wins: r[2] + (r[2] === 1 ? ' window' : ' windows'), open: false, tag: '', rowClass: 's-row' };
+    });
+    const groups = two
+      ? [
+          { name: 'pop-os', status: 'live', statusClass: 's-live', meta: '· 9 sessions · 3 open', sessions: sessions.slice(0, 4) },
+          { name: 'jimmys-macbook-air', status: 'live', statusClass: 's-live', meta: '· 2 sessions', sessions: mac }
+        ]
+      : [{ name: 'pop-os', status: 'live', statusClass: 's-live', meta: '· 9 sessions · 3 open', sessions: sessions }];
+    return {
+      sheetClass: (this.props.height ?? 'half') === 'full' ? 's-sheet s-full' : 's-sheet',
+      half: (this.props.height ?? 'half') !== 'full',
+      full: (this.props.height ?? 'half') === 'full',
+      groups: groups,
+      rootClass: 's-phone t-' + theme,
+      isList: layout === 'list',
+      isGrid: layout === 'grid',
+      showWindows: overlay === 'windows',
+      showNew: overlay === 'new',
+      sessions: sessions
+    };
+  }
+}
+</script>
+</body>
+</html>

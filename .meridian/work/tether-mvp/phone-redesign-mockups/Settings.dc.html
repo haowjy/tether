@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings on the phone</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.t-light{--bg:#eef0f4;--raised:#ffffff;--term-bg:#fafbfc;--hover:#e3e6ec;--sel:#dce7fb;--text:#171a21;--muted:#545a67;--border:#d6dae2;--accent:#2a5ec0;--onaccent:#ffffff;--term-fg:#262a33;--term-dim:#6d7380;--green:#2c7a47;--amber:#8a5900;--blue:#2a5ec0;--kb:#d0d3da;--scrim:rgba(20,24,33,.32);--danger:#b3261e}
+.t-dark{--bg:#0d0d0d;--raised:#171717;--term-bg:#000000;--hover:#242424;--sel:#1b2738;--text:#ececec;--muted:#a0a0a0;--border:#2d2d2d;--accent:#7db7f2;--onaccent:#0a1726;--term-fg:#d9d9d9;--term-dim:#8a8a8a;--green:#72d38f;--amber:#e6b85c;--blue:#7db7f2;--kb:#2a2a2c;--scrim:rgba(0,0,0,.6);--danger:#ff8a80}
+.g-phone{width:390px;height:844px;overflow:hidden;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif}
+.g-top{padding:50px 4px 0;display:flex;align-items:center;gap:2px}
+.g-back{width:44px;height:44px;border:0;background:none;color:var(--accent);display:grid;place-items:center;padding:0}
+.g-title{margin:0;font-size:17px;font-weight:680}
+.g-body{flex:1;min-height:0;overflow:hidden;padding:8px 16px;display:flex;flex-direction:column;gap:14px}
+.g-sec h2{margin:0 4px 6px;font-size:13px;font-weight:560;color:var(--muted)}
+.g-card{background:var(--raised);border-radius:12px;overflow:hidden}
+.g-row{display:flex;align-items:center;gap:10px;width:100%;min-height:48px;padding:0 14px;border:0;background:none;color:var(--text);font:inherit;font-size:16px;text-align:left;box-sizing:border-box}
+.g-row + .g-row{border-top:1px solid var(--border)}
+.g-grow{flex:1}
+.g-danger{color:var(--danger)}
+.g-seg{display:flex;background:var(--hover);border-radius:10px;padding:3px;gap:3px;margin:10px 14px}
+.g-seg button{flex:1;height:36px;border:0;border-radius:8px;background:none;color:var(--text);font:inherit;font-size:15px}
+.g-seg button[aria-pressed="true"]{background:var(--raised);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.g-label{padding:12px 14px 0;font-size:16px}
+.g-cap{padding:0 14px 12px;font-size:13px;color:var(--muted)}
+.g-step{display:flex;align-items:center;gap:6px}
+.g-step button{width:44px;height:36px;border:0;border-radius:8px;background:var(--hover);color:var(--text);font:inherit;font-size:15px}
+.g-step span{min-width:44px;text-align:center}
+</style>
+</helmet>
+<div class="{{rootClass}}">
+  <div class="g-top">
+    <button class="g-back" aria-label="Back to Home"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <h1 class="g-title">Settings</h1>
+  </div>
+  <div class="g-body">
+    <section class="g-sec">
+      <h2>Appearance</h2>
+      <div class="g-card">
+        <div class="g-seg" role="group" aria-label="Appearance">
+          <button aria-pressed="{{sysOn}}">System</button><button aria-pressed="false">Light</button><button aria-pressed="{{darkOn}}">Dark</button>
+        </div>
+        <div class="g-row" style="border-top: 1px solid var(--border)"><span class="g-grow">Terminal text</span><span class="g-step"><button aria-label="Smaller text">A−</button><span>12 pt</span><button aria-label="Larger text">A+</button></span></div>
+      </div>
+    </section>
+    <sc-if value="{{app}}" hint-placeholder-val="{{true}}">
+      <section class="g-sec">
+        <h2>Face ID</h2>
+        <div class="g-card">
+          <div class="g-label">Ask again after leaving the app for</div>
+          <div class="g-seg" role="group" aria-label="Ask for Face ID again after">
+            <button aria-pressed="false">5 min</button><button aria-pressed="true">1 hour</button><button aria-pressed="false">At launch</button>
+          </div>
+          <div class="g-cap">At launch: Face ID only when the app starts.</div>
+        </div>
+      </section>
+    </sc-if>
+    <sc-if value="{{web}}" hint-placeholder-val="{{false}}">
+      <section class="g-sec">
+        <h2>Install</h2>
+        <div class="g-card"><button class="g-row">Add to Home Screen</button></div>
+      </section>
+    </sc-if>
+    <section class="g-sec">
+      <h2>This phone</h2>
+      <div class="g-card">
+        <button class="g-row g-danger">Clear drafts and saved tabs</button>
+      </div>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"surface":{"editor":"enum","options":["app","safari"],"default":"app"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const web = (this.props.surface ?? 'app') === 'safari';
+    return {
+      rootClass: 'g-phone t-' + theme,
+      sysOn: theme === 'light' ? 'true' : 'false',
+      darkOn: theme === 'dark' ? 'true' : 'false',
+      app: !web,
+      web: web
+    };
+  }
+}
+</script>
+</body>
+</html>

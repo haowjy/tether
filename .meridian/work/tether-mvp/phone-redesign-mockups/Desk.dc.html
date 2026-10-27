@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tether on the desktop</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.t-light{--bg:#eef0f4;--raised:#ffffff;--term-bg:#fafbfc;--hover:#e3e6ec;--sel:#dce7fb;--text:#171a21;--muted:#545a67;--border:#d6dae2;--accent:#2a5ec0;--onaccent:#ffffff;--term-fg:#262a33;--term-dim:#6d7380;--green:#2c7a47;--amber:#8a5900;--blue:#2a5ec0;--kb:#d0d3da;--scrim:rgba(20,24,33,.32);--danger:#b3261e}
+.t-dark{--bg:#0d0d0d;--raised:#171717;--term-bg:#000000;--hover:#242424;--sel:#1b2738;--text:#ececec;--muted:#a0a0a0;--border:#2d2d2d;--accent:#7db7f2;--onaccent:#0a1726;--term-fg:#d9d9d9;--term-dim:#8a8a8a;--green:#72d38f;--amber:#e6b85c;--blue:#7db7f2;--kb:#2a2a2c;--scrim:rgba(0,0,0,.6);--danger:#ff8a80}
+.d-win{width:1280px;height:800px;position:relative;overflow:hidden;display:flex;flex-direction:column;background:var(--term-bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;font-size:14px}
+.d-top{height:44px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px;background:var(--raised);border-bottom:1px solid var(--border)}
+.d-ib{flex:none;width:32px;height:32px;border-radius:8px;border:0;background:none;color:var(--muted);display:grid;place-items:center;padding:0}
+.d-ib.d-on{background:var(--sel);color:var(--text)}
+.d-tabs{display:flex;gap:4px;min-width:0}
+.d-tab{display:flex;align-items:center;height:32px;border-radius:8px}
+.d-tab.d-on{background:var(--sel)}
+.d-tabmain{background:none;border:0;font:inherit;color:var(--muted);height:32px;padding:0 12px;display:flex;gap:6px;align-items:center;white-space:nowrap}
+.d-on .d-tabmain{color:var(--text);padding-right:2px}
+.d-tabmain b{font-weight:680;color:var(--text)}
+.d-x{background:none;border:0;color:var(--muted);width:28px;height:32px;display:grid;place-items:center;padding:0}
+.d-host{margin-left:auto;display:flex;gap:6px;align-items:baseline;color:var(--muted);padding-right:8px}
+.d-host b{color:var(--text);font-weight:600}
+.d-live{color:var(--green);font-weight:560}
+.d-term{flex:1;min-height:0;overflow:hidden;padding:12px 16px;display:flex;flex-direction:column;justify-content:flex-end}
+.d-tt{margin:0;font:13px/1.45 ui-monospace,"SF Mono",Menlo,monospace;color:var(--term-fg);white-space:pre}
+.d-dim{color:var(--term-dim)}.d-g{color:var(--green)}.d-a{color:var(--amber)}.d-b{color:var(--blue)}
+.d-cur{display:inline-block;width:7.8px;height:16px;vertical-align:-3px;background:var(--accent)}
+.d-pop{position:absolute;top:40px;left:440px;width:400px;background:var(--raised);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.35);padding:8px;display:flex;flex-direction:column;gap:4px}
+.d-search{height:36px;border-radius:8px;background:var(--bg);box-shadow:inset 0 0 0 2px var(--accent);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--muted)}
+.d-hostrow{display:flex;gap:8px;align-items:baseline;padding:8px 8px 2px;color:var(--muted);font-size:12px}
+.d-hostrow b{color:var(--text);font-size:13px}
+.d-row{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:8px;border:0;background:none;color:var(--text);font:inherit;text-align:left}
+.d-row.d-here{background:var(--sel)}
+.d-name{font-weight:680;min-width:26px}
+.d-cmd{flex:1;color:var(--muted)}
+.d-wins{color:var(--muted);font-size:12px}
+.d-tag{font-size:11px;font-weight:560;color:var(--accent);border:1px solid currentColor;border-radius:5px;padding:0 5px}
+.d-sep{height:1px;background:var(--border);margin:4px 2px}
+.d-act{display:flex;gap:4px}
+.d-act button{flex:1;height:36px;border:0;border-radius:8px;background:var(--bg);color:var(--text);font:inherit;display:flex;gap:6px;align-items:center;justify-content:center}
+.d-files{flex:1;min-height:0;background:var(--raised);display:flex;flex-direction:column}
+.d-pathbar{height:44px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border);color:var(--muted)}
+.d-pathbar b{color:var(--text)}
+.d-pfield{flex:1;height:32px;border-radius:8px;background:var(--bg);display:flex;align-items:center;padding:0 10px;font:13px ui-monospace,"SF Mono",Menlo,monospace}
+.d-table{padding:4px 12px;display:flex;flex-direction:column}
+.d-frow{display:grid;grid-template-columns:28px minmax(0,1fr) 120px 140px;align-items:center;height:36px;padding:0 8px;border-radius:6px;border:0;background:none;color:var(--text);font:inherit;text-align:left}
+.d-frow.d-head{color:var(--muted);font-size:12px;height:28px}
+.d-frow .d-m{color:var(--muted)}
+.d-dir{color:var(--accent);display:grid}
+.d-fil{color:var(--muted);display:grid}
+.d-home{flex:1;min-height:0;background:var(--bg);overflow:hidden;padding:16px}
+.d-col{width:min(720px,100%);margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.d-hhead{display:flex;align-items:center;justify-content:space-between;height:36px}
+.d-hhead h1{margin:0;font-size:15px;font-weight:680}
+.d-chead{display:flex;align-items:baseline;gap:8px;padding:12px 14px 6px}
+.d-chead b{font-size:15px}
+.d-cmeta{color:var(--muted);font-size:12px;margin-left:8px}
+.d-small{margin-left:auto;height:28px;padding:0 12px;border:0;border-radius:6px;background:var(--bg);color:var(--text);font:inherit;align-self:center}
+.d-addsrv{align-self:flex-start;height:36px;border:0;background:none;color:var(--accent);font:inherit;padding:0 4px}
+.d-sec h2{margin:0 4px 6px;font-size:12px;font-weight:560;color:var(--muted)}
+.d-card{background:var(--raised);border-radius:10px;overflow:hidden}
+.d-hrow{display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 14px;border:0;background:none;color:var(--text);font:inherit;text-align:left;box-sizing:border-box}
+.d-hrow + .d-hrow{border-top:1px solid var(--border)}
+.d-grow{flex:1}
+.d-seg{display:inline-flex;background:var(--hover);border-radius:8px;padding:3px;gap:3px}
+.d-seg button{height:28px;padding:0 14px;border:0;border-radius:6px;background:none;color:var(--text);font:inherit}
+.d-seg button[aria-pressed="true"]{background:var(--raised);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.d-add{color:var(--accent)}
+.d-danger{color:var(--danger)}
+</style>
+</helmet>
+<div class="{{rootClass}}">
+  <div class="d-top">
+    <button class="{{homeBtnClass}}" aria-label="Home"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg></button>
+    <div class="d-tabs">
+      <div class="{{tab1Class}}">
+        <button class="d-tabmain"><b>a1</b> python</button>
+        <sc-if value="{{tab1On}}" hint-placeholder-val="{{true}}"><button class="d-x" aria-label="Close tab a1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></sc-if>
+      </div>
+      <div class="d-tab"><button class="d-tabmain"><b>g3</b> bash</button></div>
+      <div class="d-tab"><button class="d-tabmain"><b>b1</b> claude</button></div>
+      <div class="{{filesTabClass}}">
+        <button class="d-tabmain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><b>tether</b></button>
+        <sc-if value="{{filesOn}}" hint-placeholder-val="{{false}}"><button class="d-x" aria-label="Close files tab"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></sc-if>
+      </div>
+    </div>
+    <button class="{{plusClass}}" aria-label="New tab"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    <div class="d-host"><b>pop-os</b><span class="d-live">live</span></div>
+  </div>
+
+  <sc-if value="{{showTerm}}" hint-placeholder-val="{{true}}">
+    <div class="d-term">
+<pre class="d-tt"><span class="d-dim">  Searched for 1 pattern</span>
+
+<span class="d-g">●</span> The script is stdlib-only Python, so it can be ported as-is. I'm setting up the worktree and the PR
+  draft, then writing the coder's brief.
+
+<span class="d-dim">  Ran 2 shell commands</span>
+
+<span class="d-g">●</span> Mars also has a fresh <span class="d-b">[Unreleased]</span> entry from #240, which merged a few minutes ago. The port has to
+  carry it into the next release, so it goes in the brief. Writing the brief now:
+
+<span class="d-g">●</span> <b>Write</b>(~/.meridian/git/haowjy-meridian-cli-docs/work/post-0-19-followups/prompts/mars-pr-body-changelog.md)
+  ⎿  Wrote <b>52</b> lines to ~/.meridian/git/haowjy-meridian-cli-docs/work/post-0-19-followups/prompts/mars-pr-body-changelog.md
+     … +142 lines
+
+  Waiting for the coder spawn · 3s
+  ⎿  $ meridian spawn wait (4s · 4 lines)
+     (ctrl+b ctrl+b (twice) to run in background)
+
+<span class="d-a">* Sock-hopping… (14m 57s · ↓ 11.9k tokens)</span>                                       <span class="d-g">✔ Update installed · Restart to update</span>
+<span class="d-dim">─────────────────────────────────────────────────────────────────────────────────────────────────────── tech-lead ─</span>
+› <span class="d-cur"></span>
+<span class="d-dim">─────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+  <span class="d-g">Opus 5.5</span> 11%/1000k  5h 19%  7d 58%  CW 59m  c9182 <span class="d-b">main</span>
+  <span class="d-a">▸▸ bypass permissions on</span> · 2 shells</pre>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{showFiles}}" hint-placeholder-val="{{false}}">
+    <div class="d-files">
+      <div class="d-pathbar"><span class="d-pfield">~/repos/<b>tether</b></span></div>
+      <div class="d-table">
+        <div class="d-frow d-head"><span></span><span>Name</span><span>Size</span><span>Modified</span></div>
+        <button class="d-frow" style="color: var(--accent)"><span class="d-dir"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></span><span>repos</span><span></span><span></span></button>
+        <sc-for list="{{entries}}" as="e" hint-placeholder-count="10">
+          <button class="d-frow"><span class="{{e.icoClass}}"><sc-if value="{{e.dir}}" hint-placeholder-val="{{true}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></sc-if><sc-if value="{{e.file}}" hint-placeholder-val="{{false}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg></sc-if></span><span>{{e.name}}</span><span class="d-m">{{e.size}}</span><span class="d-m">{{e.when}}</span></button>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{showHome}}" hint-placeholder-val="{{false}}">
+    <div class="d-home">
+      <div class="d-col">
+        <div class="d-hhead"><h1>tether</h1><button class="d-ib" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button></div>
+        <div class="d-card">
+          <div class="d-chead"><b>pop-os</b><span class="d-live">live</span><span class="d-cmeta">Open in tabs</span></div>
+          <sc-for list="{{openTabs}}" as="t" hint-placeholder-count="3">
+            <button class="d-hrow"><span class="d-name">{{t.name}}</span><span class="d-cmd">{{t.cmd}}</span><span class="d-wins">{{t.wins}}</span></button>
+          </sc-for>
+          <button class="d-hrow d-add"><span class="d-grow">All 9 sessions</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+          <button class="d-hrow d-add"><span class="d-grow">Files</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        </div>
+        <div class="d-card">
+          <div class="d-chead"><b>jimmys-macbook-air</b><span style="color: var(--muted)">offline</span><span class="d-cmeta">Last reached 2 hours ago</span><button class="d-small">Retry</button></div>
+        </div>
+        <button class="d-addsrv">+ Add server</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{showSettings}}" hint-placeholder-val="{{false}}">
+    <div class="d-home">
+      <div class="d-col">
+        <div class="d-hhead" style="justify-content: flex-start; gap: 4px"><button class="d-ib" aria-label="Back to Home"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button><h1>Settings</h1></div>
+        <section class="d-sec">
+          <h2>Appearance</h2>
+          <div class="d-card">
+            <div class="d-hrow"><span class="d-grow">Theme</span><span class="d-seg" role="group" aria-label="Theme"><button aria-pressed="false">System</button><button aria-pressed="{{lightOn}}">Light</button><button aria-pressed="{{darkOn}}">Dark</button></span></div>
+            <div class="d-hrow"><span class="d-grow">Terminal text</span><span class="d-seg" role="group" aria-label="Terminal text size"><button aria-label="Smaller text">A−</button><button aria-pressed="true">13 px</button><button aria-label="Larger text">A+</button></span></div>
+          </div>
+        </section>
+        <section class="d-sec">
+          <h2>This browser</h2>
+          <div class="d-card">
+            <button class="d-hrow d-danger">Clear drafts and saved tabs</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{showPicker}}" hint-placeholder-val="{{false}}">
+    <div class="d-pop" role="dialog" aria-label="Open a tab">
+      <label class="d-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Find a session</label>
+      <div class="d-hostrow"><b>pop-os</b><span class="d-live">live</span><span>9 sessions · 3 open</span></div>
+      <sc-for list="{{sessions}}" as="s" hint-placeholder-count="9">
+        <button class="{{s.rowClass}}"><span class="d-name">{{s.name}}</span><span class="d-cmd">{{s.cmd}}</span><span class="d-wins">{{s.wins}}</span><sc-if value="{{s.open}}" hint-placeholder-val="{{false}}"><span class="d-tag">{{s.tag}}</span></sc-if></button>
+      </sc-for>
+      <div class="d-sep"></div>
+      <div class="d-act">
+        <button><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New session…</button>
+        <button><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Browse files</button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"view":{"editor":"enum","options":["terminal","picker","files","home","settings"],"default":"terminal"},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'dark';
+    const view = this.props.view ?? 'terminal';
+    const files = view === 'files';
+    const home = view === 'home';
+    const settings = view === 'settings';
+    const tab1 = !files && !home && !settings;
+    const raw = [
+      ['a1', 'python', 2, 'here'], ['g3', 'bash', 1, 'open'], ['b1', 'claude', 1, 'open'],
+      ['a2', 'claude', 1, ''], ['a3', 'bash', 1, ''], ['b2', 'node', 3, ''],
+      ['b3', 'bash', 1, ''], ['c1', 'claude', 1, ''], ['c2', 'zsh', 1, '']
+    ];
+    const ents = [
+      ['docs', true, '—', 'today'], ['ios', true, '—', 'today'], ['scripts', true, '—', '2 days ago'],
+      ['src', true, '—', 'today'], ['web', true, '—', 'today'], ['AGENTS.md', false, '3 KB', '2 days ago'],
+      ['CHANGELOG.md', false, '9 KB', '1 hour ago'], ['Cargo.toml', false, '2 KB', '4 days ago'],
+      ['README.md', false, '6 KB', '2 days ago'], ['rust-toolchain.toml', false, '96 B', '6 days ago']
+    ];
+    return {
+      rootClass: 'd-win t-' + theme,
+      showTerm: view === 'terminal' || view === 'picker',
+      showPicker: view === 'picker',
+      showFiles: files,
+      showHome: home,
+      showSettings: settings,
+      openTabs: [['a1','python',2],['g3','bash',1],['b1','claude',1]].map(function (r) { return { name: r[0], cmd: r[1], wins: r[2] + (r[2] === 1 ? ' window' : ' windows') }; }),
+      homeBtnClass: home || settings ? 'd-ib d-on' : 'd-ib',
+      tab1Class: tab1 ? 'd-tab d-on' : 'd-tab',
+      tab1On: tab1,
+      filesTabClass: files ? 'd-tab d-on' : 'd-tab',
+      filesOn: files,
+      plusClass: view === 'picker' ? 'd-ib d-on' : 'd-ib',
+      lightOn: theme === 'light' ? 'true' : 'false',
+      darkOn: theme === 'dark' ? 'true' : 'false',
+      sessions: raw.map(function (r) {
+        return { name: r[0], cmd: r[1], wins: r[2] + (r[2] === 1 ? ' window' : ' windows'), open: r[3] !== '', tag: r[3], rowClass: r[3] === 'here' ? 'd-row d-here' : 'd-row' };
+      }),
+      entries: ents.map(function (e) {
+        return { name: e[0], dir: e[1], file: !e[1], size: e[2], when: e[3], icoClass: e[1] ? 'd-dir' : 'd-fil' };
+      })
+    };
+  }
+}
+</script>
+</body>
+</html>

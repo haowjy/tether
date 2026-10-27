@@ -1,0 +1,285 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-27T17:30:00Z"
+  },
+  "title": "tether phone redesign",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 terminal, keyboard down"
+    },
+    "AppTyping.dc.html": {
+      "x": 470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 keyboard up, typing to tmux"
+    },
+    "AppComposing.dc.html": {
+      "x": 940,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 keyboard up, composing a line"
+    },
+    "Sheet.dc.html": {
+      "x": 1410,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 sessions sheet (tap the active tab)"
+    },
+    "SheetGrid.dc.html": {
+      "x": 1880,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 sessions sheet (grid, to compare)"
+    },
+    "SheetNew.dc.html": {
+      "x": 2820,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 + : new session or files"
+    },
+    "SheetTwoHosts.dc.html": {
+      "x": 3290,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 sessions from two servers"
+    },
+    "Files.dc.html": {
+      "x": 3760,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 files as a tab"
+    },
+    "Home.dc.html": {
+      "x": 4230,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 Home, two servers"
+    },
+    "Settings.dc.html": {
+      "x": 6580,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 Settings (gear on Home)"
+    },
+    "DarkTerminal.dc.html": {
+      "x": 0,
+      "y": 1300,
+      "w": 390,
+      "h": 844,
+      "title": "Dark \u00b7 terminal"
+    },
+    "DarkTyping.dc.html": {
+      "x": 470,
+      "y": 1300,
+      "w": 390,
+      "h": 844,
+      "title": "Dark \u00b7 keyboard up"
+    },
+    "DarkSheet.dc.html": {
+      "x": 940,
+      "y": 1300,
+      "w": 390,
+      "h": 844,
+      "title": "Dark \u00b7 sessions sheet"
+    },
+    "DarkHome.dc.html": {
+      "x": 1410,
+      "y": 1300,
+      "w": 390,
+      "h": 844,
+      "title": "Dark \u00b7 Home"
+    },
+    "WebTerminal.dc.html": {
+      "x": 0,
+      "y": 2600,
+      "w": 390,
+      "h": 844,
+      "title": "Safari \u00b7 terminal, keyboard down"
+    },
+    "WebTyping.dc.html": {
+      "x": 470,
+      "y": 2600,
+      "w": 390,
+      "h": 844,
+      "title": "Safari \u00b7 keyboard up (form bar)"
+    },
+    "WebHome.dc.html": {
+      "x": 940,
+      "y": 2600,
+      "w": 390,
+      "h": 844,
+      "title": "Safari \u00b7 Home"
+    },
+    "Desk.dc.html": {
+      "x": 0,
+      "y": 3900,
+      "w": 1280,
+      "h": 800,
+      "title": "Desktop \u00b7 terminal"
+    },
+    "DeskPicker.dc.html": {
+      "x": 1360,
+      "y": 3900,
+      "w": 1280,
+      "h": 800,
+      "title": "Desktop \u00b7 + opens sessions"
+    },
+    "DeskFiles.dc.html": {
+      "x": 2720,
+      "y": 3900,
+      "w": 1280,
+      "h": 800,
+      "title": "Desktop \u00b7 files tab"
+    },
+    "DeskHome.dc.html": {
+      "x": 4080,
+      "y": 3900,
+      "w": 1280,
+      "h": 800,
+      "title": "Desktop \u00b7 Home: your servers"
+    },
+    "HomeOne.dc.html": {
+      "x": 5170,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 Home, one server"
+    },
+    "HomeNoSessions.dc.html": {
+      "x": 5640,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 Home, no sessions / tmux off"
+    },
+    "HomeEmpty.dc.html": {
+      "x": 6110,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "App \u00b7 Home, no servers yet"
+    },
+    "HomeAllSessions.dc.html": {
+      "x": 4230,
+      "y": -1300,
+      "w": 390,
+      "h": 844,
+      "title": "From Home \u00b7 All 9 sessions (full height)"
+    },
+    "FilePreview.dc.html": {
+      "x": 5170,
+      "y": -1300,
+      "w": 390,
+      "h": 844,
+      "title": "Files \u00b7 Markdown preview"
+    },
+    "DeskSettings.dc.html": {
+      "x": 5440,
+      "y": 3900,
+      "w": 1280,
+      "h": 800,
+      "title": "Desktop \u00b7 Settings (gear on Home)"
+    },
+    "AppReconnecting.dc.html": {
+      "x": 3290,
+      "y": -1300,
+      "w": 390,
+      "h": 844,
+      "title": "Cold open \u00b7 last tab, reconnecting"
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "AppTyping.dc.html",
+    "AppComposing.dc.html",
+    "Sheet.dc.html",
+    "SheetGrid.dc.html",
+    "SheetNew.dc.html",
+    "SheetTwoHosts.dc.html",
+    "Files.dc.html",
+    "Home.dc.html",
+    "HomeOne.dc.html",
+    "HomeNoSessions.dc.html",
+    "HomeEmpty.dc.html",
+    "Settings.dc.html",
+    "DarkTerminal.dc.html",
+    "DarkTyping.dc.html",
+    "DarkSheet.dc.html",
+    "DarkHome.dc.html",
+    "WebTerminal.dc.html",
+    "WebTyping.dc.html",
+    "WebHome.dc.html",
+    "Desk.dc.html",
+    "DeskPicker.dc.html",
+    "DeskFiles.dc.html",
+    "DeskHome.dc.html",
+    "HomeAllSessions.dc.html",
+    "FilePreview.dc.html",
+    "DeskSettings.dc.html",
+    "AppReconnecting.dc.html"
+  ],
+  "notes": {
+    "rowApp": {
+      "x": 0,
+      "y": -300,
+      "text": "iPhone app \u00b7 light",
+      "kind": "title1",
+      "maxW": 6970
+    },
+    "rowDark": {
+      "x": 0,
+      "y": 1000,
+      "text": "iPhone app \u00b7 dark (classic terminal)",
+      "kind": "title1",
+      "maxW": 1800
+    },
+    "rowWeb": {
+      "x": 0,
+      "y": 2300,
+      "text": "Phone browser (Safari / PWA)",
+      "kind": "title1",
+      "maxW": 1330
+    },
+    "rowDesk": {
+      "x": 0,
+      "y": 3600,
+      "text": "Desktop browser",
+      "kind": "title1",
+      "maxW": 6720
+    },
+    "rowFlow": {
+      "x": 4230,
+      "y": -1600,
+      "text": "Where Home leads",
+      "kind": "title1",
+      "maxW": 1330
+    },
+    "flowNote": {
+      "x": 4700,
+      "y": -1300,
+      "text": "Files \u203a opens the Files tab (top row, \"App \u00b7 files as a tab\"): folders one at a time, path field to jump. Tap a file \u2192 its preview (right).",
+      "w": 390,
+      "size": "m"
+    }
+  },
+  "designSystems": []
+}

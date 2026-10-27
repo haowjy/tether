@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Markdown preview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.t-light{--bg:#eef0f4;--raised:#ffffff;--text:#171a21;--muted:#545a67;--border:#d6dae2;--accent:#2a5ec0;--sel:#dce7fb;--code:#f3f4f7;--amber:#8a5900}
+.t-dark{--bg:#0d0d0d;--raised:#171717;--text:#ececec;--muted:#a0a0a0;--border:#2d2d2d;--accent:#7db7f2;--sel:#1b2738;--code:#0f0f0f;--amber:#e6b85c}
+.p-phone{width:390px;height:844px;overflow:hidden;display:flex;flex-direction:column;background:var(--raised);color:var(--text);font-family:system-ui,-apple-system,sans-serif}
+.p-top{padding:54px 12px 8px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)}
+.p-ib{flex:none;width:44px;height:44px;border-radius:12px;border:0;background:var(--bg);color:var(--text);display:grid;place-items:center;padding:0}
+.p-name{flex:1;min-width:0;font:15px ui-monospace,"SF Mono",Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-name span{color:var(--muted)}
+.p-doc{flex:1;min-height:0;overflow:hidden;padding:16px 20px;font-size:16px;line-height:1.5}
+.p-doc h1{font-size:26px;margin:0 0 8px;line-height:1.2}
+.p-doc h2{font-size:19px;margin:20px 0 6px}
+.p-doc p{margin:0 0 12px}
+.p-doc ul{margin:0 0 12px;padding-left:22px}
+.p-doc a{color:var(--accent)}
+.p-doc code{font:14px ui-monospace,"SF Mono",Menlo,monospace;background:var(--code);padding:1px 5px;border-radius:4px}
+.p-pre{margin:0 0 12px;background:var(--code);border-radius:8px;padding:10px 12px;font:13px/1.45 ui-monospace,"SF Mono",Menlo,monospace;white-space:pre;overflow:hidden}
+.p-mm{border:1px dashed var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px}
+.p-box{border:1.5px solid var(--accent);border-radius:8px;padding:6px 12px;font-size:14px;background:var(--sel)}
+.p-arrow{color:var(--muted);font-size:14px;line-height:1}
+.p-cap{font-size:12px;color:var(--muted)}
+.p-ib2{flex:none;width:44px;height:44px;border-radius:12px;border:0;background:var(--bg);color:var(--text);display:grid;place-items:center;padding:0}
+.p-cur{flex:1;min-width:0;height:44px;border:0;border-radius:12px;background:var(--bg);color:var(--text);font:inherit;font-size:15px;padding:0 12px 0 14px;display:flex;gap:8px;align-items:center;text-align:left}
+.p-curname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-curname b{font-weight:680}
+.p-curmeta{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;white-space:nowrap}
+.p-dot{width:8px;height:8px;border-radius:4px;background:var(--accent)}
+.p-bar{background:var(--raised);border-top:1px solid var(--border);padding:8px 12px 34px;display:flex;gap:8px;align-items:center}
+.p-tabs{flex:1;min-width:0;display:flex;gap:8px;overflow:hidden;-webkit-mask-image:linear-gradient(to right,#000 78%,transparent);mask-image:linear-gradient(to right,#000 78%,transparent)}
+.p-tab{flex:none;height:44px;border:0;border-radius:12px;background:var(--bg);color:var(--muted);font:inherit;font-size:15px;padding:0 14px;display:flex;gap:6px;align-items:center;white-space:nowrap}
+.p-tab b{font-weight:680;color:var(--text)}
+.p-tab.p-on{background:var(--sel);color:var(--text)}
+</style>
+</helmet>
+<div class="{{rootClass}}">
+  <div class="p-top">
+    <button class="p-ib" aria-label="Back to the folder"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <div class="p-name"><span>~/repos/tether/</span>README.md</div>
+    <button class="p-ib" aria-label="Show the source"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg></button>
+  </div>
+  <div class="p-doc">
+    <h1>tether</h1>
+    <p>Phone-first client for tmux on a dev server, over Tailscale. A Rust daemon bridges tmux control mode to a native iOS app.</p>
+    <h2>Build from source</h2>
+<pre class="p-pre">scripts/preflight.sh full
+cargo run -- --version</pre>
+    <p>Then run <code>tether setup</code> and follow <a href="#">docs/setup.md</a>.</p>
+    <h2>How it fits</h2>
+    <div class="p-mm">
+      <span class="p-box">iPhone app</span><span class="p-arrow">↓ HTTPS + WebSocket</span>
+      <span class="p-box">tether daemon</span><span class="p-arrow">↓ tmux -C</span>
+      <span class="p-box">your tmux</span>
+      <span class="p-cap">Mermaid, rendered (pinch to zoom, drag to pan)</span>
+    </div>
+  </div>
+  <div class="p-bar">
+    <button class="p-cur" aria-label="tether files, 4 tabs, b1 rang. Open the sessions sheet"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="p-curname"><b>tether</b> files</span><span class="p-curmeta"><span class="p-dot"></span>4 tabs</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return { rootClass: 'p-phone t-' + (this.props.theme ?? 'light') }; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Terminal on the phone</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.t-light{--bg:#eef0f4;--raised:#ffffff;--term-bg:#fafbfc;--hover:#e3e6ec;--sel:#dce7fb;--text:#171a21;--muted:#545a67;--border:#d6dae2;--accent:#2a5ec0;--onaccent:#ffffff;--term-fg:#262a33;--term-dim:#6d7380;--green:#2c7a47;--amber:#8a5900;--blue:#2a5ec0;--kb:#d0d3da;--scrim:rgba(20,24,33,.32);--danger:#b3261e;--cursor:#2a5ec0;--warnbg:#fbefd5}
+.t-dark{--bg:#0d0d0d;--raised:#171717;--term-bg:#000000;--hover:#242424;--sel:#1b2738;--text:#ececec;--muted:#a0a0a0;--border:#2d2d2d;--accent:#7db7f2;--onaccent:#0a1726;--term-fg:#d9d9d9;--term-dim:#8a8a8a;--green:#72d38f;--amber:#e6b85c;--blue:#7db7f2;--kb:#2a2a2c;--scrim:rgba(0,0,0,.6);--danger:#ff8a80;--cursor:#e6e6e6;--warnbg:#3a2c0e}
+.m-phone{width:390px;height:844px;position:relative;overflow:hidden;display:flex;flex-direction:column;background:var(--term-bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif}
+.m-term{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:54px 14px 8px;background:var(--term-bg);position:relative}
+.m-tt{margin:0;font:12px/1.45 ui-monospace,"SF Mono",Menlo,monospace;color:var(--term-fg);white-space:pre}
+.m-dim{color:var(--term-dim)}.m-g{color:var(--green)}.m-a{color:var(--amber)}.m-b{color:var(--blue)}
+.m-cur{display:inline-block;width:7.2px;height:15px;vertical-align:-3px}
+.m-solid{background:var(--cursor)}
+.m-hollow{box-shadow:inset 0 0 0 1.5px var(--cursor)}
+.m-conn{position:absolute;top:54px;left:50%;transform:translateX(-50%);background:var(--warnbg);color:var(--amber);font-size:13px;font-weight:560;padding:5px 12px;border-radius:14px;white-space:nowrap}
+.m-bar{background:var(--raised);border-top:1px solid var(--border);padding:8px 12px 34px;display:flex;gap:8px;align-items:center}
+.m-bar.m-web{padding-bottom:8px}
+.m-tabs{flex:1;min-width:0;display:flex;gap:8px;overflow:hidden;-webkit-mask-image:linear-gradient(to right,#000 78%,transparent);mask-image:linear-gradient(to right,#000 78%,transparent)}
+.m-tab{flex:none;height:44px;border:0;border-radius:12px;background:var(--bg);color:var(--muted);font:inherit;font-size:15px;padding:0 14px;display:flex;gap:6px;align-items:center;white-space:nowrap;position:relative}
+.m-tab b{font-weight:680;color:var(--text)}
+.m-tab.m-on{background:var(--sel);color:var(--text)}
+.m-dot{width:8px;height:8px;border-radius:4px;background:var(--accent);flex:none}
+.m-cur{flex:1;min-width:0;height:44px;border:0;border-radius:12px;background:var(--bg);color:var(--text);font:inherit;font-size:15px;padding:0 12px 0 14px;display:flex;gap:8px;align-items:center;text-align:left}
+.m-curname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m-curname b{font-weight:680}
+.m-curmeta{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;white-space:nowrap}
+.m-dot{width:8px;height:8px;border-radius:4px;background:var(--accent)}
+.m-ib{flex:none;width:44px;height:44px;border-radius:12px;border:0;background:var(--bg);color:var(--text);display:grid;place-items:center;padding:0}
+.m-compose{display:flex;gap:8px;padding:8px 10px 4px;background:var(--raised);border-top:1px solid var(--border);align-items:flex-end}
+.m-field{flex:1;min-width:0;min-height:44px;box-sizing:border-box;border-radius:22px;font:16px/20px system-ui,-apple-system,sans-serif;text-align:left;border:0;background:var(--raised);box-shadow:inset 0 0 0 2px var(--accent);color:var(--text);display:flex;gap:8px;align-items:flex-end;padding:8px 6px 6px 16px}
+.m-txt{flex:1;padding:4px 0}
+.m-caret{display:inline-block;width:2px;height:19px;background:var(--accent);vertical-align:-4px;margin-left:1px}
+.m-send{flex:none;width:32px;height:32px;border-radius:16px;border:0;background:var(--accent);color:var(--onaccent);display:grid;place-items:center;padding:0}
+.m-keyrow{display:flex;align-items:center;gap:2px;padding:2px 8px 6px;background:var(--raised)}
+.m-idle{box-shadow:none;background:var(--bg);color:var(--muted);padding:12px 16px}
+.m-keys{flex:1;min-width:0;display:flex;gap:6px;overflow:hidden;-webkit-mask-image:linear-gradient(to right,#000 85%,transparent);mask-image:linear-gradient(to right,#000 85%,transparent)}
+.m-key{flex:none;min-width:36px;height:38px;padding:0 6px;border-radius:8px;border:0;background:none;color:var(--text);font:15px ui-monospace,"SF Mono",Menlo,monospace}
+.m-key.m-boxkey{color:var(--accent);font-weight:700}
+.m-key.m-tmuxkey{color:var(--muted)}
+.m-sib{flex:none;width:40px;height:38px;border-radius:8px;border:0;background:var(--bg);color:var(--text);display:grid;place-items:center;padding:0}
+.m-kb{height:300px;background:var(--kb);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted);font-size:13px;text-align:center;padding:0 24px}
+.m-kb strong{color:var(--text);font-size:15px;font-weight:560}
+.m-formbar{height:44px;background:var(--kb);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;color:var(--accent);font-size:16px}
+.m-safbar{height:84px;box-sizing:border-box;background:var(--raised);border-top:1px solid var(--border);display:flex;justify-content:center;padding-top:10px}
+.m-url{height:40px;width:300px;border-radius:12px;background:var(--bg);color:var(--muted);font-size:14px;display:grid;place-items:center}
+</style>
+</helmet>
+<div class="{{rootClass}}">
+  <div class="m-term">
+<pre class="m-tt"><span class="m-dim">  Searched for 1 pattern</span>
+
+<span class="m-g">●</span> The script is stdlib-only Python, so it
+  can be ported as-is. Setting up the
+  worktree and the PR draft, then writing
+  the coder's brief.
+
+<span class="m-dim">  Ran 2 shell commands</span>
+
+<span class="m-g">●</span> Mars also has a fresh <span class="m-b">[Unreleased]</span> entry
+  from #240, merged a few minutes ago. The
+  port has to carry it into the next
+  release, so it goes in the brief.
+
+<span class="m-g">●</span> <b>Write</b>(prompts/mars-pr-body-changelog.md)
+  ⎿  Wrote <b>52</b> lines to prompts/mars-pr-bo…
+     … +142 lines
+
+  Waiting for the coder spawn · 3s
+  ⎿  $ meridian spawn wait (4s · 4 lines)
+
+<span class="m-a">* Sock-hopping… (14m 57s · ↓ 11.9k tokens)</span>
+<span class="m-dim">──────────────────────────── tech-lead ─</span>
+› <span class="{{cursorClass}}"></span>
+<span class="m-dim">──────────────────────────────────────────</span>
+  <span class="m-g">Opus 5.5</span> 11%/1000k  5h 19%  <span class="m-b">main</span>
+  <span class="m-a">▸▸ bypass permissions on</span> · 2 shells</pre>
+    <sc-if value="{{offline}}" hint-placeholder-val="{{false}}"><div class="m-conn" role="status">Reconnecting to pop-os…</div></sc-if>
+  </div>
+
+  <sc-if value="{{down}}" hint-placeholder-val="{{true}}">
+    <div class="{{barClass}}">
+      <button class="m-cur" aria-label="a1 python, 4 tabs, b1 rang. Open the sessions sheet"><span class="m-curname"><b>a1</b> python</span><span class="m-curmeta"><span class="m-dot"></span>4 tabs</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+      <button class="m-ib" aria-label="Show keyboard"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></button>
+    </div>
+    <sc-if value="{{web}}" hint-placeholder-val="{{false}}">
+      <div class="m-safbar"><div class="m-url">Safari toolbar · pop-os.ts.net</div></div>
+    </sc-if>
+  </sc-if>
+
+  <sc-if value="{{up}}" hint-placeholder-val="{{false}}">
+    <div class="m-compose">
+      <sc-if value="{{typing}}" hint-placeholder-val="{{true}}">
+        <button class="m-field m-idle">Type or dictate a line</button>
+      </sc-if>
+      <sc-if value="{{composing}}" hint-placeholder-val="{{false}}">
+        <div class="m-field"><span class="m-txt">check the dock height on pop-os, then run the probe again<span class="m-caret"></span></span><button class="m-send" aria-label="Send line"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button></div>
+      </sc-if>
+    </div>
+    <div class="{{keyrowClass}}">
+      <div class="m-keys">
+        <button class="{{escClass}}">esc</button><button class="{{lrClass}}">←</button><button class="{{tmuxKey}}">↑</button><button class="{{tmuxKey}}">↓</button><button class="{{lrClass}}">→</button><button class="{{tmuxKey}}">⇧tab</button><button class="{{tmuxKey}}">tab</button><button class="{{tmuxKey}}">^C</button><button class="{{tmuxKey}}">^R</button><button class="{{tmuxKey}}">ctrl</button><button class="{{tmuxKey}}">alt</button><button class="{{tmuxKey}}">⏎</button>
+      </div>
+      <button class="m-sib" aria-label="Hide keyboard"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="11" rx="2"/><path d="M7 7h.01M11 7h.01M15 7h.01M8 10.5h8"/><path d="M9 18l3 3 3-3"/></svg></button>
+    </div>
+    <sc-if value="{{web}}" hint-placeholder-val="{{false}}">
+      <div class="m-formbar"><span>⌃   ⌄</span><span>Done</span></div>
+    </sc-if>
+    <div class="m-kb"><strong>iOS keyboard</strong><span>{{returnLabel}}</span></div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"mode":{"editor":"enum","options":["down","typing","composing"],"default":"down"},"surface":{"editor":"enum","options":["app","safari"],"default":"app"},"conn":{"editor":"enum","options":["live","reconnecting"],"default":"live"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const mode = this.props.mode ?? 'down';
+    const web = (this.props.surface ?? 'app') === 'safari';
+    const composing = mode === 'composing';
+    return {
+      rootClass: 'm-phone t-' + theme,
+      down: mode === 'down',
+      up: mode !== 'down',
+      typing: mode === 'typing',
+      composing: composing,
+      web: web,
+      offline: (this.props.conn ?? 'live') === 'reconnecting',
+      barClass: web ? 'm-bar m-web' : 'm-bar',
+      keyrowClass: 'm-keyrow',
+      escClass: composing ? 'm-key m-boxkey' : 'm-key',
+      lrClass: composing ? 'm-key m-boxkey' : 'm-key',
+      tmuxKey: composing ? 'm-key m-tmuxkey' : 'm-key',
+      cursorClass: composing ? 'm-cur m-hollow' : 'm-cur m-solid',
+      returnLabel: composing ? 'Return reads Send. Blue keys edit the line; esc goes back to the terminal; grey keys go to tmux.' : 'Plain Return: every key goes to tmux.'
+    };
+  }
+}
+</script>
+</body>
+</html>

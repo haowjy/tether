@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Home on the phone</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.t-light{--bg:#eef0f4;--raised:#ffffff;--term-bg:#fafbfc;--hover:#e3e6ec;--sel:#dce7fb;--text:#171a21;--muted:#545a67;--border:#d6dae2;--accent:#2a5ec0;--onaccent:#ffffff;--term-fg:#262a33;--term-dim:#6d7380;--green:#2c7a47;--amber:#8a5900;--blue:#2a5ec0;--kb:#d0d3da;--scrim:rgba(20,24,33,.32);--danger:#b3261e}
+.t-dark{--bg:#0d0d0d;--raised:#171717;--term-bg:#000000;--hover:#242424;--sel:#1b2738;--text:#ececec;--muted:#a0a0a0;--border:#2d2d2d;--accent:#7db7f2;--onaccent:#0a1726;--term-fg:#d9d9d9;--term-dim:#8a8a8a;--green:#72d38f;--amber:#e6b85c;--blue:#7db7f2;--kb:#2a2a2c;--scrim:rgba(0,0,0,.6);--danger:#ff8a80}
+.h-phone{width:390px;height:844px;overflow:hidden;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif}
+.h-top{padding:50px 4px 0 20px;display:flex;align-items:center;justify-content:space-between}
+.h-title{margin:0;font-size:17px;font-weight:680}
+.h-ib{flex:none;width:44px;height:44px;border-radius:12px;border:0;background:none;color:var(--text);display:grid;place-items:center;padding:0}
+.h-body{flex:1;min-height:0;overflow:hidden;padding:12px 16px;display:flex;flex-direction:column;gap:12px}
+.h-card{background:var(--raised);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+.h-chead{display:flex;align-items:baseline;gap:8px;padding:14px 14px 2px}
+.h-chead b{font-size:17px;font-weight:680}
+.h-live{color:var(--green);font-size:14px;font-weight:560}
+.h-off{color:var(--muted);font-size:14px}
+.h-more{margin-left:auto;align-self:center}
+.h-meta{padding:0 14px 10px;color:var(--muted);font-size:14px}
+.h-acts{display:flex;gap:8px;padding:0 14px 14px}
+.h-btn{flex:1;height:44px;border:0;border-radius:10px;background:var(--bg);color:var(--text);font:inherit;font-size:15px;font-weight:560;display:flex;align-items:center;justify-content:center;gap:8px}
+.h-btn.h-pri{background:var(--accent);color:var(--onaccent)}
+.h-row{display:flex;align-items:center;gap:10px;height:46px;padding:0 14px;border:0;border-top:1px solid var(--border);background:none;color:var(--text);font:inherit;text-align:left;width:100%;box-sizing:border-box}
+.h-name{font-weight:680;font-size:15px;min-width:28px}
+.h-cmd{flex:1;color:var(--muted);font-size:15px}
+.h-wins{color:var(--muted);font-size:13px}
+.h-tag{font-size:12px;font-weight:560;color:var(--accent);border:1px solid currentColor;border-radius:6px;padding:1px 6px}
+.h-grow{flex:1}
+.h-link{color:var(--accent);font-size:16px}
+.h-link svg{color:var(--muted)}
+.h-dot{width:8px;height:8px;border-radius:4px;background:var(--accent);flex:none;margin-left:-4px}
+.h-in{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.h-ph{height:44px;border-radius:10px;background:var(--raised);display:flex;align-items:center;padding:0 12px;font-size:16px;color:var(--muted)}
+.h-safbar{height:84px;box-sizing:border-box;background:var(--raised);border-top:1px solid var(--border);display:flex;justify-content:center;padding-top:10px;flex:none}
+.h-url{height:40px;width:300px;border-radius:12px;background:var(--bg);color:var(--muted);font-size:14px;display:grid;place-items:center}
+.h-add{display:flex;align-items:center;gap:8px;height:48px;padding:0 14px;border:0;border-radius:14px;background:none;color:var(--accent);font:inherit;font-size:16px}
+.h-empty{flex:1;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:0 12px 80px}
+.h-empty h2{margin:0;font-size:22px}
+.h-empty p{margin:0;color:var(--muted);font-size:16px;line-height:1.45}
+.h-empty code{font:15px ui-monospace,"SF Mono",Menlo,monospace;color:var(--text);background:var(--raised);padding:1px 6px;border-radius:5px}
+.h-note{padding:0 14px 14px;color:var(--muted);font-size:14px;line-height:1.4}
+.h-bar{background:var(--raised);border-top:1px solid var(--border);padding:8px 12px 34px;display:flex;gap:8px;align-items:center}
+.h-tabs{flex:1;min-width:0;display:flex;gap:8px;overflow:hidden;-webkit-mask-image:linear-gradient(to right,#000 78%,transparent);mask-image:linear-gradient(to right,#000 78%,transparent)}
+.h-tab{flex:none;height:44px;border:0;border-radius:12px;background:var(--bg);color:var(--muted);font:inherit;font-size:15px;padding:0 14px;display:flex;gap:6px;align-items:center;white-space:nowrap}
+.h-tab b{font-weight:680;color:var(--text)}
+.h-bib{flex:none;width:44px;height:44px;border-radius:12px;border:0;background:var(--bg);color:var(--text);display:grid;place-items:center;padding:0}
+</style>
+</helmet>
+<div class="{{rootClass}}">
+  <div class="h-top">
+    <h1 class="h-title">tether</h1>
+    <button class="h-ib" aria-label="Settings"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+  </div>
+
+  <div class="h-body">
+    <sc-if value="{{hasServer}}" hint-placeholder-val="{{true}}">
+      <div class="h-card">
+        <div class="h-chead"><b>pop-os</b><span class="h-live">live</span><button class="h-ib" aria-label="pop-os: rename, pair again, remove" style="margin-left:auto;width:36px;height:28px"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button></div>
+        <div class="h-meta">Open in tabs</div>
+        <sc-for list="{{openTabs}}" as="s" hint-placeholder-count="3">
+          <button class="h-row"><sc-if value="{{s.bell}}" hint-placeholder-val="{{false}}"><span class="h-dot"></span></sc-if><span class="h-name">{{s.name}}</span><span class="h-cmd">{{s.cmd}}</span><span class="h-wins">{{s.wins}}</span></button>
+        </sc-for>
+        <button class="h-row"><span class="h-name" style="color: var(--accent)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span class="h-cmd">~/repos/tether</span></button>
+        <button class="h-row h-link"><span class="h-grow">All 9 sessions</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="h-row h-link"><span class="h-grow">Files</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+      </div>
+    </sc-if>
+    <sc-if value="{{isTwo}}" hint-placeholder-val="{{true}}">
+      <div class="h-card">
+        <div class="h-chead"><b>jimmys-macbook-air</b><span class="h-off">offline</span></div>
+        <div class="h-meta">Last reached 2 hours ago. Is Tailscale on there?</div>
+        <div class="h-acts"><button class="h-btn">Retry</button></div>
+      </div>
+    </sc-if>
+    <sc-if value="{{hasServer}}" hint-placeholder-val="{{true}}">
+      <button class="h-add"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add server</button>
+    </sc-if>
+
+    <sc-if value="{{isNoSessions}}" hint-placeholder-val="{{false}}">
+      <div class="h-card">
+        <div class="h-chead"><b>pop-os</b><span class="h-live">live</span></div>
+        <div class="h-meta">No tmux sessions yet.</div>
+        <div class="h-acts">
+          <button class="h-btn h-pri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New session</button>
+          <button class="h-btn">Files</button>
+        </div>
+      </div>
+      <div class="h-card">
+        <div class="h-chead"><b>dev-box-2</b><span class="h-off">tmux not running</span></div>
+        <div class="h-note">tether never starts tmux. Start it on dev-box-2 (run <code style="font: 13px ui-monospace, Menlo, monospace">tmux</code>), then pull to refresh.</div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{web}}" hint-placeholder-val="{{false}}">
+      <button class="h-add" style="color: var(--text)">Add to Home Screen for the full app<span class="h-grow"></span>›</button>
+    </sc-if>
+    <sc-if value="{{isNoServers}}" hint-placeholder-val="{{false}}">
+      <div class="h-empty">
+        <h2>Connect your dev box</h2>
+        <p>On the machine that runs tmux, run <code>tether enroll</code>. Scan its QR with the iPhone camera, or type its server name and code.</p>
+        <label class="h-in"><span>Server</span><span class="h-ph">pop-os.tail852a76.ts.net</span></label>
+        <label class="h-in"><span>Code</span><span class="h-ph">▢▢▢▢ – ▢▢▢▢</span></label>
+        <button class="h-btn h-pri" style="flex: none">Add server</button>
+      </div>
+    </sc-if>
+  </div>
+  <sc-if value="{{web}}" hint-placeholder-val="{{false}}"><div class="h-safbar"><div class="h-url">Safari toolbar · pop-os.ts.net</div></div></sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"surface":{"editor":"enum","options":["app","safari"],"default":"app"},"state":{"editor":"enum","options":["two servers","one server","no sessions","no servers"],"default":"two servers"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const state = this.props.state ?? 'two servers';
+    const raw = [['a1', 'python', 2], ['g3', 'bash', 1], ['b1', 'claude', 1]];
+    const web = (this.props.surface ?? 'app') === 'safari';
+    return {
+      rootClass: 'h-phone t-' + theme,
+      web: web,
+      isTwo: state === 'two servers',
+      hasServer: state === 'two servers' || state === 'one server',
+      isNoSessions: state === 'no sessions',
+      isNoServers: state === 'no servers',
+      openTabs: raw.map(function (r) { return { name: r[0], cmd: r[1], wins: r[2] + (r[2] === 1 ? ' window' : ' windows'), bell: r[0] === 'b1' }; })
+    };
+  }
+}
+</script>
+</body>
+</html>
