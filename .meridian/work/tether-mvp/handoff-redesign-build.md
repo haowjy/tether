@@ -16,8 +16,11 @@ install the app anyways").
 ## Current state
 
 - **Specs are settled and on `main`:** `d97cbe4` (redesign), `58d2bf9` (bell mechanism),
-  `c04fc3c` (bell polling, clean launch opens Home). `main` == `origin/main` at `37552e4`
-  (work notes). Jimmy: "always push" after each commit.
+  `c04fc3c` (bell polling, clean launch opens Home), `5a741ae` (several servers is a
+  product rule), `31d116f` (plan.md opens with the four invariants; test on tmux 3.4 and
+  3.8), `0837859` (decisions.md cut to the decisions in force: replaced entries removed,
+  their options folded into the survivors' Rejected lists; record in
+  `decisions-cleanup.md`). All pushed. Jimmy: "always push" after each commit.
 - **Shipped this session:** `dd22280`, the iOS proxy now checks a host's `/auth/info`
   itself, so Files and completions work in the app (it said "speaks a different version"
   against a same-protocol daemon). Installed on the iPhone and verified by Jimmy ("yeah,
@@ -51,8 +54,8 @@ top row (⌂, tabs, +, server), + opens a popover; no rail.
 2. `docs/design/client/terminal-interaction-design.md`: target routing and focus.
 3. `docs/design/plan.md`: product rules, Bell attention, scope (Mermaid now in scope).
 4. `docs/design/auth.md` (Face ID relock setting), `docs/design/ios-shell.md`.
-5. `docs/design/decisions.md`: the 2026-10-27 entries (search "2026-10-27, Jimmy"),
-   each with what it supersedes.
+5. `docs/design/decisions.md`: the 2026-10-27 entries (search "2026-10-27"). The log
+   now holds only decisions in force; git history keeps removed text.
 6. `.meridian/work/tether-mvp/phone-redesign-brief.md`: every round with Jimmy's words,
    including reversals (the terminal tab strip was reversed in round 6).
 7. Mockups: https://claude.ai/artifact/VpZoJtGXYytqnhzBBy24qA (Jimmy's private canvas);
@@ -73,8 +76,8 @@ top row (⌂, tabs, +, server), + opens a popover; no rail.
   `"preferredNotifChannel": "terminal_bell"` note when the bell ships (Jimmy asked for it
   in tether's docs).
 - **Browser multi-server:** several servers are now a product rule (`5a741ae`), but the
-  browser/PWA is bound to its page origin while Home shows several servers and Add server. Needs an origin/auth design before the browser gets a
-  multi-server Home (browser-behaviors.md "Product boundaries"). The app already has a
+  browser/PWA is bound to its page origin while Home shows several servers and Add
+  server. Needs an origin/auth design before the browser gets a multi-server Home (browser-behaviors.md "Product boundaries"). The app already has a
   host registry.
 - **Smaller open details in the specs:** list vs 2-column grid for sessions (Jimmy
   unsure; lead leans list); the exact window-switch control and creating a window in a
@@ -88,7 +91,6 @@ top row (⌂, tabs, +, server), + opens a popover; no rail.
 
 Jimmy, on scope: "this is a lot of reworking btw". Plan it in shippable slices, each
 leaving the app usable, rather than one big switch.
-
 
 - **Objective:** plan and build the redesign across web (shared by Safari/PWA and the
   app), the iOS shell (native input target routing, appearance setting, Face ID relock
