@@ -296,7 +296,7 @@ its tests expect to fail.
 
 **Native keeps its single focus controller.** The native app no longer bans web text
 fields. Instead, the web tells native which focus mode a screen needs, whenever the
-destination or overlay changes (§6.5). With Home, Files or any dialog on screen, native
+screen or overlay changes (§6.5). With Home, Files or any dialog on screen, native
 is in `webText`: its guard is down, so any field can take the keyboard on the user's tap
 with no handshake. That replaces ios-shell.md's "no other web text inputs" rule and the
 `prompt` bridge message.
@@ -1136,7 +1136,7 @@ and window captured before the prompt, so a later tab or focus change cannot ret
   the native field, so send does not echo another line load.
 - **Resting mode.** On Terminal with no overlay, the web asks native for `line` when the
   app line owner is active, otherwise `terminal` if an input holds the keyboard, else
-  `hidden`. Other destinations and overlays ask for `webText`. Native therefore remains
+  `hidden`. Other screens and overlays ask for `webText`. Native therefore remains
   first responder only on Terminal; search, rename, Files and other sheet fields use
   WebKit normally.
 - **Selection takes priority.** While the selection layer is active, the resting target is

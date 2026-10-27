@@ -2,6 +2,7 @@ import { HttpRefusal } from "../net/http";
 import { Store } from "../ui/store";
 import type { FsApi, Listing } from "./api";
 import { folderKey, scopeOf, type FolderNames, type FolderState, type Where } from "./pathfield";
+import { trimOldest } from "./recent";
 
 export type Via = "list" | "dirs";
 
@@ -119,10 +120,7 @@ export class Folders extends Store<FoldersView> {
     const record = { names: null, first: null, ...held.get(key), ...patch };
     held.delete(key);
     held.set(key, record);
-    for (const [oldest] of held) {
-      if (held.size <= KEPT) break;
-      held.delete(oldest);
-    }
+    trimOldest(held, KEPT);
     this.update({ held });
   }
 

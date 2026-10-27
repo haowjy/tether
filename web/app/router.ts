@@ -105,7 +105,7 @@ export class Router {
     this.close(1, then);
   }
 
-  /** Closes every overlay open on this destination at once: one history step, so none is left open (WebKit drops a second `back()` issued before the first pops). `then` as for {@link closeOverlay}. */
+  /** Closes every overlay open on this entry at once: one history step, so none is left open (WebKit drops a second `back()` issued before the first pops). `then` as for {@link closeOverlay}. */
   closeAllOverlays(then?: () => void): void {
     let open = 0;
     while (this.stack[this.at - open]?.overlay) open++;

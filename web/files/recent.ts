@@ -1,3 +1,11 @@
+/** Deletes `map`'s oldest keys (first inserted) until at most `limit` remain. */
+export function trimOldest(map: Map<string, unknown>, limit: number): void {
+  for (const [oldest] of map) {
+    if (map.size <= limit) break;
+    map.delete(oldest);
+  }
+}
+
 /** A map that keeps the `limit` most recently set keys: setting a key again makes it the newest. */
 export class Recent<V> {
   private readonly items = new Map<string, V>();
@@ -11,10 +19,7 @@ export class Recent<V> {
   set(key: string, value: V): void {
     this.items.delete(key);
     this.items.set(key, value);
-    for (const [oldest] of this.items) {
-      if (this.items.size <= this.limit) break;
-      this.items.delete(oldest);
-    }
+    trimOldest(this.items, this.limit);
   }
 
   delete(key: string): void {

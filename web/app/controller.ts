@@ -148,7 +148,6 @@ export class AppController extends Store<AppView> {
     if (state.route === "tab" && tab && entry.route === "tab" && entry.tab !== tab.id) this.router.switchTab(tab.id, tab.kind === "files" ? tab.place : null);
     if (state.active !== this.sentActive) {
       this.sentActive = state.active;
-      const tab = activeTab(state);
       this.platform.input.setActiveTab(tab?.kind === "terminal" ? tab.key : null);
     }
     this.syncScreen();
