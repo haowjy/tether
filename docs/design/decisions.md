@@ -3909,14 +3909,27 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   (`monitor-bell` of a non-current window was missed when read per session). Rejected:
   a separate `list-sessions` marker command (a second path, a second parser, `busy`
   collisions).
-- **Install is guarded and empty-only, at the head of every `List`.** One tmux command
-  list, `if-shell -F '#{==:#{alert-bell[9100]},}' "set-hook -g …"`, verified on 3.4 and
-  3.8 (the earlier claim that install can't carry a guard was wrong: the hook text nests
-  with escaped double quotes). Steady state writes nothing, a missing entry is back within
-  one poll, a foreign entry is never overwritten. Hub start runs the empty-or-ours form
-  once, to rewrite an older build's entry. Rejected: read the state, then write (a
-  `HookState` and a gap); an unguarded install at hub start (it overwrote a user's entry
-  at 9100).
+- **Install is `set-option -goq 'alert-bell[9100]' '<hook>'`, empty-only, at the head of
+  every `List`** (review p368 found the first form, `if-shell -F '#{==:#{alert-bell[9100]},}'
+  "set-hook -g …"`, wrong). `if-shell -F` formats against the most recent session, so a
+  session-level `alert-bell` hook there hides the global array, index 9100 reads empty,
+  and the install overwrote a foreign global entry (probed on 3.4 and 3.8). `-o` checks
+  the global array itself, `-q` makes an occupied index exit 0 so the list goes on.
+  Steady state writes nothing, a missing entry is back within one poll, a foreign entry is
+  never overwritten. Hub start runs `if-shell -F '<ours>' "set-hook -g …" ; <install>`
+  once, to rewrite an older build's entry; the shadowed guard there can only skip a
+  rewrite. Rejected: read the state, then write (a `HookState` and a gap); an unguarded
+  install at hub start (it overwrote a user's entry at 9100); keeping the `if-shell`
+  guard for install and teaching it to read the global array (no format reads the global
+  array while a session shadows it).
+- **The baseline's silence is only for the first answer after a connection comes.** After
+  a new tmux instance or `NoServer` the next answer is diffed against nothing, so every
+  mark reaches the devices (review p368): a connected device with no control client on the
+  new server never relists, and the first bell of the new server was swallowed as a
+  baseline. `bell.server` is absent while no instance is known, not the endpoint name.
+  The stop sequence closes the control clients' stdin, lets the one-shot in flight finish
+  and then removes the entry, all inside 1.5 s of the hub's 2 s (the unset used to race an
+  in-flight `List`'s install and spend the whole budget before the pumps drained).
 - **Stated limits** (plan.md "Coverage limits"): bells before the first device connects
   after a tmux start are lost; with two daemons on one server the first to stop removes
   the shared entry and the survivor reinstalls at its next listing. No cheap fix exists:
@@ -3950,6 +3963,16 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   number); a snapshot message on connect (the listing already is one); the daemon
   remembering what each device has seen (per-device state in the daemon for something the
   device already keeps).
+- **One baseline rule on the device, for a listing and a `bell`** (review p369). A session
+  with no seen mark takes the first mark it learns as its baseline, unless the page has
+  already heard marks from that host: its counter then started after that, at 0, so the
+  mark is a bell not yet shown. Review p369 asked for "an instance this device has already
+  listed"; that still swallows the first bell of a restarted server, whose first answer
+  arrives as a `bell` before any relist. Rejected: a rule per path (a race decided
+  whether a new session got a dot). An overlay over a terminal tab still counts the tab as
+  seen (the half-height sheet leaves it visible); two pages of one origin save one
+  `bellSeen` each and the last writer wins, a stated limit. `Row` gets a `mark` slot that
+  never shrinks, so a dot beside a truncating label can't be clipped.
 - **Failure is visible.** A foreign entry at 9100, a session-level hook, `monitor-bell off`
   and `bell-action` not `any` produce `covered: false`; a failed poll produces
   `available: false`. The daemon

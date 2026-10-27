@@ -284,9 +284,12 @@ pub enum ServerMsg {
     /// The sessions of `server` whose bell mark or coverage changed since the last
     /// listing the daemon read (daemon-core.md §4.8), to every connection.
     /// `available: false` (with no sessions) says the daemon couldn't read tmux's bell
-    /// state; the next `bell` with `available: true` ends it.
+    /// state; the next `bell` with `available: true` ends it. `server` is the tmux
+    /// instance, absent while none is known.
     Bell {
-        server: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        server: Option<String>,
         available: bool,
         sessions: Vec<BellChange>,
     },

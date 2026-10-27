@@ -7,7 +7,7 @@ use std::path::Path;
 
 use super::history::STATE_FORMAT as HISTORY_STATE_FORMAT;
 use super::reply::{
-    BELL_EMPTY, BELL_HOOK_INDEX, BELL_OURS, CREATED_FORMAT, LISTING_SERVER_FORMAT, LOCATE_FORMAT,
+    BELL_HOOK_INDEX, BELL_OURS, CREATED_FORMAT, LISTING_SERVER_FORMAT, LOCATE_FORMAT,
     STARTUP_FORMAT, listing_window_format,
 };
 use super::snapshot::STATE_FORMAT;
@@ -232,11 +232,12 @@ pub fn attach(session: SessionId) -> Vec<String> {
 /// argument as it is, with no quoting, except that one ending in `;` ends a command.
 pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
     Ok(match cmd {
-        // The guarded install comes first (written only while the index is empty, in
-        // the same command list as the check), then the server identity; each
-        // remaining line is a window.
+        // The install comes first (`-o` writes the global array only while the index is
+        // empty, and exits 0 either way), then the server identity; each remaining line
+        // is a window.
         OneShotCmd::List => {
-            let mut args = owned(&["if-shell", "-F", BELL_EMPTY, &bell_install(), ";"]);
+            let mut args = bell_install();
+            args.push(";".to_owned());
             args.extend(owned(&[
                 "display-message",
                 "-p",
@@ -249,13 +250,20 @@ pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
             ]));
             args
         }
-        // Empty or an older build's entry: install. Never a foreign one.
-        OneShotCmd::AdoptBellHook => owned(&[
-            "if-shell",
-            "-F",
-            &format!("#{{||:{BELL_EMPTY},{BELL_OURS}}}"),
-            &bell_install(),
-        ]),
+        // An older build's entry is rewritten, a foreign one never; then the install
+        // fills an empty index. The guard reads through the current session, so a
+        // session-level hook can only make it skip the rewrite.
+        OneShotCmd::AdoptBellHook => {
+            let mut args = owned(&[
+                "if-shell",
+                "-F",
+                BELL_OURS,
+                &format!("set-hook -g 'alert-bell[{BELL_HOOK_INDEX}]' '{BELL_HOOK}'"),
+                ";",
+            ]);
+            args.extend(bell_install());
+            args
+        }
         OneShotCmd::RemoveBellHook => owned(&[
             "if-shell",
             "-F",
@@ -298,8 +306,15 @@ pub fn oneshot(cmd: &OneShotCmd) -> Result<Vec<String>, TmuxError> {
 const BELL_HOOK: &str =
     r##"set-option -F @tether-bell "#{e|+:#{?#{@tether-bell},#{@tether-bell},0},1}""##;
 
-fn bell_install() -> String {
-    format!("set-hook -g 'alert-bell[{BELL_HOOK_INDEX}]' '{BELL_HOOK}'")
+/// Writes the global entry only while the index is empty. It reads no session's hooks,
+/// so a session-level `alert-bell` can't make a foreign entry look empty.
+fn bell_install() -> Vec<String> {
+    owned(&[
+        "set-option",
+        "-goq",
+        &format!("alert-bell[{BELL_HOOK_INDEX}]"),
+        BELL_HOOK,
+    ])
 }
 
 /// A first command that stops the rest of a one-shot's list unless the server is

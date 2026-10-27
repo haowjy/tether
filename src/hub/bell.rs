@@ -18,14 +18,17 @@ pub(super) struct BellPoll {
     /// When the next poll is due: 5 s after the last listing answer, whoever asked,
     /// and at once for the first connection. `None` with no connection.
     pub(super) due: Option<Instant>,
-    /// The last answer. The first one after polling started only becomes this.
+    /// The last answer. `None` until polling has one: that first answer only becomes the
+    /// baseline, since a device's own listing carries the marks it needs.
     baseline: Option<Baseline>,
     /// The last listing failed (not `NoServer`), and the devices were told.
     unavailable: bool,
 }
 
 struct Baseline {
-    server: ServerInstance,
+    /// `None` after "no tmux server": the next server's answer is then diffed against
+    /// nothing, so devices learn every mark.
+    server: Option<ServerInstance>,
     sessions: BTreeMap<SessionId, Bell>,
 }
 
@@ -60,9 +63,13 @@ impl State {
         self.bell.due = (!self.conns.is_empty()).then(|| self.now + BELL_POLL);
     }
 
-    /// No tmux server: nothing to diff, and the server-level failure, if any, is over.
+    /// No tmux server: nothing to diff against, and the server-level failure, if any,
+    /// is over.
     pub(super) fn bell_no_server(&mut self) {
-        self.bell.baseline = None;
+        self.bell.baseline = Some(Baseline {
+            server: None,
+            sessions: BTreeMap::new(),
+        });
         if std::mem::take(&mut self.bell.unavailable) {
             self.broadcast(&self.bell_message(true, Vec::new()));
         }
@@ -86,19 +93,22 @@ impl State {
             .map(|session| (session.id, session.bell))
             .collect();
         let changed = match &self.bell.baseline {
-            Some(old) if old.server == listing.server => now
-                .iter()
-                .filter(|(id, bell)| old.sessions.get(id) != Some(bell))
-                .map(|(id, bell)| BellChange {
-                    session: id.0,
-                    mark: bell.mark,
-                    covered: bell.covered,
-                })
-                .collect(),
-            _ => Vec::new(),
+            None => Vec::new(),
+            Some(old) => {
+                // Another instance's counters mean nothing here.
+                let same = old.server == Some(listing.server);
+                now.iter()
+                    .filter(|(id, bell)| !same || old.sessions.get(id) != Some(bell))
+                    .map(|(id, bell)| BellChange {
+                        session: id.0,
+                        mark: bell.mark,
+                        covered: bell.covered,
+                    })
+                    .collect()
+            }
         };
         self.bell.baseline = Some(Baseline {
-            server: listing.server,
+            server: Some(listing.server),
             sessions: now,
         });
         let recovered = std::mem::take(&mut self.bell.unavailable);
@@ -108,12 +118,10 @@ impl State {
     }
 
     fn bell_message(&self, available: bool, sessions: Vec<BellChange>) -> ServerMsg {
-        let server = match self.endpoints[MAIN].live {
-            Some(live) => self.server_name(MAIN, live),
-            None => self.endpoints[MAIN].name.to_owned(),
-        };
         ServerMsg::Bell {
-            server,
+            server: self.endpoints[MAIN]
+                .live
+                .map(|live| self.server_name(MAIN, live)),
             available,
             sessions,
         }

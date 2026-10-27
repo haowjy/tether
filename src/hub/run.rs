@@ -4,7 +4,7 @@
 //! for the pumps at shutdown.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::JoinSet;
@@ -13,7 +13,11 @@ use tracing::{error, warn};
 use super::state::{Effect, Input, MAIN, State};
 use super::{CONN_CHANNEL, ConnId, ConnectReply, FromConn, HubMsg, INBOX, ToConn};
 use crate::blocking::Busy;
-use crate::tmux::{ClientId, OneShotCmd, PumpMsg, TmuxError, oneshot, pump};
+use crate::tmux::{ClientId, Endpoint, OneShotCmd, PumpMsg, TmuxError, oneshot, pump};
+
+/// How long a stop waits for the one-shot in flight and the hook's removal: under the
+/// daemon's 2 s wait for the hub (`HUB_WAIT`), with room for the pumps to end.
+const BELL_STOP_WAIT: Duration = Duration::from_millis(1500);
 
 /// What the executor holds for `State`. Its maps mirror the state's: an entry goes when
 /// the state's `CloseClient` or `DropConn` says so, or when its channel fails first.
@@ -24,6 +28,8 @@ struct Io {
     /// One task per pump, ending with it: a pump that panicked still gets its `Exited`
     /// here. Finished ones are reaped at the next spawn.
     pump_tasks: JoinSet<()>,
+    /// The one-shot tasks, so a stop can wait for the one in flight.
+    oneshots: JoinSet<()>,
     /// Weak, so the hub ends once every `HubHandle` is dropped.
     inbox: mpsc::WeakSender<HubMsg>,
     next_conn: u64,
@@ -40,11 +46,12 @@ pub(super) async fn run(
         conns: BTreeMap::new(),
         pumps,
         pump_tasks: JoinSet::new(),
+        oneshots: JoinSet::new(),
         inbox: weak_inbox,
         next_conn: 1,
     };
     // Once at start, before any connection: an older build's hook entry is rewritten.
-    bell_hook(&state, OneShotCmd::AdoptBellHook).await;
+    bell_hook(&state.endpoints[MAIN].endpoint, OneShotCmd::AdoptBellHook).await;
     loop {
         let deadline = state.next_deadline().map(tokio::time::Instant::from_std);
         let input = tokio::select! {
@@ -67,15 +74,15 @@ pub(super) async fn run(
             }
         }
     }
-    bell_hook(&state, OneShotCmd::RemoveBellHook).await;
-    io.shut_down(pump_out).await;
+    io.shut_down(pump_out, &state.endpoints[MAIN].endpoint)
+        .await;
 }
 
 /// Adopts or removes tether's `alert-bell` entry (daemon-core.md §4.8) outside the hub's
 /// one-shot slot: nothing else runs yet or any more. A failure costs only the entry's
 /// tidiness, and no tmux server is not one.
-async fn bell_hook(state: &State, cmd: OneShotCmd) {
-    match oneshot::run(&state.endpoints[MAIN].endpoint, &cmd).await {
+async fn bell_hook(endpoint: &Endpoint, cmd: OneShotCmd) {
+    match oneshot::run(endpoint, &cmd).await {
         Ok(_) | Err(TmuxError::NoServer) => {}
         Err(error) => warn!(?cmd, %error, "can't update the tmux bell hook"),
     }
@@ -103,19 +110,35 @@ impl Io {
     /// Closes every control client's stdin and waits for each pump to see its tmux
     /// exit, reading and dropping what tmux still writes. Returning sooner would leave
     /// the pumps to the runtime's end, which kills `tmux -C` (`kill_on_drop`). tmux
-    /// itself is unaffected either way.
-    async fn shut_down(mut self, mut pump_out: mpsc::Receiver<(ClientId, PumpMsg)>) {
+    /// itself is unaffected either way. Meanwhile tether's `alert-bell` entry is removed,
+    /// once the one-shot in flight has finished: its install could land after the
+    /// removal otherwise. That wait is cut short to stay inside the daemon's wait for the
+    /// hub; a leftover entry is adopted at the next start.
+    async fn shut_down(
+        mut self,
+        mut pump_out: mpsc::Receiver<(ClientId, PumpMsg)>,
+        tmux: &Endpoint,
+    ) {
         self.lines.clear();
         self.conns.clear();
-        loop {
-            tokio::select! {
-                joined = self.pump_tasks.join_next() => if joined.is_none() {
-                    return;
-                },
-                // `self.pumps` keeps this open, so it never resolves to `None`.
-                _ = pump_out.recv() => {}
+        let remove_hook = async {
+            while self.oneshots.join_next().await.is_some() {}
+            bell_hook(tmux, OneShotCmd::RemoveBellHook).await;
+        };
+        let remove_hook = tokio::time::timeout(BELL_STOP_WAIT, remove_hook);
+        let drain_pumps = async {
+            loop {
+                tokio::select! {
+                    joined = self.pump_tasks.join_next() => if joined.is_none() {
+                        return;
+                    },
+                    // `self.pumps` keeps this open, so it never resolves to `None`.
+                    _ = pump_out.recv() => {}
+                }
             }
-        }
+        };
+        // A timeout only means the entry stays.
+        let _ = tokio::join!(remove_hook, drain_pumps);
     }
 
     /// Runs one effect. A failure the state must hear about becomes a follow-up input.
@@ -168,7 +191,8 @@ impl Io {
                 let Some(inbox) = self.inbox.upgrade() else {
                     return;
                 };
-                tokio::spawn(async move {
+                while self.oneshots.try_join_next().is_some() {}
+                self.oneshots.spawn(async move {
                     let result = oneshot::run(&endpoint, &cmd).await;
                     let _ = inbox.send(HubMsg::OneShot(tag, result)).await;
                 });

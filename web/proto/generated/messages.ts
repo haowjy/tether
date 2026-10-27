@@ -75,7 +75,7 @@ cwd: string | null, } }
   | { "type": "sessionClosed", "data": { session: SessionRef, } }
   | { "type": "serverExited", "data": { server: string, } }
   | { "type": "sessionsChanged" }
-  | { "type": "bell", "data": { server: string, available: boolean, sessions: Array<BellChange>, } }
+  | { "type": "bell", "data": { server?: string, available: boolean, sessions: Array<BellChange>, } }
   | { "type": "sessions", "data": { req: number, tmux: TmuxListing | null, } }
   | { "type": "historyChunk", "data": { req: number, watch: number, pane: number, start: number,
 /**

@@ -63,7 +63,7 @@ export class BellMarks extends Store<BellsState> {
 
   /** A `bell` message: the sessions whose mark or coverage changed, or the host's availability. */
   changed(hostId: string, msg: BellMsg): void {
-    if (msg.available) this.learn(hostId, msg.server, msg.sessions, false);
+    if (msg.available) this.learn(hostId, msg.server ?? "", msg.sessions, false);
     else this.unreadable(hostId);
   }
 

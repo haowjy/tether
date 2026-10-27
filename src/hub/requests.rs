@@ -15,7 +15,8 @@ use crate::proto::{
     TmuxListing, WatchEndReason, WindowListing,
 };
 use crate::tmux::{
-    ClientId, InputItem, OneShotCmd, Op, PaneId, Reply, SessionId, Size, Tag, TmuxError, WindowId,
+    ClientId, InputItem, Listing, OneShotCmd, Op, PaneId, Reply, SessionId, Size, Tag, TmuxError,
+    WindowId,
 };
 
 #[derive(Clone, Copy)]
@@ -630,6 +631,13 @@ impl State {
             }
         };
         self.learned_version(MAIN, listing.server, &listing.version);
+        if !waiters.is_empty() {
+            self.answer_listing(&listing, waiters);
+        }
+        self.bell_read(&listing);
+    }
+
+    fn answer_listing(&mut self, listing: &Listing, waiters: Vec<(ConnId, u32)>) {
         let tmux = TmuxListing {
             server: self.server_name(MAIN, listing.server),
             version: listing.version.to_string(),
@@ -675,7 +683,6 @@ impl State {
                 self.send_encoded(conn, json, None);
             }
         }
-        self.bell_read(&listing);
     }
 
     fn new_window(

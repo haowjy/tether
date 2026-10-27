@@ -72,11 +72,10 @@ pub(super) fn location(row: &[u8]) -> Option<Location> {
 pub(super) const LISTING_SERVER_FORMAT: &str = "#{version}\t#{pid}\t#{start_time}";
 /// The server-global `alert-bell` entry tether owns (daemon-core.md §4.8).
 pub(super) const BELL_HOOK_INDEX: u32 = 9100;
-/// True while nothing is at tether's index.
-pub(super) const BELL_EMPTY: &str = "#{==:#{alert-bell[9100]},}";
 /// True while the entry at tether's index starts with tether's hook text, whatever
 /// build wrote it. A session resolves the entry, so a session-level `alert-bell` hook
-/// (which shadows the global array) breaks it.
+/// (which shadows the global array) hides it: the listing then reports no coverage, and
+/// the guards skip.
 pub(super) const BELL_OURS: &str = "#{m:set-option -F @tether-bell*,#{alert-bell[9100]}}";
 
 /// One line per window, and no field can hold a line break: the ids and numbers are
@@ -141,9 +140,10 @@ pub(super) fn listing(stdout: &[u8]) -> Option<Listing> {
             _ => listing.sessions.push(ListedSession {
                 id: session,
                 name: session_name.to_owned(),
-                // The arithmetic leaves a number, or nothing for text a user set.
+                // The arithmetic leaves a number, or nothing for text a user set. The
+                // mark is opaque, so a counter past `u32` just wraps.
                 bell: Bell {
-                    mark: mark.parse().unwrap_or(0),
+                    mark: mark.parse::<u64>().map_or(0, |mark| mark as u32),
                     covered,
                 },
                 windows: vec![window],
