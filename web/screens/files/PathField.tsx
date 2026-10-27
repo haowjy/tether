@@ -48,7 +48,7 @@ export function PathField({ session, rest, onEditing, onOpen }: Props) {
   const active = useRef(false);
 
   const where = browser.where();
-  const ctx: CompleteContext | null = where && { where, showHidden, folder: (key) => held.get(key) };
+  const ctx: CompleteContext | null = where && { where, showHidden, folder: (key) => held.get(key)?.names ?? undefined };
   const c: Completion | null = ctx && text !== null ? complete(text, ctx) : null;
   const highlighted = c && (c.rows.find((row) => row.name === chosen) ?? c.predicted);
 
@@ -100,7 +100,7 @@ export function PathField({ session, rest, onEditing, onOpen }: Props) {
     if ("wait" in result && c.ask) {
       await browser.folders.load(c.ask.path, c.ask.hidden);
       if (latest.current !== text) return;
-      result = go(text, highlighted ?? null, { ...ctx, folder: (key) => browser.folders.snapshot.held.get(key) });
+      result = go(text, highlighted ?? null, { ...ctx, folder: (key) => browser.folders.snapshot.held.get(key)?.names ?? undefined });
     }
     if ("open" in result) {
       endEditing();

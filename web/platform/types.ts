@@ -68,6 +68,10 @@ export interface NativeLineSnapshot { tab: TabKey; gen: number; text: string; se
 /** Where a Files tab is: the folder list of its roots, a folder, or a file preview. */
 export type FilesPlace = { kind: "roots" } | { kind: "dir"; path: string } | { kind: "file"; path: string };
 
+export function samePlace(a: FilesPlace, b: FilesPlace): boolean {
+  return a.kind === "roots" ? b.kind === "roots" : b.kind === a.kind && b.path === a.path;
+}
+
 /** One saved tab, in tab order. A Files tab's id is its own; a terminal tab's is `tabId(key)`. */
 export type SavedTab =
   | { kind: "terminal"; key: TabKey; session: string; window: string }

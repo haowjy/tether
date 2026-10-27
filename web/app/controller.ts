@@ -6,15 +6,14 @@
 // through `useApp()`.
 import { HostRegistry, type HostClient } from "../net/hosts";
 import { SessionsCache } from "../sessions/cache";
-import type { BootResult, Lifecycle, Platform, UpdateState, Viewport } from "../platform/types";
+import { samePlace, type BootResult, type FilesPlace, type Lifecycle, type Platform, type UpdateState, type Viewport } from "../platform/types";
 import { Store } from "../ui/store";
 import { parseSavedWorkspace } from "../workspace/saved";
-import { activeTab, initialWorkspace, reduce, samePlace, savedTabs, screenOf, type FilesTab, type Route, type Screen, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
+import { activeTab, initialWorkspace, reduce, savedTabs, screenOf, type Route, type Screen, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
 import { FocusController } from "./focus";
 import { ListingFetcher } from "./listing";
 import { Persist } from "./persist";
-import { browserHistory, enrolCodeFromHash, Router, type HistoryPort, type Navigated, type Overlay } from "./router";
-import type { FilesPlace } from "../platform/types";
+import { browserHistory, enrolCodeFromHash, Router, type Entry, type HistoryPort, type Overlay } from "./router";
 import { lineDraftsOf } from "../screens/terminal/dock/lineDrafts";
 import { startNativeLine } from "../screens/terminal/dock/nativeLine";
 
@@ -25,7 +24,8 @@ export interface AppView {
   viewport: Viewport;
   lifecycle: Lifecycle;
   workspace: WorkspaceState;
-  nav: Navigated;
+  /** The history entry on screen. */
+  entry: Entry;
   /** A snapshot of the host registry, replaced on every change. */
   hosts: HostClient[];
   /** One message at a time, for the polite live region. */
@@ -82,20 +82,18 @@ export class AppController extends Store<AppView> {
     // Read before the Router: it replaces the link's `#code=…` with the entry hash, so a reload or Back cannot replay the code.
     const enrolCode = enrolCodeFromHash(history.current().hash);
     const saved = parseSavedWorkspace(boot.workspace);
-    const router = new Router(history);
+    const router = new Router(history, () => this.snapshot.workspace.active);
     super({
       viewport: boot.viewport,
       lifecycle: boot.lifecycle,
       workspace: initialWorkspace,
-      nav: { entry: router.entry },
+      entry: router.entry,
       hosts: [],
       notice: null,
       appOffer: null,
       storageClosed: false,
       update: "none",
     });
-    // The router asks which tab is active, and the workspace lives in the store `super` builds.
-    router.activeTab = () => this.snapshot.workspace.active;
     this.router = router;
     this.enrolCode = enrolCode;
     this.linkHandoffPending = enrolCode !== null;
@@ -128,8 +126,8 @@ export class AppController extends Store<AppView> {
     const savedName = saved?.hostName;
     this.hosts.set(boot.hosts.map((h) => (h.name === null && h.pageOrigin !== null && savedName !== undefined ? { ...h, name: savedName } : h)));
     this.dispatch({ type: "restored", saved });
-    this.dispatch({ type: "navigated", route: "home", tab: null, place: null });
-    router.subscribe((nav) => { this.navigated(nav); });
+    this.dispatch({ type: "navigated", entry: router.entry });
+    router.subscribe((entry) => { this.navigated(entry); });
     this.listing.subscribe((event) => {
       const client = this.hosts.get(event.handle);
       if (event.type === "requested") this.sessions.requested(event.handle);
@@ -144,6 +142,10 @@ export class AppController extends Store<AppView> {
   dispatch(event: WorkspaceEvent): void {
     const { state, effects } = reduce(this.snapshot.workspace, event);
     if (state !== this.snapshot.workspace) this.update({ workspace: state });
+    // On a tab route the current entry names the active tab, so a switch rewrites it (a replace: no history is added).
+    const tab = activeTab(state);
+    const { entry } = this.router;
+    if (state.route === "tab" && tab && entry.route === "tab" && entry.tab !== tab.id) this.router.switchTab(tab.id, tab.kind === "files" ? tab.place : null);
     if (state.active !== this.sentActive) {
       this.sentActive = state.active;
       const tab = activeTab(state);
@@ -165,18 +167,10 @@ export class AppController extends Store<AppView> {
     this.dispatch({ type: "filesOpened", id: `files-${crypto.randomUUID()}`, host: hostId, place: { kind: "roots" } });
   }
 
-  /** Files tab `id`, when it is the one on screen and its entry is the current one: a late answer for a tab the user has left finds none. */
-  private shownFiles(id: string): FilesTab | null {
-    const { workspace } = this.snapshot;
-    const tab = activeTab(workspace);
-    const { entry } = this.router;
-    return tab?.kind === "files" && tab.id === id && screenOf(workspace) === "files" && entry.route === "tab" && entry.tab === id ? tab : null;
-  }
-
-  /** Drills into `to` in Files tab `id`, if it is still on screen: a new history entry, which writes the tab's place once it lands. */
-  openPlace(id: string, to: FilesPlace): void {
-    const tab = this.shownFiles(id);
-    if (tab) this.router.pushPlace(id, tab.place, to);
+  /** Drills into `to` in the active Files tab: a new history entry, which writes the tab's place once it lands. */
+  openPlace(to: FilesPlace): void {
+    const tab = activeTab(this.snapshot.workspace);
+    if (tab?.kind === "files") this.router.pushPlace(tab.id, to);
   }
 
   /** The active Files tab's in-app back: to `place`, the enclosing one. */
@@ -185,10 +179,10 @@ export class AppController extends Store<AppView> {
     if (tab?.kind === "files") this.router.toPlace(tab.id, place);
   }
 
-  /** The daemon answered for a place Files tab `id` asked for with the canonical `to`: the tab follows it, if it is still on screen and still there. */
-  resolvedPlace(id: string, from: FilesPlace, to: FilesPlace): void {
-    const tab = this.shownFiles(id);
-    if (tab && samePlace(tab.place, from)) this.router.replacePlace(id, to);
+  /** The daemon answered for a place the active Files tab asked for with the canonical `to`: the tab follows it, if it is still there. */
+  resolvedPlace(from: FilesPlace, to: FilesPlace): void {
+    const tab = activeTab(this.snapshot.workspace);
+    if (tab?.kind === "files" && samePlace(tab.place, from)) this.router.replacePlace(tab.id, to);
   }
 
   /** A message for the polite live region, replaced by the next. */
@@ -256,16 +250,15 @@ export class AppController extends Store<AppView> {
     else this.router.openTab(tab.id, tab.kind === "files" ? tab.place : null);
   }
 
-  private navigated(nav: Navigated): void {
-    this.update({ nav });
-    const { route, tab, place } = nav.entry;
-    this.dispatch({ type: "navigated", route, tab, place });
+  private navigated(entry: Entry): void {
+    this.update({ entry });
+    this.dispatch({ type: "navigated", entry });
   }
 
   /** Focus follows the screen on screen, which changes with a route, an overlay, or a switch between tabs of different kinds. */
   private syncScreen(): void {
     const screen = screenOf(this.snapshot.workspace);
-    const overlay = this.snapshot.nav.entry.overlay !== null;
+    const overlay = this.snapshot.entry.overlay !== null;
     if (this.sentScreen?.screen === screen && this.sentScreen.overlay === overlay) return;
     this.sentScreen = { screen, overlay };
     this.focus.screenChanged(screen, overlay);
@@ -292,8 +285,8 @@ export class AppController extends Store<AppView> {
 
   /** A host stays joined while Home, the picker or the switcher is on screen, a tab on it exists, or one is restoring. This is the one place that asks for a listing on entering one of them. */
   private syncListing(): void {
-    const { nav, workspace } = this.snapshot;
-    const listingShown = screenOf(workspace) === "home" || nav.entry.overlay?.screen === "picker" || nav.entry.overlay?.screen === "switcher";
+    const { entry, workspace } = this.snapshot;
+    const listingShown = screenOf(workspace) === "home" || entry.overlay?.screen === "picker" || entry.overlay?.screen === "switcher";
     const entered = listingShown && !this.wasOnListing;
     this.wasOnListing = listingShown;
     for (const client of this.hosts.all()) {

@@ -5,6 +5,7 @@
 import type { AppController } from "../../app/controller";
 import type { FsApi } from "../../files/api";
 import { FileBrowser } from "../../files/browser";
+import { Recent } from "../../files/recent";
 import { UploadTracker } from "../../files/uploads";
 import type { HostClient } from "../../net/hosts";
 import { insertTargetOf } from "../../workspace/state";
@@ -17,8 +18,11 @@ export interface FilesSession {
   browser: FileBrowser;
   uploads: UploadTracker;
   /** Scroll position by Files tab and folder path (`scrollKey`), so Back finds the list where it was. */
-  scroll: Map<string, number>;
+  scroll: Recent<number>;
 }
+
+/** Scrolls kept per host: the least recently set go first, so closed tabs' do not pile up. */
+const SCROLLS_KEPT = 64;
 
 /** Two tabs may show the same folder, each scrolled its own way. */
 export const scrollKey = (tab: string, path: string): string => `${tab}\n${path}`;
@@ -34,7 +38,7 @@ export function filesSession(app: AppController, host: HostClient): FilesSession
     get hostName() { return app.hosts.get(host.entry.handle)?.name ?? "the server"; },
     browser,
     uploads: new UploadTracker((path) => { void browser.uploaded(path); }),
-    scroll: new Map(),
+    scroll: new Recent(SCROLLS_KEPT),
   };
   sessions.set(host.fs, session);
   return session;

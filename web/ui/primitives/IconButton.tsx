@@ -10,7 +10,7 @@ export interface IconButtonProps extends Omit<ButtonHTMLAttributes, "icon" | "la
   /** The accessible name, and the tooltip's text. Required: an icon button has no other name. */
   label: string;
   placement?: "top" | "bottom" | "right";
-  /** Pressed state, for toggles such as the rail's current destination (`aria-current`). */
+  /** Pressed state, for toggles such as the top row's current tab (`aria-current`). */
   current?: boolean;
   /** Registers the button with the focus controller under this name. */
   focusTarget?: FocusTarget;

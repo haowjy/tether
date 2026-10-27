@@ -138,9 +138,9 @@ One name per concept. The code, the specs and the UI copy use these.
 |---|---|---|
 | **host** | One tether daemon endpoint, identified by `hostId` (`/auth/info.hostId`, `welcome.host.id`). The browser has exactly one, the daemon behind its page origin. Native has a saved list | `SessionRef.server`, a tmux server *instance*. UI copy shows the host's name (`pop-os`) with no label word; native settings call the list "Servers" (connection-roadmap.md) |
 | **tab** | A tether tab: one tmux session open in tether, showing whichever window the session shows. Its identity is the **tab key**, `(hostId, SessionRef)` | A browser tab. Closing a tether tab never touches tmux |
-| **destination** | Home, Terminal or Files: the top level of navigation | |
-| **overlay** | A modal surface stacked on a destination: the picker, the switcher, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files; the **status band** |
-| **navigation stack** | The browser history entries tether pushes: destination, overlay, Files folder and preview (§6.6). Its only writer is the router | The tab strip, which never enters history |
+| **route** | Home or the active tab: the top level of navigation. The screen on screen (Home, Terminal or Files) follows from the route and the active tab's kind | |
+| **overlay** | A modal surface stacked on a route: the picker, the switcher, a creation dialog, Settings, a confirmation. Back closes it first | Files' folder stack and preview, which belong to Files; the **status band** |
+| **navigation stack** | The browser history entries tether pushes: route, overlay, Files folder and preview (§6.6). Its only writer is the router | The tab strip, which never enters history |
 | **listing** | One host's tmux sessions and windows, from `listSessions`. One fetcher gets it (§6.3) | |
 | **status band** | The band on the terminal's top edge that says a tab is reconnecting, limited or failed, with Retry, or that its window is sized for another terminal, with Fit (§5.4, §8.2) | an overlay |
 | **persist now** | `app/persist.ts`: hand every pending draft and workspace write to storage at once (§5.5) | |
@@ -184,7 +184,7 @@ means kept with its tests; "Revise" names the change.
 | (new) `net/admission.ts` | **New**: pure. `/auth/info`, the session reply, close codes and native token refusals in; `Admission` out (§4.2) | Admission is daemon protocol, the same in every environment, so it is unit-tested once |
 | `app/app.ts`, `app/windows.ts` | **Delete**. Their logic moves into `workspace/` and `sessions/` | Sheet routing, native `prompt` for names, and `typeChip` all go |
 | `app/Chrome.tsx`, `Sheets.tsx`, `TabBar.tsx`, `app.css` | **Delete** | Old views |
-| `files/api.ts`, `browser.ts`, `kinds.ts`, `images.ts`, `fakes.ts` | **Keep**. `browser.ts` drops its Settings and root-picker places as navigation places; removing a root is a router overlay on Files (`screens/files/FolderDialogs.tsx`), and adding one is the path field (`screens/files/PathField.tsx`, whose editing is a `files/find` overlay) over `FileBrowser.addRoot` and `removeRoot` (decisions.md "Add folder becomes the path field"). `FileBrowser` is the only holder of the Files place; it follows `navigated` (§6.6) | Tested `/fs` client and navigation state |
+| `files/api.ts`, `browser.ts`, `kinds.ts`, `images.ts`, `fakes.ts` | **Keep**. `browser.ts` drops its Settings and root-picker places as navigation places; removing a root is a router overlay on Files (`screens/files/FolderDialogs.tsx`), and adding one is the path field (`screens/files/PathField.tsx`, whose editing is a `files/find` overlay) over `FileBrowser.addRoot` and `removeRoot` (decisions.md "Add folder becomes the path field"). The workspace holds a Files tab's place; `FileBrowser` follows it (§6.6) | Tested `/fs` client and navigation state |
 | `files/markdown.ts`, `files/code.ts` | **Keep**, moved to `files/render/`, which may use the DOM | They build DOM and run DOMPurify |
 | `files/FilesSheet.tsx`, `Viewers.tsx`, `files.css` | **Delete**. The viewers are rebuilt in `screens/files/` on `files/render/` | Old views |
 | `complete/` (strip, suggester, its test) | **Delete** | The suggestion strip is deferred (client README). Git keeps it |
@@ -222,7 +222,7 @@ web/
   workspace/         pure: tabs, active tab, restore, pruning, labels
   sessions/          pure: listing cache per host, search, expansion, creation requests
   drafts/            pure: per-tab line-field drafts, Return send state, eviction
-  files/             /fs client and FileBrowser (the Files place); render/ (markdown, code)
+  files/             /fs client and FileBrowser (the browsing state); render/ (markdown, code)
   app/               <App> root and its context, controller, router.ts (the navigation
                      stack), focus.ts (the focus controller), listing.ts (the listing
                      fetcher), persist.ts (persist now)
@@ -893,7 +893,7 @@ interface WorkspaceState {
 
 **State that is not here has its own owner.** Overlays and the history of Files drill-ins
 are the navigation stack (§6.6). The listing is `sessions/`'s, the focus owner
-`app/focus.ts`'s, the folder cache `FileBrowser`'s. A Files tab's place is the
+`app/focus.ts`'s, the folder cache the host's `Folders` (reached through `filesSession`). A Files tab's place is the
 workspace's own, and only `navigated` writes it. Each lane therefore extends its own
 state without asking W0.
 
@@ -1168,7 +1168,9 @@ after every push, replace and `popstate`.
   `FileBrowser` shows, changes only when the resulting `navigated` arrives. `FileBrowser`
   follows the active Files tab's place and, when the daemon answers with a canonical path
   (or a folder where a file was named), reports it back (`resolvedPlace`): the router
-  replaces the entry's place and the workspace follows.
+  replaces the entry's place and the workspace follows. `openPlace` and `resolvedPlace` act
+  on the active Files tab. A late answer is dropped by one cancellation, the pane's
+  per-place effect, which a Markdown link's resolve uses too.
 - A screen renders the overlay named in the top entry. An overlay is
   `{ screen, name, params }`, opaque to the router, so each lane adds overlays in its own
   screen.
@@ -1182,15 +1184,18 @@ after every push, replace and `popstate`.
 - **Entries.** Each of these pushes an entry: Home to a tab, a tab to Home, opening an
   overlay, drilling into a folder or preview. Switching between tabs while a tab shows,
   of either kind, pushes nothing: the tabs live in the workspace.
-- **Stamp before push.** A drill-in first replaces the current entry with `{tab, from}`,
-  then pushes `{tab, to}`, so Back returns to this place in this tab even if another tab
-  was shown since the entry was made.
+- **The current entry names the active tab.** While a tab route shows, the controller
+  replaces the current entry with `{tab, place}` whenever the active tab changes (a replace
+  adds no entry, so switching still pushes nothing). A drill-in is then a plain push, and
+  Back returns to this place in this tab. An entry is never trusted as a copy of the
+  workspace's active tab: it is rewritten, or recognised as stale on a pop.
 - **Back** closes the top overlay first, then the preview, then pops folders, then leaves
   to Home. It never touches tmux. A pop that lands on an entry whose tab is gone or is
   not the active one is stale: the router goes to the nearest Home entry below it in one
   `history.go(-n)`, computed from its in-memory stack, announcing nothing for the stale
-  entry (with no Home below, as after a reload, it replaces the entry with Home). A pop
-  that closes an overlay lands on the overlay's base whichever tab was shown meanwhile.
+  entry (with no Home below, as after a reload, it replaces the entry with Home). A tab
+  switch under an open overlay rewrites the overlay's entry too, so closing it lands on
+  an entry for the active tab (the router replaces it when the base entry names another).
 - **Closing an overlay by an action**, such as picking a window, is `history.back()`
   plus the tab activation. The activation writes no history, so the two can't race.
   A finished Settings action closes its confirmation and Settings together with

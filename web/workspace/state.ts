@@ -1,7 +1,7 @@
 // The workspace core (client-architecture.md §6.1): a pure reducer over the open tabs and
 // nothing else. Events in; state and effects out. No Preact, no window, no document.
 import { tabId } from "../platform/tabKey";
-import type { FilesPlace, SavedTab, SavedWorkspace, TabKey } from "../platform/types";
+import { samePlace, type FilesPlace, type SavedTab, type SavedWorkspace, type TabKey } from "../platform/types";
 import type { TmuxListing } from "../proto/generated/messages";
 
 /** A tab that follows one tmux session. Its id is `tabId(key)`, so drafts keep their keys. */
@@ -32,6 +32,8 @@ export type Tab = TerminalTab | FilesTab;
 
 /** Home, or the active tab. */
 export type Route = "home" | "tab";
+/** Where a history entry lands: Home, or a tab with the place a Files tab held there. */
+export type Landing = { route: "home" } | { route: "tab"; tab: string; place: FilesPlace | null };
 /** What is on screen: derived from the route and the active tab by {@link screenOf}. */
 export type Screen = "home" | "terminal" | "files";
 
@@ -59,8 +61,8 @@ export type WorkspaceEvent =
   /** The daemon says the tab's session is gone. */
   | { type: "sessionClosed"; id: string }
   | { type: "serverExited"; hostId: string; server: string }
-  /** The router's entry: the only writer of `route` and of a Files tab's place (`tab` and `place` are the entry's record). */
-  | { type: "navigated"; route: Route; tab: string | null; place: FilesPlace | null }
+  /** The router's entry: the only writer of `route` and of a Files tab's place. */
+  | { type: "navigated"; entry: Landing }
   /** The daemon found the session and says which window it shows now: the tab is live, and its label follows. */
   | { type: "watching"; id: string; window: string };
 
@@ -97,10 +99,6 @@ export function screenOf(state: WorkspaceState): Screen {
 /** The tab whose watch runs: only the active terminal tab, and only while its screen shows. The terminal lane reads this to cover and uncover its drivers. */
 export function shownTab(state: WorkspaceState): string | null {
   return screenOf(state) === "terminal" ? state.active : null;
-}
-
-export function samePlace(a: FilesPlace, b: FilesPlace): boolean {
-  return a.kind === b.kind && (a.kind === "roots" || a.path === (b as { path: string }).path);
 }
 
 const newTerminalTab = (key: TabKey, session: string, window: string, restoring: boolean): TerminalTab =>
@@ -199,14 +197,12 @@ function step(state: WorkspaceState, event: WorkspaceEvent): Step {
       return { state: { ...state, tabs: state.tabs.map((t) => (t === tab ? { ...t, window: event.window, restoring: false } : t)) }, notices: [] };
     }
     case "navigated": {
-      const { place } = event;
-      // The entry's place is the active Files tab's own; an entry recording another tab (an overlay's base after a tab switch) says nothing about this one.
-      const tabs = event.route === "tab" && event.tab === state.active && place
-        ? state.tabs.map((t) => (t.kind === "files" && t.id === event.tab && !samePlace(t.place, place) ? { ...t, place } : t))
-        : state.tabs;
+      const { entry } = event;
+      const [id, place] = entry.route === "tab" ? [entry.tab, entry.place] : [null, null];
+      const tabs = place ? state.tabs.map((t) => (t.kind === "files" && t.id === id && !samePlace(t.place, place) ? { ...t, place } : t)) : state.tabs;
       const changed = tabs.some((t, i) => t !== state.tabs[i]);
-      if (state.route === event.route && !changed) return none;
-      const next = { ...state, tabs: changed ? tabs : state.tabs, route: event.route };
+      if (state.route === entry.route && !changed) return none;
+      const next = { ...state, tabs: changed ? tabs : state.tabs, route: entry.route };
       // Arriving at Terminal (a tab, Back, a deep link) puts desktop focus in it.
       return { state: next, notices: [], ...(screenOf(next) === "terminal" && screenOf(state) !== "terminal" && { focus: "terminal" as const }) };
     }

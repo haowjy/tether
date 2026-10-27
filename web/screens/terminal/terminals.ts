@@ -500,9 +500,9 @@ export class Terminals extends Store<TerminalsView> {
    * something else, a dialog or a field, has taken the focus meanwhile.
    */
   private focusIfIdle(): void {
-    const { nav, workspace } = this.app.snapshot;
+    const { entry, workspace } = this.app.snapshot;
     const holder = document.activeElement;
-    if (screenOf(workspace) !== "terminal" || nav.entry.overlay !== null || (holder && holder !== document.body)) return;
+    if (screenOf(workspace) !== "terminal" || entry.overlay !== null || (holder && holder !== document.body)) return;
     this.app.focus.focusTarget("terminal");
   }
 }

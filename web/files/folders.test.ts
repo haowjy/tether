@@ -17,7 +17,7 @@ function setup(extra: string[] = [], page = 3) {
   const fs = new FakeFs(tree(extra), page);
   return { fs, folders: new Folders(fs, () => where) };
 }
-const held = (f: Folders, path: string) => f.snapshot.held.get(folderKey(path, false));
+const held = (f: Folders, path: string) => f.snapshot.held.get(folderKey(path, false))?.names ?? undefined;
 
 describe("Folders", () => {
   beforeEach(() => { vi.useFakeTimers(); });

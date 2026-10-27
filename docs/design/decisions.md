@@ -3508,15 +3508,16 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 - **What:** a tab is a terminal tab or a Files tab, each with a stable id and a host. The
   workspace owns a Files tab's place and writes it only from `navigated`; a history entry
   records `{tab, place}` so Back returns to an earlier folder without a new request.
-  Before a drill-in the router stamps the current entry with `{tab, from}`, then pushes
+  While a tab route shows, the current entry always names the active tab (see "The
+  current history entry names the active tab"), so a drill-in is a plain push of
   `{tab, to}`. A Back that lands on an entry whose tab is gone or not active goes to
   Home's entry in one `history.go(-n)` computed from the in-memory stack, announcing
-  nothing for the stale entry; closing an overlay lands on its base entry whichever tab
-  was shown meanwhile. The router keeps the whole history stack with a cursor, so a
+  nothing for the stale entry; a tab switch under an open overlay rewrites the overlay's entry
+  too. The router keeps the whole history stack with a cursor, so a
   Forward after a Back stays in it. There is still one `FileBrowser` per host: it shows
   the active Files tab's place and reports the daemon's canonical path back, which
-  replaces the entry's place; that report, and a Markdown link's probe, are scoped to the
-  pane's tab and dropped when the pane is gone or another tab or Home is showing. A Files
+  replaces the entry's place; that report, and a Markdown link's probe, are dropped by one
+  cancellation, the pane's per-place effect, and both act on the active Files tab. A Files
   tab's label is its folder or file name, and "Files" at the folder list. Insert path and
   uploads go to the host's `lastTerminal`, the terminal tab last activated and still open,
   saved in the workspace; with none, they are disabled with "Open a terminal tab first".
@@ -3530,6 +3531,23 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   or an upload, and a probed file is likewise held); Back as the in-app
   parent only (it misses the history rule in browser-behaviors.md "Browsing by tap");
   inserting into the active tab (a Files tab is never a terminal).
+
+### The current history entry names the active tab
+
+- **Decided:** 2026-10-27, slice 1 strict review (p330).
+- **What:** on a tab route the controller replaces the current history entry with
+  `{tab, place}` whenever the active tab changes (a replace adds no entry). The router's
+  entry is therefore never a stale copy of the workspace's active tab; a pop to an entry
+  of any other tab is stale and skips to Home. `Entry` is a union (`home`, or `tab` with
+  its place), `history.state` is checked at the boundary including the place, and the
+  router emits the `Entry` itself. A host's `Folders` holds one bounded record per folder
+  (subfolder names and first page), and each Files session's scroll positions are bounded.
+- **Why:** the first design stamped the entry only on a drill-in, so after any tab switch
+  the entry named the tab pushed last and the controller's guard dropped every tap in the
+  switched-to Files tab. A record that copies its owner and is trusted as the owner goes
+  out of date; rewriting it at the one place the owner changes ends the class.
+- **Rejected:** stamping before each push (the stale copy stays and every reader must
+  distrust it); a guard on the controller's taps (the bug moves to the next reader).
 
 ### Switching between tabs adds no history entry
 

@@ -8,7 +8,7 @@ import type { FilesPlace, SavedTab, SavedWorkspace } from "../platform/types";
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const isString = (v: unknown): v is string => typeof v === "string";
 
-function isPlace(v: unknown): v is FilesPlace {
+export function isPlace(v: unknown): v is FilesPlace {
   if (!isRecord(v)) return false;
   return v["kind"] === "roots" || ((v["kind"] === "dir" || v["kind"] === "file") && isString(v["path"]));
 }

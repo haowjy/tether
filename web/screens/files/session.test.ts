@@ -7,7 +7,7 @@ import { filesSession } from "./session";
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); });
 
-const history: HistoryPort = { current: () => ({ state: null, hash: "#/files" }), push: () => undefined, replace: () => undefined, go: () => undefined, onPop: () => () => undefined };
+const history: HistoryPort = { current: () => ({ state: null, hash: "#/tab" }), push: () => undefined, replace: () => undefined, go: () => undefined, onPop: () => () => undefined };
 
 it("names the host once /auth/info has answered, however early the session was made", async () => {
   const platform = createTestPlatform();

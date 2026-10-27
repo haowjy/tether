@@ -1,4 +1,4 @@
-// Remove (fs.md "The picker"): an overlay on the Files destination, so Back, Escape and the
+// Remove (fs.md "The picker"): an overlay on a Files tab, so Back, Escape and the
 // backdrop close it like every other overlay. Adding a folder is the path field's (PathField.tsx).
 import { useEffect, useState } from "preact/hooks";
 import { useApp, useOverlay } from "../../app/context";

@@ -1,10 +1,9 @@
 import { HttpRefusal } from "../net/http";
 import type { Entry, FsApi, Listing, Roots } from "./api";
-import type { FilesPlace } from "../platform/types";
+import { samePlace, type FilesPlace } from "../platform/types";
 import { hostProblem, type HostProblem } from "../ui/hostProblem";
 import { Store } from "../ui/store";
 import { baseName, join, parentOf } from "./paths";
-import { samePlace } from "../workspace/state";
 import { Folders, KEPT, listFolder, type Via } from "./folders";
 import { Recent } from "./recent";
 import type { Where } from "./pathfield";

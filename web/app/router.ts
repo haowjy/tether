@@ -2,8 +2,9 @@
 // §6.6). Each entry's state holds the route (Home or a tab), the overlay open on it, and a
 // record of the tab's Files place. The URL carries the route only, so file paths never enter
 // it. Everyone else learns of navigation one way: `navigated`, after every push, replace and pop.
-import type { FilesPlace } from "../platform/types";
-import { samePlace, type Route } from "../workspace/state";
+import { samePlace, type FilesPlace } from "../platform/types";
+import { isPlace } from "../workspace/saved";
+import type { Landing, Route } from "../workspace/state";
 
 /** `{ screen, name, params }` is opaque to the router: each lane adds overlays in its own screen. */
 export interface Overlay {
@@ -13,22 +14,19 @@ export interface Overlay {
 }
 
 /**
- * One history entry. `tab` and `place` are a record of what the entry showed (the tab, and
- * for a Files tab the place it held), so Back returns to an earlier folder without a new
+ * One history entry: the route it shows (Home, or a tab with the place a Files tab held), and the
+ * overlay open on it. On a tab route the current entry names the active tab (the controller
+ * replaces it when the active tab changes), so Back returns to an earlier folder without a new
  * request. The workspace owns the place; the router never decides it.
  */
-export interface Entry {
+export type Entry = Landing & {
   /** Unique per entry: lets a pop find its place in the in-memory stack. */
   id: number;
-  route: Route;
-  tab: string | null;
-  place: FilesPlace | null;
   overlay: Overlay | null;
-}
+};
 
-export interface Navigated {
-  entry: Entry;
-}
+/** The entry without its id, as the router is asked to make one. */
+type Next = Landing & { overlay: Overlay | null };
 
 /** What the router needs of `window.history`, so a test can stand in. */
 export interface HistoryPort {
@@ -47,25 +45,27 @@ export function enrolCodeFromHash(hash: string): string | null {
   return code === "" ? null : code;
 }
 
+/** `history.state` is a trust boundary: an earlier page life, maybe an older build, wrote it. */
 function isEntry(state: unknown): state is Entry {
-  const e = state as Partial<Entry> | null;
-  return typeof e?.id === "number" && (e.route === "home" || (e.route === "tab" && typeof e.tab === "string"));
+  const e = state as Partial<Record<keyof Entry | "place" | "tab", unknown>> | null;
+  return typeof e?.id === "number" && (e.route === "home" || (e.route === "tab" && typeof e.tab === "string" && (e.place === null || isPlace(e.place))));
 }
 
-const HOME = { route: "home", tab: null, place: null, overlay: null } as const;
+const HOME: Next = { route: "home", overlay: null };
 
 export class Router {
   /** Every entry of this page's life, forward ones included; `at` is the one on screen. */
   private stack: Entry[] = [];
   private at = 0;
-  private readonly listeners = new Set<(nav: Navigated) => void>();
+  private readonly listeners = new Set<(entry: Entry) => void>();
   private nextId = Date.now();
-  /** The workspace's active tab, set by the controller once the workspace exists: an entry whose tab is not it is stale. */
-  activeTab: () => string | null = () => null;
 
-  /** A clean launch opens Home, even with saved tabs: the first entry is replaced with Home's. */
-  constructor(private readonly port: HistoryPort) {
-    const entry: Entry = { id: this.nextId++, ...HOME };
+  /**
+   * A clean launch opens Home, even with saved tabs: the first entry is replaced with Home's.
+   * `activeTab` is the workspace's active tab id: a pop to an entry of any other tab is stale.
+   */
+  constructor(private readonly port: HistoryPort, private readonly activeTab: () => string | null) {
+    const entry = { id: this.nextId++, ...HOME };
     this.stack = [entry];
     port.replace(entry, HASHES.home);
     port.onPop(() => { this.popped(); });
@@ -75,7 +75,7 @@ export class Router {
     return this.stack[this.at] as Entry;
   }
 
-  subscribe(listener: (nav: Navigated) => void): () => void {
+  subscribe(listener: (entry: Entry) => void): () => void {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };
   }
@@ -118,7 +118,7 @@ export class Router {
       return;
     }
     if (then) {
-      const off = this.subscribe(({ entry }) => {
+      const off = this.subscribe((entry) => {
         if (entry.overlay !== null) return;
         off();
         then();
@@ -131,17 +131,17 @@ export class Router {
     const { entry } = this;
     if (entry.overlay === null) return;
     const base = this.stack[this.at - count];
-    if (base?.route === entry.route && base.tab === entry.tab) this.port.go(-count);
+    if (base?.route === entry.route && (base.route === "home" || (entry.route === "tab" && base.tab === entry.tab))) this.port.go(-count);
     else this.replace({ ...entry, overlay: null });
   }
 
-  /**
-   * Drilling into a folder or preview of Files tab `tab`, now at `from`. The current entry is
-   * stamped with `{tab, from}` first (a record, nothing emitted), so Back returns to this
-   * place in this tab even if another tab was shown since the entry was made.
-   */
-  pushPlace(tab: string, from: FilesPlace, to: FilesPlace): void {
-    this.replaceQuietly({ route: "tab", tab, place: from, overlay: null });
+  /** The active tab changed while a tab is on screen: the current entry names `tab` now. A replace, so switching tabs pushes nothing. */
+  switchTab(tab: string, place: FilesPlace | null): void {
+    this.replace({ route: "tab", tab, place, overlay: this.entry.overlay });
+  }
+
+  /** Drilling into a folder or preview of Files tab `tab`: a new entry. */
+  pushPlace(tab: string, to: FilesPlace): void {
     this.push({ route: "tab", tab, place: to, overlay: null });
   }
 
@@ -169,27 +169,22 @@ export class Router {
     else this.replace({ route: "tab", tab, place, overlay: null });
   }
 
-  private push(next: Omit<Entry, "id">): void {
-    const entry: Entry = { ...next, id: this.nextId++ };
+  private push(next: Next): void {
+    const entry = { ...next, id: this.nextId++ };
     this.stack.splice(this.at + 1, Infinity, entry);
     this.at++;
     this.port.push(entry, HASHES[entry.route]);
     this.emit();
   }
 
-  private replace(next: Omit<Entry, "id">): void {
-    this.replaceQuietly(next);
+  private replace(next: Next): void {
+    const entry = { ...next, id: this.nextId++ };
+    this.stack[this.at] = entry;
+    this.port.replace(entry, HASHES[entry.route]);
     this.emit();
   }
 
-  private replaceQuietly(next: Omit<Entry, "id">): void {
-    const entry: Entry = { ...next, id: this.nextId++ };
-    this.stack[this.at] = entry;
-    this.port.replace(entry, HASHES[entry.route]);
-  }
-
   private popped(): void {
-    const leftOverlay = this.entry.overlay !== null;
     const { state } = this.port.current();
     if (isEntry(state)) {
       const at = this.stack.findIndex((e) => e.id === state.id);
@@ -200,9 +195,8 @@ export class Router {
       this.stand({ id: this.nextId++, ...HOME });
     }
     const { entry } = this;
-    // Closing an overlay lands on its base entry, whichever tab was shown meanwhile. Any other entry
-    // for a tab that is gone or not the active one is stale: skip to Home without announcing it.
-    if (!leftOverlay && entry.route === "tab" && entry.tab !== this.activeTab()) {
+    // An entry for a tab that is gone or not the active one is stale: skip to Home without announcing it.
+    if (entry.route === "tab" && entry.tab !== this.activeTab()) {
       const home = this.stack.slice(0, this.at + 1).findLastIndex((e) => e.route === "home" && e.overlay === null);
       if (home < 0) this.replace(HOME);
       else this.port.go(home - this.at);
@@ -217,8 +211,7 @@ export class Router {
   }
 
   private emit(): void {
-    const nav: Navigated = { entry: this.entry };
-    for (const listener of [...this.listeners]) listener(nav);
+    for (const listener of [...this.listeners]) listener(this.entry);
   }
 }
 

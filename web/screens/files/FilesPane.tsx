@@ -35,16 +35,17 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
   // While the path field is being typed in, its completions are the list.
   const [finding, setFinding] = useState(false);
 
-  // An answer that lands after the pane is gone (another tab, Home) is dropped.
-  const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  // The one cancellation for answers that land late: this effect's token is current only while the pane still wants this place.
+  // A resolve or a Markdown link answer that finds another token (or none) is dropped.
+  const wantsNow = useRef<object | null>(null);
   useEffect(() => {
-    let current = true;
-    void browser.follow(wanted, (settled) => { if (current) app.resolvedPlace(tab.id, wanted, settled); });
-    return () => { current = false; };
-  }, [app, browser, wanted, tab.id]);
+    const token = {};
+    wantsNow.current = token;
+    void browser.follow(wanted, (settled) => { if (wantsNow.current === token) app.resolvedPlace(wanted, settled); });
+    return () => { wantsNow.current = null; };
+  }, [app, browser, wanted]);
 
-  const open = (to: FilesPlace): void => { app.openPlace(tab.id, to); };
+  const open = (to: FilesPlace): void => { app.openPlace(to); };
   const up = parentPlace(view);
   const listed = pages !== null && (place.kind === "dir" ? pages.path === place.path : place.kind === "file" && pages.path === parentOf(place.file.path));
   const listingVisible = place.kind === "dir" && listed && !error && !finding;
@@ -58,7 +59,9 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
   const onLink = (target: LinkTarget): void => {
     if (target.kind === "external") app.platform.openURL(target.url);
     else if (target.kind === "path") {
-      browser.resolve(target.path).then((to) => { if (mounted.current) open(to); }, (e: unknown) => { if (mounted.current) app.notify(e instanceof Error && "code" in e ? describeError(e as never, session.hostName) : "That link can't be opened."); });
+      const token = wantsNow.current;
+      const here = (): boolean => wantsNow.current === token;
+      browser.resolve(target.path).then((to) => { if (here()) open(to); }, (e: unknown) => { if (here()) app.notify(e instanceof Error && "code" in e ? describeError(e as never, session.hostName) : "That link can't be opened."); });
     }
   };
 

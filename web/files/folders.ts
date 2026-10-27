@@ -1,7 +1,6 @@
 import { HttpRefusal } from "../net/http";
 import { Store } from "../ui/store";
 import type { FsApi, Listing } from "./api";
-import { Recent } from "./recent";
 import { folderKey, scopeOf, type FolderNames, type FolderState, type Where } from "./pathfield";
 
 export type Via = "list" | "dirs";
@@ -13,25 +12,32 @@ export const KEPT = 32;
 /** A folder's pages asked for before giving up: 5 × 200 = 1,000 folders. */
 export const MAX_PAGES = 5;
 
-export interface FoldersView {
-  /** Oldest first: the first to go when more than `KEPT` are held. */
-  held: ReadonlyMap<string, FolderState>;
-}
-
 /** A folder's first page, as listed. */
 export type FirstPage = Listing & { via: Via };
 
+/** What is known of one folder: the subfolder names the path field completes from, and the first page browsing shows. */
+export interface Held {
+  names: FolderState | null;
+  first: FirstPage | null;
+}
+
+export interface FoldersView {
+  /** Oldest first: the first to go when more than `KEPT` are held. */
+  held: ReadonlyMap<string, Held>;
+}
+
 /**
- * What one host's folders have told us. The subfolder names the path field completes from:
- * one request per folder entered and never one per keystroke, since `ask` waits for typing to
- * settle and a held folder is not asked for again. And the first page of the `KEPT` folders
- * most recently loaded, by the field or by browsing: showing one of those, on a tab switch or a
- * Back, costs no request. A refresh or an upload drops the folder.
+ * What one host's folders have told us, `KEPT` folders at most, the least recently used going
+ * first. Each holds the subfolder names the path field completes from (one request per folder
+ * entered, never one per keystroke: `ask` waits for typing to settle and a held folder is not
+ * asked for again) and the first page browsing shows, so showing a held folder on a tab switch
+ * or a Back costs no request. What clears what: `drop` (a refresh or an upload changed the
+ * folder) clears both; a failed load clears the folder's first page; `forgetAll` (a root
+ * was added or removed) clears every first page but keeps the names.
  */
 export class Folders extends Store<FoldersView> {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly inflight = new Map<string, Promise<void>>();
-  private readonly firsts = new Recent<FirstPage>(KEPT);
 
   constructor(
     private readonly api: FsApi,
@@ -45,10 +51,10 @@ export class Folders extends Store<FoldersView> {
     clearTimeout(this.timer);
     if (!target) return;
     const key = folderKey(target.path, target.hidden);
-    const state = this.snapshot.held.get(key);
+    const { names } = this.snapshot.held.get(key) ?? {};
     // A listing that failed for want of a connection is asked for again: it may be back.
-    if (state && !(state.status === "error" && state.error.code === "network")) {
-      this.set(key, state);
+    if (names && !(names.status === "error" && names.error.code === "network")) {
+      this.put(key, {});
       return;
     }
     this.timer = setTimeout(() => { void this.load(target.path, target.hidden); }, SETTLE_MS);
@@ -59,10 +65,10 @@ export class Folders extends Store<FoldersView> {
     const key = folderKey(path, hidden);
     const running = this.inflight.get(key);
     if (running) return running;
-    this.set(key, { status: "loading" });
+    this.put(key, { names: { status: "loading" } });
     const done = this.fetch(path, hidden, key).then(
-      (names) => { this.set(key, { status: "ready", ...names }); },
-      (error: unknown) => { this.firsts.delete(key); this.set(key, { status: "error", error: error instanceof HttpRefusal ? error : new HttpRefusal(0, "internal") }); },
+      (names) => { this.put(key, { names: { status: "ready", ...names } }); },
+      (error: unknown) => { this.put(key, { names: { status: "error", error: error instanceof HttpRefusal ? error : new HttpRefusal(0, "internal") }, first: null }); },
     ).finally(() => { this.inflight.delete(key); });
     this.inflight.set(key, done);
     return done;
@@ -70,7 +76,7 @@ export class Folders extends Store<FoldersView> {
 
   /** The cached first page of `path`, if any. */
   peek(path: string, hidden: boolean): FirstPage | null {
-    return this.firsts.get(folderKey(path, hidden)) ?? null;
+    return this.snapshot.held.get(folderKey(path, hidden))?.first ?? null;
   }
 
   /** Like {@link peek}, but waits for a fetch under way instead of asking again. */
@@ -81,20 +87,22 @@ export class Folders extends Store<FoldersView> {
 
   /** Browsing listed `listing`'s first page: it is cached, and its subfolders are held. */
   loaded(listing: FirstPage, hidden: boolean, asked: string): void {
-    this.firsts.set(folderKey(asked, hidden), listing);
-    this.firsts.set(folderKey(listing.path, hidden), listing);
+    this.put(folderKey(asked, hidden), { first: listing });
+    this.put(folderKey(listing.path, hidden), { first: listing });
     this.seed(listing, hidden);
   }
 
   /** What browsing loaded: a folder whose pages hold all its subfolders (they sort first) needs no request. */
   seed(listing: Listing, hidden: boolean): void {
     const allHeld = listing.entries.length >= listing.total || listing.entries.some((e) => e.kind !== "dir");
-    if (allHeld) this.set(folderKey(listing.path, hidden), { status: "ready", ...namesOf(listing.entries), capped: listing.truncated });
+    if (allHeld) this.put(folderKey(listing.path, hidden), { names: { status: "ready", ...namesOf(listing.entries), capped: listing.truncated } });
   }
 
-  /** The scope changed (a root added or removed): no listing is known to be what a fresh one would say. */
+  /** The scope changed (a root added or removed): no first page is known to be what a fresh one would say. */
   forgetAll(): void {
-    this.firsts.clear();
+    const held = new Map<string, Held>();
+    for (const [key, record] of this.snapshot.held) if (record.names) held.set(key, { names: record.names, first: null });
+    this.update({ held });
   }
 
   /** A refresh or an upload changed `path`. */
@@ -102,15 +110,15 @@ export class Folders extends Store<FoldersView> {
     const held = new Map(this.snapshot.held);
     held.delete(folderKey(path, false));
     held.delete(folderKey(path, true));
-    this.firsts.delete(folderKey(path, false));
-    this.firsts.delete(folderKey(path, true));
     this.update({ held });
   }
 
-  private set(key: string, state: FolderState): void {
+  /** Merges `patch` into the folder's record and makes it the newest. */
+  private put(key: string, patch: Partial<Held>): void {
     const held = new Map(this.snapshot.held);
+    const record = { names: null, first: null, ...held.get(key), ...patch };
     held.delete(key);
-    held.set(key, state);
+    held.set(key, record);
     for (const [oldest] of held) {
       if (held.size <= KEPT) break;
       held.delete(oldest);
@@ -123,7 +131,7 @@ export class Folders extends Store<FoldersView> {
     let via: Via | undefined;
     for (let page = 1, offset = 0; ; page++) {
       const listing = await listFolder(this.api, this.where(), path, offset, hidden, offset === 0 ? undefined : via);
-      if (page === 1) { this.firsts.set(key, listing); via = listing.via; }
+      if (page === 1) { this.put(key, { first: listing }); via = listing.via; }
       names.push(...namesOf(listing.entries).names);
       offset += listing.entries.length;
       const more = listing.entries.length > 0 && listing.entries.every((e) => e.kind === "dir") && offset < listing.total;

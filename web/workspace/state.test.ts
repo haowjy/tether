@@ -66,17 +66,17 @@ describe("navigation and focus", () => {
     const r = reduce(s, { type: "activated", id: tabId(key(1)) });
     expect(r.effects).toContainEqual({ type: "navigate", to: "tab" });
     expect(r.effects.some((e) => e.type === "focus")).toBe(false);
-    expect(reduce(s, { type: "navigated", route: "tab", tab: null, place: null }).effects).toContainEqual({ type: "focus", target: "terminal" });
+    expect(reduce(s, { type: "navigated", entry: { route: "tab", tab: "x", place: null } }).effects).toContainEqual({ type: "focus", target: "terminal" });
   });
 
   it("activating a tab already on Terminal only focuses it", () => {
-    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", route: "tab", tab: null, place: null }]).state;
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", entry: { route: "tab", tab: "x", place: null } }]).state;
     const r = reduce(s, { type: "activated", id: tabId(key(1)) });
     expect(r.effects).toEqual([{ type: "focus", target: "terminal" }]);
   });
 
   it("closing the last tab on Terminal navigates Home before focusing Home search", () => {
-    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", route: "tab", tab: null, place: null }]).state;
+    const s = run([{ type: "opened", key: key(1), session: "s", window: "a" }, { type: "navigated", entry: { route: "tab", tab: "x", place: null } }]).state;
     const r = reduce(s, { type: "closed", id: tabId(key(1)) });
     expect(r.effects.map((e) => e.type)).toEqual(expect.arrayContaining(["navigate", "focus"]));
     expect(r.effects.findIndex((e) => e.type === "navigate")).toBeLessThan(r.effects.findIndex((e) => e.type === "focus"));
@@ -95,18 +95,18 @@ describe("what is on screen", () => {
   it("watches only the active tab while its terminal screen shows", () => {
     let r = run([{ type: "opened", key: key(1), session: "s", window: "a" }]);
     expect(shownTab(r.state)).toBeNull();
-    r = run([{ type: "navigated", route: "tab", tab: null, place: null }], r.state);
+    r = run([{ type: "navigated", entry: { route: "tab", tab: "x", place: null } }], r.state);
     expect(shownTab(r.state)).toBe(tabId(key(1)));
     r = run([{ type: "opened", key: key(2), session: "s", window: "b" }], r.state);
     expect(shownTab(r.state)).toBe(tabId(key(2)));
-    r = run([{ type: "navigated", route: "home", tab: null, place: null }], r.state);
+    r = run([{ type: "navigated", entry: { route: "home" } }], r.state);
     expect(shownTab(r.state)).toBeNull();
   });
 
   it("saves on every change to the tabs, and on none other", () => {
     expect(open(initialWorkspace, 1).effects).toContainEqual({ type: "save" });
     const s = open(initialWorkspace, 1).state;
-    expect(reduce(s, { type: "navigated", route: "tab", tab: null, place: null }).effects.some((e) => e.type === "save")).toBe(false);
+    expect(reduce(s, { type: "navigated", entry: { route: "tab", tab: "x", place: null } }).effects.some((e) => e.type === "save")).toBe(false);
   });
 
   it("does not save when only what is not saved changed (restoring)", () => {
