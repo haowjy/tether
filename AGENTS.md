@@ -18,7 +18,7 @@ review ceremony; the rigor stays:
   (sans-IO cores for the tmux protocol and the hub, thin I/O tasks, bounded queues,
   one native focus controller). Get a review of each subsystem's design and code
   before moving on.
-- **Probe the real thing.** Verify against real tmux (3.4 and 3.7b), a real iPhone,
+- **Probe the real thing.** Verify against real tmux (3.4, the oldest supported, and 3.8), a real iPhone,
   and the resource budget measured on the dev box. Passing tests is not enough.
 - **Coherent commits.** One change per commit; the lead preflights each commit on a
   clean export before pushing. The pre-push hook runs `scripts/preflight.sh full` on
@@ -56,14 +56,22 @@ is `web/pnpm-lock.yaml`; don't add a `package-lock.json`.
 
 ## Principles
 
+Invariants (`docs/design/plan.md`, "Invariants"). A change that breaks one makes a
+different product:
+
 - **tmux is the source of truth.** tether is a window onto Jimmy's tmux, never its
   owner: tmux's life never depends on tether's.
 - **Usable on spotty, barely-there connections.** Every byte and round trip on the
   network costs the user; reconnecting must be cheap.
 - **Light on a busy host.** The dev box runs many processes. tether's CPU and memory
   stay small, bounded, and capped where Jimmy chooses.
-- **Private.** Reachable only from Jimmy's tailnet.
-- POSIX only (Linux, macOS). tmux doesn't run on Windows.
+- **Content from disk or tmux never runs as the app.** Rendered Markdown and Mermaid
+  are sanitized; proxied files are served sandboxed.
+
+Product rules are Jimmy's standing decisions and change only through
+`docs/design/decisions.md`. Among them: tether is reachable only from Jimmy's tailnet;
+it serves several servers; hosts are POSIX (Linux, macOS), since tmux doesn't run on
+Windows.
 
 ## Releases
 

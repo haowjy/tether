@@ -1,11 +1,6 @@
 # tether: product and UX spec
 
-> **Client UX update (2026-10-22):** Start with [client design and Mac handoff](client/README.md).
-> Its approved browser/mobile navigation and minimal layout supersede conflicting
-> UI rules below. Subsystem invariants remain in force; touch, clipboard and the phone
-> dock retain explicit device gates.
-
-tether is a phone-first client for the tmux sessions on Jimmy's dev server, reached
+tether is a phone-first client for the tmux sessions on Jimmy's dev servers, reached
 only over his tailnet. This document is the product and UX spec and the index of the
 design: what tether does and how it looks and behaves on the phone. Each subsystem
 has its own spec, and every decision, with the alternatives rejected, is logged in
@@ -18,8 +13,9 @@ and record decisions in decisions.md.
 
 | Document | Covers |
 |---|---|
-| plan.md (this) | Goal, product rules, layout, keyboard, touch, file manager, security overview, code structure, phases, spikes |
+| plan.md (this) | Goal, invariants, product rules, layout, keyboard, touch, file manager, security overview, code structure, phases, spikes |
 | [daemon-core.md](daemon-core.md) | `src/tmux/`, `src/hub/`, `src/proto/`: control mode, snapshots, pane streams, the WebSocket protocol, and every daemon limit |
+| [client/](client/README.md) | The client on every surface: the interaction contract ([browser-behaviors.md](client/browser-behaviors.md)), where typing goes ([terminal-interaction-design.md](client/terminal-interaction-design.md)), browser setup |
 | [ios-shell.md](ios-shell.md) | The native iOS app: keyboard, focus, bridge, scheme handler, lifecycle, media |
 | [auth.md](auth.md) | Native device tokens, enrolled-node browser admission, enrolment and auth routes |
 | [fs.md](fs.md) | `src/fs/`: roots, path resolution, the `/fs/*` routes, uploads, their limits |
@@ -31,7 +27,7 @@ and record decisions in decisions.md.
 
 ## Goal
 
-A phone-first client for the tmux sessions on Jimmy's dev server, reached only over
+A phone-first client for the tmux sessions on Jimmy's dev servers, reached only over
 his tailnet. It needs:
 
 - **Terminal tabs**, one per tmux session, like `tmux attach`, plus a session list for
@@ -46,8 +42,39 @@ his tailnet. It needs:
   markdown (MVP) and diffs (v2); edit, create and rename files (v2).
 
 Agent dashboards and notifications are out of scope: Jimmy's agent harness already
-handles notifications. A terminal bell does mark its tab and session with an attention dot (Bell attention below).
+handles notifications. The one exception: a terminal bell puts an attention dot on its
+tab and session row ([Bell attention](#reading-on-a-small-screen)).
 Why tether is worth building, and which projects to study, is in [research/prior-art.md](research/prior-art.md).
+
+## Invariants
+
+Four rules hold whatever the design. A change that breaks one makes a different
+product; it is not a decision to log.
+
+- **tmux is the source of truth.** tether is a window onto Jimmy's tmux, never its
+  owner. It never starts the tmux server, and tmux keeps running whether tether runs or
+  not. Closing a tab closes only the tab; tether has no control that kills a tmux
+  session or window.
+- **Every byte on the network costs the user.** The phone is often on a weak link.
+  Nothing polls over the network: the daemon sends changes, and a reconnect costs one
+  fresh snapshot.
+- **tether stays light on a busy host.** Its CPU and memory are bounded and capped
+  where Jimmy chooses ([Resource budget](#resource-budget)).
+- **Content from disk or tmux never runs as the app.** Rendered Markdown and Mermaid
+  are sanitized (DOMPurify, Mermaid's strict mode), and proxied files are served
+  sandboxed ([Security](#security)).
+
+Everything else in these documents is a decision, and changes through
+[decisions.md](decisions.md):
+
+- **Product rules** (next section): Jimmy's standing decisions about devices, tabs,
+  hosts, files and access. Only Jimmy changes them.
+- **Engineering standards** ([Code structure and standards](#code-structure-and-standards)):
+  how the code is built.
+- **The interaction design** ([client/browser-behaviors.md](client/browser-behaviors.md)
+  and the subsystem specs): what each screen does and how input flows.
+- **Test coverage:** which tmux versions and devices are verified. Today that is tmux
+  3.4, the oldest supported, and 3.8, the newest; and Jimmy's iPhone.
 
 ## Product rules
 
@@ -58,7 +85,7 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
 - **Client:** a native Swift app hosting the web UI in a WKWebView, with a native
   first responder owning the keyboard ([ios-shell.md](ios-shell.md)). Installed from
   Xcode until a paid Apple account brings TestFlight.
-- **tmux:** 3.4 on the server, 3.7b on the Mac, `window-size latest`, default prefix
+- **tmux:** 3.4 on the server; tether supports 3.4 and newer. `window-size latest`, default prefix
   `C-b`, the laptop sometimes attached at the same time. A window takes the size of
   the client that acted on it last, as tmux's `latest` does: opening a tab, typing,
   pasting, rotating, a font change or Fit sizes it to exactly the phone's size, whether
@@ -79,6 +106,7 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
 - **Auth:** allowlisted Tailscale login plus two device lanes: an iOS device token
   behind Face ID and an enrolled tailnet node for the browser/PWA. Both use the same
   one-time code and can be revoked with `tether device remove` ([auth.md](auth.md)).
+- **Access:** tether is reachable only from Jimmy's tailnet.
 - **Hosts:** several servers are part of the product, not a later extension: Home shows
   one card per server and the sessions sheet groups sessions by server. The app connects
   to each host's daemon directly. A browser/PWA is still bound to its page origin until a
@@ -680,8 +708,8 @@ upload and edit; nothing in the uploads folder is ever executed by tether
 - **Version skew:** the client speaks one protocol version, each daemon accepts a
   range ([daemon-core.md §5.2](daemon-core.md#52-handshake-and-versions)), checked per
   host.
-- **tmux versions:** fixtures from 3.4 and 3.7b; features gated on the detected
-  version. libtmux-rs tests 3.2a–3.7b and is the reference for version quirks.
+- **tmux versions:** tested on 3.4 and 3.8; features gated on the detected version.
+  Recorded fixtures exist for 3.4 and 3.7b; recording 3.8's is open work. libtmux-rs tests 3.2a–3.7b and is the reference for version quirks.
 - **Web UI version:** bundled in the app, one build per app version.
 - **Config compatibility:** unknown TOML keys are ignored, so an older daemon reads a
   newer config.
@@ -803,7 +831,7 @@ slice they need and storage coalesces writes within a microtask.
   5. `workspace/`, `sessions/`, `drafts/`, `tabs/`, `net/admission.ts` and
      `touch/gesture.ts` are sans-IO: no Preact, `window` or `document`. `proto/link.ts`
      may use `WebSocket`; `files/render/` may use the DOM.
-- **Tests:** recorded fixtures for tmux 3.4 and 3.7b, pure hub state-machine tests, and
+- **Tests:** recorded tmux fixtures (3.4 and 3.7b today; 3.8 to record), pure hub state-machine tests, and
   a manual real-phone checklist. The web client has unit tests plus Playwright on
   Chromium and WebKit against `web/harness/` (`npm --prefix web run e2e`); axe checks
   every route in both themes and densities. `web/scripts/checks.mjs` enforces source
@@ -813,7 +841,7 @@ slice they need and storage coalesces writes within a microtask.
   `TETHER_PREFLIGHT_E2E=1` opts the browser suite into `scripts/preflight.sh full`; it is
   otherwise run explicitly, since the preflight environment must have its browsers
   installed. The `*.real.ts` specs (`pnpm --dir web run e2e:real`) run a real daemon on a
-  private tmux 3.4 and 3.7b; they need the tmux builds under `~/.cache/tether-tmux` and are
+  private tmux 3.4 and 3.8; they need the tmux builds under `~/.cache/tether-tmux` and are
   never part of preflight.
 
 ## Phases

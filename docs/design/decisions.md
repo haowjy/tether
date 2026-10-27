@@ -5054,3 +5054,18 @@ log upload left on). Probe results: `.meridian/work/tether-mvp/mac-front-probes.
   lead's lean), since it would ship Home and the sheet in a shape the product rule then
   changes.
 - **Supersedes:** "one host in the MVP" in plan.md's product rules.
+
+### Invariants are separate from decisions; test tmux 3.4 and 3.8
+
+- **Decided:** 2026-10-27, Jimmy ("tailnet is a product rule, Supported tmux versions
+  should not be an invariant... its just what we tested, process is not an invariant";
+  "we should be testing against tmux 3.8").
+- **What:** plan.md opens with four invariants (tmux is the source of truth, network
+  bytes cost the user, light on the host, content never runs as the app) and says that
+  everything else is a decision: product rules, engineering standards, the interaction
+  design and test coverage. Tailnet-only access is a product rule. Test coverage is tmux
+  3.4, the oldest supported, and 3.8, the newest; recording 3.8 fixtures is open work.
+- **Why:** the specs mixed invariants with decisions, so a reader could not tell which
+  rules may change through this log.
+- **Rejected:** treating tested tmux versions, the build process or the code structure
+  as invariants; keeping 3.7b as the second tested version.
