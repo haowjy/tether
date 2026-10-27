@@ -1,5 +1,5 @@
 // New session and Browse files on `host`, a server the caller chose: the active tab's for the
-// sessions overlay, a card's on Home. An unreachable one disables both with the reason; neither
+// sessions overlay; Home's card has New session alone (its Files row is Browse files). An unreachable one disables both with the reason; neither
 // acts on another server. Both go through `commit`, so the form decides when they run: at once
 // behind the sheet, after the picker or a server's sheet has closed.
 import { useApp, useAppView } from "../../app/context";
@@ -16,35 +16,54 @@ export function useActiveHost(): HostClient | undefined {
   });
 }
 
-export function NewActions({ host, commit }: { host: HostClient | undefined; commit: Commit }) {
+/** Why neither can run on `host`, if so. */
+function reasonOf(host: HostClient | undefined): string | undefined {
+  return host === undefined ? "No server to use" : host.admission.kind === "unreachable" ? `${host.name ?? "The server"} can't be reached` : undefined;
+}
+
+export function NewSession({ host, commit }: { host: HostClient | undefined; commit: Commit }) {
   const app = useApp();
-  const reason = host === undefined ? "No server to use" : host.admission.kind === "unreachable" ? `${host.name ?? "The server"} can't be reached` : undefined;
+  const reason = reasonOf(host);
+  return (
+    <Button
+      variant="quiet"
+      icon="plus"
+      disabledReason={reason}
+      onClick={(e) => {
+        if (!host || reason) return;
+        const opener = e.currentTarget;
+        commit(() => { app.openOverlay({ screen: "home", name: "newSession", params: { handle: host.entry.handle } }, opener); });
+      }}
+    >
+      New session
+    </Button>
+  );
+}
+
+function BrowseFiles({ host, commit }: { host: HostClient | undefined; commit: Commit }) {
+  const app = useApp();
+  const reason = reasonOf(host);
+  return (
+    <Button
+      variant="quiet"
+      icon="folder"
+      disabledReason={reason}
+      onClick={() => {
+        if (!host?.hostId || reason) return;
+        const { hostId } = host;
+        commit(() => { app.openFiles(hostId); });
+      }}
+    >
+      Browse files
+    </Button>
+  );
+}
+
+export function NewActions({ host, commit }: { host: HostClient | undefined; commit: Commit }) {
   return (
     <>
-      <Button
-        variant="quiet"
-        icon="plus"
-        disabledReason={reason}
-        onClick={(e) => {
-          if (!host || reason) return;
-          const opener = e.currentTarget;
-          commit(() => { app.openOverlay({ screen: "home", name: "newSession", params: { handle: host.entry.handle } }, opener); });
-        }}
-      >
-        New session
-      </Button>
-      <Button
-        variant="quiet"
-        icon="folder"
-        disabledReason={reason}
-        onClick={() => {
-          if (!host?.hostId || reason) return;
-          const { hostId } = host;
-          commit(() => { app.openFiles(hostId); });
-        }}
-      >
-        Browse files
-      </Button>
+      <NewSession host={host} commit={commit} />
+      <BrowseFiles host={host} commit={commit} />
     </>
   );
 }

@@ -44,7 +44,7 @@ export function HostSessionLists({ query, only, active, onOpen }: HostSessionLis
             }}
             {...(active && { active })}
             onOpen={(l, session) => { onOpen(h, l, session); }}
-            onRetry={() => { if (h.admission.kind === "unreachable") app.hosts.recheck(handle); else app.listing.refresh(handle); }}
+            onRetry={() => { app.retryHost(handle); }}
           />
         );
       })}

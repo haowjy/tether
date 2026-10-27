@@ -391,7 +391,9 @@ Servers settings, and no Enrol screen is shown.
     `hosts.removeDevice(host)` (`POST /auth/node/remove` through `httpBase`) and shows
     Enrol. Drafts stay.
   - **Clear local data.** After a confirmation it deletes drafts and the saved workspace
-    on this device only.
+    on this device only. The tabs open at that moment stay until closed but are never saved
+    again (`Persist` holds their ids; a tab opened later, or the same session after its tab was
+    closed, saves normally), so backgrounding or reloading does not bring them back.
   - **Add to Home Screen** is on Home, not here: when `platform.install` is present and
     reports the page not installed, in the phone layout, a short section after the cards
     shows the iOS steps. It is never a forced screen.
@@ -1482,7 +1484,7 @@ sit over one `HostSessionLists` (the same session rows as Home) and one search b
 resets on close. Contract:
 [session picker and switcher](../../../../docs/design/client/browser-behaviors.md#session-picker-desktop-and-session-switcher-phone).
 
-- *Phone: the half-height `Dialog` sheet* (`variant="sheet"`, `header` for its top row)
+- *Phone: the half-height `Dialog` sheet* (`variant="sheet"`, a `ToolBar` for its top row)
   over the current tab. Top row: Home and the search field, not auto-focused (initial
   focus is the dialog, §6.5). The list is every listable server, grouped by server, rows
   marked "here" (the active terminal tab's session) and "open". The active session's
@@ -1513,7 +1515,7 @@ resets on close. Contract:
   no button, and no client code for it.
 - *Phone from Home: the server sheet* (`ServerSheet.tsx`), the third overlay name,
   `{ screen: "sessions", name: "server", params: { host } }`, opened by "All N sessions" on a
-  Home card. A `variant="page"` dialog: Back to Home, the search and `NewMenu` in its header,
+  Home card. A `variant="page"` dialog with a `PageBar` (Back to Home, the search and `NewMenu`),
   that server's rows only (`SessionPicks only`), no tab strip. It commits like the picker (close,
   then act), so a row opens its tab over Home, Back from the tab lands on Home and never on the
   sheet, and the router's tab-route repair is not involved.
@@ -2023,7 +2025,7 @@ removed on 2026-10-27 (decisions.md, "Harness UI tests removed"); the harness fi
 | **W4 PWA** | `sw/` (including `vite-plugin.ts`), `public/`, `platform/browser/pwa.ts`, `harness/pwa/` | Service worker, its build plugin (entry, precache list, manifest link and `theme-color` metas), `updates` and `install`, the Update banner's state, offline Home. The manifest template's content is handed to L2 | Built bundle served by the daemon through Serve, from an enrolled second machine: install in Chromium; offline launch; the multi-window and two-updates gates (§12); no API response in Cache Storage |
 | **P3a phone dock, owned input and switcher** (after W1, W2 and the paste-confirmation lane, §10) | `touch/owned-input.ts`, `touch/modifiers.ts`, `drafts/`, `ui/primitives/LineInput.tsx`, `screens/terminal/dock/`, `screens/switcher/`, `screens/picker/` (taken over from W1), `harness/dock/` (renamed from `harness/draft/`), `e2e/dock/`; the phone toolbar in `TerminalScreen.tsx`, which becomes the dock (its disabled keyboard button goes). W0 hand-offs below | The dock as chosen (one row at rest: tab chip, line field, toggle; the key row above it while the keyboard is up), the line field with drafts and Return, the key row with armed ctrl and alt, the one keyboard toggle, the focus cues; the owned input; the `line` focus owner; the switcher replacing the phone picker sheet and tab row. Built against real tmux, with UI quality as the bar | `drafts/` and `modifiers.ts` unit tests (caps, eviction, revisions, send states by `req`, arming). Playwright WebKit at phone size against a real daemon on scratch tmux 3.4 and 3.7b: Return runs `echo hi` once in zsh and bash and submits a prompt in Claude Code and Codex; a `busy` paste refusal puts the line back and no Enter runs; every key-row key and an armed ctrl+c reach tmux; a multiline paste into the field goes to the terminal unsent; a tab switch swaps drafts; reload restores one; the switcher switches by pill, opens a window from the list, closes a tab, filters, and creates a session. Simulator Safari: the toggle raises and lowers the keyboard from both inputs and a terminal tap changes nothing; the key row appears only with the keyboard; the cursor and Return-key cues follow the owner; tmux size is unchanged with the keyboard up and the prompt on tmux's last row stays above the dock; portrait and landscape. Screenshots of every dock and switcher state, keyboard up and down, reviewed against the mockup. The real-iPhone checklist (§12) queued for Jimmy |
 | **P3b gestures, scroll and selection** (after W2) | `touch/gesture.ts`, `touch/selection.ts`, `screens/terminal/selection/`, `harness/gesture/` | The recognizer (a tap raises the keyboard only on or beside the cursor row), touch scroll with history, wheel translation, tap-to-position, the long-press with its haptic and held drag, word selection with handles and the selection layer, the edit menu (Copy, Paste) | Recognizer unit tests (tap, hold then release, hold then drag, release over a blank cell, scroll, cancel, long-press while streaming). Simulator probes against real tmux: a tap far from the cursor never changes the keyboard; ← and → move the shell cursor and vim's, repeating while held; a long-press selects a word at once, a drag extends it, Copy keeps logical newlines, Paste sends one paste without Enter; vertical swipe in less and vim sends ↑/↓ or wheel events; scroll in a shell, in less and in Claude Code. The selection-versus-click and logical-copy gates (§12) |
-| **W5 native adapter** (P4, after G3) | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v5, native transport, `saveWorkspace`, the draft store bridge, native line mirror contract, `readPasteboard`, `copy` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap Home search from Terminal with the keyboard up, and restore both keyboard targets. Then ios-shell.md's device checklist on Jimmy's iPhone |
+| **W5 native adapter** (P4, after G3) | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v5, native transport, `saveWorkspace`, the draft store bridge, native line mirror contract, `readPasteboard`, `copy` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap the current-tab button from Terminal with the keyboard up, and restore both keyboard targets. Then ios-shell.md's device checklist on Jimmy's iPhone |
 
 **How a commit lands.** Coders don't commit (a tech-lead call). For each reviewed change:
 
@@ -2095,7 +2097,7 @@ edited only by the lead, from each lane's notes, in that lane's commit.
 | Keyboard detection misfires (iOS 26 offset bugs, hardware keyboard, zoom, toolbar collapse) | iPhone: open and close the keyboard; rotate with it up; pinch zoom; scroll until Safari's toolbars collapse; connect a hardware keyboard; focus the line field. tmux size never changes |
 | Gesture arbitration | Tap in a mouse-aware app versus a plain shell; press and hold; press then scroll; `pointercancel`; long-press while output streams. No mouse event is sent while selecting |
 | Logical copy | The terminal-interaction-design.md matrix: soft wrap, hard break at the exact column, blank lines, indentation, CJK, emoji and combining cells, partial selection, after reconnect and history fetch (after L3) |
-| Native clipboard and focus | Simulator then device: `copy` through the bridge; Home search tapped from Terminal with the keyboard up; the switcher with its search focused; rotation |
+| Native clipboard and focus | Simulator then device: `copy` through the bridge; the current-tab button tapped from Terminal with the keyboard up; the switcher with its search focused; rotation |
 | `<dialog>` sheet on iOS: focus, scroll, keyboard | iPhone Safari and WKWebView: a long list in the switcher with its search at the bottom focused, which must stay above the keyboard; rotation |
 | Multi-window update | Two Chromium windows and a PWA open, each with an unsent line in the field; Update in one. Only that window reloads; the others show "Reload to finish updating", keep their drafts, and still open a lazy viewer (Markdown) after the worker has been idle long enough to be terminated |
 | Two updates in a row | Build h1 open in one window; update to h2 in another, then to h3. The h1 window's next lazy chunk shows "Update required"; Cache Storage holds only `tether-shell-h2` and `tether-shell-h3` |

@@ -7,6 +7,7 @@
 // desktop's form, opened by the top row's +, is `Picker`.
 import { useApp, useOverlay } from "../../app/context";
 import { Dialog } from "../../ui/primitives/Dialog";
+import { ToolBar } from "../../ui/primitives/DialogBars";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { SearchField } from "../../ui/primitives/TextField";
 import { now, SessionPicks, useQuery } from "./SessionPicks";
@@ -24,10 +25,10 @@ export function Sessions() {
       variant="sheet"
       onClose={close}
       header={
-        <>
+        <ToolBar>
           <IconButton icon="home" label="Home" onClick={() => { app.router.closeOverlay(() => { app.router.goHome(); }); }} />
           <SearchField label="Find a session" placeholder="Find a session" value={query} onInput={setQuery} class={styles.search} />
-        </>
+        </ToolBar>
       }
       footer={open && <SheetTabs />}
     >

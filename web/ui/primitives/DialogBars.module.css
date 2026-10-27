@@ -1,0 +1,21 @@
+.heading { font-size: var(--text-heading); font-weight: var(--weight-bold); }
+.title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+}
+.title .heading { flex: 1; }
+/* A sheet's own top row: no title bar, the controls it is given. */
+.tools { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-2); }
+.page {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  width: min(var(--page-width), 100%);
+  min-height: calc(var(--header-height) + var(--safe-top));
+  margin: 0 auto;
+  padding: var(--safe-top) var(--space-2) 0;
+}

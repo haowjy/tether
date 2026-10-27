@@ -5,6 +5,7 @@
 // a press outside dismisses it and leaves the active tab as it is.
 import { useApp, useAppView, useOverlay } from "../../app/context";
 import { Dialog } from "../../ui/primitives/Dialog";
+import { ToolBar } from "../../ui/primitives/DialogBars";
 import { SearchField } from "../../ui/primitives/TextField";
 import { NewActions, useActiveHost } from "./NewActions";
 import { closing, SessionPicks, useQuery } from "./SessionPicks";
@@ -25,7 +26,7 @@ export function Picker() {
       variant={{ kind: "popover", to: "plus" }}
       returnFocusTo={noTabs || touch ? "plus" : "terminal"}
       onClose={close}
-      header={<SearchField label="Find a session" placeholder="Find a session" value={query} onInput={setQuery} class={styles.search} data-initial-focus="" />}
+      header={<ToolBar><SearchField label="Find a session" placeholder="Find a session" value={query} onInput={setQuery} class={styles.search} data-initial-focus="" /></ToolBar>}
       footer={open && <div class={styles.actions}><NewActions host={host} commit={commit} /></div>}
     >
       {open && <SessionPicks query={query} commit={commit} />}

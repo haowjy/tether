@@ -3756,3 +3756,26 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   usual. `tapAction(...)` resolves every tap to a single action.
 - **Rejected:** a tap that both returns typing and clicks (an unintended click in vim or htop
   mid-line is worse than one extra tap).
+
+## Slice 4 fixes: one tab state, one card state, variants mean placement
+
+- **Decided:** 2026-10-27, tech lead (slice 4, from reviews p347 and p348).
+- **What:**
+  - Home's tab rows come from `tabPills`/`lookOf`, the derivation the top row and the sheet strip
+    use; a row's words are `pillMeta`. A tab sits on its host's card by id; the lone-host stand-in
+    applies only while that host's id is unknown. With the host list complete, `hostsKnown` drops
+    every tab of a host that is gone.
+  - `cardOf(host, sessions)` returns the card's body and whether Files is offered. The body kind
+    decides the status word (`STATUS`), so a card can't read "live" over an offline body. Home's
+    empty body offers New session alone; Files is the card's own row.
+  - Clear local data: `Persist` treats the tabs open at the time as unsaved until they close.
+  - A listing is asked for on entering each listing surface (Home, the picker, the sheet, a server's
+    sheet), keyed by surface name, so Home to a server's sheet lists again.
+  - `app.retryHost` is the one Retry; Home hides the unreachable host's banner, since its card says
+    so and offers the Retry.
+  - `Dialog`'s variant means placement only. Top rows are `TitleBar`, `ToolBar` and `PageBar`,
+    passed as `header`; the dialog is named by `aria-label`.
+  - The test platform welcomes each socket with its saved host's id and name. It had welcomed all
+    of them as the one fake daemon, so a second server's sessions matched the first's tabs.
+- **Budget:** initial JS 198 to 199 KB (198.1 measured).
+- **Rejected:** a Home-only `waiting` rule; clearing by closing the open tabs.

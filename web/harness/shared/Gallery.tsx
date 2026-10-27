@@ -2,6 +2,7 @@ import { useState } from "preact/hooks";
 import { Banner } from "../../ui/primitives/Banner";
 import { Button } from "../../ui/primitives/Button";
 import { Dialog } from "../../ui/primitives/Dialog";
+import { TitleBar } from "../../ui/primitives/DialogBars";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { Icon, type IconName } from "../../ui/primitives/Icon";
 import { IconButton } from "../../ui/primitives/IconButton";
@@ -101,7 +102,7 @@ export function Gallery() {
         </div>
       </Section>
       <Toast message="2 tabs closed: their windows are gone" onDismiss={() => undefined} />
-      <Dialog open={dialog !== null} variant={dialog ?? "dialog"} title="Open session" onClose={() => { setDialog(null); }}>
+      <Dialog open={dialog !== null} variant={dialog ?? "dialog"} title="Open session" header={<TitleBar title="Open session" onClose={() => { setDialog(null); }} />} onClose={() => { setDialog(null); }}>
         <SearchField label="Find a session or window" value="" onInput={() => undefined} />
         <EmptyState icon="sessions" title="No matching sessions or windows." />
       </Dialog>

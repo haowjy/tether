@@ -25,7 +25,7 @@ export function NewMenu({ host, commit }: { host: HostClient | undefined; commit
           setAnchor(e.currentTarget);
         }}
       />
-      <Dialog open={anchor !== null} title="New session or Browse files" variant={{ kind: "menu", to: anchor }} onClose={close}>
+      <Dialog open={anchor !== null} title="New session or Browse files" variant={{ kind: "menu", to: anchor }} header={null} onClose={close}>
         {anchor && <NewActions host={host} commit={(pick) => { close(); commit(pick); }} />}
       </Dialog>
     </>

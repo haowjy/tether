@@ -6,11 +6,13 @@
 // local data. Each destructive action confirms in its own overlay, so Back from the
 // confirmation returns here. Appearance and terminal text size are not here: nothing stores
 // them yet (slice 5 adds them with their controls).
-import { useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
+import { useId, useState } from "preact/hooks";
 import { useApp, useAppView, useOverlay } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
 import { Button } from "../../ui/primitives/Button";
 import { Dialog } from "../../ui/primitives/Dialog";
+import { PageBar, TitleBar } from "../../ui/primitives/DialogBars";
 import styles from "./Settings.module.css";
 
 type Confirmation = "removeDevice" | "clearData";
@@ -36,7 +38,7 @@ function Confirm({ name, title, confirmLabel, run, children }: {
     else app.router.closeAllOverlays(); // a finished action leaves nothing open
   };
   return (
-    <Dialog open={open} title={title} onClose={close}>
+    <Dialog open={open} title={title} header={<TitleBar title={title} onClose={close} />} onClose={close}>
       {open && (
         <div class={styles.confirm}>
           <p>{children}</p>
@@ -50,6 +52,18 @@ function Confirm({ name, title, confirmLabel, run, children }: {
         </div>
       )}
     </Dialog>
+  );
+}
+
+/** One group on the page: a heading, what it covers, and its controls. */
+function Section({ title, detail, children }: { title: string; detail: ComponentChildren; children?: ComponentChildren }) {
+  const id = useId();
+  return (
+    <section class={styles.section} aria-labelledby={id}>
+      <h3 id={id} class={styles.heading}>{title}</h3>
+      <p class={styles.detail}>{detail}</p>
+      {children}
+    </section>
   );
 }
 
@@ -75,38 +89,34 @@ export function Settings() {
 
   return (
     <>
-      <Dialog open={open} title="Settings" variant="page" backLabel="Back to Home" onClose={close}>
+      <Dialog open={open} title="Settings" variant="page" header={<PageBar back="Back to Home" onBack={close} title="Settings" />} onClose={close}>
         {open && (
           <div class={styles.sections}>
             {manageHosts && (
-              <section class={styles.section} aria-labelledby="settings-servers">
-                <h3 id="settings-servers" class={styles.heading}>Servers</h3>
-                <p class={styles.detail}>The servers this app connects to. Add one, pair it again with a code from <code>tether enroll</code>, or remove it.</p>
+              <Section
+                title="Servers"
+                detail={<>The servers this app connects to. Add one, pair it again with a code from <code>tether enroll</code>, or remove it.</>}
+              >
                 <Button variant="secondary" onClick={manageHosts}>Manage servers</Button>
-              </section>
+              </Section>
             )}
             {target && (
-              <section class={styles.section} aria-labelledby="settings-device">
-                <h3 id="settings-device" class={styles.heading}>This device</h3>
-                <p class={styles.detail}>
-                  Every browser and app on {device} uses tether on {hostName}. Removing it signs them all out; enrol again with <code>tether enroll</code>.
-                </p>
+              <Section
+                title="This device"
+                detail={<>Every browser and app on {device} uses tether on {hostName}. Removing it signs them all out; enrol again with <code>tether enroll</code>.</>}
+              >
                 <Button variant="secondary" class={styles.danger} onClick={(e) => { ask("removeDevice", e.currentTarget); }}>Remove this device</Button>
-              </section>
+              </Section>
             )}
             {keyboard && (
-              <section class={styles.section} aria-labelledby="settings-keys">
-                <h3 id="settings-keys" class={styles.heading}>Keyboard</h3>
-                <p class={styles.detail}>
-                  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> leaves the terminal and focuses the tab strip; Enter on a tab returns. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> copies the selection and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> pastes. Every other key goes to tmux.
-                </p>
-              </section>
+              <Section
+                title="Keyboard"
+                detail={<><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> leaves the terminal and focuses the tab strip; Enter on a tab returns. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> copies the selection and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> pastes. Every other key goes to tmux.</>}
+              />
             )}
-            <section class={styles.section} aria-labelledby="settings-data">
-              <h3 id="settings-data" class={styles.heading}>Local data</h3>
-              <p class={styles.detail}>Drafts and the saved tabs on this device. Nothing on {hostName} changes, and tmux keeps running.</p>
+            <Section title="Local data" detail={`Drafts and the saved tabs on this device. Nothing on ${hostName} changes, and tmux keeps running.`}>
               <Button variant="secondary" class={styles.danger} onClick={(e) => { ask("clearData", e.currentTarget); }}>Clear local data</Button>
-            </section>
+            </Section>
           </div>
         )}
       </Dialog>
@@ -125,12 +135,12 @@ export function Settings() {
         title="Clear local data?"
         confirmLabel="Clear local data"
         run={async () => {
-          await app.platform.storage.clearLocalData();
+          await app.persist.clearLocalData();
           app.notify("Local data cleared");
           return null;
         }}
       >
-        Drafts and the saved tabs on this device are deleted. Open tabs stay until you close them.
+        Drafts and the saved tabs on this device are deleted. Tabs open now stay until you close them, and are not saved again.
       </Confirm>
     </>
   );

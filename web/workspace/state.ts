@@ -158,8 +158,8 @@ function step(state: WorkspaceState, event: WorkspaceEvent): Step {
     case "hostsKnown": {
       if (!event.complete) return none;
       const known = new Set(event.ids);
-      // A Files tab is never proved by a listing, so its host alone decides; a terminal tab opened this run names a host that was known.
-      const gone = new Set(state.tabs.filter((t) => (t.kind === "files" || t.restoring) && !known.has(t.host)).map((t) => t.id));
+      // With the host list complete, a tab of a host that isn't in it (removed in Manage servers, or never there) has nowhere to go.
+      const gone = new Set(state.tabs.filter((t) => !known.has(t.host)).map((t) => t.id));
       return gone.size ? { state: without(state, gone), notices: [] } : none;
     }
     case "opened": {

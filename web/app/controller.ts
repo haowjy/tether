@@ -55,7 +55,8 @@ export class AppController extends Store<AppView> {
   readonly sessions: SessionsCache;
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastUpdateCheck = 0;
-  private wasOnListing = false;
+  /** The listing surface on screen when the last listing was asked for; null when none is. */
+  private listingSurface: string | null = null;
   /** The active tab native was last told: undefined until the first dispatch. */
   private sentActive: string | null | undefined;
   /** The screen and overlay state the focus controller was last told. */
@@ -159,6 +160,12 @@ export class AppController extends Store<AppView> {
   openOverlay(overlay: Overlay, opener?: Element): void {
     this.focus.noteOpener(opener ?? null);
     this.router.openOverlay(overlay);
+  }
+
+  /** Looks at a host again: admission when it is unreachable, a fresh listing otherwise. The one Retry. */
+  retryHost(handle: string): void {
+    if (this.hosts.get(handle)?.admission.kind === "unreachable") this.hosts.recheck(handle);
+    else this.listing.refresh(handle);
   }
 
   /** A new Files tab on `hostId`, at that host's roots (every time: the tab is the place). */
@@ -285,15 +292,19 @@ export class AppController extends Store<AppView> {
   /** A host stays joined while Home or the sessions overlay is on screen, a tab on it exists, or one is restoring. This is the one place that asks for a listing on entering one of them. */
   private syncListing(): void {
     const { entry, workspace } = this.snapshot;
-    const listingShown = screenOf(workspace) === "home" || entry.overlay?.screen === "sessions";
-    const entered = listingShown && !this.wasOnListing;
-    this.wasOnListing = listingShown;
+    const home = screenOf(workspace) === "home";
+    const overlay = entry.overlay?.screen === "sessions" ? `${entry.overlay.screen}/${entry.overlay.name}` : null;
+    const listingShown = home || overlay !== null;
+    // Each surface asks afresh when it is entered, so Home to a server's sheet lists again; the sheet over a tab and the picker over Home are surfaces of their own.
+    const surface = overlay ?? (home ? "home" : null);
+    const entered = surface !== null && surface !== this.listingSurface;
+    this.listingSurface = surface;
     for (const client of this.hosts.all()) {
       const { handle } = client.entry;
       const admitted = client.admission.kind === "admitted";
       const hasTab = client.hostId !== null && workspace.tabs.some((t) => t.host === client.hostId);
       const listed = this.listing.setWanted(handle, admitted && (listingShown || hasTab));
-      // Entering Home or the sessions overlay lists afresh, unless joining the host just started a listing.
+      // Entering a listing surface lists afresh, unless joining the host just started a listing.
       if (entered && admitted && !listed) this.listing.refresh(handle);
     }
   }

@@ -156,11 +156,14 @@ describe("restore and pruning", () => {
     expect(reduce(s, { type: "listing", hostId: "h2", listing: listing("main:1-1", []) }).state.tabs).toHaveLength(1);
   });
 
-  it("discards saved tabs of a host that no current host reports, once every id is known", () => {
+  it("discards the tabs of a host that no current host reports, once every id is known", () => {
     const s = reduce(initialWorkspace, { type: "restored", saved: saved([1], 1) }).state;
     expect(reduce(s, { type: "hostsKnown", ids: [], complete: false }).state.tabs).toHaveLength(1);
     expect(reduce(s, { type: "hostsKnown", ids: ["h1"], complete: true }).state.tabs).toHaveLength(1);
     expect(reduce(s, { type: "hostsKnown", ids: ["h2"], complete: true }).state.tabs).toHaveLength(0);
+    // A tab proved live this run goes with its host too.
+    const live = reduce(s, { type: "watching", id: s.tabs[0]?.id ?? "", window: "w" }).state;
+    expect(reduce(live, { type: "hostsKnown", ids: ["h2"], complete: true }).state.tabs).toHaveLength(0);
   });
 
   it("a listing refreshes the session name and, off screen, the current window's name", () => {

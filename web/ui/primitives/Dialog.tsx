@@ -1,8 +1,8 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useId, useLayoutEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { cx } from "../cx";
 import { useFocus, type FocusTarget } from "../focus";
-import { IconButton } from "./IconButton";
+import { useCloseByTap } from "./DialogBars";
 import styles from "./Dialog.module.css";
 
 /**
@@ -21,14 +21,12 @@ interface DialogProps {
   /** Escape, the backdrop, the close button. The parent decides what closing means (usually the router's Back). */
   onClose: () => void;
   title: string;
-  /** `page`'s Back button: what it goes back to ("Back to Home"). */
-  backLabel?: string;
-  /** `sheet` is the same dialog styled as a tall bottom sheet with safe-area padding; `page` fills the screen under one 44 pt header row, Back and the title by default (Settings, a server's sessions). */
+  /** Where it sits: centred (`dialog`), as a tall bottom sheet with safe-area padding, filling the screen (`page`), or against a control. What its top row holds is `header`'s. */
   variant?: "dialog" | "sheet" | "page" | Anchored;
   /** Where focus returns on close: an element or a registered name. Default: the control `app.openOverlay` was given, else the one focused at opening. A field marked `data-initial-focus=""` takes focus on opening with a fine pointer. */
   returnFocusTo?: HTMLElement | FocusTarget | null;
-  /** The top row in place of the title and close button (the sessions sheet's Home and search); `title` stays as the dialog's accessible name. */
-  header?: ComponentChildren;
+  /** The top row: a `TitleBar`, `ToolBar` or `PageBar`, or null for none. `title` is the dialog's accessible name. */
+  header: ComponentChildren;
   /** Pinned under the scrolling body, safe-area padded (the sessions sheet's tabs). */
   footer?: ComponentChildren;
   children: ComponentChildren;
@@ -52,15 +50,10 @@ function place(dialog: HTMLDialogElement, anchor: HTMLElement): void {
 }
 
 /** `<dialog>.showModal()`: top layer, modal focus containment, Escape. Safari lacks `closedby`, so Escape and the backdrop are handled here. */
-export function Dialog({ open, onClose, title, variant = "dialog", backLabel = "Back", returnFocusTo, header, footer, children }: DialogProps) {
+export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo, header, footer, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
   const focus = useFocus();
-  // A tap that closes (the close icon, the backdrop) is the moment a keyboard that was up can come back.
-  const closeByTap = (from: Element): void => {
-    focus.returnKeyboardInTap(from);
-    onClose();
-  };
+  const closeByTap = useCloseByTap(onClose);
 
   const anchored = typeof variant === "object" ? variant : null;
   const anchorElement = (): HTMLElement | null => (typeof anchored?.to === "string" ? focus.elementOf(anchored.to) : (anchored?.to ?? null));
@@ -94,32 +87,18 @@ export function Dialog({ open, onClose, title, variant = "dialog", backLabel = "
     if (dialog?.open) dialog.close();
   }, []);
 
+  const placement = typeof variant === "object" ? variant.kind : variant;
   return (
     <dialog
       ref={ref}
-      class={cx(styles.dialog, variant !== "dialog" && styles[anchored?.kind ?? (variant as "sheet")])}
-      aria-labelledby={titleId}
+      class={cx(styles.dialog, placement !== "dialog" && styles[placement])}
+      aria-label={title}
       tabIndex={-1}
       onCancel={(e) => { e.preventDefault(); onClose(); }}
       onClick={(e) => { if (e.target === e.currentTarget) closeByTap(e.currentTarget); }}
     >
       <div class={styles.panel}>
-        {header || anchored?.kind === "menu" ? (
-          <>
-            <h2 id={titleId} class="sr-only">{title}</h2>
-            {header && <header class={styles.top}>{header}</header>}
-          </>
-        ) : variant === "page" ? (
-          <header class={styles.pageHeader}>
-            <IconButton icon="back" label={backLabel} data-initial-focus="touch" onClick={(e) => { closeByTap(e.currentTarget); }} />
-            <h2 id={titleId} class={styles.pageTitle}>{title}</h2>
-          </header>
-        ) : (
-          <header class={styles.header}>
-            <h2 id={titleId} class={styles.title}>{title}</h2>
-            <IconButton icon="close" label="Close" data-initial-focus="touch" onClick={(e) => { closeByTap(e.currentTarget); }} />
-          </header>
-        )}
+        {header}
         <div class={styles.body}>{children}</div>
         {footer && <footer class={styles.footer}>{footer}</footer>}
       </div>

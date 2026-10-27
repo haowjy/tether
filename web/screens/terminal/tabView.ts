@@ -57,6 +57,13 @@ export function tabPills(
   });
 }
 
+/** A pill's connection as a list row says it, when it isn't fine: "Checking…", "Reconnecting…", "Disconnected". */
+export function pillMeta({ tone, state }: Pill): string | undefined {
+  if (tone === "live" || tone === "idle") return undefined;
+  const word = state.charAt(0).toUpperCase() + state.slice(1);
+  return tone === "reconnecting" ? `${word}…` : word;
+}
+
 /** The band's colour: halted and limited tabs are errors, a tab still trying is reconnecting. */
 export function bandTone(tone: Tone): "reconnecting" | "error" {
   return tone === "halted" || tone === "limited" || tone === "gone" ? "error" : "reconnecting";

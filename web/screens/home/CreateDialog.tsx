@@ -3,6 +3,7 @@ import { useApp, useOverlay } from "../../app/context";
 import { parseCreation } from "../../sessions/creation";
 import { Button } from "../../ui/primitives/Button";
 import { Dialog } from "../../ui/primitives/Dialog";
+import { TitleBar } from "../../ui/primitives/DialogBars";
 import { TextField } from "../../ui/primitives/TextField";
 import { createAndOpen } from "./create";
 import styles from "./CreateDialog.module.css";
@@ -52,7 +53,7 @@ export function CreateDialog() {
   const { open, params: overlayParams, close } = useOverlay("home");
   const params = open ? (overlayParams as CreateParams) : null;
   return (
-    <Dialog open={open} title="New session" onClose={close}>
+    <Dialog open={open} title="New session" header={<TitleBar title="New session" onClose={close} />} onClose={close}>
       {params && <Form key={params.handle} params={params} />}
     </Dialog>
   );

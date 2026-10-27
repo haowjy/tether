@@ -246,7 +246,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
     },
 
     transport: {
-      openSocket(_handle: string, handlers: LinkHandlers) {
+      openSocket(handle: string, handlers: LinkHandlers) {
         const link = new FakeLink(handlers);
         platform.links.push(link);
         queueMicrotask(() => {
@@ -254,9 +254,11 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
             if (!link.closed) link.drop(1006);
             return;
           }
-          const id = daemon.info.hostId;
+          // A host the platform booted with already has its own id and name: each handle is a different server, not the one fake daemon.
+          const saved = hosts.find((h) => h.handle === handle);
+          const id = saved?.hostId ?? daemon.info.hostId;
           link.ready = true;
-          handlers.welcome({ protocol: 2, daemon: { version: "0", completion: false }, host: { id, name: daemon.info.name } });
+          handlers.welcome({ protocol: 2, daemon: { version: "0", completion: false }, host: { id, name: saved?.name ?? daemon.info.name } });
         });
         const send = link.send.bind(link);
         const watches = new Map<number, { session: SessionRef; size: Size }>();
@@ -300,6 +302,7 @@ export function createTestPlatform(options: TestPlatformOptions = {}): TestPlatf
       },
       clearLocalData: () => {
         platform.drafts.clear();
+        platform.savedWorkspaces.length = 0;
         return Promise.resolve();
       },
     },

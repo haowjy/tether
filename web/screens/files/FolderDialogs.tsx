@@ -8,6 +8,7 @@ import { HttpRefusal } from "../../net/http";
 import { useStore } from "../../ui/store";
 import { Button } from "../../ui/primitives/Button";
 import { Dialog } from "../../ui/primitives/Dialog";
+import { TitleBar } from "../../ui/primitives/DialogBars";
 import type { FilesSession } from "./session";
 import styles from "./FolderDialogs.module.css";
 
@@ -41,7 +42,7 @@ export function RemoveFolderDialog({ session }: { session: FilesSession }) {
   };
 
   return (
-    <Dialog open={open} title="Remove this folder?" returnFocusTo={removed ? "addFolder" : null} onClose={close}>
+    <Dialog open={open} title="Remove this folder?" header={<TitleBar title="Remove this folder?" onClose={close} />} returnFocusTo={removed ? "addFolder" : null} onClose={close}>
       {open && (
         <div class={styles.body}>
           <p>{label} will no longer show in Files on {session.hostName}. Nothing in the folder is deleted.</p>

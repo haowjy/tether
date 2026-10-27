@@ -9,6 +9,8 @@ version section on release.
   sessions" (a full-height list with its own search and +) and Files. A server that can't be
   reached says when it was last reached and offers Retry; one where tmux isn't running says so.
   Settings moved behind the gear in Home's header, and Add to Home Screen moved onto Home.
+  Clear local data now stays cleared: the tabs open at that moment are not saved again, so
+  they don't return after the app goes to the background.
 - Mermaid diagrams render in Markdown previews, in the app's light or dark theme. A wider
   diagram scrolls inside its own box; one that doesn't parse stays as a code block with the
   reason under it. The diagram code downloads the first time a document has a diagram; a page

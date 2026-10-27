@@ -1,25 +1,27 @@
 // Every state of a server card on one page, for design review: the states a real host reaches
 // only with a dead socket, a stopped tmux or an admission problem. Real flows are the fixtures.
 import { Button } from "../../ui/primitives/Button";
-import { ServerCard, type ServerCardProps } from "../../screens/home/ServerCard";
+import { ServerCard, type CardTab, type ServerCardProps } from "../../screens/home/ServerCard";
 
 const NO_OP = (): void => undefined;
-const tab = (id: string, label: string, waiting?: string): ServerCardProps["tabs"][number] => ({
-  id, icon: id.startsWith("files") ? "folder" : "terminal", label, waiting, selected: false, onOpen: NO_OP, onClose: NO_OP,
+const tab = (id: string, label: string, meta?: string): CardTab => ({
+  id, icon: id.startsWith("files") ? "folder" : "terminal", label, meta, selected: false, onOpen: NO_OP, onClose: NO_OP,
 });
 const TABS = [tab("t1", "tether agent"), tab("t2", "notes shell"), tab("files-1", "tether")];
+const NEW = <Button variant="quiet" icon="plus">New session</Button>;
+const base = { onRetry: NO_OP, onSessions: NO_OP, newSession: NEW };
 
 const CARDS: ServerCardProps[] = [
-  { name: "pop-os", status: "live", tabs: TABS, body: { kind: "ready", count: 9, onSessions: NO_OP }, onFiles: NO_OP },
-  { name: "pop-os (no tabs)", status: "live", tabs: [], body: { kind: "ready", count: 2, onSessions: NO_OP }, onFiles: NO_OP },
-  { name: "pop-os (loading)", status: "live", tabs: [], body: { kind: "loading" }, onFiles: NO_OP },
-  { name: "pop-os (list failed)", status: "live", tabs: [], body: { kind: "failed", onRetry: NO_OP }, onFiles: NO_OP },
-  { name: "no sessions", status: "live", tabs: [], body: { kind: "empty", actions: <><Button variant="quiet" icon="plus">New session</Button><Button variant="quiet" icon="folder">Browse files</Button></> }, onFiles: NO_OP },
-  { name: "dev-box-2", status: "live", tabs: [tab("t3", "build shell")], body: { kind: "noTmux", onRetry: NO_OP }, onFiles: NO_OP },
-  { name: "jimmys-macbook-air", status: "offline", tabs: [tab("t4", "tether agent", "Reconnecting…")], body: { kind: "offline", reachedAgo: "2 hours ago", onRetry: NO_OP }, onFiles: undefined },
-  { name: "offline, never reached", status: "offline", tabs: [], body: { kind: "offline", reachedAgo: null, onRetry: NO_OP }, onFiles: undefined },
-  { name: "checking", status: "checking", tabs: [tab("t5", "tether agent", "Checking…")], body: { kind: "loading" }, onFiles: undefined },
-  { name: "needs the user", status: "attention", tabs: [], body: { kind: "attention" }, onFiles: undefined },
+  { ...base, name: "pop-os", tabs: TABS, body: { kind: "ready", count: 9 }, onFiles: NO_OP },
+  { ...base, name: "pop-os (no tabs)", tabs: [], body: { kind: "ready", count: 2 }, onFiles: NO_OP },
+  { ...base, name: "pop-os (loading)", tabs: [], body: { kind: "loading" }, onFiles: NO_OP },
+  { ...base, name: "pop-os (list failed)", tabs: [], body: { kind: "failed" }, onFiles: NO_OP },
+  { ...base, name: "no sessions", tabs: [], body: { kind: "empty" }, onFiles: NO_OP },
+  { ...base, name: "dev-box-2", tabs: [tab("t3", "build shell")], body: { kind: "noTmux" }, onFiles: NO_OP },
+  { ...base, name: "jimmys-macbook-air", tabs: [tab("t4", "tether agent", "Reconnecting…")], body: { kind: "offline", reachedAt: Date.now() - 2 * 3_600_000 }, onFiles: undefined },
+  { ...base, name: "offline, never reached", tabs: [], body: { kind: "offline", reachedAt: null }, onFiles: undefined },
+  { ...base, name: "checking", tabs: [tab("t5", "tether agent", "Checking…")], body: { kind: "checking" }, onFiles: undefined },
+  { ...base, name: "needs the user", tabs: [], body: { kind: "attention" }, onFiles: undefined },
 ];
 
 export function Cards() {
