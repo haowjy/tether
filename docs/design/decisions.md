@@ -2010,14 +2010,13 @@ behind it are Jimmy's ([Shell integration](#shell-integration)); see the
 - **What:** the real-daemon specs (`e2e/*/*.real.ts`) share `e2e/shared/stack.ts`: an
   isolated daemon with `--allow-login e2e`, a private tmux, Vite's dev server with the dev
   proxy, and a front proxy that stands in for Tailscale Serve and answers `/auth/info`
-  itself. They are opt-in: `pnpm e2e:real` needs the local tmux builds. The harness suite's Playwright output goes to
-  `test-results/<port>`. The dev proxy's `/auth/info` request carries the token and the
+  itself. They are opt-in: `pnpm e2e:real` needs the local tmux builds. The dev proxy's `/auth/info` request carries the token and the
   caller's `Tailscale-User-Login`, which the daemon's Tailscale check requires.
 - **Why:** a browser cannot add `Tailscale-User-Login` to a WebSocket upgrade, so
   something must stand in for Serve, and one stack serves every lane.
 - **Rejected:** a `TETHER_LOCALAPI_SOCKET` override in the daemon with a fake LocalAPI
   (a test hook in the production identity path); a patched daemon copy; a separate
-  stack per lane; running the real specs in the default `pnpm e2e` (they fail on a
+  stack per lane; running the real specs in a default test run (they fail on a
   machine without the tmux builds); a shared `test-results/` that one run empties under
   another.
 
@@ -3560,3 +3559,23 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 - **Why:** browser-behaviors.md states "tab changes are not history" for terminal tabs
   only; extending it keeps Back meaning "leave this tab's folders, then leave to Home".
 - **Rejected:** an entry per tab switch (Back would replay every switch).
+
+## Harness UI tests removed; real-daemon e2e kept as scripts
+
+- **Decided:** 2026-10-27, Jimmy.
+- **What:** the Playwright specs that ran against the harness's fake daemon (Files, Home
+  keyboard, PWA, admission, navigation, routes, the axe checks), their helpers,
+  `@axe-core/playwright`, the `e2e` script and `TETHER_PREFLIGHT_E2E` are deleted. Kept: the
+  harness and its fixtures (every state has one, for looking at it), vitest, Rust and Swift
+  tests, and the `*.real.ts` end-to-end scripts on `e2e/shared/stack.ts`. Those run a real
+  daemon on a private tmux 3.4 and 3.8, opt-in and never in preflight, to exercise full
+  behaviour end to end and, later, to record performance (not built yet).
+  `pnpm --dir web run e2e:stack` starts the isolated stack alone and prints its URL, so a
+  prober can drive it by hand without touching Jimmy's sessions. Verification is structural
+  review, probes on the running system (harness, real stack), and the device checklist.
+- **Why:** Jimmy: "we shouldn't have any ui tesets, u should just make the code strong enough
+  that it shouldn't happen or we shouldn't be able to question it in the first place (code
+  structure over if statements)", then "i don't think i've ever seen ui tests catch anything
+  really", then "e2e scripts maybe (to test the full behavior, and record performance)".
+- **Rejected:** keeping the harness suite, opt-in or in preflight (it checks a fake daemon's
+  idea of the app, and costs a browser install and maintenance every change).

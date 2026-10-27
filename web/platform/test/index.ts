@@ -1,4 +1,4 @@
-// The in-memory Platform for vitest and the Playwright harness. Only tests and harness/
+// The in-memory Platform for vitest and the harness. Only tests and harness/
 // import it (lint rule 4). The daemon is faked at two seams, so the real code above runs:
 // HTTP (`fetch`, which answers /auth/*) and the socket (a FakeLink that welcomes and answers
 // listings and watches). Nothing here knows which environment it stands in for.

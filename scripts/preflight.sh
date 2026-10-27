@@ -7,8 +7,7 @@
 # another lane's uncommitted file can neither rescue a commit that depends on it nor block
 # one that doesn't. The export installs the web dependencies from its lockfile and builds in
 # its own target directory (target/preflight/), so it
-# neither rebuilds nor blocks the checkout's builds. Set TETHER_PREFLIGHT_E2E=1 to add
-# the Playwright suite to `full`.
+# neither rebuilds nor blocks the checkout's builds.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -90,8 +89,5 @@ case "$MODE" in
     run_step cargo test --locked
     run_step cargo build --release --locked
     run_step pnpm --dir web run check
-    if [[ -n "${TETHER_PREFLIGHT_E2E:-}" ]]; then
-      run_step pnpm --dir web run e2e
-    fi
     ;;
 esac

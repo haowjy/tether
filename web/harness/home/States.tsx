@@ -1,4 +1,4 @@
-// Every state of the sessions list on one page, for design review and axe: the states a real
+// Every state of the sessions list on one page, for design review: the states a real
 // daemon only reaches with a dead socket or a refusal. Real flows are in e2e/home.
 import type { ComponentChildren } from "preact";
 import type { HostSessions } from "../../sessions/cache";

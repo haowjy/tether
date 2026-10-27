@@ -10,17 +10,17 @@ needs to know before editing.
 ```bash
 pnpm --dir web install --frozen-lockfile
 pnpm --dir web run check     # typecheck, lint, source checks, unit tests, build, budgets
-pnpm --dir web run e2e       # Playwright (Chromium and WebKit) on the harness
-pnpm --dir web run e2e:real  # the same browsers against a real daemon and tmux (below)
-pnpm --dir web exec playwright install chromium webkit   # once
+pnpm --dir web run e2e:real  # end-to-end scripts against a real daemon and tmux (below)
+pnpm --dir web run e2e:stack # that isolated stack alone, to drive by hand (below)
 ```
 
 ## The harness
 
 `/harness/index.html?fixture=<name>&layout=phone|desktop&scheme=dark|light&density=touch|compact#/route`
 runs the real app on the in-memory `test` platform, with a fake daemon behind `/auth/*` and the
-socket. Fixtures live in `harness/<lane>/`; `gallery` shows every primitive in every state. Start
-it with `pnpm --dir web run dev -- --mode harness`. Playwright starts it itself. It is never in
+socket. It is for looking at each screen and state; there are no UI tests on it. Every state has a
+fixture in `harness/<lane>/`; `gallery` shows every primitive in every state. Start
+it with `pnpm --dir web run dev -- --mode harness`. It is never in
 a production build: the build fails if its module graph holds `platform/test/` or `harness/`.
 
 ## Developing against a real daemon
@@ -48,16 +48,19 @@ Phone layouts are checked in a real phone browser or the iOS Simulator: there is
 
 ## End to end against a real daemon
 
-The `*.real.ts` specs (`e2e/terminal/`, `e2e/home/`) run the app against a real tether daemon
-and a private tmux, each describe block on its own isolated stack (`e2e/shared/stack.ts`): a
+The `*.real.ts` scripts (`e2e/terminal/`, `e2e/home/`, `e2e/dock/`, `e2e/gesture/`) are
+Playwright scripts that exercise full behaviour end to end, and are where performance recording
+will live (not built yet). Each describe block runs the app against a real tether daemon and a
+private tmux on its own isolated stack (`e2e/shared/stack.ts`): a
 daemon started with `--allow-login e2e`, Vite's dev server with the dev proxy, and a small front
 proxy that stands in for Tailscale Serve and answers `/auth/info` itself, since a daemon on this
 machine has no tailscaled to ask. Nothing touches the installed service, Tailscale or your tmux
 sessions; everything lives under `<tmpdir>/e2e-<port>/`.
 
 They are opt-in, never part of preflight. They need a debug build of the daemon
-(`cargo build`) and tmux builds at `~/.cache/tether-tmux/3.4/bin/tmux` and
-`~/.cache/tether-tmux/3.7b/bin/tmux`:
+(`cargo build`), tmux builds at `~/.cache/tether-tmux/3.4/bin/tmux` and
+`~/.cache/tether-tmux/3.7b/bin/tmux`, and Playwright's browsers
+(`pnpm --dir web exec playwright install chromium webkit`, once):
 
 ```bash
 cargo build
@@ -68,9 +71,12 @@ TETHER_E2E_PORT=5220 TMPDIR=/tmp/some/dir pnpm --dir web run e2e:real   # keep a
 
 `TETHER_E2E_KEEP=1` leaves a stack's directory (daemon, Vite and tmux logs) after the run.
 
+To drive the app by hand on the same isolated stack, `pnpm --dir web run e2e:stack` starts one
+(`TETHER_E2E_TMUX=3.7b` picks the tmux), prints its URL and runs until Ctrl-C.
+
 ## PWA checks that need a real box
 
-`e2e/pwa/` runs the real service worker against a stand-in for the daemon's shell. What needs
+The service worker runs only in the built bundle. What needs
 the daemon itself and Tailscale Serve's HTTPS origin, from a second enrolled machine, is by
 hand:
 

@@ -744,7 +744,7 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
                   lifecycle.ts, storage.ts, uploads.ts, clipboard.ts, links.ts,
                   restart.ts, pwa.ts (updates and install)
     native/       bridge v4 and adapter for the Swift shell
-    test/         in-memory Platform for vitest and the Playwright harness
+    test/         in-memory Platform for vitest and the harness
   proto/          generated wire types, binary frames, HostLink and session identity
   net/            host.ts, http.ts, hosts.ts (registry), admission.ts (pure)
   tabs/           connection.ts, driver.ts, input.ts, keymap.ts, status.ts
@@ -775,7 +775,7 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
   sw/             service worker and the Vite plugin that builds it, after the main bundle
   public/         manifest template and web app icons (render-icons regenerates the PNGs)
   harness/        test-mode entry, imports per-lane fixtures; never in production builds
-  e2e/            Playwright specs against the harness; `*.real.ts` specs run a real daemon
+  e2e/            opt-in end-to-end scripts (`*.real.ts`): a real daemon on a private tmux
                   through shared/stack.ts
 ios/           Swift app (XcodeGen) and the TetherKit package (ios-shell.md)
 ```
@@ -832,17 +832,16 @@ slice they need and storage coalesces writes within a microtask.
      `touch/gesture.ts` are sans-IO: no Preact, `window` or `document`. `proto/link.ts`
      may use `WebSocket`; `files/render/` may use the DOM.
 - **Tests:** recorded tmux fixtures (3.4 and 3.7b today; 3.8 to record), pure hub state-machine tests, and
-  a manual real-phone checklist. The web client has unit tests plus Playwright on
-  Chromium and WebKit against `web/harness/` (`npm --prefix web run e2e`); axe checks
-  every route in both themes and densities. `web/scripts/checks.mjs` enforces source
-  rules and shell budgets. Vite's production build plugin rejects test/harness modules
-  in the module graph; a manifest-only check cannot detect those transitive imports.
-  Playwright's WebKit cannot reproduce the iOS keyboard, so it cannot replace the phone.
-  `TETHER_PREFLIGHT_E2E=1` opts the browser suite into `scripts/preflight.sh full`; it is
-  otherwise run explicitly, since the preflight environment must have its browsers
-  installed. The `*.real.ts` specs (`pnpm --dir web run e2e:real`) run a real daemon on a
-  private tmux 3.4 and 3.8; they need the tmux builds under `~/.cache/tether-tmux` and are
-  never part of preflight.
+  a manual real-phone checklist. The web client has unit tests (vitest) and no UI tests:
+  structure makes a state impossible rather than a test checking for it
+  ([decision](decisions.md#harness-ui-tests-removed-real-daemon-e2e-kept-as-scripts)).
+  Every state has a fixture in `web/harness/` for looking at it, and `web/scripts/checks.mjs`
+  enforces source rules and shell budgets. Vite's production build plugin rejects
+  test/harness modules in the module graph; a manifest-only check cannot detect those
+  transitive imports. The keyboard and viewport are checked on the phone. The `*.real.ts`
+  end-to-end scripts (`pnpm --dir web run e2e:real`) run a real daemon on a private tmux 3.4
+  and 3.8 and exercise full behaviour end to end; they are where performance recording will
+  live. They need the tmux builds under `~/.cache/tether-tmux` and are never part of preflight.
 
 ## Phases
 

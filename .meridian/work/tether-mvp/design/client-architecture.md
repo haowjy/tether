@@ -211,7 +211,7 @@ web/
                      transport.ts, viewport.ts, lifecycle.ts, storage.ts, uploads.ts,
                      clipboard.ts, links.ts, pwa.ts (updates and install)
     native/          bridge.ts (v2) and adapter.ts
-    test/            in-memory Platform for vitest and the Playwright harness
+    test/            in-memory Platform for vitest and the harness
   proto/             wire types, frames, link
   net/               host.ts, http.ts, hosts.ts (registry, admission state), admission.ts (pure)
   tabs/              connection.ts, driver.ts, input.ts, keymap.ts (KeyboardEvent → InputItem),
@@ -243,9 +243,9 @@ web/
     store.ts, theme.ts, hostProblem.ts
   sw/                the service worker, built as its own entry; vite-plugin.ts
   public/            icons, apple-touch-icon
-  harness/           test-mode entry for Playwright; never in a production build.
+  harness/           harness entry, to look at each state; never in a production build.
                      index.ts imports one fixture directory per lane (harness/<lane>/)
-  e2e/               Playwright specs, one directory per lane
+  e2e/               opt-in end-to-end scripts (`*.real.ts`) on a real daemon, one directory per lane
 ```
 
 **Screens call their own cores directly.** `app/` provides one context (`useApp()`):
@@ -1511,8 +1511,8 @@ opening it lowers the keyboard like any overlay. On the phone layout nothing els
   never shows. W5 hand-off (`web/.context/TODO`): native sends `keyboardInset` and the
   toggle reaches Swift's responder.
 - *Not verified in the Simulator:* the Simulator here has no window or touch injection
-  (`simctl` has no tap), so keyboard-up behaviour and landscape were exercised in Playwright
-  WebKit with a scripted viewport and are on the real-iPhone checklist
+  (`simctl` has no tap), so keyboard-up behaviour and landscape were exercised in a desktop
+  browser with a scripted viewport and are on the real-iPhone checklist
   (`.meridian/work/tether-mvp/g3-iphone-checklist.md`).
 
 ### 7.5 Paste and image paste
@@ -1695,8 +1695,9 @@ P3b's gates are in §12.
 - an accessible name on every icon button;
 - one live region for notices.
 
-A G2 suite keeps that cost bounded: axe on every route in both themes and both
-densities, and keyboard-only Playwright walks of Home, the picker, Terminal and Files.
+The harness fixtures keep that cost bounded: every state has one, to look at it in both themes
+and both densities and to walk it by keyboard. There is no UI test suite (decisions.md,
+"Harness UI tests removed").
 
 ### 8.2 Primitives the screens need
 
@@ -1953,13 +1954,16 @@ dock, P3b the selection layer. W1 is finished, so P3a takes over the one W1 file
 must change, `screens/picker/` (its sheet variant goes), and asks for the
 `screens/sessions/` renderer's `active` prop through the hand-off below.
 
+The "Verifies" column is the original lane plan. Its Playwright and axe items on the harness were
+removed on 2026-10-27 (decisions.md, "Harness UI tests removed"); the harness fixtures remain.
+
 | Lane | Owns (writes only these) | Delivers | Verifies |
 |---|---|---|---|
 | **W0 skeleton** | the deletions; every shared file: `package.json` and its lock, `index.html`, both `tsconfig`s, `eslint.config.js`, `vite.config.ts`, `main.tsx`; `platform/types.ts`, `platform/browser/{index,boot,transport,viewport,lifecycle,storage,clipboard,links}.ts`, `platform/test/`; `net/`, `proto/link.ts`; `app/`, `workspace/`, `ui/` (except `ui/primitives/LineInput.tsx`); `screens/shell/`, `screens/enrol/`; `harness/index.ts`, `harness/shared/`, `e2e/shared/`; `scripts/` checks and `.githooks/pre-push`. It also creates, then hands over, one stub per lane: `sw/vite-plugin.ts` and `platform/browser/pwa.ts` (W4), and `harness/<lane>/index.ts` (each lane) | Old views gone. Every dependency any lane will need (Playwright, axe) is installed before the lanes fork. Tokens, every primitive, CSS modules, the workspace core with restore and pruning, the listing fetcher, persist now, `net/admission.ts`, the router, the focus controller, the `useApp()` context, stub screens on their routes, the Enrol screen, the font subsets, `preflight.sh --commit` | Unit tests for workspace, admission, router, labels and restore. The kept suites stay green. Each lint rule, and each form of rule 3, fails on a seeded violation. Playwright on the harness opens every route in both layouts, themes and densities. Budgets are enforced |
 | **W1 Home, picker, Settings** | `screens/home/`, `screens/picker/`, `screens/settings/`, `screens/sessions/` (the host session lists both render), `sessions/`, `harness/home/`, `e2e/home/` | Open tabs; the sessions list with search and expansion; creation dialogs; the picker as dialog and sheet; listing states; Settings | `sessions/` unit tests (search, expansion, 24+ groups). Playwright through the Vite proxy against isolated `tmux -L` servers on 3.4 and 3.7b: create, open, attachedElsewhere, pruning after a kill under an off-screen tab, one `listSessions` per reconnect |
 | **W2 Terminal and desktop input** | `screens/terminal/` (except `dock/` and `selection/`), `term/`, `tabs/`, `harness/terminal/`, `e2e/terminal/`, additions to `tests/fixtures/proto/keys.json` | The tab strip, the terminal surface, sizing from the stable box, desktop direct input, paste and image paste interception, the status band including `limited`. **For P3**, in `term/index.ts` and `tabs/keymap.ts`: `mouseMode()`, `cellAt(x, y)`, `setPanArea(px)`, and the owned-mode keymap branch (Ctrl/Alt+printable, §7.3) | keymap tests against `keys.json`. Playwright in Chromium and WebKit: typing; named keys in vim and less; Shift+Enter in `cat -v` shows `^[[13;2u` once; Japanese IME candidate selection with arrows; paste with bracketed mode on and off, never double-bracketed; 300 KiB paste refused; the 4th session refused with its message; reconnect after a socket kill; window drag resizes tmux once |
-| **W3 Files** | `screens/files/`, `files/`, `platform/browser/uploads.ts`, `harness/files/`, `e2e/files/` | Folder list, preview with the kept viewers, inline video, upload, the insert-path offer | `files/` tests kept. Playwright: browse, preview, Back through folders and preview, upload then insert the quoted path into the captured tab, the target gone mid-upload, a fifth queued upload refused |
-| **W4 PWA** | `sw/` (including `vite-plugin.ts`), `public/`, `platform/browser/pwa.ts`, `harness/pwa/`, `e2e/pwa/` | Service worker, its build plugin (entry, precache list, manifest link and `theme-color` metas), `updates` and `install`, the Update banner's state, offline Home. The manifest template's content is handed to L2 | Built bundle served by the daemon through Serve, from an enrolled second machine: install in Chromium; offline launch; the multi-window and two-updates gates (§12); no API response in Cache Storage |
+| **W3 Files** | `screens/files/`, `files/`, `platform/browser/uploads.ts`, `harness/files/` | Folder list, preview with the kept viewers, inline video, upload, the insert-path offer | `files/` tests kept. Playwright: browse, preview, Back through folders and preview, upload then insert the quoted path into the captured tab, the target gone mid-upload, a fifth queued upload refused |
+| **W4 PWA** | `sw/` (including `vite-plugin.ts`), `public/`, `platform/browser/pwa.ts`, `harness/pwa/` | Service worker, its build plugin (entry, precache list, manifest link and `theme-color` metas), `updates` and `install`, the Update banner's state, offline Home. The manifest template's content is handed to L2 | Built bundle served by the daemon through Serve, from an enrolled second machine: install in Chromium; offline launch; the multi-window and two-updates gates (§12); no API response in Cache Storage |
 | **P3a phone dock, owned input and switcher** (after W1, W2 and the paste-confirmation lane, §10) | `touch/owned-input.ts`, `touch/modifiers.ts`, `drafts/`, `ui/primitives/LineInput.tsx`, `screens/terminal/dock/`, `screens/switcher/`, `screens/picker/` (taken over from W1), `harness/dock/` (renamed from `harness/draft/`), `e2e/dock/`; the phone toolbar in `TerminalScreen.tsx`, which becomes the dock (its disabled keyboard button goes). W0 hand-offs below | The dock as chosen (one row at rest: tab chip, line field, toggle; the key row above it while the keyboard is up), the line field with drafts and Return, the key row with armed ctrl and alt, the one keyboard toggle, the focus cues; the owned input; the `line` focus owner; the switcher replacing the phone picker sheet and tab row. Built against real tmux, with UI quality as the bar | `drafts/` and `modifiers.ts` unit tests (caps, eviction, revisions, send states by `req`, arming). Playwright WebKit at phone size against a real daemon on scratch tmux 3.4 and 3.7b: Return runs `echo hi` once in zsh and bash and submits a prompt in Claude Code and Codex; a `busy` paste refusal puts the line back and no Enter runs; every key-row key and an armed ctrl+c reach tmux; a multiline paste into the field goes to the terminal unsent; a tab switch swaps drafts; reload restores one; the switcher switches by pill, opens a window from the list, closes a tab, filters, and creates a session. Simulator Safari: the toggle raises and lowers the keyboard from both inputs and a terminal tap changes nothing; the key row appears only with the keyboard; the cursor and Return-key cues follow the owner; tmux size is unchanged with the keyboard up and the prompt on tmux's last row stays above the dock; portrait and landscape. Screenshots of every dock and switcher state, keyboard up and down, reviewed against the mockup. The real-iPhone checklist (§12) queued for Jimmy |
 | **P3b gestures, scroll and selection** (after W2) | `touch/gesture.ts`, `touch/selection.ts`, `screens/terminal/selection/`, `harness/gesture/` | The recognizer (a tap raises the keyboard only on or beside the cursor row), touch scroll with history, wheel translation, tap-to-position, the long-press with its haptic and held drag, word selection with handles and the selection layer, the edit menu (Copy, Paste) | Recognizer unit tests (tap, hold then release, hold then drag, release over a blank cell, scroll, cancel, long-press while streaming). Simulator probes against real tmux: a tap far from the cursor never changes the keyboard; ← and → move the shell cursor and vim's, repeating while held; a long-press selects a word at once, a drag extends it, Copy keeps logical newlines, Paste sends one paste without Enter; vertical swipe in less and vim sends ↑/↓ or wheel events; scroll in a shell, in less and in Claude Code. The selection-versus-click and logical-copy gates (§12) |
 | **W5 native adapter** (P4, after G3) | `platform/native/`, with the native lane's `ios/` and ios-shell.md (§5.10) | Bridge v5, native transport, `saveWorkspace`, the draft store bridge, native line mirror contract, `readPasteboard`, `copy` | Bridge fixtures decoded by both sides. Simulator: boot, rotate with the keyboard up (tmux rows unchanged), background and resume, tap Home search from Terminal with the keyboard up, and restore both keyboard targets. Then ios-shell.md's device checklist on Jimmy's iPhone |
@@ -2126,8 +2130,7 @@ For `docs/design/decisions.md`, each with the alternatives rejected:
 Spec edits that land with the code (the lead applies them in the owning lane's commit):
 
 - **plan.md "Code structure and standards".** Replace the `web/` tree with §3.2.
-  Replace the Frontend bullet with §3.3's rules. Add Playwright (Chromium and WebKit
-  desktop, the harness) to the Tests bullet. Owned by W0.
+  Replace the Frontend bullet with §3.3's rules. Owned by W0.
 - **plan.md "Stack".** "Web assets: none in the daemon" becomes the embedded shell
   (with L2).
 - **ios-shell.md.** The table in §5.10. Owned by W5.
@@ -2200,7 +2203,7 @@ follow the theme (§8.5), and each server's installed PWA is named
 | A L9 cold reader | Fixed: labels glossed; sources linked | header, Sources |
 | A L10 native draft parity | Fixed with R1 M11 | §5.6 |
 | A L11 lane gaps | Fixed: owners for uploads, clipboard, links; W5 → G3 | §11 |
-| A L12 a11y maintenance | Fixed: axe and keyboard suites | §8.1 |
+| A L12 a11y maintenance | Fixed: harness fixtures for every state | §8.1 |
 | A L13 pasted-image bound | Fixed: first image only; at most four queued | §5.7, §7.5 |
 | R2 N1 phone rows hidden under toolbar and keyboard | Fixed: toolbar's resting slot in flow; pan area feeds `cursorPan`; keyboard detection follows `owned`, not layout | §5.4, §3.1 |
 | R2 N2 precache burst vs shell caps | Fixed: register after `load`, 4 in flight, bounded `503` retry, copy unchanged assets from old caches | §9.2 |

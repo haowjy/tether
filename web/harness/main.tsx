@@ -1,4 +1,4 @@
-// The Playwright and review entry: the real app on the test platform. Open
+// The review entry: the real app on the test platform. Open
 // `/harness/index.html?fixture=<name>&layout=phone|desktop&scheme=dark|light&density=touch|compact`, plus `&open` to open the saved active tab at launch (a clean launch shows Home).
 // Served by Vite's dev server only; no production build includes it (the forbidTestModules plugin in vite.config.ts fails the build if one leaks).
 import { render } from "preact";
@@ -12,7 +12,7 @@ import { fixtures } from "./index";
 
 declare global {
   interface Window {
-    /** The running app and its platform, for Playwright to drive and read. */
+    /** The running app and its platform, for probes to drive and read. */
     __harness?: { platform: TestPlatform; app: AppController };
   }
 }
@@ -26,7 +26,7 @@ const viewport = {
   ...base,
   scheme: params.get("scheme") === "light" ? ("light" as const) : ("dark" as const),
   density: params.get("density") === "touch" ? ("touch" as const) : params.get("density") === "compact" ? ("compact" as const) : base.density,
-  // The page is the size Playwright gave it; the platform reports what the browser would.
+  // The page is the size the browser gave it; the platform reports what the browser would.
   width: innerWidth,
   stableHeight: innerHeight,
   visibleHeight: innerHeight,

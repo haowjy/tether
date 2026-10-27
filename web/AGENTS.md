@@ -22,7 +22,7 @@ adding a file. [README.md](README.md) has the commands.
   spacing, radius, type and duration scales directly. Each screen styles itself with a CSS module.
 - **No `·`, `•` or `●` in copy**; `scripts/checks.mjs source` fails on them.
 - **Every state, not the one in the mockup.** A new screen ships its loading, empty, error and
-  offline states, and a harness fixture (`harness/<lane>/`) that Playwright opens in both layouts.
+  offline states, and a harness fixture (`harness/<lane>/`) to look at it in both layouts.
 - The iOS shell's bridge is `platform/native/bridge.ts` (bridge v5); `bridge.test.ts` decodes
   every fixture in `ios/TetherKit/Tests/Fixtures/bridge/`, the contract's one copy.
 
