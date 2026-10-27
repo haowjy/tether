@@ -1,6 +1,7 @@
 import { HttpRefusal } from "../net/http";
 import { Store } from "../ui/store";
 import type { FsApi, Listing } from "./api";
+import { Recent } from "./recent";
 import { folderKey, scopeOf, type FolderNames, type FolderState, type Where } from "./pathfield";
 
 export type Via = "list" | "dirs";
@@ -9,8 +10,6 @@ export type Via = "list" | "dirs";
 export const SETTLE_MS = 250;
 /** Folders kept per host for the Files session. */
 export const KEPT = 32;
-/** A fetched first page is handed to browsing only this soon after: a folder opened later is listed afresh. */
-export const HAND_OVER_MS = 10_000;
 /** A folder's pages asked for before giving up: 5 × 200 = 1,000 folders. */
 export const MAX_PAGES = 5;
 
@@ -19,16 +18,20 @@ export interface FoldersView {
   held: ReadonlyMap<string, FolderState>;
 }
 
+/** A folder's first page, as listed. */
+export type FirstPage = Listing & { via: Via };
+
 /**
- * The subfolder names of folders the path field has looked in, one request per folder
- * entered and never one per keystroke: `ask` waits for typing to settle, and a held folder
- * is not asked for again. Browsing seeds it with the listings it already loaded.
+ * What one host's folders have told us. The subfolder names the path field completes from:
+ * one request per folder entered and never one per keystroke, since `ask` waits for typing to
+ * settle and a held folder is not asked for again. And the first page of the `KEPT` folders
+ * most recently loaded, by the field or by browsing: showing one of those, on a tab switch or a
+ * Back, costs no request. A refresh or an upload drops the folder.
  */
 export class Folders extends Store<FoldersView> {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly inflight = new Map<string, Promise<void>>();
-  /** The first page of each folder the field fetched, until browsing takes it: one listing serves both. Kept only for held folders. */
-  private readonly firsts = new Map<string, { at: number; listing: Listing & { via: Via } }>();
+  private readonly firsts = new Recent<FirstPage>(KEPT);
 
   constructor(
     private readonly api: FsApi,
@@ -65,22 +68,33 @@ export class Folders extends Store<FoldersView> {
     return done;
   }
 
-  /**
-   * The first page the field fetched for `path`, handed to browsing so that opening the folder
-   * costs no second request; it waits for a fetch under way. Taken once, and only soon after.
-   */
-  async take(path: string, hidden: boolean): Promise<(Listing & { via: Via }) | null> {
-    const key = folderKey(path, hidden);
-    await this.inflight.get(key);
-    const first = this.firsts.get(key);
-    this.firsts.delete(key);
-    return first && Date.now() - first.at < HAND_OVER_MS ? first.listing : null;
+  /** The cached first page of `path`, if any. */
+  peek(path: string, hidden: boolean): FirstPage | null {
+    return this.firsts.get(folderKey(path, hidden)) ?? null;
+  }
+
+  /** Like {@link peek}, but waits for a fetch under way instead of asking again. */
+  async settled(path: string, hidden: boolean): Promise<FirstPage | null> {
+    await this.inflight.get(folderKey(path, hidden));
+    return this.peek(path, hidden);
+  }
+
+  /** Browsing listed `listing`'s first page: it is cached, and its subfolders are held. */
+  loaded(listing: FirstPage, hidden: boolean, asked: string): void {
+    this.firsts.set(folderKey(asked, hidden), listing);
+    this.firsts.set(folderKey(listing.path, hidden), listing);
+    this.seed(listing, hidden);
   }
 
   /** What browsing loaded: a folder whose pages hold all its subfolders (they sort first) needs no request. */
   seed(listing: Listing, hidden: boolean): void {
     const allHeld = listing.entries.length >= listing.total || listing.entries.some((e) => e.kind !== "dir");
     if (allHeld) this.set(folderKey(listing.path, hidden), { status: "ready", ...namesOf(listing.entries), capped: listing.truncated });
+  }
+
+  /** The scope changed (a root added or removed): no listing is known to be what a fresh one would say. */
+  forgetAll(): void {
+    this.firsts.clear();
   }
 
   /** A refresh or an upload changed `path`. */
@@ -100,7 +114,6 @@ export class Folders extends Store<FoldersView> {
     for (const [oldest] of held) {
       if (held.size <= KEPT) break;
       held.delete(oldest);
-      this.firsts.delete(oldest);
     }
     this.update({ held });
   }
@@ -110,7 +123,7 @@ export class Folders extends Store<FoldersView> {
     let via: Via | undefined;
     for (let page = 1, offset = 0; ; page++) {
       const listing = await listFolder(this.api, this.where(), path, offset, hidden, offset === 0 ? undefined : via);
-      if (page === 1) { this.firsts.set(key, { at: Date.now(), listing }); via = listing.via; }
+      if (page === 1) { this.firsts.set(key, listing); via = listing.via; }
       names.push(...namesOf(listing.entries).names);
       offset += listing.entries.length;
       const more = listing.entries.length > 0 && listing.entries.every((e) => e.kind === "dir") && offset < listing.total;

@@ -55,7 +55,9 @@ function isEntry(state: unknown): state is Entry {
 const HOME = { route: "home", tab: null, place: null, overlay: null } as const;
 
 export class Router {
+  /** Every entry of this page's life, forward ones included; `at` is the one on screen. */
   private stack: Entry[] = [];
+  private at = 0;
   private readonly listeners = new Set<(nav: Navigated) => void>();
   private nextId = Date.now();
   /** The workspace's active tab, set by the controller once the workspace exists: an entry whose tab is not it is stale. */
@@ -70,7 +72,7 @@ export class Router {
   }
 
   get entry(): Entry {
-    return this.stack[this.stack.length - 1] as Entry;
+    return this.stack[this.at] as Entry;
   }
 
   subscribe(listener: (nav: Navigated) => void): () => void {
@@ -106,7 +108,7 @@ export class Router {
   /** Closes every overlay open on this destination at once: one history step, so none is left open (WebKit drops a second `back()` issued before the first pops). `then` as for {@link closeOverlay}. */
   closeAllOverlays(then?: () => void): void {
     let open = 0;
-    while (this.stack[this.stack.length - 1 - open]?.overlay) open++;
+    while (this.stack[this.at - open]?.overlay) open++;
     this.close(open, then);
   }
 
@@ -128,7 +130,7 @@ export class Router {
   private closeOverlays(count: number): void {
     const { entry } = this;
     if (entry.overlay === null) return;
-    const base = this.stack[this.stack.length - 1 - count];
+    const base = this.stack[this.at - count];
     if (base?.route === entry.route && base.tab === entry.tab) this.port.go(-count);
     else this.replace({ ...entry, overlay: null });
   }
@@ -155,21 +157,22 @@ export class Router {
    */
   toHome(): void {
     if (this.entry.route === "home") return;
-    const previous = this.stack[this.stack.length - 2];
+    const previous = this.stack[this.at - 1];
     if (previous?.route === "home" && previous.overlay === null) this.port.go(-1);
     else this.replace(HOME);
   }
 
   /** The in-app back inside a Files tab: to `place`, the enclosing one. The previous entry is that place in this tab, or the entry is replaced with it. */
   toPlace(tab: string, place: FilesPlace): void {
-    const previous = this.stack[this.stack.length - 2];
+    const previous = this.stack[this.at - 1];
     if (previous?.route === "tab" && previous.tab === tab && previous.overlay === null && previous.place && samePlace(previous.place, place)) this.port.go(-1);
     else this.replace({ route: "tab", tab, place, overlay: null });
   }
 
   private push(next: Omit<Entry, "id">): void {
     const entry: Entry = { ...next, id: this.nextId++ };
-    this.stack.push(entry);
+    this.stack.splice(this.at + 1, Infinity, entry);
+    this.at++;
     this.port.push(entry, HASHES[entry.route]);
     this.emit();
   }
@@ -181,7 +184,7 @@ export class Router {
 
   private replaceQuietly(next: Omit<Entry, "id">): void {
     const entry: Entry = { ...next, id: this.nextId++ };
-    this.stack[this.stack.length - 1] = entry;
+    this.stack[this.at] = entry;
     this.port.replace(entry, HASHES[entry.route]);
   }
 
@@ -190,21 +193,27 @@ export class Router {
     const { state } = this.port.current();
     if (isEntry(state)) {
       const at = this.stack.findIndex((e) => e.id === state.id);
-      // An entry from this page's life moves the stack; one from an earlier life (forward past a reload) stands alone.
-      this.stack = at >= 0 ? this.stack.slice(0, at + 1) : [{ ...state, overlay: null }];
+      // An entry from this page's life moves the cursor; one from an earlier life (forward past a reload) stands alone.
+      if (at >= 0) this.at = at;
+      else this.stand({ ...state, overlay: null });
     } else {
-      this.stack = [{ id: this.nextId++, ...HOME }];
+      this.stand({ id: this.nextId++, ...HOME });
     }
     const { entry } = this;
     // Closing an overlay lands on its base entry, whichever tab was shown meanwhile. Any other entry
     // for a tab that is gone or not the active one is stale: skip to Home without announcing it.
     if (!leftOverlay && entry.route === "tab" && entry.tab !== this.activeTab()) {
-      const home = this.stack.findLastIndex((e) => e.route === "home" && e.overlay === null);
+      const home = this.stack.slice(0, this.at + 1).findLastIndex((e) => e.route === "home" && e.overlay === null);
       if (home < 0) this.replace(HOME);
-      else this.port.go(home - (this.stack.length - 1));
+      else this.port.go(home - this.at);
       return;
     }
     this.emit();
+  }
+
+  private stand(entry: Entry): void {
+    this.stack = [entry];
+    this.at = 0;
   }
 
   private emit(): void {

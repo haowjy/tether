@@ -31,6 +31,7 @@ export const SAVED: SavedWorkspace = {
     { kind: "terminal", key: key(99), session: "gone", window: "window" },
   ],
   active: "h-pop/main:1-1/$1",
+  lastTerminal: { "h-pop": "h-pop/main:1-1/$1" },
 };
 
 export const fixtures: Fixtures = {

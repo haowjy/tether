@@ -35,9 +35,16 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
   // While the path field is being typed in, its completions are the list.
   const [finding, setFinding] = useState(false);
 
-  useEffect(() => { void browser.follow(wanted); }, [browser, wanted]);
+  // An answer that lands after the pane is gone (another tab, Home) is dropped.
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => {
+    let current = true;
+    void browser.follow(wanted, (settled) => { if (current) app.resolvedPlace(tab.id, wanted, settled); });
+    return () => { current = false; };
+  }, [app, browser, wanted, tab.id]);
 
-  const open = (to: FilesPlace): void => { app.openPlace(to); };
+  const open = (to: FilesPlace): void => { app.openPlace(tab.id, to); };
   const up = parentPlace(view);
   const listed = pages !== null && (place.kind === "dir" ? pages.path === place.path : place.kind === "file" && pages.path === parentOf(place.file.path));
   const listingVisible = place.kind === "dir" && listed && !error && !finding;
@@ -51,7 +58,7 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
   const onLink = (target: LinkTarget): void => {
     if (target.kind === "external") app.platform.openURL(target.url);
     else if (target.kind === "path") {
-      browser.resolve(target.path).then(open, (e: unknown) => { app.notify(e instanceof Error && "code" in e ? describeError(e as never, session.hostName) : "That link can't be opened."); });
+      browser.resolve(target.path).then((to) => { if (mounted.current) open(to); }, (e: unknown) => { if (mounted.current) app.notify(e instanceof Error && "code" in e ? describeError(e as never, session.hostName) : "That link can't be opened."); });
     }
   };
 
@@ -95,7 +102,7 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
           </div>
         )}
       </header>
-      {place.kind !== "file" && roots && <PathField session={session} rest={rest} onEditing={setFinding} />}
+      {place.kind !== "file" && roots && <PathField session={session} rest={rest} onEditing={setFinding} onOpen={open} />}
       {!finding && <UploadPanel session={session} onPreview={(path) => { open({ kind: "file", path }); }} />}
       {/* The list stays mounted under a preview, so Back returns to it as it was. */}
       {listed && !error && (

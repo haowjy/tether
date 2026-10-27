@@ -24,6 +24,7 @@ const saved = (ids: number[], active: number): SavedWorkspace => ({
   version: 3,
   tabs: ids.map((i) => ({ kind: "terminal", key: key(i), session: "s", window: `w${String(i)}` })),
   active: tabId(key(active)),
+  lastTerminal: {},
 });
 
 describe("opening and closing", () => {

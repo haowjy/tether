@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useApp, useOverlay } from "../../app/context";
 import { accept, complete, go, slashAccepts, type CompleteContext, type Completion } from "../../files/pathfield";
+import type { FilesPlace } from "../../platform/types";
 import { useStore } from "../../ui/store";
 import { Button } from "../../ui/primitives/Button";
 import { PathInput } from "../../ui/primitives/PathInput";
@@ -15,6 +16,8 @@ interface Props {
   rest: string;
   /** The list below is the field's while it is editing. */
   onEditing: (editing: boolean) => void;
+  /** Go named a folder: the pane opens it in its tab. */
+  onOpen: (to: FilesPlace) => void;
 }
 
 /**
@@ -23,7 +26,7 @@ interface Props {
  * it names. The completion rules are `files/pathfield.ts`'s; this wires keys, taps and focus.
  * Editing is a router overlay (`files/find`), so Back ends the edit before it leaves the folder.
  */
-export function PathField({ session, rest, onEditing }: Props) {
+export function PathField({ session, rest, onEditing, onOpen }: Props) {
   const app = useApp();
   const { browser } = session;
   const roots = useStore(browser, (s) => s.roots);
@@ -101,7 +104,7 @@ export function PathField({ session, rest, onEditing }: Props) {
     }
     if ("open" in result) {
       endEditing();
-      app.router.closeOverlay(() => { app.openPlace({ kind: "dir", path: result.open }); });
+      app.router.closeOverlay(() => { onOpen({ kind: "dir", path: result.open }); });
     } else if ("say" in result) setSaid(result.say);
   };
 

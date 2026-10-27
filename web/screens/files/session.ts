@@ -28,7 +28,7 @@ const sessions = new WeakMap<FsApi, FilesSession>();
 export function filesSession(app: AppController, host: HostClient): FilesSession {
   const existing = sessions.get(host.fs);
   if (existing) return existing;
-  const browser = new FileBrowser({ api: host.fs, hidden: false, onResolved: (asked, settled) => { app.resolvedPlace(asked, settled); } });
+  const browser = new FileBrowser({ api: host.fs, hidden: false });
   const session: FilesSession = {
     handle: host.entry.handle,
     get hostName() { return app.hosts.get(host.entry.handle)?.name ?? "the server"; },

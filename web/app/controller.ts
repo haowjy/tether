@@ -9,7 +9,7 @@ import { SessionsCache } from "../sessions/cache";
 import type { BootResult, Lifecycle, Platform, UpdateState, Viewport } from "../platform/types";
 import { Store } from "../ui/store";
 import { parseSavedWorkspace } from "../workspace/saved";
-import { activeTab, initialWorkspace, reduce, samePlace, savedTabs, screenOf, type Route, type Screen, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
+import { activeTab, initialWorkspace, reduce, samePlace, savedTabs, screenOf, type FilesTab, type Route, type Screen, type WorkspaceEffect, type WorkspaceEvent, type WorkspaceState } from "../workspace/state";
 import { FocusController } from "./focus";
 import { ListingFetcher } from "./listing";
 import { Persist } from "./persist";
@@ -165,10 +165,18 @@ export class AppController extends Store<AppView> {
     this.dispatch({ type: "filesOpened", id: `files-${crypto.randomUUID()}`, host: hostId, place: { kind: "roots" } });
   }
 
-  /** Drills into `to` in the active Files tab: a new history entry, which writes the tab's place once it lands. */
-  openPlace(to: FilesPlace): void {
-    const tab = activeTab(this.snapshot.workspace);
-    if (tab?.kind === "files") this.router.pushPlace(tab.id, tab.place, to);
+  /** Files tab `id`, when it is the one on screen and its entry is the current one: a late answer for a tab the user has left finds none. */
+  private shownFiles(id: string): FilesTab | null {
+    const { workspace } = this.snapshot;
+    const tab = activeTab(workspace);
+    const { entry } = this.router;
+    return tab?.kind === "files" && tab.id === id && screenOf(workspace) === "files" && entry.route === "tab" && entry.tab === id ? tab : null;
+  }
+
+  /** Drills into `to` in Files tab `id`, if it is still on screen: a new history entry, which writes the tab's place once it lands. */
+  openPlace(id: string, to: FilesPlace): void {
+    const tab = this.shownFiles(id);
+    if (tab) this.router.pushPlace(id, tab.place, to);
   }
 
   /** The active Files tab's in-app back: to `place`, the enclosing one. */
@@ -177,10 +185,10 @@ export class AppController extends Store<AppView> {
     if (tab?.kind === "files") this.router.toPlace(tab.id, place);
   }
 
-  /** The daemon answered for a place the active Files tab asked for with the canonical `to`: the tab follows it. */
-  resolvedPlace(from: FilesPlace, to: FilesPlace): void {
-    const tab = activeTab(this.snapshot.workspace);
-    if (tab?.kind === "files" && samePlace(tab.place, from)) this.router.replacePlace(tab.id, to);
+  /** The daemon answered for a place Files tab `id` asked for with the canonical `to`: the tab follows it, if it is still on screen and still there. */
+  resolvedPlace(id: string, from: FilesPlace, to: FilesPlace): void {
+    const tab = this.shownFiles(id);
+    if (tab && samePlace(tab.place, from)) this.router.replacePlace(id, to);
   }
 
   /** A message for the polite live region, replaced by the next. */

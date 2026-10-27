@@ -80,6 +80,8 @@ export interface SavedWorkspace {
   tabs: SavedTab[];
   /** The active tab's id. */
   active: string | null;
+  /** Per host, the terminal tab last activated: where Insert path and uploads go. */
+  lastTerminal: Record<string, string>;
   /** The host's last known name: an offline launch cannot ask `/auth/info`, yet still says "Can't reach pop-os". */
   hostName?: string;
 }

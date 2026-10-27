@@ -3488,11 +3488,16 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 - **What:** the saved workspace is version 3: tabs in order (a terminal tab as before, a
   Files tab with its id, host and place) and `active` by id. One web parser takes what
   storage returns as `unknown` and returns version 3 or null; it discards version 2 and
-  version 1 whole, and the storage adapters no longer know versions. Drafts are never
-  touched: they are keyed by `TabKey` and return when that session is reopened. This
+  version 1 whole, and the storage adapters no longer know versions. It also drops a
+  repeated tab id (the first wins) and carries `lastTerminal`, the terminal tab last
+  activated per host. Drafts are not cleared with the workspace: a draft keyed by a
+  session `TabKey` returns when that session is reopened. The one exception is at the
+  storage boundary: the browser adapter's `drafts.list()` drops any record whose key is
+  not a session `TabKey`, because a build from before tabs followed sessions left drafts
+  keyed by window, which name no session and would crash the drafts reducer at boot. This
   replaces the earlier rule that a version-1 workspace also cleared every draft.
 - **Why:** the earlier clear existed because a window-tab draft named no session. A
-  draft keyed by `TabKey` is still correct after the workspace is discarded, and a clean
+  session-keyed draft is still correct after the workspace is discarded, and a clean
   launch opens Home, so the tab list is cheap to rebuild from the server cards.
 - **Rejected:** converting version 2 (a compatibility branch for one tab list per device);
   clearing drafts along with an old workspace.
@@ -3507,16 +3512,22 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   `{tab, to}`. A Back that lands on an entry whose tab is gone or not active goes to
   Home's entry in one `history.go(-n)` computed from the in-memory stack, announcing
   nothing for the stale entry; closing an overlay lands on its base entry whichever tab
-  was shown meanwhile. There is still one `FileBrowser` per host: it shows the active
-  Files tab's place and reports the daemon's canonical path back, which replaces the
-  entry's place. A Files tab's label is its folder or file name, and "Files" at the folder
-  list. Insert path and uploads go to the host's `lastTerminal`, the terminal tab last
-  activated and still open (after a reload, the first terminal tab of the host until one
-  is activated); with none, they are disabled with "Open a terminal tab first".
+  was shown meanwhile. The router keeps the whole history stack with a cursor, so a
+  Forward after a Back stays in it. There is still one `FileBrowser` per host: it shows
+  the active Files tab's place and reports the daemon's canonical path back, which
+  replaces the entry's place; that report, and a Markdown link's probe, are scoped to the
+  pane's tab and dropped when the pane is gone or another tab or Home is showing. A Files
+  tab's label is its folder or file name, and "Files" at the folder list. Insert path and
+  uploads go to the host's `lastTerminal`, the terminal tab last activated and still open,
+  saved in the workspace; with none, they are disabled with "Open a terminal tab first".
+  Any change that leaves no tab while the route is a tab navigates Home, in the reducer.
 - **Why:** one owner for a place means a tab switch, a reload and Back cannot disagree
   about where a tab is.
 - **Rejected:** a `FileBrowser` per tab (a lifecycle that tracks tab open and close for no
-  gain: the per-host 32-folder cache already restores listings); Back as the in-app
+  gain: the per-host listing cache restores a tab's folder without a request, as
+  browser-behaviors.md "Cost on a spotty network" says: the first pages of the 32 most
+  recently loaded folders, filled by the path field and by browsing, dropped by a refresh
+  or an upload, and a probed file is likewise held); Back as the in-app
   parent only (it misses the history rule in browser-behaviors.md "Browsing by tap");
   inserting into the active tab (a Files tab is never a terminal).
 

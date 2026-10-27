@@ -153,9 +153,8 @@ function step(state: WorkspaceState, event: WorkspaceEvent): Step {
       if (!saved) return none;
       const tabs = saved.tabs.map((t): Tab => (t.kind === "terminal" ? newTerminalTab(t.key, t.session, t.window, true) : { kind: "files", id: t.id, host: t.host, place: t.place }));
       const active = tabs.some((t) => t.id === saved.active) ? saved.active : (tabs[0]?.id ?? null);
-      // What was last used is not saved: each host's first terminal tab stands in until one is activated (the active one wins).
-      const lastTerminal: Record<string, string> = {};
-      for (const t of tabs) if (t.kind === "terminal") lastTerminal[t.host] ??= t.id;
+      // Saved ids that are not a restored terminal tab of that host are dropped.
+      const lastTerminal = Object.fromEntries(Object.entries(saved.lastTerminal).filter(([host, id]) => tabs.some((t) => t.kind === "terminal" && t.id === id && t.host === host)));
       return { state: activate({ ...state, tabs, lastTerminal }, active), notices: [] };
     }
     case "hostsKnown": {
@@ -186,7 +185,7 @@ function step(state: WorkspaceState, event: WorkspaceEvent): Step {
       const next = without(state, new Set([event.id]));
       // Closing the last tab returns Home, and on desktop focuses Home search.
       if (next.tabs.length > 0) return { state: next, notices: [] };
-      return { state: next, notices: [], ...(state.route === "tab" && { navigate: "home" as const }), focus: "homeSearch" as const };
+      return { state: next, notices: [], focus: "homeSearch" as const };
     }
     case "sessionClosed":
       return state.tabs.some((t) => t.id === event.id) ? { state: without(state, new Set([event.id])), notices: [] } : none;
@@ -252,7 +251,9 @@ export function reduce(state: WorkspaceState, event: WorkspaceEvent): Reduced {
   const next = result.state;
   const effects: WorkspaceEffect[] = [];
   if (savedChanged(state, next)) effects.push({ type: "save" });
-  if (result.navigate) effects.push({ type: "navigate", to: result.navigate });
+  // With no tab left, the tab route has nothing to show: whatever emptied the workspace, Home is the route.
+  const navigate = result.navigate ?? (next.tabs.length === 0 && next.route === "tab" ? "home" : undefined);
+  if (navigate) effects.push({ type: "navigate", to: navigate });
   if (result.focus === "terminal" && next.active !== null) effects.push({ type: "focus", target: "terminal" });
   if (result.focus === "homeSearch") effects.push({ type: "focus", target: "homeSearch" });
   for (const text of result.notices) effects.push({ type: "notice", text });
@@ -260,8 +261,8 @@ export function reduce(state: WorkspaceState, event: WorkspaceEvent): Reduced {
 }
 
 /** The saved form of the tabs, for persist now. */
-export function savedTabs(state: WorkspaceState): Pick<SavedWorkspace, "tabs" | "active"> {
-  return { tabs: state.tabs.map(savedTab), active: state.active };
+export function savedTabs(state: WorkspaceState): Pick<SavedWorkspace, "tabs" | "active" | "lastTerminal"> {
+  return { tabs: state.tabs.map(savedTab), active: state.active, lastTerminal: { ...state.lastTerminal } };
 }
 
 const savedTab = (t: Tab): SavedTab =>
@@ -269,7 +270,7 @@ const savedTab = (t: Tab): SavedTab =>
 
 /** Whether the saved form differs: `restoring` is not saved, so changing only it writes nothing. */
 function savedChanged(a: WorkspaceState, b: WorkspaceState): boolean {
-  if (a.active !== b.active || a.tabs.length !== b.tabs.length) return true;
+  if (a.active !== b.active || a.lastTerminal !== b.lastTerminal || a.tabs.length !== b.tabs.length) return true;
   return a.tabs.some((t, i) => {
     const u = b.tabs[i];
     if (u === t) return false;

@@ -9,7 +9,7 @@ export class Persist {
 
   constructor(
     private readonly storage: PlatformStorage,
-    private readonly tabs: () => Pick<SavedWorkspace, "tabs" | "active">,
+    private readonly tabs: () => Pick<SavedWorkspace, "tabs" | "active" | "lastTerminal">,
   ) {}
 
   /** The controller says the page's host name, once `/auth/info` has told it. */

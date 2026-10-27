@@ -19,7 +19,7 @@ const tree = (): FakeTree => ({
 
 function setup(t = tree()) {
   const fs = new FakeFs(t);
-  const browser = new FileBrowser({ api: fs, hidden: false, onResolved: () => undefined });
+  const browser = new FileBrowser({ api: fs, hidden: false });
   return { fs, browser };
 }
 

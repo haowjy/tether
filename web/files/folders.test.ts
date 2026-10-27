@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeFs, type FakeTree } from "../platform/test/fs";
-import { Folders, HAND_OVER_MS, KEPT, MAX_PAGES, SETTLE_MS } from "./folders";
+import { Folders, KEPT, MAX_PAGES, SETTLE_MS } from "./folders";
 import { folderKey, type Where } from "./pathfield";
 
 const many = (n: number): string[] => Array.from({ length: n }, (_, i) => `/home/j/repos/d${String(i).padStart(3, "0")}`);
@@ -72,22 +72,22 @@ describe("Folders", () => {
     expect(held(folders, "/home/j/repos")).toMatchObject({ capped: false });
   });
 
-  it("hands the first page it fetched to browsing once, and only soon after", async () => {
+  it("caches the first page it fetched, until a refresh drops it", async () => {
     const { fs, folders } = setup();
     await folders.load("/home/j/repos/tether", false);
-    expect(await folders.take("/home/j/repos/tether", false)).toMatchObject({ path: "/home/j/repos/tether", via: "list" });
-    expect(await folders.take("/home/j/repos/tether", false)).toBeNull();
-    await folders.load("/home/j/repos", false);
-    vi.advanceTimersByTime(HAND_OVER_MS);
-    expect(await folders.take("/home/j/repos", false)).toBeNull();
-    expect(fs.calls).toHaveLength(2);
+    expect(await folders.settled("/home/j/repos/tether", false)).toMatchObject({ path: "/home/j/repos/tether", via: "list" });
+    expect(folders.peek("/home/j/repos/tether", false)).not.toBeNull();
+    expect(folders.peek("/home/j/repos/tether", true)).toBeNull();
+    folders.drop("/home/j/repos/tether");
+    expect(folders.peek("/home/j/repos/tether", false)).toBeNull();
+    expect(fs.calls).toHaveLength(1);
   });
 
-  it("a take waits for the fetch under way instead of asking again", async () => {
+  it("a settled waits for the fetch under way instead of asking again", async () => {
     const { fs, folders } = setup();
     fs.hold = true;
     const loading = folders.load("/home/j/repos", false);
-    const taken = folders.take("/home/j/repos", false);
+    const taken = folders.settled("/home/j/repos", false);
     fs.release();
     await loading;
     expect(await taken).toMatchObject({ via: "dirs" });

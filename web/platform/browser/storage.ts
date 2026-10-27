@@ -2,7 +2,7 @@
 // version 1, two stores. `workspace` holds the one saved workspace; `drafts` is keyed by
 // tab key. Every write is one small record. A page writes its workspace only while it has
 // focus, so the saved workspace is the one from the page used last.
-import { tabId } from "../tabKey";
+import { isTabKey, tabId } from "../tabKey";
 import type { DraftRecord, DraftStore, PlatformEvent, PlatformStorage, SavedWorkspace, TabKey } from "../types";
 
 const DB_NAME = "tether";
@@ -131,8 +131,9 @@ export function createBrowserStorage(): BrowserStorage {
     },
     async list() {
       const handle = await db();
-      if (!handle) return [...memory.drafts.values()];
-      return (await request(handle.transaction("drafts").objectStore("drafts").getAll())) as DraftRecord[];
+      const records = handle ? ((await request(handle.transaction("drafts").objectStore("drafts").getAll())) as DraftRecord[]) : [...memory.drafts.values()];
+      // A build from before tabs followed sessions left drafts keyed by window; they name no session and are dropped.
+      return records.filter((r) => isTabKey((r as Partial<DraftRecord>).key));
     },
   };
 
