@@ -8,6 +8,7 @@ import { bellLook, bellsUnavailable } from "../../sessions/bells";
 import type { SessionListing, TmuxListing } from "../../proto/generated/messages";
 import { useStore } from "../../ui/store";
 import { useListedHosts } from "./HostSection";
+import { reasonOf } from "./pick";
 import { SessionList, type ActiveWindows } from "./SessionList";
 
 interface HostSessionListsProps {
@@ -17,9 +18,11 @@ interface HostSessionListsProps {
   /** The terminal tab on screen: its session says "here" and lists its windows. None on Home and Files. */
   active?: ActiveWindows & { id: string };
   onOpen: (host: HostClient, listing: TmuxListing, session: SessionListing) => void;
+  /** The "New session" row of `host`'s group, with the search as the name's start. */
+  onNew: (host: HostClient, name: string) => void;
 }
 
-export function HostSessionLists({ query, only, active, onOpen }: HostSessionListsProps) {
+export function HostSessionLists({ query, only, active, onOpen, onNew }: HostSessionListsProps) {
   const app = useApp();
   const hosts = useListedHosts(only);
   const tabs = useAppView((v) => v.workspace.tabs);
@@ -49,6 +52,8 @@ export function HostSessionLists({ query, only, active, onOpen }: HostSessionLis
             }}
             {...(active && { active })}
             onOpen={(l, session) => { onOpen(h, l, session); }}
+            onNew={(name) => { onNew(h, name); }}
+            newDisabled={reasonOf(h)}
             onRetry={() => { app.retryHost(handle); }}
           />
         );

@@ -142,7 +142,7 @@ pub enum ClientMsg {
         #[ts(optional)]
         name: Option<String>,
         /// Absolute and a directory, checked by the connection (fs.md "Path
-        /// resolution"); not checked against the file roots.
+        /// resolution"); no scope.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         dir: Option<String>,

@@ -1,0 +1,6 @@
+.list { display: flex; flex-direction: column; gap: var(--space-1); }
+/* The count and the open/here word share the meta slot, set apart by space alone. */
+.state { margin-left: var(--space-2); }
+.line { display: flex; align-items: center; gap: var(--space-1); }
+.line > :first-child { flex: 1; min-width: 0; }
+.missing { opacity: 0.6; }

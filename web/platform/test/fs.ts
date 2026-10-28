@@ -1,14 +1,12 @@
 // A file API over an in-memory tree, following fs.md's rules closely enough for the
-// browser model's tests: roots scope the list, the picker is $HOME, dirs sort first, pages
-// of `page` entries. Paths are already canonical.
+// browser model's tests: any listed directory opens, dirs sort first, pages of `page` entries. Paths are already canonical.
 import { HttpRefusal } from "../../net/http";
-import type { Entry, FsApi, Listing, Roots } from "../../files/api";
-import { within } from "../../files/paths";
+import type { Entry, FsApi, Listing, Favorites } from "../../files/api";
 import type { FakeDaemon } from ".";
 
 export interface FakeTree {
   home: string;
-  roots: string[];
+  favorites: string[];
   uploads: string;
   /** Directory paths and file paths (with their mime); parents are implied. */
   dirs: string[];
@@ -31,37 +29,33 @@ export class FakeFs implements FsApi {
     for (const go of waiting) go();
   }
 
-  roots(): Promise<Roots> {
-    return this.answer("roots", () => this.rootsNow());
+  favorites(): Promise<Favorites> {
+    return this.answer("favorites", () => this.favoritesNow());
   }
 
   list(path: string, offset: number, hidden: boolean): Promise<Listing> {
-    return this.answer(`list ${path} ${String(offset)}`, () => this.listing(this.scope(), path, offset, hidden, false));
+    return this.answer(`list ${path} ${String(offset)}`, () => this.listing(path, offset, hidden));
   }
 
-  dirs(path: string, offset: number, hidden: boolean): Promise<Listing> {
-    return this.answer(`dirs ${path} ${String(offset)}`, () => this.listing([this.tree.home], path, offset, hidden, true));
-  }
-
-  addRoot(path: string): Promise<Roots> {
+  addFavorite(path: string): Promise<Favorites> {
     return this.answer(`add ${path}`, () => {
-      if (path === this.tree.home || !within(path, this.tree.home)) throw new HttpRefusal(403, "outside_home");
-      if (!this.tree.roots.includes(path)) this.tree.roots.push(path);
-      return this.rootsNow();
+      if (!this.tree.dirs.includes(path)) throw new HttpRefusal(404, "not_found");
+      if (!this.tree.favorites.includes(path)) this.tree.favorites.push(path);
+      return this.favoritesNow();
     });
   }
 
-  removeRoot(path: string): Promise<Roots> {
+  removeFavorite(path: string): Promise<Favorites> {
     return this.answer(`remove ${path}`, () => {
-      this.tree.roots = this.tree.roots.filter((r) => r !== path);
-      return this.rootsNow();
+      this.tree.favorites = this.tree.favorites.filter((r) => r !== path);
+      return this.favoritesNow();
     });
   }
 
-  setUploadsDir(path: string): Promise<Roots> {
+  setUploadsDir(path: string): Promise<Favorites> {
     return this.answer(`uploads ${path}`, () => {
       this.tree.uploads = path;
-      return this.rootsNow();
+      return this.favoritesNow();
     });
   }
 
@@ -83,35 +77,27 @@ export class FakeFs implements FsApi {
     return `fake://h/fs/raw${path}`;
   }
 
-  private scope(): string[] {
-    return [...this.tree.roots, this.tree.uploads];
-  }
-
-  private rootsNow(): Roots {
+  private favoritesNow(): Favorites {
     const entry = (path: string) => ({ path, canonical: path, ok: this.tree.dirs.includes(path) });
-    return { home: this.tree.home, roots: this.tree.roots.map(entry), uploadsDir: entry(this.tree.uploads) };
+    return { home: this.tree.home, favorites: this.tree.favorites.map(entry), uploadsDir: entry(this.tree.uploads) };
   }
 
-  private listing(scope: string[], path: string, offset: number, hidden: boolean, dirsOnly: boolean): Listing {
-    const root = scope.filter((r) => within(path, r)).sort((a, b) => b.length - a.length)[0];
-    if (root === undefined) throw new HttpRefusal(403, dirsOnly ? "outside_home" : "outside_roots");
+  private listing(path: string, offset: number, hidden: boolean): Listing {
     if (!this.tree.dirs.includes(path)) throw new HttpRefusal(404, this.tree.files[path] ? "not_a_directory" : "not_found");
     const childOf = (p: string): string | null => {
       const rest = p.slice(path === "/" ? 1 : path.length + 1);
-      return within(p, path) && p !== path && !rest.includes("/") ? rest : null;
+      return p.startsWith(path === "/" ? "/" : `${path}/`) && p !== path && !rest.includes("/") ? rest : null;
     };
     const entries: Entry[] = [
       ...this.tree.dirs.flatMap((d) => { const name = childOf(d); return name ? [{ name, kind: "dir" as const, link: false }] : []; }),
-      ...(dirsOnly ? [] : Object.entries(this.tree.files).flatMap(([f, mime]) => {
+      ...Object.entries(this.tree.files).flatMap(([f, mime]) => {
         const name = childOf(f);
         return name ? [{ name, kind: "file" as const, link: false, size: 10, mtime: 0, mime }] : [];
-      })),
+      }),
     ].filter((e) => hidden || !e.name.startsWith("."));
-    const parent = path.slice(0, Math.max(1, path.lastIndexOf("/")));
     return {
       path,
-      root,
-      parent: path !== root && within(parent, root) ? parent : null,
+      parent: path === "/" ? null : path.slice(0, Math.max(1, path.lastIndexOf("/"))),
       total: entries.length,
       offset,
       truncated: false,
@@ -143,11 +129,10 @@ export function serveFs(fs: FakeFs): NonNullable<FakeDaemon["fs"]> {
   const bodyPath = (body: string | null): string => (JSON.parse(body ?? "{}") as { path: string }).path;
   const route = async ({ method, path, query, body }: Parameters<NonNullable<FakeDaemon["fs"]>>[0]): Promise<Response> => {
     const at = (prefix: string): string => decodePath(path.slice(prefix.length));
-    if (method === "GET" && path === "/fs/roots") return json(200, await fs.roots());
+    if (method === "GET" && path === "/fs/favorites") return json(200, await fs.favorites());
     if (method === "GET" && path.startsWith("/fs/list/")) return json(200, await fs.list(at("/fs/list"), ...page(query)));
-    if (method === "GET" && path.startsWith("/fs/dirs/")) return json(200, await fs.dirs(at("/fs/dirs"), ...page(query)));
-    if (method === "POST" && path === "/fs/roots/add") return json(200, await fs.addRoot(bodyPath(body)));
-    if (method === "POST" && path === "/fs/roots/remove") return json(200, await fs.removeRoot(bodyPath(body)));
+    if (method === "POST" && path === "/fs/favorites/add") return json(200, await fs.addFavorite(bodyPath(body)));
+    if (method === "POST" && path === "/fs/favorites/remove") return json(200, await fs.removeFavorite(bodyPath(body)));
     if (method === "POST" && path === "/fs/uploads-dir") return json(200, await fs.setUploadsDir(bodyPath(body)));
     if (method === "GET" && path.startsWith("/fs/raw/")) {
       const target = at("/fs/raw");

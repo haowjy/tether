@@ -21,7 +21,7 @@ Interactive mockup: [mockups/index.html](mockups/index.html). It predates this r
 | Primary navigation | One top row: Home, terminal and Files tabs, +, and server context. No rail. | Home is server-first. Terminal, Files and previews have a resting bar with Home and the current-tab button, which opens the picker; Home has no tab strip. |
 | Tabs | Top row, with × on the active tab only. + opens the picker. | With the keyboard down, the bar has Home, the current-tab button and keyboard control. The open tabs are at the bottom of the picker sheet, not on the terminal. |
 | Terminal | All available space below the top row. Direct physical-keyboard input; no dock. | Full-bleed above the dock. With the keyboard up, the compose box and key row replace the resting bar. |
-| Picker | + opens a popover: a Sessions / Files switch with +, search, and that side's list. | The same picker as a half-height sheet over the current tab, or a full-height sheet with Back when entered from Home; the switch, + and search sit at the bottom, in thumb reach. |
+| Picker | + opens a popover: a Sessions / Files switch, search, and that side's list, which ends with creation (New session; on Files, Open a folder…). | The same picker as a half-height sheet over the current tab, or at full height with Back when entered from Home; the search, the switch and the open tabs sit at the bottom, in thumb reach. |
 
 Safe areas and browser chrome are real platform constraints. Use the measured visible
 viewport and keep controls unobscured. Mobile controls target at least 44 px of touch
@@ -97,7 +97,7 @@ Returning from the background keeps the screen the user left.
 - Selecting a tab activates it; other tabs remain open. Opening a session already represented by a tab activates that tab. Implementation identity must use server/session IDs, not mutable display names.
 - **The tab follows its session.** When the session's current window changes (prefix-n on the laptop, the window switcher below, a window exiting, a script), the tab shows the new window: its snapshot replaces the old one in place and the label changes. The tab, its draft and its place in the tab order stay. Typing, the line field, paste and an inserted path go to the window the tab is showing on this screen, so keys sent just before a change made elsewhere still reach the window the user was looking at. Opening or activating a tab enters Terminal through the router; desktop focus lands on the terminal after that screen is rendered.
 - Closing the active tab activates its right-hand neighbour, or the left-hand neighbour if it was last. Only the active tab shows ×, on desktop and in the phone sheet; every tab keeps the space for one, so changing tabs never moves the others. It closes that tether tab, never its tmux session or process. Scroll the active tab into view. Closing the last tab returns Home. Creation-dialog cancellation/Escape restores focus to its opener.
-- The resting bar's Home button and the system back gesture return to Home, preserving open tabs and active selection. Desktop Home is in the top row. Desktop + opens the picker; the phone current-tab button opens the picker sheet. In the picker, + beside the switch is New session on Sessions and New Files tab on Files.
+- The resting bar's Home button and the system back gesture return to Home, preserving open tabs and active selection. Desktop Home is in the top row. Desktop + opens the picker; the phone current-tab button opens the picker sheet. In the picker, creating is the last row of each list: New session on Sessions, and on Files the search takes a path, with Open a folder… to start one.
 - Files opens as a tab from Home or the picker; switching tabs preserves the terminal and running process.
 - Terminal output is not editable mock text masquerading as live input. The prototype says it is sample content and sends no input.
 - On the terminal, show connection status only when not live. Reconnecting/error is visible in text, with Retry, and is distinct from active-tab selection and the bell dot. Home server cards still show live or offline status.
@@ -114,57 +114,92 @@ Returning from the background keeps the screen the user left.
 ## Picker (desktop) and picker sheet (phone)
 
 One picker opens a session or a Files tab, on every surface. Its controls are one block: a
-row with a **Sessions / Files** switch (a tablist: a segmented control 32 px tall on touch, each
-tab with a 44 px hit area) and one **+** at its end (New session on Sessions, New Files tab on
-Files), and under it a full-width search field that filters whichever side is showing (“Find a
-session” / “Find a folder”), about 8 px apart. On the desktop the block leads the popover, with
-the list below it. On the phone the block sits at the bottom, in thumb reach like the dock,
-and the list above it is the only thing that scrolls; the list still starts at its top. With several servers, the lists are grouped by server, each under an “On pop-os”
-heading; with one server shown (one listable, or a server's own sheet) there is no heading,
-since nothing needs telling apart (its transient “Updating” note goes with it, so no row shifts). The three surfaces differ only in their container and in
-who offers the way out. The picker remembers its side while the page is open, one side for all three surfaces.
+full-width search field that filters whichever side is showing (“Find a session” / “Find a
+folder or type a path”) and a **Sessions / Files** switch (a tablist: a segmented control 32 px
+tall on touch, each tab with a 44 px hit area), about 8 px apart. There is no +: creating is the
+last row of each list. On the desktop the block leads the popover, switch first and then search,
+with the list below it. On the phone the block sits at the bottom, in thumb reach like the dock,
+search first and the switch under it, then the open tabs as the last row, and the list above it is
+the only thing that scrolls; the list still starts at its top. With several servers, the lists are
+grouped by server, each under an “On pop-os” heading; with one server shown (one listable, or a
+server's own sheet) there is no heading, since nothing needs telling apart (its transient
+“Updating” note goes with it, so no row shifts). The phone sheet and the desktop popover differ only
+in their container and in who offers the way out. The picker remembers its side while the page is
+open, one side for all surfaces.
+
+**The phone sheet is one component at two heights.** The half-height sheet over the current tab
+and the full-height sheet from Home's “Sessions and files” row have the same list, search, switch,
+end-of-list rows and open-tab strip. The full-height sheet differs in height, in a top bar with
+‹ Back to Home and the server's name (no tab is behind it), and in listing only the server tapped
+on Home.
 
 **Sessions side.** Fetches sessions when opened, searches locally by name without a request
 per keystroke, distinguishes no matches from loading and errors, and marks sessions already
 open. A row opens an existing session's tab or activates it, never creates a shell. A list is
-a list, not a grid.
+a list, not a grid. The list's last row, in each server's group and for that server, is **New
+session** (when the search matches no session of that server it reads `New session "<query>"` and
+the form's Name starts as the query). It is not shown while the server has no tmux server, which
+tether never starts. Tapping it replaces the list, in the same container, with the **New session
+form**: a top row with ‹ and “New session on pop-os” (the search and the switch hide; on the phone
+the strip stays), an optional Name, an optional Start directory that is the same completing path
+field as the Files tab's (below), and Create. ‹, the system Back and Escape return to the list
+(a router entry of its own); a second Back or Escape closes the picker. Create does not close the
+picker: the new session's tab opens and becomes active behind it, and the picker returns from the
+form to its list, where the row reads “here”. Over Home too: Create (or a typed path) switches the route under the
+full-height sheet to the new tab and keeps the sheet open on its list, the strip showing the tab. ‹
+still goes Home; closing the sheet any other way leaves you on the new tab. A refused directory or name
+shows the daemon's reason in the form. Home's empty-card New session opens the full-height sheet
+on this form, and Back returns to its list.
 
-**Files side.** Lists each server's root folders (the folder list a new Files tab starts
-at, Uploads included), with the same rows as that list. A row opens a **new** Files tab at that folder. Open Files tabs are not
-listed (they are in the bottom strip and on Home). The roots are asked for when the side is
-first shown in an opening, once per server and kept until the picker closes, not per keystroke; a server that can't be reached says so. Folders are
-added and removed in a Files tab, so this list has no ×: + opens a new Files tab at the
-folder list, where Add folder is. A root that can't be opened (Missing) is left out here; the
-Files tab still shows it to fix or remove. When none can be opened, the side says there are no folders to show. + is disabled with its reason while the server is unreachable or its
-access is still being checked.
+**Files side.** Lists each server's folders: Home (`~`, always first, built in), then the favorites
+alphabetically by path, then Uploads when it exists; the order is the client's, from the unsorted
+list the daemon returns, and there is no reordering. A row **activates the Files tab on that
+server whose current place is that folder** (canonical path match), else opens a **new** Files tab
+there, like a session row; a tab browsed elsewhere no longer matches. Rows carry the session rows'
+marks: “here” when the active tab shows the folder, “open” when another tab does. The favorites are
+asked for when the side is first shown in an opening, once per server and kept until the picker
+closes, not per keystroke; a server that can't be reached says so. A favorite whose folder no longer
+exists stays in the list, dimmed, reading “Missing”, with a × “Remove from favorites”: its star is
+inside the folder, so this is the only way to remove it from the app. A missing Home or Uploads is
+left out. Home is listed even with no favorites, so the side is never empty.
 
-**A pick closes the picker**, on every surface, and then acts: a session row, a window
-row and a root row alike, so the tab it opens is the one that gets focus. A pick leaves no
-picker entry in history: Back from the opened tab never reopens the picker. Escape, a press outside or Back dismisses it without
-changing the active tab. On the phone, a tab in the half-height sheet's bottom strip is the
-exception: it switches the tab behind the sheet and the sheet stays, for flipping between
-open tabs.
+The search is also the **path field** here. Plain text filters the folders above. Text starting
+with `~` or `/` is a path: the list becomes that folder's completions (the Files tab's completion,
+below, with its “‹ ..” row and Tab or → to accept, on the one server the sheet is for, else the
+active tab's), and a tap on a completion, or Go, opens a **new** Files tab there, any readable
+folder. As with Create, the tab opens behind the picker, which stays open on its list with the
+search cleared. A path that isn't a readable folder shows the
+daemon's reason under the search's list. Each server's group ends with **Open a folder…**, like its New session row: inside the tap it puts
+`~/` in the search and focuses it, so the keyboard comes up, and the path is on that server (a typed
+path with no row tapped is on the one the sheet is for, else the active tab's).
 
-**Desktop:** + in the top row opens a popover under it with the switch, search and list; there is no
-footer (the picker's + creates). Focus returns to terminal input, or + when there is no tab.
-Search is auto-focused.
+**Every pick leaves the picker open**, in every container: a session row, a window row, a folder row
+(activate-or-open), Create, a typed path and a strip pill each switch or open the tab behind it, and the
+picker stays on its list with that row marked “here”. Nothing a pick does closes it; the user does, with a
+swipe down, a tap outside, Escape, or ‹ on the full-height sheet (which goes Home). Closing it any other
+way leaves the tab the pick put on screen. A pick leaves no picker entry in history. Over Home the route
+under the full sheet switches to the tab and the sheet stays.
 
-**Phone:** the current-tab button opens a half-height sheet over the current terminal or
-Files tab, which remains visible behind it. From Home's “Sessions and files” row the
-sheet is full-height for that server: a top bar with Back to Home and the server's name, the
-list, then the control block. The half-height sheet has no Home button (Home is on the resting
-bar) and has the open tabs under the control block, as its last row; the full-height sheet has no tab strip (Home already lists the open tabs).
+**Desktop:** + in the top row opens a popover under it with the switch, search and list; the
+popover has no open-tab strip (the top row has the tabs). Focus returns to terminal input, or + when
+there is no tab. Search is auto-focused.
+
+**Phone:** the current-tab button opens the half-height sheet over the current terminal or Files
+tab, which remains visible behind it. Home's “Sessions and files” row opens the same sheet at full
+height for that server. Neither has a Home button of its own (Home is on the resting bar, and the
+full-height sheet's Back).
 
 ```text
 half-height over current tab             full-height from Home
 ┌──────────────────────────────────┐     ┌──────────────────────────────────┐
 │ current terminal / Files         │     │ [‹] pop-os                       │
 ├──────────────────────────────────┤     │                                  │
-│ sessions (no heading: one server)│     │ sessions or roots for this server│
-│ …                                │     │ (no "On …" heading: one server)  │
-│ [ Sessions | Files          ] [+]│     │                                  │
-│ [ Find a session               ] │     │ [ Sessions | Files          ] [+]│
-│ (a1 python ×) (b1 claude) …      │     │ [ Find a session               ] │
+│ sessions (no heading: one server)│     │ sessions or folders, this server │
+│ …                                │     │ …                                │
+│ + New session                    │     │ + New session                    │
+│ [ Find a session               ] │     │ [ Find a session               ] │
+│ [ Sessions | Files             ] │     │ [ Sessions | Files             ] │
+│ (a1 python ×) (b1 claude) …      │     │ (a1 python ×) (b1 claude) …      │
 └──────────────────────────────────┘     └──────────────────────────────────┘
 ```
 
@@ -175,9 +210,8 @@ half-height over current tab             full-height from Home
 - The bottom strip contains terminal and Files tabs in order, with the next tab peeking
   when more remain; swipe scrolls the strip, tap switches the active tab behind the
   sheet, and the sheet stays open. Only the active tab shows ×. Closing a terminal tab
-  leaves its session running. The strip has no +: it sits beside the switch, in the control block. Its pills have 8 px above and below, and the safe-area inset under them.
-- + acts on the active tab's server (the first server when no tab is open; the full-height
-  sheet's server); it is disabled with its reason when that server can't be reached.
+  leaves its session running. Its pills have 8 px above and below, and the safe-area inset under them.
+- A server's **New session** row is disabled with its reason when that server can't be reached.
 - Session rows mark the active tab's session “here” and other open sessions “open”.
   When the active tab's session has more than one window, its row lists them beneath it
   (see Window switcher); other rows show a window count.
@@ -210,11 +244,12 @@ half-height over current tab             full-height from Home
     server (the daemon cannot read tmux's bell state), the server's card and the
     picker sheet say "Bell tracking unavailable on this host". A `listSessions` that fails with a tmux error (not "no server") says the same. Both are plain text
     lines, not dots, and clear when a later message or listing says otherwise.
-- New session prompts for an optional name and absolute start directory; blank uses
-  tmux's defaults. Cancellation is harmless and server validation is authoritative.
-  Open its tab from the next listing containing it; after 5 seconds say when it was created
-  but has not appeared. Show a refused directory's reason in the form. The server choice
-  for creation when several are available remains open.
+- New session (the form above) asks for an optional name and start directory, `~/…` or an
+  absolute path (the completing field expands `~` to the server's home before sending); blank
+  uses tmux's defaults. Backing out is harmless and server validation is authoritative. Open
+  its tab from the next listing containing it; after 5 seconds say when it was created but has
+  not appeared. Show a refused directory's reason in the form. Each server's group has its own
+  New session row, so there is no server choice to make.
 - A tap outside, the system back gesture or Escape dismisses the half-height sheet without
   changing the active tab. Opening the sheet lowers the keyboard (Phone dock). Empty,
   offline and refused states are distinct.
@@ -224,7 +259,7 @@ half-height over current tab             full-height from Home
 A terminal tab opens on its session's current window and follows it as any client changes
 it. Only a session with more than one window offers a window-switching affordance; on the
 phone it is inside the picker sheet, not terminal chrome: the active tab's session row
-lists its windows beneath it. The desktop's + popover shows the same rows (one renderer). Choosing a window closes the picker, like any pick. Choosing a window runs tmux's
+lists its windows beneath it. The desktop's + popover shows the same rows (one renderer). Choosing a window leaves the picker open, like any pick. Choosing a window runs tmux's
 `select-window` on the session, so every attached client moves with it. Rows are in actual index order as “index: name”; the latest `watching`
 window is marked “shown”. Load from the current listing, show loading and refusal with
 selecting the shown window changes nothing. Creating a window has no button on either layout
@@ -233,7 +268,7 @@ pane, not tmux's key tables.
 
 ## Files
 
-Any number of Files tabs can be open, even on the same server. Each remembers its own folder or file preview locally and is labelled by that folder or file name (“Files” at the folder list). A root chosen in the picker's Files side opens a new tab at that folder, and the picker's + (Add folder) a new tab at the selected server's folder list (its roots), since outside a root tether lists subfolders, not files; existing Files tabs are reached through their tab or Home row.
+Any number of Files tabs can be open, even on the same server. Each remembers its own folder or file preview locally and is labelled by that folder or file name. A Files tab can open any folder or file the daemon's user can read, `/` included; there is no scope and no favorites page inside a tab. A folder chosen in the picker's Files side (Home, a favorite, Uploads) activates the tab already at it, else opens a new one there, and a path typed in the picker's search opens a new tab; the tabs are also reached through their pill or Home row.
 
 Each Files tab presents one folder list under one path field. At rest the field shows where the user is; typed into, it completes folders; tapping rows browses one folder at a time.
 
@@ -241,7 +276,7 @@ Each Files tab presents one folder list under one path field. At rest the field 
 phone, at rest                           phone, typing (keyboard up)
 ┌──────────────────────────────────┐     ┌──────────────────────────────────┐
 │ [ ~/repos/tether            ]    │     │ [ ~/repos/te|ther/     ] Cancel  │  ghost: "ther/"
-│ ‹ repos                          │     │ in ~/repos                       │
+│ ‹ repos                          │     │ ‹ ..                             │
 │ ▸ docs                         › │     │ ▸ tether                         │  predicted, highlighted
 │ ▸ src                          › │     │ ▸ tether-old                     │
 │ ▸ web                          › │     │ ▸ test-data                      │
@@ -253,38 +288,32 @@ phone, at rest                           phone, typing (keyboard up)
 └──────────────────────────────────┘     └──────────────────────────────────┘
 ```
 
-**The path field** heads Files on every platform, above the list. At rest it reads the current folder's path (`~/…` under `$HOME`), or is empty with the placeholder "Go to folder" at the top level, where the list holds the roots. A tap starts editing with the current path and a trailing `/`, caret at the end, so typing narrows that folder's subfolders at once; editing is a history entry, so Back ends it before it leaves the folder; a Cancel button beside the field restores the path and lowers the keyboard, as Escape and Back do. Hiding the keyboard, or a tap elsewhere, only lowers it: the edit and its text stay, with Cancel, and a tap on the field resumes typing. The field turns autocorrect, auto-capitalization and spellcheck off and sets `enterkeyhint="go"`. The ghost text is drawn behind the input and shifts with its scroll; when the typed path fills the field the ghost is cut off at the edge and the highlighted row shows the prediction. It keeps the ordinary text keyboard: the iPhone's URL keyboard has `/` on its first layer but no space bar, and folder names can hold spaces.
+**The path field** heads Files on every platform, above the list. At rest it reads the current folder's path (`~/…` under `$HOME`), (`/` at the top). A tap starts editing with the current path and a trailing `/`, and the caret goes to the end however the tap landed: iOS places the caret at the tap point after focus, so the end is set again on the next frame and once more after the tap settles (taps while already editing place the caret normally), so typing narrows that folder's subfolders at once; editing is a history entry, so Back ends it before it leaves the folder; a Cancel button beside the field restores the path and lowers the keyboard, as Escape and Back do. Hiding the keyboard, or a tap elsewhere, only lowers it: the edit and its text stay, with Cancel, and a tap on the field resumes typing. The field turns autocorrect, auto-capitalization and spellcheck off and sets `enterkeyhint="go"`. The ghost text is drawn behind the input and shifts with its scroll; when the typed path fills the field the ghost is cut off at the edge and the highlighted row shows the prediction. It keeps the ordinary text keyboard: the iPhone's URL keyboard has `/` on its first layer but no space bar, and folder names can hold spaces.
 
-**Completion.** While the field is being edited, the list shows the folders in the typed parent whose names start with the typed last segment, folders only, matched with ASCII case folded as the daemon sorts them; a line above them names the parent ("in ~/repos"). While the last segment is empty (right after a `/`) the list shows all the parent's folders and nothing is predicted. Once a character is typed, the first match is the prediction: it is highlighted, and its remaining letters show as ghost text after the caret, with a trailing `/`. A tap on a row is Go on that folder: it opens it and ends editing. On a row that is only a step toward a root, such as `Users` above `/Users/j/repos`, Go fills the field with it and a `/`, as Tab does, since there is nothing there to open; a root or home listed there opens. The row takes the tap without taking focus from the field, so the keyboard stays up until the folder opens. Drilling deeper is then a tap in the folder's own list. Accepting a folder, from a hardware keyboard, puts its full path and a `/` in the field and lists its subfolders; it does not leave the folder the user is in. Accepting is:
+**Completion.** While the field is being edited, the list shows the folders in the typed parent whose names start with the typed last segment, folders only, matched with ASCII case folded as the daemon sorts them; the first row is “‹ ..”, which steps the field to the parent folder (`~/repos/` becomes `~/`; `~/` becomes `/home/`) and is absent at `/`; it looks like the folder list's up row and takes a tap like the other rows. There is no line naming the parent: the field says where you are. While the last segment is empty (right after a `/`) the list shows all the parent's folders and nothing is predicted. Once a character is typed, the first match is the prediction: it is highlighted, and its remaining letters show as ghost text after the caret, with a trailing `/`. A tap on a row is Go on that folder: it opens it and ends editing. The row takes the tap without taking focus from the field, so the keyboard stays up until the folder opens. Drilling deeper is then a tap in the folder's own list. Accepting a folder, from a hardware keyboard, puts its full path and a `/` in the field and lists its subfolders; it does not leave the folder the user is in. Accepting is:
 
 - **`/` typed after a name that is not itself a folder there**, which accepts the prediction in place of the literal `/` ("rep/" becomes "repos/"); after an exact folder name, or with no prediction, `/` is typed as is;
 - **Tab**, or → with the caret at the end, on a hardware keyboard, where ↑ and ↓ move the highlight (and can highlight a row while the segment is empty).
 
 **Go** (the keyboard's Return, Enter on desktop) opens a folder and ends editing: the highlighted folder, or with no highlight the folder the text names. So right after a keyboard accept, Go opens the folder just accepted. A path naming nothing says "No folder ~/repos/tetherx" under the field and opens nothing. Opening adds a history entry, as a tap into a folder does, so Back returns to the folder the user left.
 
-**Scopes.** The field reaches three kinds of path, and the list says which:
+**Anywhere.** The field completes folders in any directory the daemon's user can read, from one `/fs/list` listing per folder, the same as browsing. A path naming nothing says "No folder …".
 
-- **Inside a root:** completion and opening use `/fs/list`, as browsing does.
-- **Under `$HOME`, outside the roots:** completion uses `/fs/dirs`. Rows for folders outside every root read "not added"; a row that is a root, or inside one, reads like any folder and opens with `/fs/list`. Opening such a folder shows its subfolders only, under a line "Not one of your folders" with "Add this folder", disabled with its reason at `$HOME` itself and for a folder already added; a daemon refusal (outside `$HOME`, a read-only `config.toml`) shows there in plain words. Once added, the folder lists in full. "Add folder…", under the roots list and in the empty state, starts the field at `~/`.
-- **Elsewhere** (`/`, `/srv`): no listing is asked for; completion offers the next segment of each root path under the typed parent, from the roots list already loaded. A path outside all three says "Outside your folders".
-
-A `/fs/list` refused as outside the roots for a path under `$HOME` (a symlink leading out) falls back to `/fs/dirs`.
-
-**Cost on a spotty network: one listing per folder, never one per keystroke.** Completion filters a listing the client already holds. Entering a folder (an accept, a typed `/`, a pasted path) asks for that folder's first page once, after typing pauses 250 ms, and only for the folder the field names when it settles; answers for a folder the field has left are never shown, and are kept in the cache. Listings are cached per host for the Files session: the first pages of the 32 most recently loaded folders, whether the field or browsing loaded them (keyed by path and the hidden flag). Showing a folder that is cached (opening it from the field, switching to another Files tab, Back or Forward, returning to a preview's folder) costs no request, and returning to a file already probed does not probe again. Adding or removing a root forgets them all. A failed listing is asked for again when the field next names that folder. Pull-to-refresh and tether's own uploads drop the affected ones. Directories sort first, so one page of 200 entries holds every subfolder of almost any folder. A page that is all folders is followed by the next, each a fresh scan on the daemon, up to 5 pages (1,000 folders); past that, or when the daemon says the folder is past its scan cap, the list ends "Only the first 1,000 folders are searched, keep typing to narrow". While a listing loads, the list says so beside the parent line; a refusal shows in plain words with "Try again", never as an empty list.
+**Cost on a spotty network: one listing per folder, never one per keystroke.** Completion filters a listing the client already holds. Entering a folder (an accept, a typed `/`, a pasted path) asks for that folder's first page once, after typing pauses 250 ms, and only for the folder the field names when it settles; answers for a folder the field has left are never shown, and are kept in the cache. Listings are cached per host for the Files session: the first pages of the 32 most recently loaded folders, whether the field or browsing loaded them (keyed by path and the hidden flag). Showing a folder that is cached (opening it from the field, switching to another Files tab, Back or Forward, returning to a preview's folder) costs no request, and returning to a file already probed does not probe again. A failed listing is asked for again when the field next names that folder. Pull-to-refresh and tether's own uploads drop the affected ones. Directories sort first, so one page of 200 entries holds every subfolder of almost any folder. A page that is all folders is followed by the next, each a fresh scan on the daemon, up to 5 pages (1,000 folders); past that, or when the daemon says the folder is past its scan cap, the list ends "Only the first 1,000 folders are searched, keep typing to narrow". While a listing loads, the list says “Loading”; a refusal shows in plain words with "Try again", never as an empty list.
 
 **Hidden folders** are left out of completion unless the typed segment starts with `.` (that folder is then asked for with `hidden=1`, cached separately) or the hidden-files toggle is on.
 
 **Browsing by tap** is unchanged at rest:
 
 - Opens the current folder as a list. Returning from terminal preserves folder/preview context.
-- Folders open their contents, not an accordion. The first row is “‹ parent” (with the parent folder name); it moves up and is absent at a configured root. The system/browser back gesture also goes back.
+- Folders open their contents, not an accordion. Every folder but `/` starts with an up row, “‹ <parent name>” (a top-level folder reads “‹ /”), which moves up; at `/` there is none. A folder that was moved or deleted since the tab last showed it says “This folder no longer exists” with its up row (the parent of its path) still working. The system/browser back gesture goes back, not up.
 - Files open a preview. Back from preview returns to its containing folder.
 - Matching navigation treatment: same row height, padding, leading icon position, text size, metadata alignment, trailing chevron, and hover/focus treatment as session rows. Folder rows end with a right chevron (drill in); session rows have none (they open a tab). Files/folders are not falsely presented as expandable trees.
-- Roots are listed first at the top level, each with a Remove button that asks first ("Remove this folder?", nothing is deleted from disk) and a Remove-less Uploads row. Remove is a router overlay: Back, Escape and the backdrop close it, and focus returns to the control that asked (Add folder… when a removed row's button is gone). Moving the uploads folder still happens in `config.toml` on the host; the list says so. Returning to a Files tab restores its folder or preview; the in-app back button goes up one place, and the browser's Back returns to the previous one without a new request when its folder is still loaded.
+- **Favorites toggle.** The Files tab's header has a star: “Add to favorites” on a folder that isn't a favorite, “Remove from favorites” (`aria-pressed`) on one that is. There is no confirmation: nothing on disk changes. Home and Uploads have no star (they are always listed). Moving the uploads folder still happens in `config.toml` on the host. Returning to a Files tab restores its folder or preview; the in-app back button goes up one place, and the browser's Back returns to the previous one without a new request when its folder is still loaded.
 - Folder rows show an icon, name and chevron; file rows add a size. A link that cannot open says why (“Broken link”, “Not a file”) and is disabled. A folder past the daemon's scan cap says it is too big to list in full. Further pages load as the end of the list nears the screen, with “Show more” as the fallback. Hidden files are behind a quiet toggle under the list.
 - Previews: code (14 grammars, plain text for the rest), Markdown (relative links open the file here, web links go to the browser, an address link hands off to the mail app; an allowlist of prose, lists, tables, code, links and images is sanitized with DOMPurify, and no click inside it navigates the page itself), images (zoom and pan), video and audio (inline in the browser; native keeps its own player), and binary files (“Open as text”). Markdown Mermaid diagrams render with a lazily loaded renderer in strict mode, with rendered output sanitized by DOMPurify. Each diagram's place reads “Loading diagram…” until it renders; if it can't, the code block returns with the reason after it.
 - Loading and failure never look like an empty list: a spinner with words, or the refusal in plain words with “Try again”.
-- Root selection, permissions, size limits, and error handling remain governed by existing fs spec. Upload/path insertion route is specified below. No delete/move/rename controls are added.
+- Permissions, size limits, and error handling remain governed by [fs.md](../fs.md). Upload/path insertion route is specified below. No delete/move/rename controls are added.
 
 ## Persistence and input
 

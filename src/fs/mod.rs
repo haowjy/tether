@@ -1,7 +1,7 @@
-//! The file API's core (fs.md): the roots that scope it, `fs::open`, listings, raw
-//! reads, uploads and `config.toml` writes. Knows nothing of axum; `http/fs.rs` parses
-//! requests, takes slots and builds responses. Every path a client sends reaches the
-//! disk through `open`, which returns a descriptor checked to be inside the scope.
+//! The file API's core (fs.md): the favorites, `fs::open`, listings, raw reads, uploads
+//! and `config.toml` writes. Knows nothing of axum; `http/fs.rs` parses requests, takes
+//! slots and builds responses. Every path a client sends reaches the disk through
+//! `open`, which returns a descriptor and the canonical path it was opened at.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -20,7 +20,7 @@ pub mod raw;
 mod slots;
 pub mod upload;
 
-pub use open::{Opened, Scope, Want, check_dir, check_shape, open};
+pub use open::{Opened, Want, check_dir, check_shape, open};
 pub use slots::Slots;
 
 /// A path in a request: absolute, UTF-8, no NUL, at most this long.
@@ -30,10 +30,6 @@ pub const MAX_PATH: usize = 4096;
 pub enum FsError {
     #[error("bad request")]
     BadRequest,
-    #[error("outside the roots")]
-    OutsideRoots,
-    #[error("outside $HOME")]
-    OutsideHome,
     #[error("permission denied")]
     Denied,
     #[error("not found")]
@@ -82,24 +78,25 @@ impl From<Busy> for FsError {
     }
 }
 
-/// One `roots` entry or `uploads_dir`, as stored and as resolved now.
+/// One `favorites` entry or `uploads_dir`, as stored and as resolved now.
 #[derive(Debug, Clone)]
-pub struct Root {
+pub struct Place {
     pub stored: String,
     /// `None`: missing, not a directory, not absolute or `~/`, or not UTF-8.
     pub canonical: Option<PathBuf>,
 }
 
-/// The effective roots, read from `config.toml` and canonicalized for one request.
+/// The favorites and the uploads folder, read from `config.toml` and canonicalized for
+/// one request.
 #[derive(Debug, Clone)]
-pub struct Roots {
+pub struct Favorites {
     /// The canonical `$HOME`.
     pub home: PathBuf,
-    pub roots: Vec<Root>,
-    pub uploads: Root,
+    pub favorites: Vec<Place>,
+    pub uploads: Place,
 }
 
-impl Roots {
+impl Favorites {
     /// Reads `config.toml` now: a hand edit applies to the next request.
     pub fn load(file: &ConfigFile, home: &Path) -> Result<Self, FsError> {
         Self::resolve(&file.load()?, home)
@@ -107,47 +104,30 @@ impl Roots {
 
     pub fn resolve(config: &Config, home: &Path) -> Result<Self, FsError> {
         let canonical_home = std::fs::canonicalize(home).map_err(FsError::Internal)?;
-        let root = |stored: &String| Root {
+        let place = |stored: &String| Place {
             stored: stored.clone(),
             canonical: expand(stored, home).and_then(|path| canonical_dir(&path)),
         };
         Ok(Self {
             home: canonical_home,
-            roots: config.roots.iter().map(root).collect(),
-            uploads: root(&config.uploads_dir),
+            favorites: config.favorites.iter().map(place).collect(),
+            uploads: place(&config.uploads_dir),
         })
     }
 
-    /// The canonical directories the file API may read: the roots that resolved, and
-    /// the uploads folder.
-    pub fn scope(&self) -> Scope {
-        let dirs = self
-            .roots
-            .iter()
-            .chain([&self.uploads])
-            .filter_map(|root| root.canonical.clone())
-            .collect();
-        Scope::roots(dirs)
-    }
-
-    /// `[$HOME]`, for the picker.
-    pub fn home_scope(&self) -> Scope {
-        Scope::home(self.home.clone())
-    }
-
-    pub fn to_wire(&self) -> wire::Roots {
-        let status = |root: &Root| wire::RootStatus {
-            path: root.stored.clone(),
-            canonical: root
+    pub fn to_wire(&self) -> wire::Favorites {
+        let status = |place: &Place| wire::PlaceStatus {
+            path: place.stored.clone(),
+            canonical: place
                 .canonical
                 .as_deref()
                 .and_then(Path::to_str)
                 .map(str::to_owned),
-            ok: root.canonical.is_some(),
+            ok: place.canonical.is_some(),
         };
-        wire::Roots {
+        wire::Favorites {
             home: self.home.to_string_lossy().into_owned(),
-            roots: self.roots.iter().map(status).collect(),
+            favorites: self.favorites.iter().map(status).collect(),
             uploads_dir: status(&self.uploads),
         }
     }

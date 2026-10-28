@@ -4059,3 +4059,69 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 - **Budget:** initial JS 201 to 202 KB (201.1 measured): the switch, the roots side and the dock's Home button are
   launch code, and the cuts the change could make (the dead menu variant, `RovingList`'s role prop) did not cover them.
   Rejected: splitting screens into lazy chunks in this change (its own piece of work, in `web/.context/TODO`).
+
+### 2026-10-28: Files without a scope
+
+- **What:** Files opens any folder or file the daemon's user can read, `/` included, as the
+  terminal can. The roots scope is gone: `Scope`, the containment checks, `outside_roots` and
+  `outside_home`, the `$HOME`-only `/fs/dirs` picker listing and the below-`$HOME` rule for
+  adding folders. `roots` in `config.toml` becomes `favorites` (shortcuts, not a boundary); the
+  routes are `GET /fs/favorites`, `POST /fs/favorites/add` and `/remove`, and `uploads_dir` may
+  be any existing directory. `Listing.root` is removed and `Listing.parent` is null only at `/`.
+  The client side (rules 1 to 6 in `client/browser-behaviors.md#files`): every folder but `/`
+  starts with an up row; the picker's Files side lists Home (`~`), the favorites, then Uploads;
+  a Files tab has no favorites page (a saved `{kind:"roots"}` place reads as `~`); a star in the tab's header
+  adds or removes the favorite with no confirmation; the path field completes folders anywhere
+  from one `/fs/list` per folder. Kept: the hidden-files toggle, sandboxed previews and
+  sanitized Markdown and Mermaid, the scan, page and upload caps, the descriptor-checked
+  no-follow open (so the reported path is real, and a FIFO never blocks), non-UTF-8 names, the
+  upload destination and naming, and atomic config writes.
+- **Why:** Jimmy, on a real iPhone at `~` that said "Open a folder inside your home folder
+  first": "u already have terminal access... why tf are we restricting this?". A device token
+  already runs any command in tmux, so the scope guarded against nothing but Jimmy, and it
+  cost a folders-only view, a "not added" state, an "Add this folder" flow, an
+  outside-your-folders message and a fallback between two list routes.
+- **Reverses** "Roots are a scope; the `$HOME` picker shows directory names only" and the
+  app-side below-`$HOME` rule for adding folders.
+- **Rejected:** keeping the scope and fixing only the wording (protects nothing a token holder
+  can't already do in tmux); `$HOME` as a built-in root with the scope kept elsewhere (the same
+  rule one level up, and `/etc` is readable in tmux); a favorites page inside the Files tab (two
+  lists of one thing, since the picker lists them); keeping `roots` as the config name or
+  accepting it as an alias (two names for one concept, and a compatibility layer for one user:
+  the CHANGELOG says to rename the key).
+
+#### The same day: how the picker lists, opens and creates (Jimmy, on the device)
+
+- **Order and missing.** Favorites are listed alphabetically by path (Home first, Uploads last),
+  as sessions come in tmux's alphabetical order. The client sorts, from the daemon's config
+  order, since only the picker lists them and nothing else needs the order; there is no
+  reordering. A favorite whose folder is gone stays, dimmed and "Missing", with a × that removes
+  it (the star lives inside the folder, so a missing one has no other way out); a missing Home
+  or Uploads is hidden. A Files tab whose folder vanished says "This folder no longer exists",
+  and its up row (the parent of its path, since `Listing.parent` is not available) still works.
+- **A folder row behaves like a session row.** It activates the Files tab on that server whose
+  place is that folder (canonical path), else opens one, and carries "here" and "open" like
+  session rows, with the same mark rendering. A tab browsed elsewhere no longer matches.
+- **No + in the picker; creating is each list's last row.** Sessions: "New session" per server
+  group (`New session "<query>"`, Name prefilled, when the search matches nothing), which
+  replaces the list in the same container with the form. Files: the search is also the path
+  field (text starting `~` or `/` shows completions; a tap or Go opens a new tab), and the last
+  row "Open a folder…" (one per server group, like New session) starts a path on that server inside the tap. Rejected: a dialog over the picker (a second
+  surface to dismiss), an "Add favorite" + (favorites are starred in the folder), an Open folder
+  form (the search already is the field).
+- **No pick closes the picker** (Jimmy: "inconsistent behavior for 2 things that look similar is bad"; reverses "a pick closes the picker"). Session, window, folder, strip, Create and a typed path all put a tab on screen behind the picker, which stays on its list; one behaviour, no `commit`-then-close path. Earlier text for Create and Open: The tab opens behind it and the picker returns to
+  its list (the new row reads "here"); row picks still close it. Over Home too (Jimmy: "why don't we
+  have tabs under the home one?"): the route under the full sheet switches to the new tab and the
+  sheet stays open, so Create and Open behave the same in every container. ‹ still goes Home;
+  closing the sheet otherwise leaves you on the tab. The form page is a router entry of its own, so Back and
+  Escape leave it before they close the picker; `Router.closeOverlay(then)` therefore waits for the
+  entry it pops, not for "no overlay".
+- **One sheet, two heights.** The half-height sheet and the full-height sheet from Home are one
+  component: same list, search, switch, end-of-list rows and open-tab strip. The full sheet adds
+  a Back to Home and the server's name, and lists only that server. Phone control order, top to
+  bottom: search, switch, strip; the desktop popover keeps switch then search.
+- **One completing field.** `useCompletion` (`screens/files/completion.ts`) is the path field's
+  behaviour for the Files tab, the picker's search and New session's Start directory, so all type
+  paths alike. Start directory accepts `~/…` and sends the absolute path (`parseCreation` is
+  unchanged). Path field details (Jimmy): the caret goes to the end when an edit starts, set
+  again after iOS places it; no "in <folder>" line; "‹ .." steps to the parent folder.

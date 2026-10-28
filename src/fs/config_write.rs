@@ -1,6 +1,6 @@
 //! The Settings sheet's writes to `config.toml` (fs.md "Writing config.toml"): under
 //! the state directory's lock, which auth's writers hold too; through a symlinked file
-//! to its target; only `roots` or `uploads_dir` changed, with `toml_edit` keeping
+//! to its target; only `favorites` or `uploads_dir` changed, with `toml_edit` keeping
 //! comments, order and unknown keys; and through `files::Temp` with the file's mode,
 //! retried if the file changed while the new text was written.
 
@@ -14,7 +14,7 @@ use rustix::io::Errno;
 use toml_edit::{DocumentMut, Item, Value};
 use tracing::{info, warn};
 
-use super::{FsError, MAX_PATH, Roots, check_shape};
+use super::{Favorites, FsError, MAX_PATH, check_shape};
 use crate::config::{Config, ConfigError, ConfigFile};
 use crate::files::{self, Dir, Stamp, Temp};
 
@@ -23,11 +23,11 @@ const TRIES: usize = 3;
 
 #[derive(Debug, Clone)]
 pub enum Change {
-    /// A directory strictly below `$HOME`, stored canonical.
-    AddRoot(String),
+    /// An existing directory, stored canonical.
+    AddFavorite(String),
     /// Every entry whose stored text or canonical path is this.
-    RemoveRoot(String),
-    /// As `AddRoot`, into `uploads_dir`.
+    RemoveFavorite(String),
+    /// As `AddFavorite`, into `uploads_dir`.
     UploadsDir(String),
 }
 
@@ -40,13 +40,13 @@ pub fn apply(
     change: Change,
 ) -> Result<(), FsError> {
     let change = match change {
-        Change::AddRoot(path) => Change::AddRoot(below_home(&path, home)?),
-        Change::UploadsDir(path) => Change::UploadsDir(below_home(&path, home)?),
+        Change::AddFavorite(path) => Change::AddFavorite(existing_dir(&path)?),
+        Change::UploadsDir(path) => Change::UploadsDir(existing_dir(&path)?),
         // Stored text, which needn't be absolute (`~/code`): only the rest of the shape.
-        Change::RemoveRoot(path) if path.len() > MAX_PATH || path.contains('\0') => {
+        Change::RemoveFavorite(path) if path.len() > MAX_PATH || path.contains('\0') => {
             return Err(FsError::BadRequest);
         }
-        remove @ Change::RemoveRoot(_) => remove,
+        remove @ Change::RemoveFavorite(_) => remove,
     };
     let _lock = files::lock(state_dir).map_err(FsError::Internal)?;
     let target = target(&file.path)?;
@@ -91,28 +91,28 @@ fn edit(
     change: &Change,
 ) -> Result<bool, FsError> {
     match change {
-        Change::AddRoot(canonical) => {
-            let roots = Roots::resolve(config, home)?;
-            let present = roots
-                .roots
+        Change::AddFavorite(canonical) => {
+            let favorites = Favorites::resolve(config, home)?;
+            let present = favorites
+                .favorites
                 .iter()
-                .any(|root| root.canonical.as_deref() == Some(Path::new(canonical)));
+                .any(|place| place.canonical.as_deref() == Some(Path::new(canonical)));
             if !present {
-                add_root(doc, canonical);
+                add_favorite(doc, canonical);
             }
             Ok(!present)
         }
-        Change::RemoveRoot(path) => {
-            let roots = Roots::resolve(config, home)?;
-            let doomed: Vec<&str> = roots
-                .roots
+        Change::RemoveFavorite(path) => {
+            let favorites = Favorites::resolve(config, home)?;
+            let doomed: Vec<&str> = favorites
+                .favorites
                 .iter()
-                .filter(|root| {
-                    root.stored == *path || root.canonical.as_deref() == Some(Path::new(path))
+                .filter(|place| {
+                    place.stored == *path || place.canonical.as_deref() == Some(Path::new(path))
                 })
-                .map(|root| root.stored.as_str())
+                .map(|place| place.stored.as_str())
                 .collect();
-            Ok(remove_roots(doc, |stored| doomed.contains(&stored)))
+            Ok(remove_favorites(doc, |stored| doomed.contains(&stored)))
         }
         Change::UploadsDir(canonical) => {
             let unchanged = config.uploads_dir == *canonical;
@@ -129,45 +129,45 @@ fn edit(
 // before, up to its newline, then the entry's own lines. Adding and removing entries
 // moves those line tails, so a comment stays on the line it was written on.
 
-/// Appends to `roots`, laid out like the entries before it.
-fn add_root(doc: &mut DocumentMut, path: &str) {
-    let Some(roots) = doc.get_mut("roots").and_then(Item::as_array_mut) else {
-        let mut roots = toml_edit::Array::new();
-        roots.push(path);
-        doc.insert("roots", Item::Value(Value::Array(roots)));
+/// Appends to `favorites`, laid out like the entries before it.
+fn add_favorite(doc: &mut DocumentMut, path: &str) {
+    let Some(list) = doc.get_mut("favorites").and_then(Item::as_array_mut) else {
+        let mut list = toml_edit::Array::new();
+        list.push(path);
+        doc.insert("favorites", Item::Value(Value::Array(list)));
         return;
     };
-    let trailing = roots.trailing().as_str().unwrap_or_default().to_owned();
-    let last = roots.iter().last().map(prefix);
+    let trailing = list.trailing().as_str().unwrap_or_default().to_owned();
+    let last = list.iter().last().map(prefix);
     let multi_line =
-        trailing.contains('\n') || roots.iter().any(|entry| prefix(entry).contains('\n'));
+        trailing.contains('\n') || list.iter().any(|entry| prefix(entry).contains('\n'));
     let mut entry = Value::from(path);
     if multi_line {
         let indent = last.as_deref().map_or("  ", own_lines);
         entry
             .decor_mut()
             .set_prefix(format!("{}{indent}", line_tail(&trailing)));
-        roots.set_trailing(format!("\n{}", own_lines(&trailing)));
+        list.set_trailing(format!("\n{}", own_lines(&trailing)));
     } else if last.is_some() {
         entry.decor_mut().set_prefix(" ");
     }
-    roots.push_formatted(entry);
+    list.push_formatted(entry);
 }
 
-/// Removes the `roots` entries `doomed` picks; false if none.
-fn remove_roots(doc: &mut DocumentMut, doomed: impl Fn(&str) -> bool) -> bool {
-    let Some(roots) = doc.get_mut("roots").and_then(Item::as_array_mut) else {
+/// Removes the `favorites` entries `doomed` picks; false if none.
+fn remove_favorites(doc: &mut DocumentMut, doomed: impl Fn(&str) -> bool) -> bool {
+    let Some(list) = doc.get_mut("favorites").and_then(Item::as_array_mut) else {
         return false;
     };
-    let before = roots.len();
+    let before = list.len();
     // The line tail of the entry before a removed run, waiting for the next survivor.
     let mut carried: Option<String> = None;
     let mut index = 0;
-    while let Some(entry) = roots.get(index) {
+    while let Some(entry) = list.get(index) {
         let text = prefix(entry);
         if entry.as_str().is_some_and(&doomed) {
             carried.get_or_insert_with(|| line_tail(&text).to_owned());
-            roots.remove(index);
+            list.remove(index);
             continue;
         }
         if let Some(tail) = carried.take() {
@@ -178,17 +178,17 @@ fn remove_roots(doc: &mut DocumentMut, doomed: impl Fn(&str) -> bool) -> bool {
             } else {
                 own
             };
-            if let Some(entry) = roots.get_mut(index) {
+            if let Some(entry) = list.get_mut(index) {
                 entry.decor_mut().set_prefix(format!("{tail}{own}"));
             }
         }
         index += 1;
     }
     if let Some(tail) = carried {
-        let trailing = roots.trailing().as_str().unwrap_or_default().to_owned();
-        roots.set_trailing(format!("{tail}{}", own_lines(&trailing)));
+        let trailing = list.trailing().as_str().unwrap_or_default().to_owned();
+        list.set_trailing(format!("{tail}{}", own_lines(&trailing)));
     }
-    roots.len() < before
+    list.len() < before
 }
 
 fn prefix(entry: &Value) -> String {
@@ -220,15 +220,10 @@ fn set_uploads_dir(doc: &mut DocumentMut, path: &str) {
     }
 }
 
-/// The canonical path of an existing directory strictly below the canonical `$HOME`:
-/// the app can't widen the scope to `$HOME` or past it.
-fn below_home(path: &str, home: &Path) -> Result<String, FsError> {
+/// The canonical path of an existing directory.
+fn existing_dir(path: &str) -> Result<String, FsError> {
     check_shape(path).map_err(|_| FsError::BadRequest)?;
-    let home = fs::canonicalize(home).map_err(FsError::Internal)?;
     let canonical = fs::canonicalize(path).map_err(FsError::io)?;
-    if !canonical.starts_with(&home) || canonical == home {
-        return Err(FsError::OutsideHome);
-    }
     if !fs::metadata(&canonical).map_err(FsError::io)?.is_dir() {
         return Err(FsError::NotADirectory);
     }
@@ -321,8 +316,8 @@ mod tests {
     const HAND_WRITTEN: &str = r#"# tether's config, by hand.
 port = 7851 # not the default
 
-# Project roots.
-roots = [
+# Project favorites.
+favorites = [
   "~/code/tether", # the daemon
   "/srv/data",
 ]
@@ -343,9 +338,9 @@ answer = 42
     }
 
     #[test]
-    fn adding_a_root_keeps_comments_order_and_unknown_keys() {
+    fn adding_a_favorite_keeps_comments_order_and_unknown_keys() {
         let mut doc = doc(HAND_WRITTEN);
-        add_root(&mut doc, "/home/jimmy/notes");
+        add_favorite(&mut doc, "/home/jimmy/notes");
         let text = doc.to_string();
         let expected = HAND_WRITTEN.replace(
             "  \"/srv/data\",\n]",
@@ -353,41 +348,41 @@ answer = 42
         );
         assert_eq!(text, expected);
         let config = Config::parse(Path::new("config.toml"), &text).expect("still a config");
-        assert_eq!(config.roots.len(), 3);
+        assert_eq!(config.favorites.len(), 3);
     }
 
     #[test]
     fn comments_stay_on_their_lines_and_single_line_arrays_stay_tidy() {
-        let commented = "roots = [\n  \"/a\", # A\n  \"/b\", # B\n  \"/c\", # C\n]\n";
+        let commented = "favorites = [\n  \"/a\", # A\n  \"/b\", # B\n  \"/c\", # C\n]\n";
         for (doomed, expected) in [
-            ("/a", "roots = [\n  \"/b\", # B\n  \"/c\", # C\n]\n"),
-            ("/b", "roots = [\n  \"/a\", # A\n  \"/c\", # C\n]\n"),
-            ("/c", "roots = [\n  \"/a\", # A\n  \"/b\", # B\n]\n"),
+            ("/a", "favorites = [\n  \"/b\", # B\n  \"/c\", # C\n]\n"),
+            ("/b", "favorites = [\n  \"/a\", # A\n  \"/c\", # C\n]\n"),
+            ("/c", "favorites = [\n  \"/a\", # A\n  \"/b\", # B\n]\n"),
         ] {
             let mut doc = doc(commented);
-            assert!(remove_roots(&mut doc, |stored| stored == doomed));
+            assert!(remove_favorites(&mut doc, |stored| stored == doomed));
             assert_eq!(doc.to_string(), expected, "removing {doomed}");
         }
         let mut doc = doc(commented);
-        add_root(&mut doc, "/d");
-        let added = "roots = [\n  \"/a\", # A\n  \"/b\", # B\n  \"/c\", # C\n  \"/d\",\n]\n";
+        add_favorite(&mut doc, "/d");
+        let added = "favorites = [\n  \"/a\", # A\n  \"/b\", # B\n  \"/c\", # C\n  \"/d\",\n]\n";
         assert_eq!(doc.to_string(), added);
 
-        let mut doc = self::doc("roots = [\"/a\", \"/b\", \"/c\"]\n");
-        assert!(remove_roots(&mut doc, |stored| stored == "/a"));
-        assert_eq!(doc.to_string(), "roots = [\"/b\", \"/c\"]\n");
-        add_root(&mut doc, "/d");
-        assert_eq!(doc.to_string(), "roots = [\"/b\", \"/c\", \"/d\"]\n");
-        let mut doc = self::doc("roots = []\n");
-        add_root(&mut doc, "/a");
-        assert_eq!(doc.to_string(), "roots = [\"/a\"]\n");
+        let mut doc = self::doc("favorites = [\"/a\", \"/b\", \"/c\"]\n");
+        assert!(remove_favorites(&mut doc, |stored| stored == "/a"));
+        assert_eq!(doc.to_string(), "favorites = [\"/b\", \"/c\"]\n");
+        add_favorite(&mut doc, "/d");
+        assert_eq!(doc.to_string(), "favorites = [\"/b\", \"/c\", \"/d\"]\n");
+        let mut doc = self::doc("favorites = []\n");
+        add_favorite(&mut doc, "/a");
+        assert_eq!(doc.to_string(), "favorites = [\"/a\"]\n");
     }
 
     #[test]
-    fn removing_roots_keeps_the_rest_of_the_file() {
+    fn removing_favorites_keeps_the_rest_of_the_file() {
         let mut doc = doc(HAND_WRITTEN);
-        assert!(remove_roots(&mut doc, |stored| stored == "/srv/data"));
-        assert!(!remove_roots(&mut doc, |stored| stored == "/srv/data"));
+        assert!(remove_favorites(&mut doc, |stored| stored == "/srv/data"));
+        assert!(!remove_favorites(&mut doc, |stored| stored == "/srv/data"));
         let text = doc.to_string();
         assert!(
             text.contains("  \"~/code/tether\", # the daemon\n]"),
@@ -408,12 +403,12 @@ answer = 42
     #[test]
     fn a_file_without_the_keys_gets_them_before_its_tables() {
         let mut doc = doc("# mine\n[tmux]\nsocket_name = \"work\"\n");
-        add_root(&mut doc, "/a");
+        add_favorite(&mut doc, "/a");
         set_uploads_dir(&mut doc, "/b");
         let text = doc.to_string();
         let config = Config::parse(Path::new("config.toml"), &text).expect("still a config");
         assert_eq!(
-            (config.roots, config.uploads_dir),
+            (config.favorites, config.uploads_dir),
             (vec!["/a".to_owned()], "/b".to_owned())
         );
         assert_eq!(config.tmux.socket_name.as_deref(), Some("work"));

@@ -3,7 +3,7 @@
 
 import { BUSY_RETRIES, HttpRefusal, send } from "../net/http";
 
-export interface RootEntry {
+export interface PlaceEntry {
   /** As stored in config.toml. */
   path: string;
   /** Null when the entry is missing or not a directory. */
@@ -11,11 +11,11 @@ export interface RootEntry {
   ok: boolean;
 }
 
-export interface Roots {
+export interface Favorites {
   /** The canonical $HOME. */
   home: string;
-  roots: RootEntry[];
-  uploadsDir: RootEntry;
+  favorites: PlaceEntry[];
+  uploadsDir: PlaceEntry;
 }
 
 export interface Entry {
@@ -25,7 +25,7 @@ export interface Entry {
   /** The entry itself is a symlink. */
   link: boolean;
   size?: number;
-  /** Unix seconds; absent for "broken" and in the picker. */
+  /** Unix seconds; absent for "broken". */
   mtime?: number;
   /** Files: the type /fs/raw would send. */
   mime?: string;
@@ -35,8 +35,7 @@ export interface Entry {
 
 export interface Listing {
   path: string;
-  root: string;
-  /** Null when the parent is outside the scope. */
+  /** Null only at `/`. */
   parent: string | null;
   total: number;
   offset: number;
@@ -56,13 +55,11 @@ export interface TextPreview {
 export type Probe = { kind: "file"; mime: string | null; size: number | null } | { kind: "dir" };
 
 export interface FsApi {
-  roots(): Promise<Roots>;
+  favorites(): Promise<Favorites>;
   list(path: string, offset: number, hidden: boolean): Promise<Listing>;
-  /** The $HOME picker: directories only. */
-  dirs(path: string, offset: number, hidden: boolean): Promise<Listing>;
-  addRoot(path: string): Promise<Roots>;
-  removeRoot(path: string): Promise<Roots>;
-  setUploadsDir(path: string): Promise<Roots>;
+  addFavorite(path: string): Promise<Favorites>;
+  removeFavorite(path: string): Promise<Favorites>;
+  setUploadsDir(path: string): Promise<Favorites>;
   probe(path: string): Promise<Probe>;
   text(path: string, limit: number, signal?: AbortSignal): Promise<TextPreview>;
   /** The URL an `<img>` loads a file from. */
@@ -98,16 +95,15 @@ function totalOf(contentRange: string | null): number | null {
 export function httpFsApi(origin: string, fetchFn?: typeof fetch): FsApi {
   const url = (route: string, path: string, query = ""): string => `${origin}/fs/${route}${encodePath(path)}${query}`;
   const json = async <T>(target: string, init?: RequestInit): Promise<T> => (await (await send(target, init, BUSY_RETRIES, fetchFn)).json()) as T;
-  const post = (route: string, path: string): Promise<Roots> =>
-    json<Roots>(`${origin}/fs/${route}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+  const post = (route: string, path: string): Promise<Favorites> =>
+    json<Favorites>(`${origin}/fs/${route}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
   const page = (offset: number, hidden: boolean): string => `?offset=${String(offset)}&hidden=${hidden ? "1" : "0"}`;
 
   return {
-    roots: () => json<Roots>(`${origin}/fs/roots`),
+    favorites: () => json<Favorites>(`${origin}/fs/favorites`),
     list: (path, offset, hidden) => json<Listing>(url("list", path, page(offset, hidden))),
-    dirs: (path, offset, hidden) => json<Listing>(url("dirs", path, page(offset, hidden))),
-    addRoot: (path) => post("roots/add", path),
-    removeRoot: (path) => post("roots/remove", path),
+    addFavorite: (path) => post("favorites/add", path),
+    removeFavorite: (path) => post("favorites/remove", path),
     setUploadsDir: (path) => post("uploads-dir", path),
 
     async probe(path) {

@@ -57,7 +57,7 @@ Rules the code relies on, which are easy to break:
   a WebSocket left running keeps its `Arc<Ctx>`, so `main` ends the hub with
   `HubHandle::stop` rather than waiting for every handle to drop.
 - `newWindow`/`newSession` `dir` is checked with `fs::check_dir` (shape and an existing
-  directory, not the roots, no config) on the dir lane and passed through. Paste files
+  directory, no config) on the dir lane and passed through. Paste files
   are written on the auth lane. Nothing here calls the blocking pool except through
   `App::lanes` (`src/blocking.rs`).
 - Route-specific slot and waiter limits use `PermitPool`; shell owns the named 4-slot,

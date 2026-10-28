@@ -28,9 +28,7 @@ impl From<HttpError> for Refusal {
         let status = match error {
             BadRequest => StatusCode::BAD_REQUEST,
             AuthRequired | NotEnrolled => StatusCode::UNAUTHORIZED,
-            Forbidden | BadOrigin | NodeRefused | BadCode | OutsideRoots | OutsideHome | Denied => {
-                StatusCode::FORBIDDEN
-            }
+            Forbidden | BadOrigin | NodeRefused | BadCode | Denied => StatusCode::FORBIDDEN,
             NotFound => StatusCode::NOT_FOUND,
             NotADirectory | NotAFile | MemoryBacked | ConfigReadOnly => StatusCode::CONFLICT,
             TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
@@ -89,8 +87,6 @@ impl From<&FsError> for HttpError {
     fn from(refused: &FsError) -> Self {
         match refused {
             FsError::BadRequest => Self::BadRequest,
-            FsError::OutsideRoots => Self::OutsideRoots,
-            FsError::OutsideHome => Self::OutsideHome,
             FsError::Denied => Self::Denied,
             FsError::NotFound => Self::NotFound,
             FsError::NotADirectory => Self::NotADirectory,

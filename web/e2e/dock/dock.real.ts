@@ -247,8 +247,10 @@ for (const version of VERSIONS) {
       await page.getByRole("button", { name: /, 1 tab, open sessions and files$/ }).click();
       const sheet = page.getByRole("dialog", { name: "Open" });
       await expect(sheet).toBeVisible();
-      // A row opens its tab and closes the sheet.
+      // A row opens its tab behind the sheet, which stays until it is closed.
       await sheet.getByRole("button", { name: /^twin \d+ window/ }).click();
+      await expect(sheet.getByText("here")).toBeVisible();
+      await page.keyboard.press("Escape");
       await expect(sheet).toBeHidden();
       await painted(page);
       await expect(draft(page)).toHaveValue("");
@@ -288,18 +290,15 @@ for (const version of VERSIONS) {
       await expect(sheet.getByRole("button", { name: /^1: shell/ })).toContainText("shown");
       await sheet.getByRole("button", { name: /^0: / }).click();
       await expect.poll(() => stack.tmux("display-message", "-p", "-t", s, "#{window_index}").trim()).toBe("0");
-      // A window row closes the sheet like any pick.
-      await expect(sheet).toBeHidden();
-      await chip.click();
+      // A window row leaves the sheet open like any pick.
+      await expect(sheet).toBeVisible();
 
-      // A row opens its tab and closes the sheet.
+      // A row opens its tab behind the sheet.
       await sheet.getByRole("searchbox").fill("oth");
       await expect(sheet.getByRole("button", { name: /^other \d+ window/ })).toBeVisible();
       await expect(sheet.getByRole("button", { name: /^sw \d+ windows/ })).toHaveCount(0);
       await sheet.getByRole("button", { name: /^other \d+ window/ }).click();
-      await expect(sheet).toBeHidden();
       await painted(page);
-      await chip.click();
       await sheet.getByRole("searchbox").fill("");
       // "here" follows the tab on screen; the other open session reads "open".
       await expect(sheet.getByText("open", { exact: true })).toBeVisible();
@@ -310,9 +309,9 @@ for (const version of VERSIONS) {
       expect(stack.tmux("list-windows", "-t", s, "-F", "#{window_index}").trim().split("\n")).toHaveLength(2);
 
       await sheet.getByRole("button", { name: "New session", exact: true }).click();
-      const create = page.getByRole("dialog", { name: "New session" });
-      await create.getByLabel("Name").fill("made");
-      await create.getByRole("button", { name: "Create" }).click();
+      // The form replaces the list in the sheet; Create opens the tab behind the sheet, which stays.
+      await sheet.getByLabel("Name").fill("made");
+      await sheet.getByRole("button", { name: "Create" }).click();
       await expect.poll(() => stack.tmux("list-sessions", "-F", "#{session_name}")).toContain("made");
       await painted(page);
     });

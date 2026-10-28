@@ -25,10 +25,10 @@ describe("httpFsApi", () => {
   });
 
   it("turns the daemon's JSON error into an HttpRefusal, and a dead network into `network`", async () => {
-    const api = httpFsApi("o", () => Promise.resolve(response(403, JSON.stringify({ error: "outside_roots" }))));
-    await expect(api.roots()).rejects.toEqual(new HttpRefusal(403, "outside_roots"));
+    const api = httpFsApi("o", () => Promise.resolve(response(403, JSON.stringify({ error: "denied" }))));
+    await expect(api.favorites()).rejects.toEqual(new HttpRefusal(403, "denied"));
     const down = httpFsApi("o", () => Promise.reject(new TypeError("Load failed")));
-    await expect(down.roots()).rejects.toMatchObject({ code: "network" });
+    await expect(down.favorites()).rejects.toMatchObject({ code: "network" });
   });
 
   it("retries `busy` after Retry-After", async () => {
@@ -37,9 +37,9 @@ describe("httpFsApi", () => {
     const api = httpFsApi("o", () => Promise.resolve(n++ === 0
       ? response(503, JSON.stringify({ error: "busy" }), { "Retry-After": "1" })
       : response(200, JSON.stringify({ home: "/h" }))));
-    const roots = api.roots();
+    const favorites = api.favorites();
     await vi.advanceTimersByTimeAsync(1000);
-    await expect(roots).resolves.toEqual({ home: "/h" });
+    await expect(favorites).resolves.toEqual({ home: "/h" });
     vi.useRealTimers();
   });
 

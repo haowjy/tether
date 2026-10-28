@@ -88,7 +88,14 @@ export class Router {
 
   /** Shows the active tab from Home: pushes an entry for it. Switching tabs on a tab route adds none. */
   openTab(tab: string, place: FilesPlace | null): void {
-    this.push({ route: "tab", tab, place, overlay: null });
+    const { overlay } = this.entry;
+    if (overlay === null) {
+      this.push({ route: "tab", tab, place, overlay: null });
+      return;
+    }
+    // An overlay open over Home (the picker) stays open over the tab: the entry under it becomes the tab's, so closing it lands on the tab.
+    this.replace({ route: "tab", tab, place, overlay: null });
+    this.push({ route: "tab", tab, place, overlay });
   }
 
   openOverlay(overlay: Overlay): void {
@@ -118,8 +125,10 @@ export class Router {
       return;
     }
     if (then) {
+      // Closed once the entries it names are gone: the one below may itself hold an overlay (a form page over its list).
+      const target = this.at - count;
       const off = this.subscribe((entry) => {
-        if (entry.overlay !== null) return;
+        if (entry.overlay !== null && this.at > target) return;
         off();
         then();
       });

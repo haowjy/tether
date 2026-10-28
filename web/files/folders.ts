@@ -1,10 +1,8 @@
 import { HttpRefusal } from "../net/http";
 import { Store } from "../ui/store";
 import type { FsApi, Listing } from "./api";
-import { folderKey, scopeOf, type FolderNames, type FolderState, type Where } from "./pathfield";
+import { folderKey, type FolderNames, type FolderState } from "./pathfield";
 import { trimOldest } from "./recent";
-
-export type Via = "list" | "dirs";
 
 /** Typing pauses this long before a folder is asked for. */
 export const SETTLE_MS = 250;
@@ -13,13 +11,10 @@ export const KEPT = 32;
 /** A folder's pages asked for before giving up: 5 × 200 = 1,000 folders. */
 export const MAX_PAGES = 5;
 
-/** A folder's first page, as listed. */
-export type FirstPage = Listing & { via: Via };
-
 /** What is known of one folder: the subfolder names the path field completes from, and the first page browsing shows. */
 export interface Held {
   names: FolderState | null;
-  first: FirstPage | null;
+  first: Listing | null;
 }
 
 export interface FoldersView {
@@ -33,17 +28,13 @@ export interface FoldersView {
  * entered, never one per keystroke: `ask` waits for typing to settle and a held folder is not
  * asked for again) and the first page browsing shows, so showing a held folder on a tab switch
  * or a Back costs no request. What clears what: `drop` (a refresh or an upload changed the
- * folder) clears both; a failed load clears the folder's first page; `forgetAll` (a root
- * was added or removed) clears every first page but keeps the names.
+ * folder) clears both; a failed load clears the folder's first page.
  */
 export class Folders extends Store<FoldersView> {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly inflight = new Map<string, Promise<void>>();
 
-  constructor(
-    private readonly api: FsApi,
-    private readonly where: () => Where | null,
-  ) {
+  constructor(private readonly api: FsApi) {
     super({ held: new Map() });
   }
 
@@ -76,18 +67,18 @@ export class Folders extends Store<FoldersView> {
   }
 
   /** The cached first page of `path`, if any. */
-  peek(path: string, hidden: boolean): FirstPage | null {
+  peek(path: string, hidden: boolean): Listing | null {
     return this.snapshot.held.get(folderKey(path, hidden))?.first ?? null;
   }
 
   /** Like {@link peek}, but waits for a fetch under way instead of asking again. */
-  async settled(path: string, hidden: boolean): Promise<FirstPage | null> {
+  async settled(path: string, hidden: boolean): Promise<Listing | null> {
     await this.inflight.get(folderKey(path, hidden));
     return this.peek(path, hidden);
   }
 
   /** Browsing listed `listing`'s first page: it is cached, and its subfolders are held. */
-  loaded(listing: FirstPage, hidden: boolean, asked: string): void {
+  loaded(listing: Listing, hidden: boolean, asked: string): void {
     this.put(folderKey(asked, hidden), { first: listing });
     this.put(folderKey(listing.path, hidden), { first: listing });
     this.seed(listing, hidden);
@@ -97,13 +88,6 @@ export class Folders extends Store<FoldersView> {
   seed(listing: Listing, hidden: boolean): void {
     const allHeld = listing.entries.length >= listing.total || listing.entries.some((e) => e.kind !== "dir");
     if (allHeld) this.put(folderKey(listing.path, hidden), { names: { status: "ready", ...namesOf(listing.entries), capped: listing.truncated } });
-  }
-
-  /** The scope changed (a root added or removed): no first page is known to be what a fresh one would say. */
-  forgetAll(): void {
-    const held = new Map<string, Held>();
-    for (const [key, record] of this.snapshot.held) if (record.names) held.set(key, { names: record.names, first: null });
-    this.update({ held });
   }
 
   /** A refresh or an upload changed `path`. */
@@ -126,32 +110,15 @@ export class Folders extends Store<FoldersView> {
 
   private async fetch(path: string, hidden: boolean, key: string): Promise<FolderNames> {
     const names: string[] = [];
-    let via: Via | undefined;
     for (let page = 1, offset = 0; ; page++) {
-      const listing = await listFolder(this.api, this.where(), path, offset, hidden, offset === 0 ? undefined : via);
-      if (page === 1) { this.put(key, { first: listing }); via = listing.via; }
+      const listing = await this.api.list(path, offset, hidden);
+      if (page === 1) this.put(key, { first: listing });
       names.push(...namesOf(listing.entries).names);
       offset += listing.entries.length;
       const more = listing.entries.length > 0 && listing.entries.every((e) => e.kind === "dir") && offset < listing.total;
       if (!more || listing.truncated) return { names, capped: listing.truncated || more };
       if (page === MAX_PAGES) return { names, capped: true };
     }
-  }
-}
-
-/**
- * One page of a folder, by the route that serves it: `/fs/list` inside a root, the `$HOME`
- * picker (`/fs/dirs`, folders only) outside every root. A link inside a root that leads out
- * is refused by `list` and falls back to the picker. `via` pins the route (later pages).
- */
-export async function listFolder(api: FsApi, where: Where | null, path: string, offset: number, hidden: boolean, via?: Via): Promise<Listing & { via: Via }> {
-  const dirs = async (): Promise<Listing & { via: Via }> => ({ ...(await api.dirs(path, offset, hidden)), via: "dirs" });
-  if (via === "dirs" || (via === undefined && where && scopeOf(path, where) === "dirs")) return dirs();
-  try {
-    return { ...(await api.list(path, offset, hidden)), via: "list" };
-  } catch (error) {
-    if (via === undefined && error instanceof HttpRefusal && error.code === "outside_roots") return dirs();
-    throw error;
   }
 }
 

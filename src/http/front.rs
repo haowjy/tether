@@ -196,9 +196,9 @@ mod tests {
     #[test]
     fn secret_gate_rewrites_path_and_preserves_query() {
         let front = front(Some(AUTHORITY));
-        let mut request = request(&format!("/{SECRET}/fs/roots?q=one"));
+        let mut request = request(&format!("/{SECRET}/fs/favorites?q=one"));
         assert!(front.gate(&mut request).is_none());
-        assert_eq!(request.uri().to_string(), "/fs/roots?q=one");
+        assert_eq!(request.uri().to_string(), "/fs/favorites?q=one");
     }
 
     #[tokio::test]

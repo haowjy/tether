@@ -1,7 +1,7 @@
 //! The file routes over a real socket (fs.md "Routes", "Errors"): ranges and their
 //! headers as the native player sees them, uploads one at a time with their part file
 //! cleaned up, Settings writes that keep a hand-written `config.toml`, and a broken
-//! config failing closed.
+//! config failing the config routes closed.
 
 use std::time::Duration;
 
@@ -46,14 +46,6 @@ async fn a_video_streams_by_range_with_a_stable_etag() {
     let clip = daemon.home("videos/clip one.MOV");
     let bytes: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
     std::fs::write(&clip, &bytes).expect("written");
-    let added = post(
-        &daemon,
-        "/fs/roots/add",
-        &path_body(&daemon.home("videos")),
-        true,
-    )
-    .await;
-    assert_eq!(added.status, 200, "{}", added.text());
     let raw = url("/fs/raw/", &clip);
 
     // AVFoundation's probe.
@@ -104,7 +96,7 @@ async fn a_video_streams_by_range_with_a_stable_etag() {
     assert_eq!((stale.status, stale.body.len()), (200, 1000));
     assert_ne!(stale.header("etag"), Some(etag.as_str()));
 
-    // Paths that don't decode, or lead out of the roots, in the JSON shape.
+    // Paths that don't decode are refused in the JSON shape.
     let undecodable = get(&daemon, "/fs/raw/tmp/%FF", &[]).await;
     assert_eq!(
         (undecodable.status, undecodable.text()),
@@ -112,15 +104,10 @@ async fn a_video_streams_by_range_with_a_stable_etag() {
     );
     let nul = get(&daemon, "/fs/raw/tmp/a%00b", &[]).await;
     assert_eq!(nul.status, 400);
-    let escape = format!(
-        "{}/..%2F..%2Fconfig.toml",
-        url("/fs/raw/", &daemon.home("videos"))
-    );
-    let outside = get(&daemon, &escape, &[]).await;
-    assert_eq!(
-        (outside.status, outside.text()),
-        (403, r#"{"error":"outside_roots"}"#)
-    );
+
+    // A file outside `$HOME` is as readable as any other.
+    let outside = get(&daemon, &url("/fs/raw/", &daemon.config), &[]).await;
+    assert_eq!(outside.status, 200, "{}", outside.text());
 }
 
 #[tokio::test]
@@ -184,11 +171,11 @@ async fn uploads_land_one_at_a_time_and_leave_no_part_file() {
 
 #[tokio::test]
 async fn settings_writes_keep_a_hand_written_symlinked_config() {
-    let daemon = start("fs-roots").await;
+    let daemon = start("fs-favorites").await;
     let dotfiles = daemon.dir.join("dotfiles");
     std::fs::create_dir_all(&dotfiles).expect("a dir");
     let real = dotfiles.join("config.toml");
-    let hand_written = "# mine\nroots = [\n  \"~/code\", # the code\n]\nfuture = 1\n\n[tmux]\nsocket_name = \"x\"\n";
+    let hand_written = "# mine\nfavorites = [\n  \"~/code\", # the code\n]\nfuture = 1\n\n[tmux]\nsocket_name = \"x\"\n";
     std::fs::write(&real, hand_written).expect("written");
     std::fs::remove_file(&daemon.config).expect("removed");
     std::os::unix::fs::symlink(&real, &daemon.config).expect("a link");
@@ -197,21 +184,21 @@ async fn settings_writes_keep_a_hand_written_symlinked_config() {
 
     let added = post(
         &daemon,
-        "/fs/roots/add",
+        "/fs/favorites/add",
         &path_body(&daemon.home("notes")),
         true,
     )
     .await;
     assert_eq!(added.status, 200, "{}", added.text());
-    let roots = added.json();
-    assert_eq!(roots["home"], daemon.home.to_str().expect("UTF-8"));
-    assert_eq!(roots["roots"][0]["path"], "~/code");
-    assert_eq!(roots["roots"][0]["ok"], true);
+    let favorites = added.json();
+    assert_eq!(favorites["home"], daemon.home.to_str().expect("UTF-8"));
+    assert_eq!(favorites["favorites"][0]["path"], "~/code");
+    assert_eq!(favorites["favorites"][0]["ok"], true);
     assert_eq!(
-        roots["roots"][1]["path"],
+        favorites["favorites"][1]["path"],
         daemon.home("notes").to_str().expect("UTF-8")
     );
-    assert_eq!(roots["uploadsDir"]["path"], "~/tether-uploads");
+    assert_eq!(favorites["uploadsDir"]["path"], "~/tether-uploads");
     let written = std::fs::read_to_string(&real).expect("the file");
     let notes = daemon.home("notes");
     let expected = hand_written.replace(
@@ -227,7 +214,7 @@ async fn settings_writes_keep_a_hand_written_symlinked_config() {
     // Adding the same directory by another path is a no-op.
     let again = post(
         &daemon,
-        "/fs/roots/add",
+        "/fs/favorites/add",
         &path_body(&daemon.home("code/../notes")),
         true,
     )
@@ -235,23 +222,47 @@ async fn settings_writes_keep_a_hand_written_symlinked_config() {
     assert_eq!(again.status, 200);
     assert_eq!(std::fs::read_to_string(&real).expect("the file"), expected);
 
-    // `$HOME` itself, or outside it, can't be added from the app.
-    for refused in [daemon.home.clone(), std::path::PathBuf::from("/tmp")] {
-        let reply = post(&daemon, "/fs/roots/add", &path_body(&refused), true).await;
-        assert_eq!(
-            (reply.status, reply.text()),
-            (403, r#"{"error":"outside_home"}"#)
-        );
+    // A directory outside `$HOME` is a favorite too; a file or a missing path isn't.
+    let tmp = std::fs::canonicalize("/tmp").expect("/tmp");
+    let reply = post(&daemon, "/fs/favorites/add", &path_body(&tmp), true).await;
+    assert_eq!(
+        reply.json()["favorites"][2]["canonical"],
+        tmp.to_str().expect("UTF-8")
+    );
+    let removed = post(&daemon, "/fs/favorites/remove", &path_body(&tmp), true).await;
+    assert_eq!(
+        removed.json()["favorites"].as_array().map(Vec::len),
+        Some(2)
+    );
+    std::fs::write(daemon.home("file"), b"x").expect("written");
+    for (refused, expected) in [
+        (daemon.home("file"), (409, r#"{"error":"not_a_directory"}"#)),
+        (daemon.home("missing"), (404, r#"{"error":"not_found"}"#)),
+    ] {
+        let reply = post(&daemon, "/fs/favorites/add", &path_body(&refused), true).await;
+        assert_eq!((reply.status, reply.text()), expected);
     }
 
     // Removing by the stored text, then by the canonical path.
-    let removed = post(&daemon, "/fs/roots/remove", br#"{"path":"~/code"}"#, true).await;
-    assert_eq!(removed.json()["roots"].as_array().map(Vec::len), Some(1));
-    let removed = post(&daemon, "/fs/roots/remove", &path_body(&notes), true).await;
-    assert_eq!(removed.json()["roots"].as_array().map(Vec::len), Some(0));
+    let removed = post(
+        &daemon,
+        "/fs/favorites/remove",
+        br#"{"path":"~/code"}"#,
+        true,
+    )
+    .await;
+    assert_eq!(
+        removed.json()["favorites"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let removed = post(&daemon, "/fs/favorites/remove", &path_body(&notes), true).await;
+    assert_eq!(
+        removed.json()["favorites"].as_array().map(Vec::len),
+        Some(0)
+    );
     let written = std::fs::read_to_string(&real).expect("the file");
     assert!(
-        written.starts_with("# mine\nroots = [\n") && written.contains("future = 1"),
+        written.starts_with("# mine\nfavorites = [\n") && written.contains("future = 1"),
         "{written}"
     );
 
@@ -261,7 +272,7 @@ async fn settings_writes_keep_a_hand_written_symlinked_config() {
         notes.to_str().expect("UTF-8")
     );
     let large = format!(r#"{{"path":"{}"}}"#, "a".repeat(5000));
-    let reply = post(&daemon, "/fs/roots/add", large.as_bytes(), true).await;
+    let reply = post(&daemon, "/fs/favorites/add", large.as_bytes(), true).await;
     assert_eq!(
         (reply.status, reply.text()),
         (413, r#"{"error":"too_large"}"#)
@@ -269,7 +280,7 @@ async fn settings_writes_keep_a_hand_written_symlinked_config() {
 
     // A link to nothing is refused, and neither the link nor its target changes.
     std::fs::remove_file(&real).expect("removed");
-    let reply = post(&daemon, "/fs/roots/add", &path_body(&notes), true).await;
+    let reply = post(&daemon, "/fs/favorites/add", &path_body(&notes), true).await;
     assert_eq!(
         (reply.status, reply.text()),
         (409, r#"{"error":"config_read_only"}"#)
@@ -279,24 +290,23 @@ async fn settings_writes_keep_a_hand_written_symlinked_config() {
 }
 
 #[tokio::test]
-async fn a_broken_config_fails_every_file_route_closed() {
+async fn a_broken_config_fails_the_config_routes_closed() {
     let daemon = start("fs-broken").await;
     std::fs::create_dir_all(daemon.home("code")).expect("a dir");
-    let broken = "roots = [\"~/code\"\n";
+    let broken = "favorites = [\"~/code\"\n";
     std::fs::write(&daemon.config, broken).expect("written");
     let code = url("/fs/list/", &daemon.home("code"));
     let unavailable = r#"{"error":"config_unavailable"}"#;
-    for path in [
-        "/fs/roots",
-        code.as_str(),
-        "/fs/raw/etc/hostname",
-        "/fs/dirs/tmp",
-    ] {
-        let reply = get(&daemon, path, &[]).await;
-        assert_eq!((reply.status, reply.text()), (503, unavailable), "{path}");
-    }
+    let reply = get(&daemon, "/fs/favorites", &[]).await;
+    assert_eq!((reply.status, reply.text()), (503, unavailable));
+    // Listing and reading don't consult the config.
+    assert_eq!(get(&daemon, &code, &[]).await.status, 200);
     let body = path_body(&daemon.home("code"));
-    for path in ["/fs/roots/add", "/fs/roots/remove", "/fs/uploads-dir"] {
+    for path in [
+        "/fs/favorites/add",
+        "/fs/favorites/remove",
+        "/fs/uploads-dir",
+    ] {
         let reply = post(&daemon, path, &body, true).await;
         assert_eq!((reply.status, reply.text()), (503, unavailable), "{path}");
     }
@@ -307,8 +317,8 @@ async fn a_broken_config_fails_every_file_route_closed() {
         std::fs::read_to_string(&daemon.config).expect("the file"),
         broken
     );
-    std::fs::write(&daemon.config, "roots = [\"~/code\"]\n").expect("fixed");
-    assert_eq!(get(&daemon, &code, &[]).await.status, 200);
+    std::fs::write(&daemon.config, "favorites = [\"~/code\"]\n").expect("fixed");
+    assert_eq!(get(&daemon, "/fs/favorites", &[]).await.status, 200);
 }
 
 /// Writes `request` and reads until the server closes or a second passes.

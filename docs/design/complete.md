@@ -294,11 +294,10 @@ accepted.
 The current word's value splits at its last `/` into a directory and a name prefix. A
 leading `~` or `~/` expands to `$HOME` (`~user` is not completed; a bare `~` gets the
 chip `/`); a relative directory joins `cwd`, and needs a non-null `cwd`. The directory
-is opened with `fs::open` and a `Scope` of `/`, wanting a directory
+is opened with `fs::open`, wanting a directory
 ([fs.md](fs.md#path-resolution-fsopen)): the same canonicalization, `O_NOFOLLOW` open
-and descriptor re-check as the file API, with `/` as the scope. Path completion returns names, never contents, from any
-directory Jimmy can read, as the shell's own Tab does; the roots stay the scope of
-everything that reads files.
+and descriptor path as the file API. Path completion returns names, never contents, from
+any directory Jimmy can read, as the shell's own Tab does.
 
 The listing reads names and `d_type` through the descriptor up to the listing cap,
 `fstatat`-ing only links and unknown types, on the dir lane. It is cached for

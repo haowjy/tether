@@ -44,8 +44,6 @@ pub enum HttpError {
     NotEnrolled,
     /// A wrong, expired or used enrolment code.
     BadCode,
-    OutsideRoots,
-    OutsideHome,
     Denied,
     NotFound,
     NotADirectory,

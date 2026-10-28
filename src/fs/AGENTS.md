@@ -1,29 +1,29 @@
 # fs
 
-The file API's core ([fs.md](../../docs/design/fs.md)): roots, `open`, listings, raw
+The file API's core ([fs.md](../../docs/design/fs.md)): favorites, `open`, listings, raw
 reads, uploads and `config.toml` writes. Plain functions over files re-read per
 request; no cache, no cursor, no descriptor kept between requests. It knows nothing of
 axum: `http/fs.rs` parses requests, takes slots and builds responses. `mod.rs` holds
-`Roots` and `FsError`; `slots.rs` the limits and the fs lane; the rest one route family
+`Favorites` and `FsError`; `slots.rs` the limits and the fs lane; the rest one route family
 each.
 
 Rules the code relies on, which are easy to break:
 
-- A client's path reaches the disk only through `open`, which returns a descriptor
-  checked against the scope after opening (`/proc/self/fd` on Linux, `F_GETPATH` on
-  macOS). Read and write through that descriptor (`pread`, `statat`, `openat`,
+- A client's path reaches the disk only through `open`, which returns a descriptor and
+  its real path (`/proc/self/fd` on Linux, `F_GETPATH` on macOS). There is no scope: any
+  path the daemon's user can read opens, as in the terminal. Read and write through that descriptor (`pread`, `statat`, `openat`,
   `renameat`), never by joining a path and opening it again. Path completion
-  (`src/complete/`) opens through it too, with `Scope::everything()`, and reads names
+  (`src/complete/`) opens through it too, and reads names
   with `list::Scan`; `check_shape` is also `/complete`'s `cwd` check.
 - Every blocking call runs on the fs lane (`Slots::lane`, see `src/blocking.rs`), which
   moves the thread's permit into the closure; the scan and raw slots wait in that
   lane's queue. clippy forbids `spawn_blocking`, and tokio's `fs` feature is off
   (`tokio::fs::File`'s buffer grows to 2 MiB). Take an fs thread last and release it
   before waiting for any other slot.
-- `Roots::load` reads `config.toml` each time; a file that exists and doesn't parse
-  fails every route with `config_unavailable` and is never written.
+- `Favorites::load` reads `config.toml` each time; a file that exists and doesn't parse
+  fails `/fs/favorites`, the config writes and uploads with `config_unavailable` and is never written.
   `config_write::apply` holds the state directory's lock (`files::lock`, which auth's
-  writers hold too) for the whole read-modify-write and changes only `roots` or
+  writers hold too) for the whole read-modify-write and changes only `favorites` or
   `uploads_dir`. It writes a symlinked file at its target and refuses
   (`config_read_only`) a link to nothing, the file's or a directory's on the way:
   `canonicalize` failing doesn't mean the file is absent. The new file keeps the old
@@ -44,6 +44,6 @@ Rules the code relies on, which are easy to break:
   upload name, or `config.toml`'s text: a parse error is logged by line number, never
   by the parser's message, which quotes the text.
 
-Tests: `open.rs` (escapes, links, FIFOs, the swapped component), `list.rs`, `raw.rs`
+Tests: `open.rs` (links, FIFOs, the swapped component), `list.rs`, `raw.rs`
 (Range, ETag), `mime.rs` (the allowlist), `upload.rs`, `config_write.rs` (comments and
 unknown keys kept); `tests/http_fs.rs` and `tests/http_auth.rs` over a real socket.

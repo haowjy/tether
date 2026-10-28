@@ -22,6 +22,8 @@ interface PathInputProps {
   activeId?: string | undefined;
   /** The name the app moves focus to this field by. */
   focusTarget?: FocusTarget;
+  /** Takes focus when its dialog opens, with a fine pointer (`Dialog`). */
+  "data-initial-focus"?: string;
   class?: string;
 }
 

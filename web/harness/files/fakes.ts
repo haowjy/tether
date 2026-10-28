@@ -38,8 +38,8 @@ fn main() -> io::Result<()> {
 export const HOME = "/home/jimmy";
 export const REPO = `${HOME}/tether`;
 export const UPLOADS = `${HOME}/tether-uploads`;
-/** A folder under $HOME whose link leads outside it: the picker lists it, and the daemon refuses to add it. */
-export const ESCAPE = `${HOME}/escape`;
+/** A folder outside $HOME, with a file in it. */
+export const ETC = "/etc";
 
 const MD = "text/markdown; charset=utf-8";
 const TEXT = "text/plain; charset=utf-8";
@@ -48,9 +48,9 @@ export function filesTree(): FakeTree {
   const extra = Array.from({ length: 12 }, (_, i) => `${REPO}/notes/note-${String(i + 1).padStart(2, "0")}.txt`);
   return {
     home: HOME,
-    roots: [REPO, `${HOME}/notes`],
+    favorites: [REPO, `${HOME}/notes`],
     uploads: UPLOADS,
-    dirs: [HOME, REPO, `${REPO}/src`, `${REPO}/docs`, `${REPO}/notes`, `${REPO}/.git`, `${REPO}/empty`, `${HOME}/notes`, UPLOADS, `${HOME}/other`, `${HOME}/other/deep`, `${HOME}/.config`, ESCAPE],
+    dirs: ["/", "/home", ETC, HOME, REPO, `${REPO}/src`, `${REPO}/docs`, `${REPO}/notes`, `${REPO}/.git`, `${REPO}/empty`, `${HOME}/notes`, UPLOADS, `${HOME}/other`, `${HOME}/other/deep`, `${HOME}/.config`],
     files: {
       [`${REPO}/README.md`]: MD,
       [`${REPO}/Cargo.toml`]: TEXT,
@@ -61,6 +61,7 @@ export function filesTree(): FakeTree {
       [`${REPO}/demo.mp4`]: "video/mp4",
       [`${REPO}/tether.bin`]: "application/octet-stream",
       [`${REPO}/.env`]: TEXT,
+      [`${ETC}/hosts`]: TEXT,
       [`${UPLOADS}/20261022-101010Z-abcd.jpg`]: "image/jpeg",
       ...Object.fromEntries(extra.map((path) => [path, TEXT])),
     },
@@ -68,7 +69,7 @@ export function filesTree(): FakeTree {
 }
 
 /**
- * A home folder for finding folders by path: one root (`~/repos/tether`) inside a `~/repos` that
+ * A home folder for finding folders by path: one favorite (`~/repos/tether`) inside a `~/repos` that
  * holds more, a folder of twenty subfolders (three pages), and ones to refuse, hang on and cap.
  */
 export const FIND_ROOT = `${HOME}/repos/tether`;
@@ -76,12 +77,12 @@ export function findTree(): FakeTree {
   const many = Array.from({ length: 20 }, (_, i) => `${HOME}/repos/many/folder-${String(i + 1).padStart(2, "0")}`);
   return {
     home: HOME,
-    roots: [FIND_ROOT],
+    favorites: [FIND_ROOT],
     uploads: UPLOADS,
     dirs: [
-      HOME, `${HOME}/repos`, FIND_ROOT, `${FIND_ROOT}/src`, `${FIND_ROOT}/web`, `${FIND_ROOT}/docs`, `${FIND_ROOT}/empty`, `${FIND_ROOT}/.git`, `${FIND_ROOT}/web/src`,
+      "/", "/home", HOME, `${HOME}/repos`, FIND_ROOT, `${FIND_ROOT}/src`, `${FIND_ROOT}/web`, `${FIND_ROOT}/docs`, `${FIND_ROOT}/empty`, `${FIND_ROOT}/.git`, `${FIND_ROOT}/web/src`,
       `${HOME}/repos/tether-old`, `${HOME}/repos/test-data`, `${HOME}/repos/zebra`, `${HOME}/repos/many`, ...many,
-      UPLOADS, `${HOME}/other`, `${HOME}/other/deep`, `${HOME}/.config`, ESCAPE,
+      UPLOADS, `${HOME}/other`, `${HOME}/other/deep`, `${HOME}/.config`,
     ],
     files: {
       [`${FIND_ROOT}/README.md`]: MD,
@@ -97,7 +98,7 @@ const CONTENT: Record<string, string> = {
   [`${REPO}/Cargo.toml`]: '[package]\nname = "tether"\nversion = "0.1.0"\n',
   [`${REPO}/src/main.rs`]: MAIN_RS,
   [`${REPO}/docs/plan.md`]: "# Plan\n\nThe product and UX spec.\n",
-  [`${REPO}/docs/fs.md`]: "# File API\n\nRoots, listing, raw reads.\n",
+  [`${REPO}/docs/fs.md`]: "# File API\n\nFavorites, listing, raw reads.\n",
   [`${REPO}/.env`]: "TOKEN=hidden\n",
 };
 
@@ -116,20 +117,11 @@ export class FilesFs extends FakeFs {
     return this.guarded(path, await super.list(path, offset, hidden));
   }
 
-  override async dirs(path: string, offset: number, hidden: boolean): ReturnType<FakeFs["dirs"]> {
-    return this.guarded(path, await super.dirs(path, offset, hidden));
-  }
-
   private guarded<T extends { truncated: boolean }>(path: string, listing: T): Promise<T> {
     if (this.denied.has(path)) return Promise.reject(new HttpRefusal(403, "denied"));
     if (this.unreachable.has(path)) return Promise.reject(new TypeError("Failed to fetch"));
     if (this.hanging.has(path)) return new Promise(() => undefined);
     return Promise.resolve(this.capped.has(path) ? { ...listing, truncated: true } : listing);
-  }
-
-  override addRoot(path: string): ReturnType<FakeFs["addRoot"]> {
-    if (path === ESCAPE) return Promise.reject(new HttpRefusal(403, "outside_home"));
-    return super.addRoot(path);
   }
 
   override text(path: string): Promise<{ text: string; size: number; truncated: boolean }> {

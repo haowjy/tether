@@ -18,7 +18,7 @@ and record decisions in decisions.md.
 | [client/](client/README.md) | The client on every surface: the interaction contract ([browser-behaviors.md](client/browser-behaviors.md)), where typing goes ([terminal-interaction-design.md](client/terminal-interaction-design.md)), browser setup |
 | [ios-shell.md](ios-shell.md) | The native iOS app: keyboard, focus, bridge, scheme handler, lifecycle, media |
 | [auth.md](auth.md) | Native device tokens, enrolled-node browser admission, enrolment and auth routes |
-| [fs.md](fs.md) | `src/fs/`: roots, path resolution, the `/fs/*` routes, uploads, their limits |
+| [fs.md](fs.md) | `src/fs/`: favorites, path resolution, the `/fs/*` routes, uploads, their limits |
 | [setup.md](setup.md) | `src/setup/`: foreground and background `tether setup`, `tether teardown`, publishing on the tailnet, and setup checks |
 | [complete.md](complete.md) | `src/complete/`: `POST /complete`, the history, PATH, carapace and path sources, the shell snippet, how they stay inside the budget |
 | [decisions.md](decisions.md) | The decision log: what, why, alternatives rejected, who, when |
@@ -100,7 +100,7 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
   follows it. Tabs never close on network loss.
 - **Shell:** shell-agnostic, with one OSC 133 snippet in his dotfiles and carapace for
   completion.
-- **Files:** project roots picked in the app; one uploads folder; HEIC converted on
+- **Files:** any folder or file the daemon's user can read; favorites starred in the app; one uploads folder; HEIC converted on
   the phone; no video thumbnails; no file watcher. The MVP views and uploads; edit,
   new file and rename come in v2. Move, mkdir and delete are done in the terminal.
 - **Auth:** allowlisted Tailscale login plus two device lanes: an iOS device token
@@ -184,8 +184,9 @@ The phone's keyboard-down bar shows Home, the current tab and a keyboard control
 tab's button opens the half-height picker sheet, with the open tabs at its bottom. Home's
 server card has one row, Sessions and files, that opens a full-height picker with Back.
 Desktop has Home, tabs and + in its top row; + opens the same picker as a popover. The
-picker has a Sessions / Files switch, search, and + (New session, or a new Files tab); a Files row
-opens a new Files tab at that root folder. Session search is local and refresh
+picker has a Sessions / Files switch and a search; creating is each list's last row (New session; on
+Files the search also takes a path, and Open a folder… starts one), and a Files row activates or opens
+the Files tab at that folder. Session search is local and refresh
 is event-driven. Only sessions with multiple windows offer switching in the sheet or
 desktop equivalent. A terminal bell puts an attention dot on its tab and session row
 (Bell attention below). See [the interaction contract](client/browser-behaviors.md)
@@ -236,7 +237,7 @@ Versions verified 2026-10-21 ([libraries.md](research/libraries.md),
 | Area | Pick | Notes |
 |---|---|---|
 | Runtime | tokio, current-thread runtime, 8 blocking threads split into bounded-wait lanes | see [Resource budget](#resource-budget) |
-| HTTP | axum 0.8, tower-http 0.7 | `/fs/raw` stays custom, so root checks and range limits are tether's own |
+| HTTP | axum 0.8, tower-http 0.7 | `/fs/raw` stays custom, so descriptor opens and range limits are tether's own |
 | Web assets | built by Vite and embedded in the daemon | the same web UI is bundled in the iOS app; the daemon serves browser/PWA shell paths |
 | Auth | sha2, subtle, getrandom | [auth.md](auth.md#crates) |
 | Tailscale LocalAPI | bounded keep-alive client over tailscaled's Unix socket: status, Serve config and per-request whois | |
@@ -262,7 +263,7 @@ and the note on `TMUX_TMPDIR` under systemd, are in [running.md](../running.md).
 | `[tmux] program` | `tmux` | the tmux executable; an absolute path if the unit's `PATH` doesn't find it |
 | `[tmux] socket_name` | none | `tmux -L <name>` |
 | `[tmux] socket_path` | none | `tmux -S <path>`; not together with `socket_name` |
-| `roots`, `uploads_dir` | none, `~/tether-uploads` | project roots and the uploads folder; read on every file request; Files adds and removes roots ([fs.md](fs.md#roots)) |
+| `favorites`, `uploads_dir` | none, `~/tether-uploads` | favorite folders and the uploads folder; read on every favorites and upload request; Files adds and removes favorites ([fs.md](fs.md#favorites)) |
 | `[complete] history` | the most recently modified of `~/.zsh_history`, `~/.bash_history`, fish's history | the one history file the suggestion strip reads; set it when the shell's `$HISTFILE` is elsewhere ([complete.md](complete.md#history)) |
 | `[complete] path` | the daemon's own `PATH` | the `PATH` the command index scans and carapace runs with; set it to the interactive shell's `PATH`, since the systemd user manager's lacks what rc files add ([complete.md](complete.md#commands-on-path)) |
 | `[complete] carapace` | `carapace` on that `PATH` | the carapace binary; absent or failing means no flag chips ([complete.md](complete.md#carapace)) |
@@ -612,20 +613,21 @@ width.
 
 Files opens as a tab from Home or the picker. Any number of
 Files tabs can be open, each remembering its own folder or file preview. A new one starts
-at the selected server's folder list (its roots); existing tabs are restored by selecting them.
+at `~`; existing tabs are restored by selecting them.
 
-**Roots.** Project roots are chosen in Files: its path field completes folders under
-`$HOME` and adds one with "Add this folder", and each root has Remove
+**No scope, favorites.** Files opens any folder or file the daemon's user can read, as
+the terminal can; a device token already runs commands in tmux, so a boundary would
+guard against nothing but Jimmy. Favorites are shortcuts the picker lists after Home
+(`~`), added and removed with the star in a Files tab's header
 ([interaction contract](client/browser-behaviors.md#files)). The uploads folder
-(`uploads_dir`, default `~/tether-uploads`) is browsable like a root and moves in
-`config.toml`. Both are saved in `~/.config/tether/config.toml`. At home, when outside
-a root, only subfolders are shown through the picker until a root is added. No file watcher:
+(`uploads_dir`, default `~/tether-uploads`) is listed after them and moves in
+`config.toml`. Both are saved in `~/.config/tether/config.toml`. No file watcher:
 listings are read on open, on pull-to-refresh, and after tether's own file operations.
 A path field heads the list: typed into, it completes the next existing folder from
 listings the client already holds, one request per folder entered, never one per
 keystroke ([interaction contract](client/browser-behaviors.md#files)).
 
-**API.** The routes, path resolution, roots management, limits and errors are in
+**API.** The routes, path resolution, favorites management, limits and errors are in
 [fs.md](fs.md). The web reaches them through its host's scheme-handler origin,
 `tether-app://h-{host}/fs/…` ([ios-shell.md](ios-shell.md#where-the-web-ui-comes-from));
 video goes to the native player instead. MVP: list, raw (Range) and upload. v2: save
@@ -704,8 +706,8 @@ row. One unprotected route is remote code execution.
 **Logging:** never log terminal contents, control-client input or output, pastes, or
 file contents. File writes are logged by path and action.
 
-**File safety:** a roots allowlist with canonicalized paths, checked for every write's
-target as well as every read; creates and renames never replace a file; size caps on
+**File safety:** every path is canonicalized and opened through a descriptor with
+`O_NOFOLLOW` (no scope: reads reach what the terminal reaches); creates and renames never replace a file; size caps on
 upload and edit; nothing in the uploads folder is ever executed by tether
 ([fs.md](fs.md#path-resolution-fsopen)).
 ## Long-term
@@ -742,7 +744,7 @@ src/blocking.rs blocking pool lanes; the only owner of spawn_blocking
 src/files.rs   shared stamps, state-file lock, and whole-file temp writes
 src/auth/      LocalAPI identity, native/node devices, admission and enrolment (auth.md)
 src/runtime.rs private runtime directory, single-instance lock, serve/local Unix sockets
-src/fs/        the only place paths are resolved and checked against roots
+src/fs/        the only place paths are resolved and opened
 src/complete/  /complete: history, PATH index, carapace runner (bounded, cached; complete.md)
 src/setup/     tether setup and teardown: checks, foreground run, service install and publication (setup.md)
 web/           one Preact app embedded by the daemon and bundled into the iOS app:
@@ -885,7 +887,7 @@ The spikes come first. The native app's keyboard checks are in
 - **Display:** xterm.js 6 WebGL, Nerd Font, `unicode11`, tappable URLs.
 - **Suggestion strip (deferred client UI):** backend completion capabilities do not
   require suggestion controls in the minimal client.
-- **Files:** browse the roots in tabs; view code, markdown with lazy strict Mermaid and
+- **Files:** browse any folder in tabs, with favorites; view code, markdown with lazy strict Mermaid and
   images; stream video in the native player; photo pick or paste → uploads folder → path insert.
 - **After the core MVP:** the scratch shell.
 

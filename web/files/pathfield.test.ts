@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { HttpRefusal } from "../net/http";
-import { accept, complete, folderKey, go, parseTyped, scopeOf, slashAccepts, type CompleteContext, type FolderState, type Where } from "./pathfield";
+import { accept, complete, folderKey, go, parseTyped, slashAccepts, type CompleteContext, type FolderState } from "./pathfield";
 
-const where: Where = { home: "/home/j", scope: ["/home/j/repos/tether", "/home/j/up"] };
 const ready = (names: string[], capped = false): FolderState => ({ status: "ready", names, capped });
 
 /** The listings held, by `path` (hidden=0 unless the key says otherwise). */
 function ctxOf(held: Record<string, FolderState>, showHidden = false): CompleteContext {
-  return { where, showHidden, folder: (key) => held[key] };
+  return { home: "/home/j", showHidden, folder: (key) => held[key] };
 }
 const at = (path: string, state: FolderState, hidden = false): Record<string, FolderState> => ({ [folderKey(path, hidden)]: state });
 
@@ -33,16 +32,6 @@ describe("parseTyped", () => {
   });
 });
 
-describe("scopeOf", () => {
-  it("is list in a root, dirs elsewhere under home, roots above the roots, else outside", () => {
-    expect(scopeOf("/home/j/repos/tether/web", where)).toBe("list");
-    expect(scopeOf("/home/j/repos", where)).toBe("dirs");
-    expect(scopeOf("/home/j/repos/tether2", where)).toBe("dirs");
-    expect(scopeOf("/", where)).toBe("roots");
-    expect(scopeOf("/srv", where)).toBe("outside");
-  });
-});
-
 describe("complete", () => {
   it("lists the parent's folders that start with the segment, case folded, and predicts the first", () => {
     const c = complete("~/repos/te", repos);
@@ -59,13 +48,11 @@ describe("complete", () => {
     expect(c.ghost).toBe("");
   });
 
-  it("marks folders outside every root 'not added' (a root or one inside reads like any folder)", () => {
-    const c = complete("~/repos/", repos);
-    expect(Object.fromEntries(c.rows.map((r) => [r.name, r.added]))).toMatchObject({ tether: true, many: false });
-  });
-
-  it("shows a step toward a root without 'not added'", () => {
-    expect(complete("/ho", ctxOf({})).rows).toEqual([{ name: "home", path: "/home", added: true }]);
+  it("offers a step up to the parent folder's text, except at `/`", () => {
+    expect(complete("~/repos/", repos).up).toBe("~/");
+    expect(complete("~/", repos).up).toBe("/home/");
+    expect(complete("/home/", ctxOf({})).up).toBe("/");
+    expect(complete("/", ctxOf({})).up).toBeNull();
   });
 
   it("asks for the typed parent, hidden only for a dot segment or the toggle, and only until it is held", () => {
@@ -77,18 +64,8 @@ describe("complete", () => {
     expect(complete("~/repos/.g", repos).rows).toEqual([]);
   });
 
-  it("completes root paths above the roots without a listing", () => {
-    const c = complete("/home/j/re", ctxOf({}));
-    expect(c.ask).toEqual({ path: "/home/j", hidden: false });
-    const top = complete("/", ctxOf({}));
-    expect(top.ask).toBeNull();
-    expect(top.rows.map((r) => r.name)).toEqual(["home"]);
-    expect(complete("/h", ctxOf({})).predicted?.name).toBe("home");
-  });
-
-  it("says when the text is no path or leads outside the folders", () => {
+  it("says when the text is no path", () => {
     expect(complete("repos", repos).note).toBe("start");
-    expect(complete("/srv/x", repos).note).toBe("outside");
   });
 
   it("carries the cap and the refusal of the listing", () => {
@@ -141,17 +118,12 @@ describe("go", () => {
     expect(go("~/gone/", null, ctxOf(at("/home/j/gone", missing)))).toEqual({ say: "No folder ~/gone" });
   });
 
-  it("opens nothing above the roots or outside them, and leaves other refusals to the list", () => {
-    expect(go("/", null, repos)).toEqual({ say: "Outside your folders" });
-    expect(go("/srv/x", null, repos)).toEqual({ say: "Outside your folders" });
+  it("opens any folder, and leaves other refusals to the list", () => {
+    expect(go("/", null, repos)).toEqual({ open: "/" });
+    expect(go("/srv/", null, ctxOf({}))).toEqual({ open: "/srv" });
     const denied: FolderState = { status: "error", error: new HttpRefusal(403, "denied") };
     expect(go("~/x/", null, ctxOf(at("/home/j/x", denied)))).toEqual({ say: null });
     expect(go("repos", null, repos)).toEqual({ say: "Start with ~ or /" });
-  });
-
-  it("fills the field for a row above the roots", () => {
-    const row = complete("/ho", ctxOf({})).predicted;
-    expect(go("/ho", row, ctxOf({}))).toEqual({ fill: "/home/" });
   });
 
   it("opens a folder named whole without waiting for a listing, and one past the scan cap that the list lacks", () => {

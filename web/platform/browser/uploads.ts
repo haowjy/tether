@@ -21,7 +21,6 @@ const REFUSALS: Record<string, string> = {
   no_space: "The server is out of disk space",
   not_a_directory: "The uploads folder isn't usable. Check uploads_dir in config.toml",
   memory_backed: "The uploads folder is on memory-backed storage",
-  outside_roots: "The uploads folder is outside your folders",
 };
 
 /** A stream that events are pushed into and a consumer iterates; ends when told to. */

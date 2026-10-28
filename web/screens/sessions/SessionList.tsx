@@ -12,6 +12,7 @@ import { EmptyState } from "../../ui/primitives/EmptyState";
 import { RovingList } from "../../ui/primitives/RovingList";
 import { Row } from "../../ui/primitives/Row";
 import { HostSection, Loading } from "./HostSection";
+import { listClass, NoMatches, StateMark, Unreachable } from "./PickRows";
 import styles from "./SessionList.module.css";
 
 /** What a session's row says about it: its tab is the one on screen ("here"), open ("open"), or neither, in words; and the bell dot or the words that no dot can appear. */
@@ -41,12 +42,16 @@ export interface SessionListProps {
   rowOf: (session: SessionListing) => RowState;
   active?: ActiveWindows;
   onOpen: (listing: TmuxListing, session: SessionListing) => void;
+  /** The list's last row: a new session on this server, its name the search when no session matches it. */
+  onNew: (name: string) => void;
+  /** Why the row can't act (the server can't be reached or isn't known yet). */
+  newDisabled?: string | undefined;
   /** A fresh listing, or admission again when the host is unreachable. */
   onRetry: () => void;
 }
 
 export function SessionList(props: SessionListProps) {
-  const { hostName, titled, unreachable, bellsUnavailable, sessions, query, rowOf, active, onOpen, onRetry } = props;
+  const { hostName, titled, unreachable, bellsUnavailable, sessions, query, rowOf, active, onOpen, onNew, newDisabled, onRetry } = props;
   const listing = sessions?.listing;
   const failure = sessions?.failure ?? null;
   let status: ComponentChildren = null;
@@ -66,9 +71,11 @@ export function SessionList(props: SessionListProps) {
   }
 
   let body: ComponentChildren;
+  // A tmux server that is running can have a session added; with none, nothing here starts one.
+  let newRow: ComponentChildren = null;
   if (listing === undefined) {
     if (unreachable) {
-      body = <EmptyState icon="alert" title="Sessions can't load yet">They load when {hostName} is reachable. Your open tabs and drafts are kept.</EmptyState>;
+      body = <Unreachable what="Sessions" hostName={hostName} more="Your open tabs and drafts are kept." />;
     } else if (failure !== null) {
       body = (
         <EmptyState
@@ -98,9 +105,9 @@ export function SessionList(props: SessionListProps) {
     const shown = matching(listing, query);
     body =
       shown.length === 0 ? (
-        <EmptyState icon="search" title="No matching sessions">Nothing on {hostName} matches "{query.trim()}".</EmptyState>
+        <NoMatches what="sessions" hostName={hostName} query={query} />
       ) : (
-        <RovingList label={`Sessions on ${hostName}`} class={styles.list}>
+        <RovingList label={`Sessions on ${hostName}`} class={listClass}>
           {shown.map((session) => {
             const { state, bell } = rowOf(session);
             return (
@@ -113,7 +120,7 @@ export function SessionList(props: SessionListProps) {
                   meta={
                     <>
                       <span>{windowCount(session.windows.length)}</span>
-                      {state && <span class={styles.state}>{state}</span>}
+                      <StateMark state={state} />
                     </>
                   }
                   selected={state !== null}
@@ -144,8 +151,17 @@ export function SessionList(props: SessionListProps) {
         </RovingList>
       );
   }
+  if (listing) {
+    const typed = query.trim();
+    const unmatched = matching(listing, query).length === 0;
+    newRow = (
+      <RovingList label="New" class={listClass}>
+        <Row roving icon="plus" label={unmatched && typed ? `New session "${typed}"` : "New session"} trailing="chevron" disabled={newDisabled !== undefined} onClick={() => { onNew(unmatched ? typed : ""); }} />
+      </RovingList>
+    );
+  }
 
   return (
-    <HostSection hostName={hostName} titled={titled} label={`Sessions on ${hostName}`} status={status}>{body}</HostSection>
+    <HostSection hostName={hostName} titled={titled} label={`Sessions on ${hostName}`} status={status}>{body}{newRow}</HostSection>
   );
 }

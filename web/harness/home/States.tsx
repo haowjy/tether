@@ -57,6 +57,7 @@ export function States() {
             rowOf={rowOf(s.bell)}
             {...(s.active !== undefined && { active: s.active })}
             onOpen={NO_OP}
+            onNew={NO_OP}
             onRetry={NO_OP}
           />
         </Block>

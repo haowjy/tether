@@ -26,7 +26,7 @@ for (const version of VERSIONS) {
     const sessionRow = (page: Page, name: string) => serverSheet(page).getByRole("button", { name: new RegExp(`^${name} \\d+ windows?`) }).first();
     const allSessions = (page: Page) => page.getByRole("button", { name: /^Sessions and files/ });
 
-    /** The server sheet's +, on its Sessions side. */
+    /** The server sheet's "New session" row, on its Sessions side. */
     const newSession = async (page: Page): Promise<void> => {
       await allSessions(page).click();
       await serverSheet(page).getByRole("button", { name: "New session", exact: true }).click();
@@ -38,6 +38,7 @@ for (const version of VERSIONS) {
       await expect(sessionRow(page, "alpha")).toContainText("2 windows");
       await sessionRow(page, "alpha").click();
       await expect(page).toHaveURL(/#\/tab$/);
+      await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Home" }).click();
       // The tab shows the session's current window, the one tmux made current with new-window.
       await expect(page.getByRole("button", { name: "alpha shell", exact: true })).toBeVisible();
@@ -45,6 +46,7 @@ for (const version of VERSIONS) {
       await allSessions(page).click();
       await expect(sessionRow(page, "alpha")).toContainText("open");
       await sessionRow(page, "alpha").click();
+      await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Home" }).click();
       await expect(page.getByRole("button", { name: "alpha shell", exact: true })).toHaveCount(1);
     });
@@ -57,7 +59,10 @@ for (const version of VERSIONS) {
       await expect(page).toHaveURL(/#\/tab$/);
       expect(stack.tmux("list-sessions", "-F", "#{session_name}")).toContain("made-here");
 
-      // Back from the tab goes Home, not to the closed dialog.
+      // The sheet stays open over the new tab, which is the route under it; closing it leaves the tab, and Back goes Home.
+      await expect(page.getByRole("dialog", { name: /^Open on / }).getByText("here", { exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
       await page.goBack();
       await expect(page).toHaveURL(/#\/$/);
       await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -69,9 +74,11 @@ for (const version of VERSIONS) {
       await page.getByRole("textbox", { name: "Start directory" }).fill("/definitely/not/here");
       await page.getByRole("button", { name: "Create" }).click();
       await expect(page.getByRole("alert")).toBeVisible();
-      await expect(page.getByRole("dialog", { name: "New session" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: /^New session on / })).toBeVisible();
+      // Escape returns from the form to the list; Escape again closes the sheet, and focus goes back to what opened it.
       await page.keyboard.press("Escape");
-      // The picker closed to open the form, so focus goes back to what opened the picker.
+      await expect(serverSheet(page).getByRole("button", { name: "New session", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
       await expect(allSessions(page)).toBeFocused();
     });
 
@@ -81,6 +88,7 @@ for (const version of VERSIONS) {
       await allSessions(page).click();
       await sessionRow(page, "doomed").click();
       await expect(page).toHaveURL(/#\/tab$/);
+      await page.keyboard.press("Escape");
       // Off screen: Home covers the tab, and the daemon's closure broadcast removes it without a notice.
       await page.getByRole("button", { name: "Home" }).click();
       await expect(page.getByRole("button", { name: "doomed only", exact: true })).toBeVisible();

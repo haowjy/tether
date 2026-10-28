@@ -1,21 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeFs, type FakeTree } from "../platform/test/fs";
 import { Folders, KEPT, MAX_PAGES, SETTLE_MS } from "./folders";
-import { folderKey, type Where } from "./pathfield";
+import { folderKey } from "./pathfield";
 
 const many = (n: number): string[] => Array.from({ length: n }, (_, i) => `/home/j/repos/d${String(i).padStart(3, "0")}`);
 const tree = (extra: string[] = []): FakeTree => ({
   home: "/home/j",
-  roots: ["/home/j/repos/tether"],
+  favorites: ["/home/j/repos/tether"],
   uploads: "/home/j/up",
   dirs: ["/home/j", "/home/j/repos", "/home/j/repos/tether", "/home/j/repos/tether/web", "/home/j/up", ...extra],
   files: { "/home/j/repos/tether/README.md": "text/markdown" },
 });
-const where: Where = { home: "/home/j", scope: ["/home/j/repos/tether", "/home/j/up"] };
 
 function setup(extra: string[] = [], page = 3) {
   const fs = new FakeFs(tree(extra), page);
-  return { fs, folders: new Folders(fs, () => where) };
+  return { fs, folders: new Folders(fs) };
 }
 const held = (f: Folders, path: string) => f.snapshot.held.get(folderKey(path, false))?.names ?? undefined;
 
@@ -30,7 +29,7 @@ describe("Folders", () => {
     await vi.advanceTimersByTimeAsync(SETTLE_MS - 1);
     expect(fs.calls).toEqual([]);
     await vi.advanceTimersByTimeAsync(1);
-    expect(fs.calls).toEqual(["dirs /home/j/repos 0"]);
+    expect(fs.calls).toEqual(["list /home/j/repos 0"]);
     expect(held(folders, "/home/j/repos")).toMatchObject({ status: "ready", names: ["tether"] });
   });
 
@@ -68,14 +67,14 @@ describe("Folders", () => {
   it("stops at the page that holds the last folder", async () => {
     const { fs, folders } = setup(many(5), 4);
     await folders.load("/home/j/repos", false);
-    expect(fs.calls).toEqual(["dirs /home/j/repos 0", "dirs /home/j/repos 4"]);
+    expect(fs.calls).toEqual(["list /home/j/repos 0", "list /home/j/repos 4"]);
     expect(held(folders, "/home/j/repos")).toMatchObject({ capped: false });
   });
 
   it("caches the first page it fetched, until a refresh drops it", async () => {
     const { fs, folders } = setup();
     await folders.load("/home/j/repos/tether", false);
-    expect(await folders.settled("/home/j/repos/tether", false)).toMatchObject({ path: "/home/j/repos/tether", via: "list" });
+    expect(await folders.settled("/home/j/repos/tether", false)).toMatchObject({ path: "/home/j/repos/tether" });
     expect(folders.peek("/home/j/repos/tether", false)).not.toBeNull();
     expect(folders.peek("/home/j/repos/tether", true)).toBeNull();
     folders.drop("/home/j/repos/tether");
@@ -90,7 +89,7 @@ describe("Folders", () => {
     const taken = folders.settled("/home/j/repos", false);
     fs.release();
     await loading;
-    expect(await taken).toMatchObject({ via: "dirs" });
+    expect(await taken).toMatchObject({ path: "/home/j/repos" });
     expect(fs.calls).toHaveLength(1);
   });
 
@@ -112,7 +111,7 @@ describe("Folders", () => {
 
   it("keeps the 32 most recent folders and drops a refreshed one", () => {
     const { folders } = setup();
-    for (let i = 0; i < KEPT + 3; i++) folders.seed({ path: `/p${String(i)}`, root: "/", parent: null, total: 0, offset: 0, truncated: false, entries: [] }, false);
+    for (let i = 0; i < KEPT + 3; i++) folders.seed({ path: `/p${String(i)}`, parent: null, total: 0, offset: 0, truncated: false, entries: [] }, false);
     expect(folders.snapshot.held.size).toBe(KEPT);
     expect(held(folders, "/p0")).toBeUndefined();
     folders.drop("/p10");
@@ -122,7 +121,7 @@ describe("Folders", () => {
   it("seeds from a listing that holds all its folders, not from a partial page of folders", () => {
     const { folders } = setup();
     const entry = (name: string, kind: "dir" | "file") => ({ name, kind, link: false });
-    const listing = (entries: ReturnType<typeof entry>[], total: number) => ({ path: "/a", root: "/", parent: null, total, offset: 0, truncated: false, entries });
+    const listing = (entries: ReturnType<typeof entry>[], total: number) => ({ path: "/a", parent: null, total, offset: 0, truncated: false, entries });
     folders.seed(listing([entry("x", "dir")], 5), false);
     expect(held(folders, "/a")).toBeUndefined();
     folders.seed(listing([entry("x", "dir"), entry("f", "file")], 5), false);

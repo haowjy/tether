@@ -1,4 +1,5 @@
-import { useId } from "preact/hooks";
+import type { RefObject, TargetedKeyboardEvent } from "preact";
+import { useCallback, useId } from "preact/hooks";
 import { cx } from "../cx";
 import { useFocusRef, type FocusTarget } from "../focus";
 import { Icon } from "./Icon";
@@ -50,11 +51,25 @@ export function TextField({ label, value, onInput, hint, error, focusTarget, aut
   );
 }
 
-type SearchProps = Pick<FieldProps, "label" | "value" | "onInput" | "placeholder" | "focusTarget" | "class">;
+type SearchProps = Pick<FieldProps, "label" | "placeholder" | "focusTarget" | "class"> & {
+  value: string;
+  /** The new text, and the element, so an owner that completes paths can read the caret. */
+  onInput: (value: string, el?: HTMLInputElement) => void;
+  /** Keys the owner handles first (a search that also completes paths); Escape still empties the field. */
+  onKeyDown?: (e: TargetedKeyboardEvent<HTMLInputElement>) => void;
+  inputRef?: RefObject<HTMLInputElement | null>;
+  /** The list this field completes into (when it has rows), and its highlighted row, for assistive technology. */
+  listId?: string | undefined;
+  activeId?: string | undefined;
+};
 
 /** A field that filters a list: a search glyph, and Escape empties it before it closes anything else. */
-export function SearchField({ label, value, onInput, placeholder, focusTarget, class: className, ...rest }: SearchProps) {
+export function SearchField({ label, value, onInput, placeholder, focusTarget, onKeyDown, inputRef, listId, activeId, class: className, ...rest }: SearchProps) {
   const focusRef = useFocusRef(focusTarget);
+  const attach = useCallback((el: HTMLInputElement | null) => {
+    focusRef(el);
+    if (inputRef) inputRef.current = el;
+  }, [focusRef, inputRef]);
   return (
     <div class={cx(styles.search, className)}>
       <Icon name="search" size={16} class={styles.glyph} />
@@ -66,12 +81,15 @@ export function SearchField({ label, value, onInput, placeholder, focusTarget, c
         spellcheck={false}
         {...rest}
         {...(placeholder !== undefined && { placeholder })}
+        aria-controls={listId}
+        aria-activedescendant={activeId}
         value={value}
-        onInput={(e) => { onInput(e.currentTarget.value); }}
+        onInput={(e) => { onInput(e.currentTarget.value, e.currentTarget); }}
         aria-label={label}
         class={styles.searchInput}
-        ref={focusRef}
+        ref={attach}
         onKeyDown={(e) => {
+          onKeyDown?.(e);
           if (e.key === "Escape" && value !== "") {
             e.preventDefault(); // a dialog around the field would otherwise close
             e.stopPropagation();

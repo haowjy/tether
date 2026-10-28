@@ -3,7 +3,7 @@ import type { Tab } from "./state";
 
 export interface TabLabel {
   id: string;
-  /** Shown bold: a terminal tab's session, a Files tab's folder or file name ("Files" at the roots). */
+  /** Shown bold: a terminal tab's session, a Files tab's folder or file name. */
   session: string;
   /** The window a terminal tab shows now, shown in regular weight after the session, set apart by spacing alone. Empty for a Files tab. */
   window: string;
@@ -25,8 +25,8 @@ export function tabLabels(tabs: readonly Tab[], hostName: (hostId: string) => st
     const on = host ? ` on ${host}` : "";
     if (t.kind === "files") {
       const { place } = t;
-      const name = place.kind === "roots" ? "Files" : baseName(place.path);
-      return { id: t.id, session: name, window: "", full: `${place.kind === "roots" ? name : `Files: ${name}`}${on}`, host };
+      const name = baseName(place.path);
+      return { id: t.id, session: name, window: "", full: `Files: ${name}${on}`, host };
     }
     return { id: t.id, session: t.session, window: t.window, full: `${t.session} ${t.window}${on}`, host };
   });

@@ -15,7 +15,7 @@ use futures_util::{Stream, StreamExt as _};
 use rustix::io::Errno;
 use tracing::debug;
 
-use super::{FsError, Opened, Roots, Want, expand, open};
+use super::{Favorites, FsError, Opened, Want, expand, open};
 use crate::blocking::Lane;
 use crate::config::ConfigFile;
 use crate::files::{Dir, Temp};
@@ -38,8 +38,8 @@ const PART_SUFFIX: &str = ".part";
 const RENAME_TRIES: usize = 16;
 const BASE32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 
-/// `uploads_dir`, created 0700 if missing and then opened through the roots read
-/// after creating it, so a folder that didn't exist a moment ago still counts. Blocks.
+/// `uploads_dir`, created 0700 if missing and then opened after creating it, so
+/// a folder that didn't exist a moment ago still counts. Blocks.
 pub fn open_dir(file: &ConfigFile, home: &Path) -> Result<Opened, FsError> {
     let config = file.load()?;
     if let Some(dir) = expand(&config.uploads_dir, home) {
@@ -49,10 +49,14 @@ pub fn open_dir(file: &ConfigFile, home: &Path) -> Result<Opened, FsError> {
             .mode(0o700)
             .create(&dir);
     }
-    let roots = Roots::resolve(&config, home)?;
-    let dir = roots.uploads.canonical.as_deref().and_then(Path::to_str);
+    let favorites = Favorites::resolve(&config, home)?;
+    let dir = favorites
+        .uploads
+        .canonical
+        .as_deref()
+        .and_then(Path::to_str);
     let dir = dir.ok_or(FsError::NotADirectory)?;
-    let opened = open(&roots.scope(), dir, Want::Dir)?;
+    let opened = open(dir, Want::Dir)?;
     if memory_backed(&opened.file)? {
         return Err(FsError::MemoryBacked);
     }
@@ -308,8 +312,7 @@ mod tests {
     use crate::fs::test_tree::Tree;
 
     fn dir(tree: &Tree) -> Opened {
-        let scope = crate::fs::Scope::roots(vec![tree.root().to_owned()]);
-        open(&scope, &tree.str(""), Want::Dir).expect("the folder")
+        open(&tree.str(""), Want::Dir).expect("the folder")
     }
 
     fn names(tree: &Tree) -> Vec<String> {

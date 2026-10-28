@@ -4,7 +4,9 @@ import type { Completion, CompletionRow } from "../../files/pathfield";
 import { Button } from "../../ui/primitives/Button";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { Row } from "../../ui/primitives/Row";
+import { baseName, parentOf } from "../../files/paths";
 import { Spinner } from "../../ui/primitives/Spinner";
+import { UpRow } from "./FolderList";
 import styles from "./FolderList.module.css";
 import find from "./PathField.module.css";
 
@@ -19,6 +21,8 @@ interface Props {
   highlighted: string | null;
   /** A tap on a row opens that folder. */
   onOpen: (row: CompletionRow) => void;
+  /** A tap on the up row: the field steps to this text. */
+  onUp: (text: string) => void;
   onRetry: () => void;
 }
 
@@ -27,10 +31,9 @@ interface Props {
  * match, each a tap to open. Rows take the tap without taking focus from the field, which
  * keeps the keyboard up until the folder opens.
  */
-export function CompletionList({ listId, completion: c, home, hostName, highlighted, onOpen, onRetry }: Props) {
+export function CompletionList({ listId, completion: c, home, hostName, highlighted, onOpen, onUp, onRetry }: Props) {
   const { typed, folder } = c;
-  if (c.note === "start") return <p class={find.note}>Type a path that starts with ~ or /.</p>;
-  if (c.note === "outside" || !typed) return <EmptyState icon="folder" title="Outside your folders" />;
+  if (c.note === "start" || !typed) return <p class={find.note}>Type a path that starts with ~ or /.</p>;
   const parent = shorten(typed.parent, home);
   if (folder?.status === "error") {
     return <EmptyState icon="alert" title={describeError(folder.error, hostName)} action={<Button onClick={onRetry}>Try again</Button>} />;
@@ -38,12 +41,14 @@ export function CompletionList({ listId, completion: c, home, hostName, highligh
   const loading = !folder || folder.status === "loading";
   return (
     <div class={styles.wrap} aria-busy={loading}>
-      <p class={find.where}>
-        <span class={find.parent} title={typed.parent}>in {parent}</span>
-        {loading && <><Spinner label="Loading the folder" /><span>Loading</span></>}
-      </p>
-      {c.rows.length > 0 && (
-        <div id={listId} role="listbox" aria-label="Folders" class={styles.list}>
+      {loading && <p class={find.where}><Spinner label="Loading the folder" /><span>Loading</span></p>}
+      {(c.up !== null || c.rows.length > 0) && (
+        <div class={styles.list}>
+          {/* Taken without taking focus from the field, like the rows. */}
+          {c.up !== null && (
+            <UpRow label=".." name={baseName(parentOf(typed.parent))} onMouseDown={(e) => { e.preventDefault(); }} onOpen={() => { if (c.up !== null) onUp(c.up); }} />
+          )}
+          <div id={listId} role="listbox" aria-label="Folders" class={find.options}>
           {c.rows.map((row) => (
             <Row
               key={row.name}
@@ -54,7 +59,6 @@ export function CompletionList({ listId, completion: c, home, hostName, highligh
               class={styles.item}
               icon="folder"
               label={row.name}
-              meta={row.added ? undefined : "not added"}
               trailing="chevron"
               selected={row.name === highlighted}
               // The row takes the tap without taking focus from the field, so the keyboard doesn't drop before the open.
@@ -62,6 +66,7 @@ export function CompletionList({ listId, completion: c, home, hostName, highligh
               onClick={() => { onOpen(row); }}
             />
           ))}
+          </div>
         </div>
       )}
       {!loading && c.rows.length === 0 && (

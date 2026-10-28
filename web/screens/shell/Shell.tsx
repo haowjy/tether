@@ -5,11 +5,8 @@ import { Enrol } from "../enrol/Enrol";
 import { NoServers } from "../enrol/NoServers";
 import { HostProblem } from "../enrol/HostProblem";
 import { FilesScreen } from "../files/FilesScreen";
-import { CreateDialog } from "../home/CreateDialog";
 import { Home } from "../home/Home";
 import { Picker } from "../sessions/Picker";
-import { ServerSheet } from "../sessions/ServerSheet";
-import { Sessions } from "../sessions/Sessions";
 import { Settings } from "../settings/Settings";
 import { TerminalScreen } from "../terminal/TerminalScreen";
 import { AppBanners } from "./AppBanners";
@@ -56,12 +53,8 @@ export function Shell() {
       </div>
       {!blocking && (
         <>
-          {/* Every sessions overlay name has its renderer here, whatever the layout. */}
-          <Sessions />
+          {/* Every sessions overlay name is this one picker, whatever the layout. */}
           <Picker />
-          <ServerSheet />
-          {/* New session opens from Home and from the sessions overlay. */}
-          <CreateDialog />
           <Settings />
         </>
       )}

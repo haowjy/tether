@@ -1,5 +1,0 @@
-.body { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; }
-.error { font-size: var(--text-small); color: var(--color-status-error); }
-.actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
-/* A destructive action reads as one (Settings does the same): the error colour on its label. */
-.danger { color: var(--color-status-error); }

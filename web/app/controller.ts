@@ -193,8 +193,8 @@ export class AppController extends Store<AppView> {
     else this.listing.refresh(handle);
   }
 
-  /** A new Files tab on `hostId`, at `place` or that host's roots (every time: the tab is the place). */
-  openFiles(hostId: string, place: FilesPlace = { kind: "roots" }): void {
+  /** A new Files tab on `hostId`, at `place` (every time: the tab is the place). */
+  openFiles(hostId: string, place: FilesPlace): void {
     this.dispatch({ type: "filesOpened", id: `files-${crypto.randomUUID()}`, host: hostId, place });
     // Desktop focus lands on the new tab's pill, once it has rendered; touch never focuses outside a tap.
     queueMicrotask(() => { this.focus.focusTarget("tabs"); });

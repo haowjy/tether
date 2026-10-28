@@ -38,7 +38,7 @@ export const SAVED: SavedWorkspace = {
 /** `SAVED`'s tabs (the third names a session that is gone) and a Files tab after the first. */
 export const WITH_FILES: SavedWorkspace = {
   ...SAVED,
-  tabs: SAVED.tabs.flatMap((t, i) => (i === 0 ? [t, { kind: "files" as const, id: "files-1", host: "h-pop", place: { kind: "roots" as const } }] : [t])),
+  tabs: SAVED.tabs.flatMap((t, i) => (i === 0 ? [t, { kind: "files" as const, id: "files-1", host: "h-pop", place: { kind: "dir" as const, path: "~" } }] : [t])),
 };
 
 export const fixtures: Fixtures = {

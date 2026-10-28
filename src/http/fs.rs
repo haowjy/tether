@@ -22,11 +22,11 @@ use crate::fs::config_write::{self, Change};
 use crate::fs::list::{self, Filter};
 use crate::fs::raw::{self, Span};
 use crate::fs::upload::{self, MAX_UPLOAD};
-use crate::fs::{FsError, Roots, Want, mime};
+use crate::fs::{Favorites, FsError, Want, mime};
 use crate::proto::HttpError;
 use crate::proto::fs::PathBody;
 
-/// `/fs/roots/*` and `/fs/uploads-dir` bodies are one path.
+/// `/fs/favorites/*` and `/fs/uploads-dir` bodies are one path.
 const JSON_BODY: usize = 4 * 1024;
 
 /// `{*path}`, or nothing on a route without one; a rejection if it doesn't decode.
@@ -38,15 +38,13 @@ pub(super) fn routes() -> Router<Arc<Ctx>> {
         post(handler).layer(DefaultBodyLimit::max(JSON_BODY))
     };
     Router::new()
-        .route("/fs/roots", get(roots))
-        .route("/fs/roots/add", settings(Change::AddRoot))
-        .route("/fs/roots/remove", settings(Change::RemoveRoot))
+        .route("/fs/favorites", get(favorites))
+        .route("/fs/favorites/add", settings(Change::AddFavorite))
+        .route("/fs/favorites/remove", settings(Change::RemoveFavorite))
         .route("/fs/uploads-dir", settings(Change::UploadsDir))
         // `{*path}` doesn't match an empty path: `/` is its own route.
-        .route("/fs/list/", get(listing::<false>))
-        .route("/fs/list/{*path}", get(listing::<false>))
-        .route("/fs/dirs/", get(listing::<true>))
-        .route("/fs/dirs/{*path}", get(listing::<true>))
+        .route("/fs/list/", get(listing))
+        .route("/fs/list/{*path}", get(listing))
         .route("/fs/raw/{*path}", get(raw))
         // The handler checks the cap itself, up front and as the body arrives.
         .route(
@@ -71,16 +69,16 @@ struct UploadQuery {
     name: String,
 }
 
-async fn roots(State(ctx): State<Arc<Ctx>>) -> Response {
+async fn favorites(State(ctx): State<Arc<Ctx>>) -> Response {
     let app = ctx.clone();
-    let loaded = async { ctx.fs.lane.run(move || app.roots()).await? }.await;
+    let loaded = async { ctx.fs.lane.run(move || app.favorites()).await? }.await;
     respond(
         "",
-        loaded.map(|roots| Json(roots.to_wire()).into_response()),
+        loaded.map(|favorites| Json(favorites.to_wire()).into_response()),
     )
 }
 
-/// A Settings change, then the roots as they are after it.
+/// A Settings change, then the favorites as they are after it.
 async fn change(
     ctx: Arc<Ctx>,
     body: Result<Json<PathBody>, JsonRejection>,
@@ -99,20 +97,19 @@ async fn change(
                 let file = &app.app.config;
                 let state_dir = app.app.auth.store().dir();
                 config_write::apply(file, state_dir, &app.app.home, requested)?;
-                app.roots()
+                app.favorites()
             })
             .await?
     }
     .await;
     respond(
         &path,
-        changed.map(|roots| Json(roots.to_wire()).into_response()),
+        changed.map(|favorites| Json(favorites.to_wire()).into_response()),
     )
 }
 
-/// A page of a directory under the roots, or for the picker (`DIRS_ONLY`) under
-/// `$HOME`, holding the scan slot.
-async fn listing<const DIRS_ONLY: bool>(
+/// A page of any directory, holding the scan slot.
+async fn listing(
     State(ctx): State<Arc<Ctx>>,
     path: WirePath,
     query: Result<Query<ListQuery>, QueryRejection>,
@@ -125,23 +122,15 @@ async fn listing<const DIRS_ONLY: bool>(
     }
     let filter = Filter {
         hidden: query.hidden == 1,
-        dirs_only: DIRS_ONLY,
     };
     let listed = async {
         let _scan = ctx.fs.scan().await?;
-        let app = ctx.clone();
         let asked = path.clone();
         ctx.fs
             .lane
             .run(move || {
-                let roots = app.roots()?;
-                let scope = if DIRS_ONLY {
-                    roots.home_scope()
-                } else {
-                    roots.scope()
-                };
-                let dir = crate::fs::open(&scope, &asked, Want::Dir)?;
-                list::list(&dir, &scope, filter, query.offset).map_err(FsError::io)
+                let dir = crate::fs::open(&asked, Want::Dir)?;
+                list::list(&dir, filter, query.offset).map_err(FsError::io)
             })
             .await?
     }
@@ -158,12 +147,11 @@ async fn raw(State(ctx): State<Arc<Ctx>>, path: WirePath, headers: HeaderMap) ->
     };
     let sent = async {
         let slot = ctx.fs.raw().await?;
-        let app = ctx.clone();
         let asked = path.clone();
         let opened = ctx
             .fs
             .lane
-            .run(move || crate::fs::open(&app.roots()?.scope(), &asked, Want::File))
+            .run(move || crate::fs::open(&asked, Want::File))
             .await??;
         let size = opened.meta.len();
         let etag = Stamp::of(&opened.meta).etag();
@@ -186,7 +174,6 @@ async fn raw(State(ctx): State<Arc<Ctx>>, path: WirePath, headers: HeaderMap) ->
             .header(header::CONTENT_LENGTH, len)
             .header(header::ETAG, etag)
             .header(header::ACCEPT_RANGES, "bytes")
-            .header(header::CACHE_CONTROL, "private, no-cache")
             // The native player fetches without the scheme handler, which adds these too.
             .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
             .header(header::CONTENT_SECURITY_POLICY, "sandbox");
@@ -243,9 +230,9 @@ async fn upload(
 }
 
 impl Ctx {
-    /// The roots as `config.toml` names them now. Blocks.
-    fn roots(&self) -> Result<Roots, FsError> {
-        Roots::load(&self.app.config, &self.app.home)
+    /// The favorites as `config.toml` names them now. Blocks.
+    fn favorites(&self) -> Result<Favorites, FsError> {
+        Favorites::load(&self.app.config, &self.app.home)
     }
 }
 
@@ -264,7 +251,7 @@ fn respond(asked: &str, result: Result<Response, FsError>) -> Response {
     };
     let code = HttpError::from(&refused);
     match &refused {
-        FsError::OutsideRoots | FsError::OutsideHome | FsError::Denied => {
+        FsError::Denied => {
             warn!(path = asked, %code, "refused a file request");
         }
         FsError::ConfigUnavailable(cause) => {

@@ -46,7 +46,7 @@ enter?: boolean, } }
   | { "type": "newWindow", "data": { req: number, session: SessionRef, name?: string,
 /**
  * Absolute and a directory, checked by the connection (fs.md "Path
- * resolution"); not checked against the file roots.
+ * resolution"); no scope.
  */
 dir?: string,
 /**
@@ -196,18 +196,18 @@ node?: ErrorNode, };
  * Every code an HTTP route answers with. Each has one status (`src/http/error.rs`),
  * except `bad_request` for a body that isn't the route's JSON, which takes axum's.
  */
-export type HttpError = "bad_request" | "auth_required" | "forbidden" | "bad_origin" | "node_refused" | "not_enrolled" | "bad_code" | "outside_roots" | "outside_home" | "denied" | "not_found" | "not_a_directory" | "not_a_file" | "memory_backed" | "config_read_only" | "too_large" | "bad_range" | "busy" | "auth_unavailable" | "identity_unavailable" | "config_unavailable" | "no_space" | "internal";
+export type HttpError = "bad_request" | "auth_required" | "forbidden" | "bad_origin" | "node_refused" | "not_enrolled" | "bad_code" | "denied" | "not_found" | "not_a_directory" | "not_a_file" | "memory_backed" | "config_read_only" | "too_large" | "bad_range" | "busy" | "auth_unavailable" | "identity_unavailable" | "config_unavailable" | "no_space" | "internal";
 
 /**
- * `GET /fs/roots` and the answer to every Settings change.
+ * `GET /fs/favorites` and the answer to every Settings change.
  */
-export type Roots = {
+export type Favorites = {
 /**
- * The canonical `$HOME`: the picker starts here.
+ * The canonical `$HOME`: the picker lists it first.
  */
-home: string, roots: Array<RootStatus>, uploadsDir: RootStatus, };
+home: string, favorites: Array<PlaceStatus>, uploadsDir: PlaceStatus, };
 
-export type RootStatus = {
+export type PlaceStatus = {
 /**
  * As stored in `config.toml`.
  */
@@ -218,12 +218,12 @@ path: string,
 canonical: string | null, ok: boolean, };
 
 /**
- * The body of `POST /fs/roots/add`, `/fs/roots/remove` and `/fs/uploads-dir`.
+ * The body of `POST /fs/favorites/add`, `/fs/favorites/remove` and `/fs/uploads-dir`.
  */
 export type PathBody = { path: string, };
 
 /**
- * `GET /fs/list/{*path}`, and the picker's `GET /fs/dirs/{*path}`.
+ * `GET /fs/list/{*path}`.
  */
 export type Listing = {
 /**
@@ -231,15 +231,11 @@ export type Listing = {
  */
 path: string,
 /**
- * The root it is under (the longest match), or `$HOME` for the picker.
- */
-root: string,
-/**
- * Null when the parent is outside every root.
+ * Null only at `/`.
  */
 parent: string | null,
 /**
- * Entries scanned, after the hidden and directories-only filters.
+ * Entries scanned, after the hidden filter.
  */
 total: number, offset: number,
 /**
@@ -265,7 +261,7 @@ link: boolean,
  */
 size?: number,
 /**
- * Unix seconds; absent for `broken` and in the picker.
+ * Unix seconds; absent for `broken`.
  */
 mtime?: number,
 /**

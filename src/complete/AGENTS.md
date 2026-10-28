@@ -57,7 +57,7 @@ Rules the code relies on, which are easy to break:
 
 Tests: the lexer table (`context.rs`); each history format, ranking and the tail read
 (`history.rs`); the `PATH` index's refresh (`commands.rs`); splitting, escaping and
-listing outside the roots (`paths.rs`); the parser on golden carapace 1.8.0 output in
+listing any directory (`paths.rs`); the parser on golden carapace 1.8.0 output in
 `tests/fixtures/carapace/` (`carapace.rs`); the runner's timeout, newer-key kill,
 abandoned request and group kill against a fake script (`runner.rs`);
 insert-only-extends across every source, the missing binary, and bash reading hostile

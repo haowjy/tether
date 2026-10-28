@@ -40,7 +40,7 @@ describe("Router", () => {
 
   it("keeps file paths out of the URL", () => {
     const { router, open, hashes } = setup();
-    open("f1", { kind: "roots" });
+    open("f1", { kind: "dir", path: "~" });
     router.pushPlace("f1", { kind: "file", path: "/secret/path.txt" });
     expect(hashes()).toEqual(["#/", "#/tab", "#/tab"]);
   });
@@ -57,7 +57,7 @@ describe("Router", () => {
 
   it("Back walks out of the folders of the tab they were opened in, each entry recording its place", () => {
     const { router, open, h } = setup();
-    open("f1", { kind: "roots" });
+    open("f1", { kind: "dir", path: "~" });
     router.pushPlace("f1", dir("/a"));
     router.pushPlace("f1", { kind: "file", path: "/a/b" });
     const places: (FilesPlace | null)[] = [];
@@ -65,13 +65,13 @@ describe("Router", () => {
     h.port.go(-1);
     h.port.go(-1);
     h.port.go(-1);
-    expect(places).toEqual([dir("/a"), { kind: "roots" }, null]);
+    expect(places).toEqual([dir("/a"), { kind: "dir", path: "~" }, null]);
     expect(router.entry.route).toBe("home");
   });
 
   it("switching tabs replaces the current entry, so Back returns to the place in the tab that is active", () => {
     const { router, state, open, h } = setup();
-    open("f1", { kind: "roots" });
+    open("f1", { kind: "dir", path: "~" });
     state.active = "f2"; // the controller switches tabs: the entry now names f2
     router.switchTab("f2", dir("/x"));
     expect(h.entries).toHaveLength(2);
@@ -98,7 +98,7 @@ describe("Router", () => {
 
   it("a Back that lands on an entry of a tab that is not active skips to Home, announcing nothing", () => {
     const { router, state, seen, open, h } = setup();
-    open("f1", { kind: "roots" });
+    open("f1", { kind: "dir", path: "~" });
     router.pushPlace("f1", dir("/a"));
     state.active = "t1"; // the user switched tabs
     const before = seen.length;
@@ -110,7 +110,7 @@ describe("Router", () => {
 
   it("an entry from before a reload whose tab is not active is replaced with Home", () => {
     const { router, open, h } = setup();
-    open("f1", { kind: "roots" });
+    open("f1", { kind: "dir", path: "~" });
     router.pushPlace("f1", dir("/a"));
     const after = new Router(h.port, () => null); // a reload: a new stack, no tab active
     h.port.go(-1);
@@ -161,7 +161,7 @@ describe("Router", () => {
     expect(h.at).toBe(0);
 
     const deep = setup();
-    deep.router.replacePlace("t1", { kind: "roots" }); // an entry with nothing below it
+    deep.router.replacePlace("t1", { kind: "dir", path: "~" }); // an entry with nothing below it
     deep.router.toHome();
     expect(deep.router.entry.route).toBe("home");
     expect(deep.h.entries).toHaveLength(1);
@@ -169,7 +169,7 @@ describe("Router", () => {
 
   it("a Files tab's in-app back goes back when the previous entry is that place in that tab, else replaces", () => {
     const { router, open, h } = setup();
-    open("f1", { kind: "roots" });
+    open("f1", { kind: "dir", path: "~" });
     router.pushPlace("f1", dir("/a"));
     router.pushPlace("f1", { kind: "file", path: "/a/b" });
     router.toPlace("f1", dir("/a"));
@@ -182,7 +182,7 @@ describe("Router", () => {
 
   it("a state from an earlier page life of an active tab stands alone", () => {
     const { router, open, h } = setup();
-    open("f1", { kind: "roots" });
+    open("f1", { kind: "dir", path: "~" });
     router.pushPlace("f1", dir("/a"));
     h.port.go(-1);
     h.port.go(-1);

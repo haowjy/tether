@@ -7,7 +7,8 @@ import type { HostClient } from "../../net/hosts";
 import type { SessionRef } from "../../proto/generated/messages";
 import { newSessionMsg, type CreationFields } from "../../sessions/creation";
 import { findSession } from "../../sessions/groups";
-import { openSession } from "../sessions/openSession";
+import { openSession } from "./openSession";
+import { popPage } from "./pick";
 
 const LISTING_WAIT_MS = 5_000;
 
@@ -53,7 +54,7 @@ function listingWith(app: AppController, host: HostClient, ref: SessionRef): Pro
   });
 }
 
-/** Creates the session and opens its tab. Every overlay closes first, the switcher's too. */
+/** Creates the session and opens its tab behind the picker, which returns from its form to its list (`popPage`). */
 export async function createAndOpen(app: AppController, host: HostClient, fields: CreationFields): Promise<CreateResult> {
   const hostName = host.name ?? "the server";
   let created;
@@ -68,6 +69,6 @@ export async function createAndOpen(app: AppController, host: HostClient, fields
   const hit = await listingWith(app, host, created.session);
   const listing = app.sessions.snapshot.hosts[host.entry.handle]?.listing;
   if (!hit || !listing) return { error: "Created, but it hasn't appeared in the list yet. Close this to see the list." };
-  app.router.closeAllOverlays(() => { openSession(app, host, listing, hit); });
+  popPage(app, () => { openSession(app, host, listing, hit); });
   return { ok: true };
 }

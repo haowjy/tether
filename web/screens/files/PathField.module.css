@@ -8,5 +8,6 @@
 }
 .said { padding: var(--space-2) var(--files-inset) 0; font-size: var(--text-small); color: var(--color-status-error); }
 .where { display: flex; align-items: center; gap: var(--space-2); min-width: 0; font-size: var(--text-small); color: var(--color-text-muted); }
-.parent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The listbox groups the folder rows inside the list that also holds the up row. */
+.options { display: contents; }
 .note { font-size: var(--text-small); color: var(--color-text-muted); text-wrap: pretty; }

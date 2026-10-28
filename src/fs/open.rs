@@ -1,7 +1,7 @@
-//! `fs::open` (fs.md "Path resolution"): canonicalize, check the scope, open without
-//! following a last-component link or blocking on a FIFO, then check the scope again on
-//! the path of the descriptor actually opened. Callers get the descriptor, never a path
-//! to open again. Also `check_dir`, the `newWindow`/`newSession` `dir` check.
+//! `fs::open` (fs.md "Path resolution"): canonicalize, open without following a
+//! last-component link or blocking on a FIFO, then read the path of the descriptor
+//! actually opened. Callers get the descriptor, never a path to open again. Also
+//! `check_dir`, the `newWindow`/`newSession` `dir` check.
 
 use std::fs::{File, Metadata};
 use std::io;
@@ -18,102 +18,50 @@ pub enum Want {
     File,
 }
 
-/// A descriptor inside the scope.
 #[derive(Debug)]
 pub struct Opened {
     pub file: File,
     /// Canonical: the descriptor's own path.
     pub path: String,
-    /// The scope entry it is under: an index into `Scope::dir`.
-    pub root: usize,
     /// From the `fstat` after opening.
     pub meta: Metadata,
 }
 
-/// The canonical directories a request may reach: the effective roots, or `$HOME` for
-/// the picker.
-#[derive(Debug, Clone)]
-pub struct Scope {
-    dirs: Vec<PathBuf>,
-    picker: bool,
-}
-
-impl Scope {
-    pub(super) fn roots(dirs: Vec<PathBuf>) -> Self {
-        Self {
-            dirs,
-            picker: false,
-        }
-    }
-
-    pub(super) fn home(home: PathBuf) -> Self {
-        Self {
-            dirs: vec![home],
-            picker: true,
-        }
-    }
-
-    /// `/`: path completion lists names, never contents, in any directory Jimmy can
-    /// read (complete.md "Paths").
-    pub fn everything() -> Self {
-        Self::roots(vec![PathBuf::from("/")])
-    }
-
-    /// The longest entry `path` equals or sits below, compared component by component,
-    /// so `/a/repo2` is not under `/a/repo`.
-    pub fn find(&self, path: &Path) -> Option<usize> {
-        let below = self
-            .dirs
-            .iter()
-            .enumerate()
-            .filter(|(_, dir)| path.starts_with(dir));
-        below
-            .max_by_key(|(_, dir)| dir.as_os_str().len())
-            .map(|(index, _)| index)
-    }
-
-    pub fn dir(&self, index: usize) -> &Path {
-        &self.dirs[index]
-    }
-
-    fn outside(&self) -> FsError {
-        if self.picker {
-            FsError::OutsideHome
-        } else {
-            FsError::OutsideRoots
-        }
-    }
-}
-
-/// Resolves `path` and opens it, checked against `scope` before and after opening.
+/// Resolves `path` and opens it. Any path the daemon's user can read: there is no scope.
 /// Blocks: run it on a lane (`crate::blocking`).
-pub fn open(scope: &Scope, path: &str, want: Want) -> Result<Opened, FsError> {
-    let canonical = resolve(scope, path)?;
-    open_resolved(scope, &canonical, want)
-}
-
-/// Steps 1 to 3: shape, `realpath`, scope.
-fn resolve(scope: &Scope, path: &str) -> Result<PathBuf, FsError> {
+pub fn open(path: &str, want: Want) -> Result<Opened, FsError> {
     check_shape(path).map_err(|_| FsError::BadRequest)?;
     let canonical = std::fs::canonicalize(path).map_err(FsError::io)?;
     if canonical.to_str().is_none() {
         return Err(FsError::BadRequest);
     }
-    scope.find(&canonical).ok_or_else(|| scope.outside())?;
-    Ok(canonical)
+    open_resolved(&canonical, want)
 }
 
-/// Steps 4 and 5: open the canonical path, check its kind, and check the scope again on
-/// the descriptor's own path, which catches a component swapped for a symlink since
-/// `resolve`.
-fn open_resolved(scope: &Scope, canonical: &Path, want: Want) -> Result<Opened, FsError> {
+/// Opens the canonical path, checks its kind, and takes the descriptor's own path, which
+/// is where the file really is if a component was swapped for a symlink since `open`
+/// resolved it.
+fn open_resolved(canonical: &Path, want: Want) -> Result<Opened, FsError> {
+    // Opening a device can act on it (a serial port's DTR toggles), so the kind is
+    // checked by `lstat` first; the `fstat` below still catches a swap in between.
+    let kind = std::fs::symlink_metadata(canonical)
+        .map_err(FsError::io)?
+        .file_type();
+    if kind.is_symlink() {
+        return Err(FsError::NotFound);
+    }
+    match want {
+        Want::Dir if !kind.is_dir() => return Err(FsError::NotADirectory),
+        Want::File if !kind.is_file() => return Err(FsError::NotAFile),
+        _ => {}
+    }
     let mut flags =
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC | OFlags::NOCTTY;
     if want == Want::Dir {
         flags |= OFlags::DIRECTORY;
     }
     let fd = rustix::fs::open(canonical, flags, Mode::empty()).map_err(|errno| match errno {
-        // The last component became a symlink after `resolve`.
+        // The last component became a symlink after `canonicalize`.
         Errno::LOOP => FsError::NotFound,
         Errno::NOTDIR if want == Want::Dir => FsError::NotADirectory,
         errno => FsError::io(errno.into()),
@@ -125,18 +73,12 @@ fn open_resolved(scope: &Scope, canonical: &Path, want: Want) -> Result<Opened, 
         Want::File if !meta.is_file() => return Err(FsError::NotAFile),
         _ => {}
     }
-    let real = fd_path(&file).map_err(FsError::Internal)?;
-    let root = scope.find(&real).ok_or_else(|| scope.outside())?;
-    let path = real
+    let path = fd_path(&file)
+        .map_err(FsError::Internal)?
         .into_os_string()
         .into_string()
         .map_err(|_| FsError::BadRequest)?;
-    Ok(Opened {
-        file,
-        path,
-        root,
-        meta,
-    })
+    Ok(Opened { file, path, meta })
 }
 
 /// The path the kernel holds for an open descriptor.
@@ -163,7 +105,7 @@ fn fd_path(_: &File) -> io::Result<PathBuf> {
 }
 
 /// `newWindow` and `newSession` `dir` (fs.md "Path resolution"): the shape rules, then
-/// a directory once links are followed. Not the roots, and no config. Blocks on a
+/// a directory once links are followed. No config. Blocks on a
 /// `stat`. The refusal names the cause, for `error { badRequest }`.
 pub fn check_dir(dir: &str) -> Result<(), &'static str> {
     check_shape(dir)?;
@@ -203,116 +145,74 @@ mod tests {
     use super::*;
     use crate::fs::test_tree::Tree;
 
-    /// `root`, `other` and `root/nested` are roots; `outside` and `root2` aren't.
-    fn tree() -> (Tree, Scope) {
+    fn tree() -> Tree {
         let tree = Tree::new("open");
-        for dir in ["root/d", "root/nested", "other", "outside/d", "root2"] {
+        for dir in ["root/d", "outside/d"] {
             tree.mkdir(dir);
         }
-        for file in [
-            "root/d/f",
-            "root/g",
-            "root/nested/n",
-            "other/o",
-            "outside/d/f",
-        ] {
-            tree.write(file, b"x");
-        }
+        tree.write("root/d/f", b"x");
+        tree.write("root/g", b"x");
         tree.write("outside/secret", b"secret");
-        tree.write("root2/f", b"x");
-        let scope = Scope::roots(vec![
-            tree.path("root"),
-            tree.path("other"),
-            tree.path("root/nested"),
-        ]);
-        (tree, scope)
+        tree
     }
 
-    fn opened(scope: &Scope, path: &Path, want: Want) -> Result<Opened, FsError> {
-        open(scope, path.to_str().expect("UTF-8"), want)
+    fn opened(path: &Path, want: Want) -> Result<Opened, FsError> {
+        open(path.to_str().expect("UTF-8"), want)
     }
 
     #[test]
-    fn a_file_in_a_root_opens_under_its_longest_root() {
-        let (tree, scope) = tree();
-        let file = opened(&scope, &tree.path("root/d/f"), Want::File).expect("opened");
-        assert_eq!((file.root, file.path), (0, tree.str("root/d/f")));
-        let nested = opened(&scope, &tree.path("root/nested/n"), Want::File).expect("opened");
-        assert_eq!(nested.root, 2);
-        let dir = opened(&scope, &tree.path("root"), Want::Dir).expect("opened");
-        assert!(dir.meta.is_dir());
-    }
-
-    #[test]
-    fn paths_that_escape_the_roots_are_refused() {
-        let (tree, scope) = tree();
+    fn any_readable_path_opens_at_its_canonical_path() {
+        let tree = tree();
         symlink(tree.path("outside"), tree.path("root/out-dir")).expect("a link");
-        symlink(tree.path("outside/secret"), tree.path("root/out-file")).expect("a link");
         symlink("../outside/secret", tree.path("root/out-relative")).expect("a link");
-        for path in [
-            format!("{}/root/../outside/secret", tree.str("")),
-            format!("{}/root/d/../../outside/secret", tree.str("")),
-            format!("{}/root/out-dir/secret", tree.str("")),
-            format!("{}/root/out-file", tree.str("")),
-            format!("{}/root/out-relative", tree.str("")),
-            format!("{}/root2/f", tree.str("")),
-            "/etc/passwd".to_owned(),
+        let file = opened(&tree.path("root/d/f"), Want::File).expect("opened");
+        assert_eq!(file.path, tree.str("root/d/f"));
+        assert!(
+            opened(&tree.path("root"), Want::Dir)
+                .expect("opened")
+                .meta
+                .is_dir()
+        );
+        // Links and `..` are followed, as the terminal would: the path is where it lands.
+        for (path, canonical) in [
+            (tree.str("root/out-dir/secret"), tree.str("outside/secret")),
+            (tree.str("root/out-relative"), tree.str("outside/secret")),
+            (
+                tree.str("root/../outside/secret"),
+                tree.str("outside/secret"),
+            ),
+            (tree.str("root/d/../g"), tree.str("root/g")),
         ] {
-            let refused = open(&scope, &path, Want::File);
-            assert!(
-                matches!(refused, Err(FsError::OutsideRoots)),
-                "{path}: {refused:?}"
-            );
+            let file = open(&path, Want::File).expect("opened");
+            assert_eq!(file.path, canonical, "{path}");
         }
-        // `..` that stays inside is fine: realpath resolves it.
-        let inside = format!("{}/root/d/../g", tree.str(""));
-        assert!(open(&scope, &inside, Want::File).is_ok());
-    }
-
-    #[test]
-    fn links_into_another_root_are_followed_and_symlinked_roots_resolve() {
-        let (tree, scope) = tree();
-        symlink(tree.path("other"), tree.path("root/to-other")).expect("a link");
-        let file = opened(&scope, &tree.path("root/to-other/o"), Want::File).expect("opened");
-        assert_eq!((file.root, file.path), (1, tree.str("other/o")));
-
-        // A root that is itself a symlink scopes its target.
-        symlink(tree.path("outside"), tree.path("link-root")).expect("a link");
-        let config = crate::config::Config {
-            roots: vec![tree.str("link-root")],
-            uploads_dir: tree.str("none"),
-            ..Default::default()
-        };
-        let roots = crate::fs::Roots::resolve(&config, &tree.path("")).expect("roots");
-        let scope = roots.scope();
-        let file = opened(&scope, &tree.path("link-root/secret"), Want::File).expect("opened");
-        assert_eq!(file.path, tree.str("outside/secret"));
+        assert!(open("/", Want::Dir).is_ok());
     }
 
     #[test]
     fn bad_shapes_and_wrong_kinds_are_refused() {
-        let (tree, scope) = tree();
+        let tree = tree();
         let long = format!("/{}", "a".repeat(MAX_PATH));
         for path in ["relative/path", "", "/a\0b", long.as_str()] {
-            let refused = open(&scope, path, Want::File);
+            let refused = open(path, Want::File);
             assert!(matches!(refused, Err(FsError::BadRequest)), "{path:?}");
         }
-        let missing = opened(&scope, &tree.path("root/missing"), Want::File);
+        let missing = opened(&tree.path("root/missing"), Want::File);
         assert!(matches!(missing, Err(FsError::NotFound)));
-        let not_file = opened(&scope, &tree.path("root/d"), Want::File);
+        let not_file = opened(&tree.path("root/d"), Want::File);
         assert!(matches!(not_file, Err(FsError::NotAFile)));
-        let not_dir = opened(&scope, &tree.path("root/g"), Want::Dir);
+        let not_dir = opened(&tree.path("root/g"), Want::Dir);
         assert!(matches!(not_dir, Err(FsError::NotADirectory)));
     }
 
     #[test]
     fn a_fifo_is_not_a_file_and_doesnt_block() {
-        let (tree, scope) = tree();
+        let tree = tree();
         let fifo = tree.path("root/fifo");
         let made = std::process::Command::new("mkfifo").arg(&fifo).status();
         assert!(made.expect("mkfifo ran").success());
         let started = Instant::now();
-        let refused = opened(&scope, &fifo, Want::File);
+        let refused = opened(&fifo, Want::File);
         assert!(matches!(refused, Err(FsError::NotAFile)), "{refused:?}");
         assert!(started.elapsed() < Duration::from_secs(1));
     }
@@ -320,35 +220,35 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_link_to_a_name_that_isnt_utf8_is_a_bad_request() {
-        let (tree, scope) = tree();
+        let tree = tree();
         let bad = tree.path("root").join(OsStr::from_bytes(b"bad\xff"));
         std::fs::write(&bad, b"x").expect("written");
         symlink(&bad, tree.path("root/to-bad")).expect("a link");
-        let refused = opened(&scope, &tree.path("root/to-bad"), Want::File);
+        let refused = opened(&tree.path("root/to-bad"), Want::File);
         assert!(matches!(refused, Err(FsError::BadRequest)), "{refused:?}");
     }
 
     #[test]
-    fn a_component_swapped_for_a_symlink_after_the_check_is_caught() {
-        let (tree, scope) = tree();
-        // A directory in the path becomes a link out of the roots between steps 2 and 4.
-        let canonical = resolve(&scope, &tree.str("root/d/f")).expect("resolved");
+    fn a_component_swapped_for_a_symlink_after_resolving_is_reported_where_it_lands() {
+        let tree = tree();
+        let canonical = tree.path("root/d/f");
         std::fs::rename(tree.path("root/d"), tree.path("root/d-old")).expect("moved");
         symlink(tree.path("outside/d"), tree.path("root/d")).expect("a link");
-        let refused = open_resolved(&scope, &canonical, Want::File);
-        assert!(matches!(refused, Err(FsError::OutsideRoots)), "{refused:?}");
+        tree.write("outside/d/f", b"y");
+        let file = open_resolved(&canonical, Want::File).expect("opened");
+        assert_eq!(file.path, tree.str("outside/d/f"));
 
         // The last component becomes a link: O_NOFOLLOW refuses it.
-        let canonical = resolve(&scope, &tree.str("root/g")).expect("resolved");
-        std::fs::remove_file(tree.path("root/g")).expect("removed");
-        symlink(tree.path("outside/secret"), tree.path("root/g")).expect("a link");
-        let refused = open_resolved(&scope, &canonical, Want::File);
+        let canonical = tree.path("root/g");
+        std::fs::remove_file(&canonical).expect("removed");
+        symlink(tree.path("outside/secret"), &canonical).expect("a link");
+        let refused = open_resolved(&canonical, Want::File);
         assert!(matches!(refused, Err(FsError::NotFound)), "{refused:?}");
     }
 
     #[test]
     fn check_dir_takes_any_existing_directory_and_names_the_cause() {
-        let (tree, _) = tree();
+        let tree = tree();
         symlink(tree.path("outside"), tree.path("dir-link")).expect("a link");
         assert_eq!(check_dir(&tree.str("outside")), Ok(()));
         assert_eq!(check_dir(&tree.str("dir-link")), Ok(()));

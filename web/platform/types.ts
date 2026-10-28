@@ -79,11 +79,11 @@ export interface TextRange { start: number; end: number }
 /** Native's retained in-progress edit, adopted into `lineDrafts` after a web-content-process restart. */
 export interface NativeLineSnapshot { tab: TabKey; gen: number; text: string; selection: TextRange; marked: TextRange | null }
 
-/** Where a Files tab is: the folder list of its roots, a folder, or a file preview. */
-export type FilesPlace = { kind: "roots" } | { kind: "dir"; path: string } | { kind: "file"; path: string };
+/** Where a Files tab is: a folder or a file preview. The folder `~` is the host's home, until the listing names it. */
+export type FilesPlace = { kind: "dir"; path: string } | { kind: "file"; path: string };
 
 export function samePlace(a: FilesPlace, b: FilesPlace): boolean {
-  return a.kind === "roots" ? b.kind === "roots" : b.kind === a.kind && b.path === a.path;
+  return a.kind === b.kind && a.path === b.path;
 }
 
 /** One saved tab, in tab order. A Files tab's id is its own; a terminal tab's is `tabId(key)`. */

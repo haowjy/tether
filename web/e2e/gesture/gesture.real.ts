@@ -6,6 +6,7 @@
 // selection handles, the system back gesture) are in g3-iphone-checklist.md.
 import { existsSync, readFileSync } from "node:fs";
 import { expect, test, type CDPSession, type Page } from "@playwright/test";
+import { openSessionRow } from "../shared/home";
 import { startStack, type Stack, type TmuxVersion } from "../shared/stack";
 
 const VERSIONS = (process.env["TETHER_E2E_TMUX"] ?? "3.4,3.7b").split(",") as TmuxVersion[];
@@ -59,7 +60,7 @@ for (const version of VERSIONS) {
 
     async function open(page: Page, session: string): Promise<Finger> {
       await page.goto(`${stack.url}/#/`);
-      await page.getByRole("button", { name: new RegExp(`^${session}\\b`) }).click();
+      await openSessionRow(page, session);
       await page.waitForFunction(() => { const host = document.querySelector(".xterm")?.parentElement; return host !== null && host !== undefined && !host.hasAttribute("data-blank"); });
       await page.waitForTimeout(400); // the snapshot's size settles
       return new Finger(await page.context().newCDPSession(page), page);
@@ -323,6 +324,7 @@ for (const version of VERSIONS) {
       await page.getByRole("button", { name: /, 1 tab, open sessions and files$/ }).tap();
       const sheet = page.getByRole("dialog", { name: "Open" });
       await sheet.getByRole("button", { name: new RegExp(`^${next} \\d+ window`) }).tap();
+      await page.keyboard.press("Escape");
       await expect(sheet).toBeHidden();
       const sent = count(s, "^[[A");
       await page.waitForTimeout(2500);

@@ -9,7 +9,7 @@ use std::path::Path;
 
 use rustix::fs::{AtFlags, Dir, FileType, Stat};
 
-use super::{Opened, Scope, mime};
+use super::{Opened, mime};
 use crate::proto::fs::{Entry, EntryKind, Listing};
 
 /// Entries in one page.
@@ -24,28 +24,24 @@ const SCAN_NAMES: usize = 1 << 20;
 pub struct Filter {
     /// Names starting with `.` too.
     pub hidden: bool,
-    /// The picker: directories only, with no size or time.
-    pub dirs_only: bool,
 }
 
-/// One page of the directory `dir`, opened through `scope`. Blocks.
-pub fn list(dir: &Opened, scope: &Scope, filter: Filter, offset: u32) -> io::Result<Listing> {
+/// One page of the directory `dir`. Blocks.
+pub fn list(dir: &Opened, filter: Filter, offset: u32) -> io::Result<Listing> {
     let mut scan = Scan::read(dir, filter)?;
     scan.sort();
     let start = (offset as usize).min(scan.entries.len());
     let end = (start + PAGE).min(scan.entries.len());
     let entries = scan.entries[start..end]
         .iter()
-        .map(|scanned| scan.entry(dir, scanned, filter))
+        .map(|scanned| scan.entry(dir, scanned))
         .collect();
     let parent = Path::new(&dir.path)
         .parent()
-        .filter(|parent| scope.find(parent).is_some())
         .and_then(Path::to_str)
         .map(str::to_owned);
     Ok(Listing {
         path: dir.path.clone(),
-        root: scope.dir(dir.root).to_string_lossy().into_owned(),
         parent,
         total: u32::try_from(scan.entries.len()).unwrap_or(u32::MAX),
         offset,
@@ -96,9 +92,6 @@ impl Scan {
             let Some((kind, link)) = kind_of(dir, name, entry.file_type()) else {
                 continue;
             };
-            if filter.dirs_only && kind != EntryKind::Dir {
-                continue;
-            }
             let with_nul = name.to_bytes_with_nul();
             if scan.names.len() + with_nul.len() > SCAN_NAMES {
                 scan.truncated = true;
@@ -145,7 +138,7 @@ impl Scan {
     }
 
     /// The page entry, with size and time from a `stat` (following links).
-    fn entry(&self, dir: &Opened, scanned: &Scanned, filter: Filter) -> Entry {
+    fn entry(&self, dir: &Opened, scanned: &Scanned) -> Entry {
         let name = self.name(scanned);
         let text = String::from_utf8_lossy(name.to_bytes()).into_owned();
         let utf8 = std::str::from_utf8(name.to_bytes())
@@ -160,7 +153,7 @@ impl Scan {
             mime: None,
             utf8,
         };
-        if filter.dirs_only || scanned.kind == EntryKind::Broken {
+        if scanned.kind == EntryKind::Broken {
             return entry;
         }
         if let Ok(stat) = rustix::fs::statat(&dir.file, name, AtFlags::empty()) {
@@ -223,15 +216,11 @@ mod tests {
     use crate::fs::test_tree::Tree;
     use crate::fs::{Want, open};
 
-    const VISIBLE: Filter = Filter {
-        hidden: false,
-        dirs_only: false,
-    };
+    const VISIBLE: Filter = Filter { hidden: false };
 
     fn listed(tree: &Tree, filter: Filter, offset: u32) -> Listing {
-        let scope = Scope::roots(vec![tree.root().to_owned()]);
-        let dir = open(&scope, &tree.str(""), Want::Dir).expect("the root");
-        list(&dir, &scope, filter, offset).expect("listed")
+        let dir = open(&tree.str(""), Want::Dir).expect("the folder");
+        list(&dir, filter, offset).expect("listed")
     }
 
     #[test]
@@ -280,40 +269,17 @@ mod tests {
         );
         assert_eq!(entry("A.txt").utf8, None);
         assert!(entry("broken").mtime.is_none() && entry("beta").mtime.is_some());
-        assert_eq!(
-            (listing.total, listing.truncated, listing.parent),
-            (7, false, None)
-        );
+        assert_eq!((listing.total, listing.truncated), (7, false));
+        let parent = tree.root().parent().and_then(Path::to_str);
+        assert_eq!(listing.parent.as_deref(), parent);
+        let top = open("/", Want::Dir).expect("the top");
+        assert_eq!(list(&top, VISIBLE, 0).expect("listed").parent, None);
 
-        let hidden = listed(
-            &tree,
-            Filter {
-                hidden: true,
-                ..VISIBLE
-            },
-            0,
-        );
+        let hidden = listed(&tree, Filter { hidden: true }, 0);
         assert_eq!(hidden.total, 9);
         assert_eq!(hidden.entries[0].name, ".hidden-dir");
         let paged = listed(&tree, VISIBLE, 6);
         assert_eq!((paged.offset, paged.entries.len()), (6, 1));
-
-        let picker = listed(
-            &tree,
-            Filter {
-                hidden: false,
-                dirs_only: true,
-            },
-            0,
-        );
-        let dirs: Vec<&str> = picker.entries.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(dirs, ["Alpha", "beta", "link-to-dir"]);
-        assert!(
-            picker
-                .entries
-                .iter()
-                .all(|e| e.size.is_none() && e.mtime.is_none())
-        );
     }
 
     #[test]

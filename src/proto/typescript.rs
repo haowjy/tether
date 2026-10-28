@@ -11,7 +11,7 @@ use std::path::Path;
 use ts_rs::{Config, TS, TypeVisitor};
 
 use super::complete::{Chip, ChipSource, CompleteRequest, Completion};
-use super::fs::{Entry, EntryKind, Listing, PathBody, RootStatus, Roots, Uploaded};
+use super::fs::{Entry, EntryKind, Favorites, Listing, PathBody, PlaceStatus, Uploaded};
 use super::*;
 
 const PATH: &str = "web/proto/generated/messages.ts";
@@ -47,8 +47,8 @@ fn declarations(config: &Config) -> Vec<(TypeId, String)> {
         declare::<ErrorNode>(config),
         declare::<ErrorBody>(config),
         declare::<HttpError>(config),
-        declare::<Roots>(config),
-        declare::<RootStatus>(config),
+        declare::<Favorites>(config),
+        declare::<PlaceStatus>(config),
         declare::<PathBody>(config),
         declare::<Listing>(config),
         declare::<Entry>(config),
@@ -115,7 +115,7 @@ fn generated_typescript_is_current() {
     let mut needed = BTreeSet::new();
     dependencies::<ClientMsg>(&mut needed);
     dependencies::<ServerMsg>(&mut needed);
-    dependencies::<Roots>(&mut needed);
+    dependencies::<Favorites>(&mut needed);
     dependencies::<Listing>(&mut needed);
     dependencies::<CompleteRequest>(&mut needed);
     dependencies::<Completion>(&mut needed);

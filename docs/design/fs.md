@@ -1,11 +1,12 @@
-# File API: roots, listing, raw reads, uploads
+# File API: favorites, listing, raw reads, uploads
 
 `src/fs/` serves the phone's file manager: directory listings, file bytes with Range
-for the viewers and the native video player, photo uploads, and the roots that scope
-all of it. Every path the file API touches passes through one function, `fs::open`,
-which canonicalizes the path, checks it against the roots and returns an open
-descriptor that was checked again after opening. No route opens a client's path any
-other way.
+for the viewers and the native video player, photo uploads, and the favorites that
+shortcut to folders. It reads any path the daemon's user can read: there is no scope.
+A device token already runs any command in tmux as Jimmy, so a boundary here would
+guard against nothing but Jimmy. Every path the file API touches passes through one
+function, `fs::open`, which canonicalizes the path and returns an open descriptor with
+the path it was really opened at. No route opens a client's path any other way.
 
 The product side (what the file manager shows, viewers, photo → terminal) is in
 [plan.md](plan.md#file-manager); the scheme handler and native player that carry these
@@ -17,8 +18,8 @@ auth is [auth.md](auth.md). Decisions and the alternatives rejected are in
 
 | Constant | Value | When hit |
 |---|---|---|
-| listing page (files and the picker) | 200 entries | the client asks for the next `offset` |
-| directory scan | 5,000 entries read or 1 MiB of names, whichever first; every entry read counts, hidden ones and (in the picker) files included | `truncated: true`; the rest isn't listed |
+| listing page | 200 entries | the client asks for the next `offset` |
+| directory scan | 5,000 entries read or 1 MiB of names, whichever first; every entry read counts, hidden ones included | `truncated: true`; the rest isn't listed |
 | scans at once | 1 | wait |
 | raw responses at once | 2 | wait |
 | uploads at once | 1 | `503 busy` at once |
@@ -32,62 +33,53 @@ auth is [auth.md](auth.md). Decisions and the alternatives rejected are in
 | page drop during a raw read | files over 8 MiB: after each chunk, everything from the response's first byte to the current position | |
 | socket buffers, every accepted socket | `SO_SNDBUF` and `SO_RCVBUF` 64 KiB (Linux doubles them); Serve reaches the daemon over a local Unix-socket hop, not another network round trip | the writer waits |
 | path in a request | 4,096 bytes, UTF-8, absolute, no NUL | `400 bad_request` |
-| JSON request body (`/fs/roots/*`, `/fs/uploads-dir`) | 4 KiB | `413` |
+| JSON request body (`/fs/favorites/*`, `/fs/uploads-dir`) | 4 KiB | `413` |
 | config write retries on a concurrent edit | 3 | `503 busy` |
 
-## Roots
+## Favorites
 
-A **root** is a directory the file API may read. The **effective roots** are the
-`roots` entries in `config.toml` plus `uploads_dir` (default `~/tether-uploads`), each
-canonicalized. Entries are absolute or start with `~/`; anything else is ignored with
-a warning. An entry that doesn't exist or isn't a directory is reported `ok: false`
-and otherwise ignored. `uploads_dir` follows the same rule, with one difference: a
-missing absolute path is created by the next upload, but one that is neither absolute
-nor `~/` shows `ok: false` and every upload answers `409 not_a_directory`.
+A **favorite** is a shortcut to a directory: the `favorites` entries in `config.toml`,
+each canonicalized, plus `uploads_dir` (default `~/tether-uploads`), which the picker
+lists too. Favorites are not a boundary; reading never consults them. Entries are
+absolute or start with `~/`; anything else is ignored with a warning. An entry that
+doesn't exist or isn't a directory is reported `ok: false` and otherwise ignored.
+`uploads_dir` follows the same rule, with one difference: a missing absolute path is
+created by the next upload, but one that is neither absolute nor `~/` shows `ok: false`
+and every upload answers `409 not_a_directory`.
 
-**fs re-reads `roots` and `uploads_dir` on every request**, as auth re-reads
-`auth.toml` ([auth.md](auth.md#state-on-disk)): the file is small, so a hand edit or a
-Settings change applies to the next request with no watcher, cache or restart. It
-reads the path `Config::load` resolved at startup (`--config`, else the default), kept
-in `App`, with the same rule: a missing default file means the defaults. A file that
-exists but can't be read or parsed **fails closed**: every fs route answers `503
-config_unavailable`, and nothing writes the file until it parses. The other config
-keys are still read once, at startup.
+**The config routes re-read `favorites` and `uploads_dir` on every request**, as auth
+re-reads `auth.toml` ([auth.md](auth.md#state-on-disk)): the file is small, so a hand
+edit or a Settings change applies to the next request with no watcher, cache or
+restart. They read the path `Config::load` resolved at startup (`--config`, else the
+default), kept in `App`, with the same rule: a missing default file means the
+defaults. A file that exists but can't be read or parsed **fails closed**:
+`/fs/favorites`, the writes and uploads answer `503 config_unavailable`, and nothing
+writes the file until it parses. Listing and raw reads don't read the config. The
+other config keys are still read once, at startup.
 
-**Roots are a scope, not an authorization boundary.** Whoever holds a device token can
-already run any command in tmux as Jimmy. The roots keep the file API, and any bug in
-it or in a viewer, inside the trees Jimmy picked: no listing, read or (in v2) write
-reaches `~/.ssh` through a mis-tap, a crafted symlink in a cloned repo, or a path from
-a malicious file.
-
-### Settings sheet routes
+### Favorites routes
 
 | Route | Body | Response | Rule |
 |---|---|---|---|
-| `GET /fs/roots` | | `Roots` | |
-| `POST /fs/roots/add` | `{path}` | `Roots` | canonicalized; must be an existing directory strictly below `$HOME`; stored canonical; a no-op if a root already has that canonical path |
-| `POST /fs/roots/remove` | `{path}` | `Roots` | removes every entry whose stored text or canonical path equals `path`; a no-op if none |
-| `POST /fs/uploads-dir` | `{path}` | `Roots` | as `add`, then replaces `uploads_dir` |
-| `GET /fs/dirs/{*path}` | | `Listing` | the picker, below |
+| `GET /fs/favorites` | | `Favorites` | |
+| `POST /fs/favorites/add` | `{path}` | `Favorites` | canonicalized; must be an existing directory; stored canonical; a no-op if a favorite already has that canonical path |
+| `POST /fs/favorites/remove` | `{path}` | `Favorites` | removes every entry whose stored text or canonical path equals `path`; a no-op if none |
+| `POST /fs/uploads-dir` | `{path}` | `Favorites` | as `add`, then replaces `uploads_dir` |
 
 ```text
-Roots = { home: string,                          // canonical $HOME
-          roots: [{ path: string,                // as stored in config.toml
-                    canonical: string | null,    // null: missing or not a directory
-                    ok: bool }],
-          uploadsDir: { path, canonical, ok } }
+Favorites = { home: string,                      // canonical $HOME
+              favorites: [{ path: string,        // as stored in config.toml
+                            canonical: string | null,  // null: missing or not a directory
+                            ok: bool }],
+              uploadsDir: { path, canonical, ok } }
 ```
 
-**The picker** (`/fs/dirs`) lists one directory under `$HOME` at a time; Files' path
-field completes and browses folders outside the roots with it. It is a
-listing ([below](#get-fslistpath)) with the same query, paging and shape, scoped to the
-canonical `$HOME` instead of the roots, returning **directories only**, with no size
-or time. A path, or a symlinked directory, that canonicalizes outside `$HOME` gets
-`403 outside_home`. The add and uploads-dir routes take the same confinement, and
-`$HOME` itself can't be added, so the app can't widen the scope to `$HOME` or past it;
-Jimmy can, by editing `config.toml`. The picker shows directory names outside the
-roots, which the roots' purpose allows: the token reaches them through tmux anyway,
-and the picker returns no file names and no contents.
+The picker's Files side lists `home` first (built in, never stored), then every
+favorite (an entry that isn't `ok` shows as Missing, with a remove), sorted by the
+client, then `uploadsDir` when it is `ok`
+([browser-behaviors.md](client/browser-behaviors.md#files)). The daemon returns the
+favorites in config order. Path completion, in the Files tab and the picker, uses
+`/fs/list` like any folder.
 
 ### Writing `config.toml`
 
@@ -110,7 +102,7 @@ replacement:
 3. Read it, note its `(dev, ino, size, mtime)`, and parse it with `toml_edit`. A file
    that doesn't parse, or that `Config` would refuse, is left alone: `503
    config_unavailable`.
-4. Change only the top-level `roots` or `uploads_dir`. `toml_edit` keeps comments,
+4. Change only the top-level `favorites` or `uploads_dir`. `toml_edit` keeps comments,
    order and unknown keys, so a newer daemon's keys survive an older one's write.
 5. Remove a stale `<name>.tmp`, then create it relative to the open directory with
    `openat`, `O_EXCL` and the exact original mode (new files 0600); write the text and
@@ -129,51 +121,39 @@ truncated text written back. Both windows are microseconds wide; accepted.
 ## Path resolution: `fs::open`
 
 ```text
-fs::open(scope: &Scope, path: &str, want: Want) -> Result<Opened, FsError>
+fs::open(path: &str, want: Want) -> Result<Opened, FsError>
 Want   = Dir | File
-Opened = { file: File, path: String /* canonical */, root: usize /* index into the scope */, meta: Metadata }
+Opened = { file: File, path: String /* canonical */, meta: Metadata }
 ```
 
-`Scope` is a list of canonical directories plus the refusal to answer outside them. It
-is a value, not a bare list of paths, because the picker's refusal differs: the
-effective roots answer `outside_roots`, `[$HOME]` (the picker) answers `outside_home`,
-and `[/]` (path completion, [complete.md](complete.md#paths)) refuses nothing that
-exists. A third `Want`, `Parent`, belongs to v2's writes
-([below](#v2-what-this-must-not-preclude)) and doesn't exist yet. `open` runs on the fs lane (the dir lane for completion listings), and does, in
-order:
+A third `Want`, `Parent`, belongs to v2's writes ([below](#v2-what-this-must-not-preclude))
+and doesn't exist yet. `open` runs on the fs lane (the dir lane for completion
+listings), and does, in order:
 
 1. **Shape.** `path` must be absolute, at most 4,096 bytes and free of NUL; otherwise
    `bad_request`. Paths on the wire are UTF-8 strings, so a non-UTF-8 name can't be
    requested ([listing](#get-fslistpath)).
 2. **Canonicalize** with `realpath`: every symlink and every `..` is resolved against
-   the real tree, so `..` needs no lexical rule and a symlink is judged by where it
-   leads. A missing path is `not_found`. A canonical path that isn't UTF-8 (an
-   in-root link to a non-UTF-8 name) is `bad_request`.
-3. **Scope check.** The canonical path must equal or sit below a scope entry, compared
-   component by component (`Path::starts_with`, so `/a/repo2` is not under `/a/repo`);
-   `root` is the longest match. Otherwise `outside_roots` (`outside_home` for the
-   picker). A symlink inside a root that leads out of every root is refused here; one
-   that leads into another root is followed.
-4. **Open** the canonical path with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC |
+   the real tree, so `..` needs no lexical rule and a symlink is followed like any
+   path (the terminal follows it too). A missing path is `not_found`. A canonical path
+   that isn't UTF-8 (a link to a non-UTF-8 name) is `bad_request`.
+3. **Open** the canonical path, after an `lstat` of it refuses any kind but a regular
+   file or directory (`not_a_file` / `not_a_directory`) so no device is opened, with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC |
    O_NOCTTY`, plus `O_DIRECTORY` for `Dir`. `O_NONBLOCK` keeps a FIFO from blocking
    the thread. `fstat` then refuses anything but a regular file for `File`
    (`not_a_file`) or a directory for `Dir` (`not_a_directory`). `ELOOP` here means
    the last component became a symlink after step 2: `not_found`.
-5. **Re-check the descriptor.** Read its real path (`readlink /proc/self/fd/N` on
-   Linux, `rustix::fs::getpath` on macOS) and repeat step 3 on it. A component swapped
-   for a symlink between steps 2 and 4 is caught here, because the check now names
-   the file actually opened.
+4. **Read the descriptor's real path** (`readlink /proc/self/fd/N` on Linux,
+   `rustix::fs::getpath` on macOS). `Opened.path` is that path, so a component swapped
+   for a symlink between steps 2 and 3 is reported where the file actually is, and the
+   listing's `path` and `parent` are the real ones.
 
 Callers get the descriptor, never a path to open again: listings read the directory
-through it, raw reads `pread` it, uploads create files relative to it. Only a process
-already running as Jimmy can race steps 2 to 4, and it could read the file anyway; the
-re-check costs one syscall and makes the rule exact: **every descriptor the file API
-reads or writes is inside its scope.**
+through it, raw reads `pread` it, uploads create files relative to it.
 
-**`newWindow` and `newSession` `dir` are not root-checked.** The roots scope the file
-API; tmux runs as Jimmy, and the web's start-directory prompt offers the tab's cwd or
-any typed path. The connection calls `fs::check_dir(dir)` on the dir lane, with a 300 ms wait: step
-1's shape rules, then `stat` (following links) must find a directory. It passes `dir` to tmux as given, so
+**`newWindow` and `newSession` `dir` use `fs::check_dir`**, not `open`: tmux runs as
+Jimmy, and the web's start-directory prompt offers the tab's cwd or any typed path.
+The connection calls it on the dir lane, with a 300 ms wait: step 1's shape rules, then `stat` (following links) must find a directory. It passes `dir` to tmux as given, so
 the shell shows the path Jimmy chose. A refusal is `error { req, code: badRequest,
 message }`, the message naming the cause ("not an absolute path", "no such
 directory"). It reads no config, so a broken `config.toml` never blocks a new window.
@@ -193,7 +173,8 @@ error shape (handlers take `Result<Path<…>, PathRejection>`, as `enroll.rs` do
 
 ### `GET /fs/list/{*path}`
 
-Query: `offset` (default 0), `hidden=0|1` (default 0). `fs::open(…, Dir)`, then one
+Query: `offset` (default 0), `hidden=0|1` (default 0). `fs::open(…, Dir)` on any
+directory, `/` included, then one
 scan of the directory through its descriptor, holding the scan slot:
 
 - Read names and `d_type` up to the scan cap, dropping `.` and `..` and, unless
@@ -208,8 +189,7 @@ scan of the directory through its descriptor, holding the scan slot:
 
 ```text
 Listing = { path: string,            // canonical
-            root: string,            // the scope entry it is under (longest match)
-            parent: string | null,   // null when the parent is outside the scope
+            parent: string | null,   // null only at "/"
             total: u32, offset: u32, truncated: bool,
             entries: [Entry] }
 Entry   = { name: string,
@@ -224,12 +204,8 @@ Entry   = { name: string,
 - **Paging** is by offset over a fresh scan: the daemon keeps no cursor or listing
   between requests. If the directory changes between pages an entry can repeat or be
   skipped; pull-to-refresh starts over (no file watcher).
-- **Symlinks** show their target's kind, size and mtime and are marked `link`. The
-  listing doesn't check each target against the roots, so a link that leads out of
-  them is listed with its target's size and mtime (a link to `/etc/passwd` shows that
-  file's). That is intended: roots are a scope, not an authorization boundary
-  ([above](#roots)), and the token reaches the target through tmux anyway. Opening the
-  link gets `outside_roots`.
+- **Symlinks** show their target's kind, size and mtime and are marked `link`. Opening
+  one follows it like any path.
 - **Non-UTF-8 names** are listed with U+FFFD in place of bad bytes and `utf8: false`;
   the web shows them greyed and not openable, since their path can't be sent back.
 - **Hidden files:** dotfiles are left out unless `hidden=1`, which the file manager's
@@ -238,7 +214,7 @@ Entry   = { name: string,
 
 ### `GET /fs/raw/{*path}`
 
-`fs::open(…, File)`, then the bytes, holding a raw-response slot. A directory, FIFO,
+`fs::open(…, File)` on any file, then the bytes, holding a raw-response slot. A directory, FIFO,
 socket or device is `409 not_a_file`; the file manager's web code expects that answer
 when a link leads to a folder. A producer task
 `pread`s 64 KiB chunks from the descriptor (each on the fs lane)
@@ -322,9 +298,8 @@ multipart or JSON. axum's default body limit is off on this route; the handler c
 the cap against `Content-Length` up front, when sent, and against the running count.
 
 1. Take the upload slot (none free: `503 busy` at once).
-2. Create `uploads_dir` (0700) if missing, then load the roots, then `fs::open(…,
-   Dir)` on it, so a directory that didn't exist when the roots were read still
-   counts. An `uploads_dir` that can't be resolved to a directory (neither absolute
+2. Create `uploads_dir` (0700) if missing, then resolve it and `fs::open(…, Dir)`
+   it, so a directory that didn't exist when the config was read still counts. An `uploads_dir` that can't be resolved to a directory (neither absolute
    nor `~/`, or not a directory) answers `409 not_a_directory`.
    On Linux, `fstatfs` on the opened directory descriptor rejects tmpfs and ramfs with
    `409 memory_backed` before a `.part` file is created. On macOS there is no cgroup
@@ -375,8 +350,6 @@ The auth middleware also uses this body for `forbidden`, `auth_required`,
 |---|---|---|
 | 400 | `bad_request` | a path that is relative, too long, has a NUL, doesn't decode, or canonicalizes to non-UTF-8; a bad query value; an upload body that stalled past the idle timeout or broke (the client went away) |
 | 401 | `not_enrolled` | the browser's current Tailscale node has no enrolled device row |
-| 403 | `outside_roots` | the canonical path, or the opened descriptor's, is under no root |
-| 403 | `outside_home` | the picker outside `$HOME`; `roots/add` or `uploads-dir` at or outside it |
 | 403 | `denied` | `EACCES` or `EPERM` |
 | 403 | `bad_origin` | Browser Origin, forwarded host or fetch metadata does not match the canonical Serve origin |
 | 403 | `node_refused` | The current Tailscale node fails a node-lane rule; includes the refusal reason |
@@ -429,9 +402,9 @@ which is why they have a row and why the flush interval is 2 MiB, not larger.
 ## Logging
 
 - **Writes at `info`, by action and canonical path:** an upload's final path and
-  size, a root added or removed, `uploads_dir` changed, a config write retried or
+  size, a favorite added or removed, `uploads_dir` changed, a config write retried or
   refused.
-- **Refusals** (`outside_roots`, `outside_home`, `denied`) at `warn` with the path
+- **Refusals** (`denied`) at `warn` with the path
   asked for.
 - **Reads** (listings, raw ranges) at `debug` only: one video is dozens of requests.
 - **Never** file contents, upload bytes, the client's upload `name` beyond its
@@ -446,10 +419,10 @@ without a disk.
 
 | File | Contents |
 |---|---|
-| `fs/mod.rs` | `Roots::load()` (config read, canonicalization), `FsError` with its status and code |
-| `fs/open.rs` | `fs::open`, `Scope`, `fs::check_dir`, the platform descriptor-path lookup |
+| `fs/mod.rs` | `Favorites::load()` (config read, canonicalization), `FsError` with its status and code |
+| `fs/open.rs` | `fs::open`, `fs::check_dir`, the platform descriptor-path lookup |
 | `fs/slots.rs` | scan, raw-response and upload permits, with waits counted against the fs lane |
-| `fs/list.rs` | the scan; pure sort and page; the picker's directories-only filter |
+| `fs/list.rs` | the scan; pure sort and page |
 | `fs/raw.rs` | pure `parse_range` and `If-Range`; the chunk producer; ETags come from `files::Stamp` |
 | `fs/mime.rs` | the extension table |
 | `fs/upload.rs` | pure name generation; part file, flush, rename, startup sweep |
@@ -458,9 +431,9 @@ without a disk.
 Wire types go in `src/proto/fs.rs` and are generated for TypeScript like the WebSocket
 messages ([daemon-core.md §5.5](daemon-core.md#55-type-generation)); Swift hand-writes
 only the upload response. New dependencies: the `toml_edit` crate and axum's `query`
-feature. Tests run `fs::open` against a temp tree with symlinks into and out of the
-roots, `..`, nested roots, a symlinked root, a FIFO and a non-UTF-8 name, and swap a
-component for a symlink between canonicalize and open to exercise step 5.
+feature. Tests run `fs::open` against a temp tree with symlinks, `..`, a FIFO and a non-UTF-8
+name, and swap a component for a symlink between canonicalize and open to exercise
+step 4.
 
 ## v2: what this must not preclude
 
@@ -468,11 +441,11 @@ Edit, new file and rename ([plan.md](plan.md#file-manager)) come as `PUT
 /fs/file/{*path}` (`If-Match` the ETag above; `412 changed` if it moved) and `POST
 /fs/create` and `/fs/rename` (`409 exists`). All go through `fs::open(…, Parent)`.
 `Want::Parent` is built with the first of these routes, not before. It checks the
-**parent directory** as in steps 1 to 5, returns its descriptor, and requires the last
+**parent directory** as in steps 1 to 4, returns its descriptor, and requires the last
 component to be a plain name (no `/`, not `.` or `..`). Every write
 is then relative to that descriptor (`openat` with `O_CREAT | O_EXCL | O_NOFOLLOW`; a
-temp file, `fsync` and `renameat` for saves; `RENAME_NOREPLACE` for renames), so no
-write can follow a symlink out of a root. The ETag, the URL-path form, the error codes
+temp file, `fsync` and `renameat` for saves; `RENAME_NOREPLACE` for renames), so a write goes where the
+descriptor is. The ETag, the URL-path form, the error codes
 and the upload's part-file-then-rename shape carry over; resumable uploads extend the
 part file at an offset.
 

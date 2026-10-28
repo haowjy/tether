@@ -5,6 +5,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import { openSessionRow } from "../shared/home";
 import { startStack, type Laptop, type Stack, type TmuxVersion } from "../shared/stack";
 
 const VERSIONS = (process.env["TETHER_E2E_TMUX"] ?? "3.4,3.7b").split(",") as TmuxVersion[];
@@ -39,7 +40,7 @@ for (const version of VERSIONS) {
     async function openTerminal(page: Page, session: string, connected = true, viewport = DESKTOP): Promise<void> {
       await page.setViewportSize(viewport);
       await page.goto(`${stack.url}/#/`);
-      await page.getByRole("button", { name: new RegExp(`^${session}\\b`) }).click();
+      await openSessionRow(page, session);
       if (!connected) {
         await expect(page.locator("[aria-current='true']").first()).toBeVisible();
         return;

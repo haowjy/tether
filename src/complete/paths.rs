@@ -1,5 +1,5 @@
 //! Path chips (complete.md "Paths"): the current word split into a directory and a
-//! name prefix, the directory listed through `fs::open` with `/` as the scope. Names,
+//! name prefix, the directory listed through `fs::open`. Names,
 //! never contents, from any directory Jimmy can read, as the shell's own Tab does.
 //! Splitting is pure; inserts are escaped by `chip`. The last directory's listing is
 //! kept while a fresh open shows the same mtime.
@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::{CHIPS, chip};
 use crate::files::Stamp;
 use crate::fs::list::{Filter, Scan, fold_cmp};
-use crate::fs::{FsError, Scope, Want};
+use crate::fs::{FsError, Want};
 use crate::proto::complete::{Chip, ChipSource};
 use crate::proto::fs::EntryKind;
 
@@ -60,15 +60,12 @@ impl Listing {
     /// `dir`'s names: `cached` while it is the same directory with the same mtime.
     /// Blocks.
     pub fn load(dir: &str, cached: Option<Arc<Self>>) -> Result<Arc<Self>, FsError> {
-        let opened = crate::fs::open(&Scope::everything(), dir, Want::Dir)?;
+        let opened = crate::fs::open(dir, Want::Dir)?;
         let stamp = Stamp::of(&opened.meta);
         if let Some(cached) = cached.filter(|c| c.path == opened.path && c.stamp == stamp) {
             return Ok(cached);
         }
-        let all = Filter {
-            hidden: true,
-            dirs_only: false,
-        };
+        let all = Filter { hidden: true };
         let scan = Scan::read(&opened, all).map_err(FsError::io)?;
         Ok(Arc::new(Self {
             path: opened.path,
@@ -178,7 +175,7 @@ mod tests {
         assert_eq!(chips(".").len(), 2);
         assert!(chips("li").is_empty());
 
-        // Outside every root and `$HOME`: names still come, as the shell's Tab lists.
+        // Outside `$HOME`: names still come, as the shell's Tab lists.
         let etc = Listing::load("/etc/", None).expect("listed");
         assert!(etc.chips("pass").iter().any(|c| c.label == "passwd"));
         // A file isn't a directory to list.

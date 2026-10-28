@@ -11,9 +11,8 @@ import { EmptyState } from "../../ui/primitives/EmptyState";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { Spinner } from "../../ui/primitives/Spinner";
 import { shorten } from "../../files/format";
-import { AddThisFolder } from "./AddThisFolder";
-import { RemoveFolderDialog } from "./FolderDialogs";
-import { DirList, RootsList } from "./FolderList";
+import { FavoriteToggle } from "./FavoriteToggle";
+import { DirList, MissingFolder } from "./FolderList";
 import { PathField } from "./PathField";
 import { Preview } from "./Preview";
 import { scrollKey, startUpload, type FilesSession } from "./session";
@@ -30,7 +29,7 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
   const { browser } = session;
   const view = useStore(browser, (s) => s);
   const wanted = tab.place;
-  const { place, pages, roots, loading, error } = view;
+  const { place, pages, favorites, loading, error } = view;
   const scroller = useRef<HTMLDivElement>(null);
   // While the path field is being typed in, its completions are the list.
   const [finding, setFinding] = useState(false);
@@ -47,7 +46,7 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
 
   const open = (to: FilesPlace): void => { app.openPlace(to); };
   const up = parentPlace(view);
-  const listed = pages !== null && (place.kind === "dir" ? pages.path === place.path : place.kind === "file" && pages.path === parentOf(place.file.path));
+  const listed = pages !== null && (place.kind === "dir" ? pages.path === place.path : pages.path === parentOf(place.file.path));
   const listingVisible = place.kind === "dir" && listed && !error && !finding;
 
   // Back finds a folder's list scrolled where it was left.
@@ -65,25 +64,19 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
     }
   };
 
-  const home = roots?.home ?? null;
-  const title = place.kind === "roots" ? "Files" : place.kind === "dir" ? baseName(place.path) : place.file.name;
+  const home = favorites?.home ?? null;
+  const title = place.kind === "dir" ? baseName(place.path) : place.file.name;
   const rest = place.kind === "dir" ? shorten(place.path, home) : "";
 
   let body;
   if (error) {
-    body = (
+    // A folder that vanished (moved, deleted) still has a way up.
+    const gone = place.kind === "dir" && error.code === "not_found";
+    body = gone ? (
+      <MissingFolder {...(up && { parent: { name: baseName(up.path), onOpen: () => { app.toPlace(up); } } })} />
+    ) : (
       <EmptyState icon="alert" title={describeError(error, session.hostName)} action={<Button onClick={() => { void browser.reload(); }}>Try again</Button>} />
     );
-  } else if (place.kind === "roots") {
-    body = roots ? (
-      <RootsList
-        roots={roots}
-        hostName={session.hostName}
-        onOpen={open}
-        onAdd={() => { app.focus.focusTarget("path", true); }}
-        onRemove={(path, from) => { app.openOverlay({ screen: "files", name: "removeFolder", params: { path } }, from); }}
-      />
-    ) : <Loading what="Loading folders" />;
   } else if (place.kind === "dir") {
     body = listed ? null : <Loading what="Loading the folder" />;
   } else {
@@ -100,12 +93,13 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
         </div>
         {place.kind !== "file" && (
           <div class={styles.actions}>
+            {listed && !error && <FavoriteToggle session={session} path={pages.path} />}
             <IconButton icon="refresh" label="Refresh" disabled={loading} onClick={() => { void browser.reload(); }} />
             <Button icon="upload" onClick={() => { startUpload(app, session); }}>Upload</Button>
           </div>
         )}
       </header>
-      {place.kind !== "file" && roots && <PathField session={session} rest={rest} onEditing={setFinding} onOpen={open} />}
+      {place.kind !== "file" && favorites && <PathField session={session} rest={rest} onEditing={setFinding} onOpen={open} />}
       {!finding && <UploadPanel session={session} onPreview={(path) => { open({ kind: "file", path }); }} />}
       {/* The list stays mounted under a preview, so Back returns to it as it was. */}
       {listed && !error && (
@@ -116,7 +110,6 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
           hidden={!listingVisible}
           onScroll={(e) => { session.scroll.set(scrollKey(tab.id, pages.path), e.currentTarget.scrollTop); }}
         >
-          {pages.via === "dirs" && <AddThisFolder session={session} path={pages.path} />}
           <DirList
             path={pages.path}
             entries={pages.entries}
@@ -127,7 +120,6 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
             onOpen={open}
             onMore={() => { void browser.more(); }}
             onToggleHidden={() => { void browser.toggleHidden(); }}
-            foldersOnly={pages.via === "dirs"}
             {...(up?.kind === "dir" && { parent: { name: baseName(up.path), onOpen: () => { app.toPlace(up); } } })}
           />
         </div>
@@ -136,7 +128,6 @@ export function FilesPane({ session, tab }: { session: FilesSession; tab: FilesT
         <Preview session={session} file={place.file} onLink={onLink} />
       )}
       {body && !finding && <div class={styles.scroll}>{body}</div>}
-      <RemoveFolderDialog session={session} />
     </div>
   );
 }

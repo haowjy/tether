@@ -4,18 +4,18 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// `GET /fs/roots` and the answer to every Settings change.
+/// `GET /fs/favorites` and the answer to every Settings change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct Roots {
-    /// The canonical `$HOME`: the picker starts here.
+pub struct Favorites {
+    /// The canonical `$HOME`: the picker lists it first.
     pub home: String,
-    pub roots: Vec<RootStatus>,
-    pub uploads_dir: RootStatus,
+    pub favorites: Vec<PlaceStatus>,
+    pub uploads_dir: PlaceStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct RootStatus {
+pub struct PlaceStatus {
     /// As stored in `config.toml`.
     pub path: String,
     /// Null when the entry is missing, isn't a directory, or isn't absolute or `~/`.
@@ -23,22 +23,20 @@ pub struct RootStatus {
     pub ok: bool,
 }
 
-/// The body of `POST /fs/roots/add`, `/fs/roots/remove` and `/fs/uploads-dir`.
+/// The body of `POST /fs/favorites/add`, `/fs/favorites/remove` and `/fs/uploads-dir`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PathBody {
     pub path: String,
 }
 
-/// `GET /fs/list/{*path}`, and the picker's `GET /fs/dirs/{*path}`.
+/// `GET /fs/list/{*path}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Listing {
     /// Canonical.
     pub path: String,
-    /// The root it is under (the longest match), or `$HOME` for the picker.
-    pub root: String,
-    /// Null when the parent is outside every root.
+    /// Null only at `/`.
     pub parent: Option<String>,
-    /// Entries scanned, after the hidden and directories-only filters.
+    /// Entries scanned, after the hidden filter.
     pub total: u32,
     pub offset: u32,
     /// The directory has more entries than one scan reads.
@@ -58,7 +56,7 @@ pub struct Entry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub size: Option<u64>,
-    /// Unix seconds; absent for `broken` and in the picker.
+    /// Unix seconds; absent for `broken`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mtime: Option<i64>,
