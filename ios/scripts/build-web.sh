@@ -28,5 +28,8 @@ fi
 pnpm --dir "$REPO_DIR/web" run build
 
 destination="${TARGET_BUILD_DIR:?Xcode must set TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH:?Xcode must set UNLOCALIZED_RESOURCES_FOLDER_PATH}/WebUI"
+# ditto merges into what is there: without the rm, every earlier build's hashed assets stay
+# in the app.
+rm -rf "$destination"
 mkdir -p "$destination"
 ditto "$REPO_DIR/web/dist" "$destination"
