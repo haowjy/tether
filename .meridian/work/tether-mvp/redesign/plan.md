@@ -245,3 +245,31 @@ keep their default (opus). Frontend: "probably sonnet is enough, maybe we need o
 - Slice 5 re-check p359: security holds (no way around the loosening gate); one Medium
   regression, the second round of "sizer inputs while hidden": fixed in `cb34f11` (p360)
   with one pending-until-laid-out rule; lead read the diff. Slices 1-6 complete.
+- Pushed `163026b`: slices 1-6 on main.
+- Slice 7 design p361 (uncommitted docs); review p362: request changes, no redesign
+  (hook as the only truth, poll = the existing listing, guarded install, 3.4 name
+  spoof). Jimmy, 2026-10-27: "Hook only" (drop the stream BEL scan; the on-screen tab
+  counts as seen). Revision 2: p363.
+- Bell design re-check p364: ready after one listing-format edit (`n:` framing fails:
+  tmux counts stored bytes, 3.4 escapes on output; a line-break substitution in the
+  format and a numeric counter make every line one record). Spec committed `d466b50`
+  (p365, local). Build: p366. Hook reaches Jimmy's live tmux only after his restart.
+- Slice 7 built (p366): `241a7ea`, `55df1a2`, `9070fc5`; lead calls: persist seen marks
+  (in-memory lost the main use: a bell while the phone was away), drop the added
+  tmux_real case: `0e2b128` (p367). Budget 201 KB accepted. Reviews: daemon p368, web p369.
+- Slice 7 reviews: daemon p368 (blocking: the install guard read the most recent
+  session's hooks, so a session-level hook hid the global 9100 and a List overwrote a
+  user's entry; fix `set-option -goq`), web p369 (blocking: dot inside the truncating
+  label; one per-host rule for first-met sessions; Codex sends OSC 9 in tmux). Lead: an
+  overlay over a terminal tab still counts it seen. Fixes: p371.
+- Slice 7 fixes `37e17ae`, `f3d1679` (p371). Re-checks: daemon p372 fit (optional:
+  drop the inbox before shut down), web p373 one blocker (a `bell` before a page's first
+  listing made "heard" true, so that listing dotted every session that ever rang). Lead
+  fixed both in `9f21420`: `HostBells.listed`, kept across outage/restart; scenarios
+  A-E plus new-session and outage checked in a throwaway vitest, deleted. Preflight of
+  d466b50..9f21420, then push. Live hook rollout waits for Jimmy's tmux restart.
+- Preflight caught `37e17ae` not building alone (optional `bell.server` in generated
+  types, web handled it only in `f3d1679`). Rebuilt with plumbing, tip tree identical:
+  `98ee0d5` (+`?? ""`), `d7021ae`, `6d47e05`. Pushed `163026b..6d47e05`: all seven slices
+  on main. Remaining: iPhone device pass (slices 1-7), live bell hook after Jimmy's tmux
+  restart, homebox 443 restore after meridian-flow#1167.
