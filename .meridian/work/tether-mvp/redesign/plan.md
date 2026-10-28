@@ -276,3 +276,6 @@ keep their default (opus). Frontend: "probably sonnet is enough, maybe we need o
 - 2026-10-27 20:36: Jimmy restarted homebox tmux (3.8) and merged meridian-flow#1167.
   tether `3e2a594` installed as homebox user service; bell hook live at 9100. Details:
   `serve-443-coexistence.md` "Restored".
+- 2026-10-27: Release app from `2f178e3` installed on Jimmy's iPhone (slices 1-7, bridge
+  7). Found and fixed on the way: build-web.sh's ditto merged old builds into WebUI (9
+  builds, 12 MB → 1, 5.8 MB), `2f178e3`. Device checklist (ios-shell.md) is Jimmy's.
