@@ -142,7 +142,8 @@ export class FocusController extends Store<FocusView> implements FocusPort {
       const element = document.createElement("div");
       element.hidden = true;
       const announce = (type: "focus" | "blur"): void => {
-        element.dispatchEvent(new Event(type));
+        // A FocusEvent, so `relatedTarget` is null as a real element's blur has it: `undefined` would match an unregistered target and read as a hand-off.
+        element.dispatchEvent(new FocusEvent(type));
         this.rest();
       };
       element.focus = () => { announce("focus"); };
