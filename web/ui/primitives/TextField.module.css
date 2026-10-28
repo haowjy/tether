@@ -9,6 +9,7 @@
   border-radius: var(--radius-2);
   background: var(--color-bg-sunken);
   color: var(--color-text);
+  font-size: var(--text-field);
 }
 .input::placeholder,
 .searchInput::placeholder { color: var(--color-text-muted); opacity: 1; }

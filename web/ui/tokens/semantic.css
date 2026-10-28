@@ -34,6 +34,8 @@
   --font-mono: "tether-mono", "tether-symbols", ui-monospace, Menlo, Consolas, monospace;
   --text-meta: var(--font-size-1);
   --text-small: var(--font-size-2);
+  /* Every text field: Safari zooms into a focused field set smaller than 16px. */
+  --text-field: 16px;
   --text-heading: var(--font-size-5);
   --text-title: var(--font-size-6);
   --weight-medium: 560;

@@ -28,7 +28,7 @@
   background: transparent;
   color: transparent;
   caret-color: transparent;
-  font-size: 16px;
+  font-size: var(--text-field);
   opacity: 0.01;
 }
 .input:focus { outline: none; }
