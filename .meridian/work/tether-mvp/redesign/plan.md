@@ -279,3 +279,11 @@ keep their default (opus). Frontend: "probably sonnet is enough, maybe we need o
 - 2026-10-27: Release app from `2f178e3` installed on Jimmy's iPhone (slices 1-7, bridge
   7). Found and fixed on the way: build-web.sh's ditto merged old builds into WebUI (9
   builds, 12 MB → 1, 5.8 MB), `2f178e3`. Device checklist (ios-shell.md) is Jimmy's.
+- 2026-10-27 evening, Jimmy on device: tab × moved neighbours (fixed `525fbf4`: every pill
+  keeps the slot); blank band above the keyboard (fixed `5f798f6`: the app wrote the
+  full-screen 34 pt into --safe-bottom; bottom padding is now env(), which is 0 above the
+  docked keyboard). "did u even review the file choosing workflow?": no, reviews covered
+  the model only. Walk p374 found friction; fixes `471ff30` (p375), `a88fd5a` (lead: busy
+  is not a reason), `7293612` (p377), `c9daf0a` (lead: root-step rule tested the row,
+  pill labels shrink). Reviews p376, p378. Pushed to `c9daf0a`, installed on the iPhone.
+  Device-unverified: keyboard band, all Files fixes on a real phone.
