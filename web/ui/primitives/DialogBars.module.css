@@ -7,8 +7,9 @@
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
 }
 .title .heading { flex: 1; }
-/* A sheet's own top row: no title bar, the controls it is given. */
-.tools { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-2); }
+/* A sheet's own top rows: no title bar, the controls each is given. Rows sit close; the first clears the sheet's edge. */
+.tools { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3) var(--space-1); }
+.tools:first-child { padding-top: var(--space-2); }
 .page {
   display: flex;
   align-items: center;

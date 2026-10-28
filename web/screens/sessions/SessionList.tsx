@@ -30,6 +30,8 @@ export interface ActiveWindows {
 
 export interface SessionListProps {
   hostName: string;
+  /** Several servers are listed: the block carries its server's name. */
+  titled: boolean;
   /** The host can't be reached at all (admission), as opposed to a listing that failed. */
   unreachable: boolean;
   /** The daemon can't read tmux's bell state on this host. */
@@ -44,7 +46,7 @@ export interface SessionListProps {
 }
 
 export function SessionList(props: SessionListProps) {
-  const { hostName, unreachable, bellsUnavailable, sessions, query, rowOf, active, onOpen, onRetry } = props;
+  const { hostName, titled, unreachable, bellsUnavailable, sessions, query, rowOf, active, onOpen, onRetry } = props;
   const listing = sessions?.listing;
   const failure = sessions?.failure ?? null;
   let status: ComponentChildren = null;
@@ -55,7 +57,8 @@ export function SessionList(props: SessionListProps) {
         <Button variant="quiet" onClick={onRetry}>Retry</Button>
       </>
     );
-  } else if (sessions?.updating && listing !== undefined) {
+  } else if (sessions?.updating && listing !== undefined && titled) {
+    // Only beside a heading: on a line of its own, "Updating" would shift the rows about to be tapped.
     status = <span class={styles.updating}>Updating</span>;
   }
   if (bellsUnavailable) {
@@ -143,6 +146,6 @@ export function SessionList(props: SessionListProps) {
   }
 
   return (
-    <HostSection hostName={hostName} label={`Sessions on ${hostName}`} status={status}>{body}</HostSection>
+    <HostSection hostName={hostName} titled={titled} label={`Sessions on ${hostName}`} status={status}>{body}</HostSection>
   );
 }

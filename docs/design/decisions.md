@@ -4008,7 +4008,7 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   others. He wanted "1 shared thing that can open a session or a file".
 - **What:** (1) one picker, a Sessions / Files switch (a tablist, 44 px tabs), a search that filters
   the side showing ("Find a session" / "Find a folder"), rows grouped by server, and one + beside the
-  search: New session on Sessions, New Files tab on Files. It is the desktop popover, the phone half
+  switch: New session on Sessions, New Files tab on Files. It is the desktop popover, the phone half
   sheet and the full-height sheet from Home: one component, three containers. (2) The Files side
   lists each server's roots (Uploads included) with the Files tab's own roots list; a root opens a
   **new** Files tab at that folder; open Files tabs are not listed. Folder editing stays in the Files
@@ -4026,11 +4026,21 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   tabs survives in the bottom strip, whose pills still switch the tab behind the sheet and keep it open.
 - **Home button** (Jimmy, same day): the phone sheet's Home moves to the resting dock row, before
   the current-tab button, on Terminal and Files alike (the keyboard-up row is unchanged). The
-  current-tab button shrinks to fit; the row keeps its height. The strip's + is gone: + sits beside search.
+  current-tab button shrinks to fit; the row keeps its height. The strip's + is gone: + sits beside the switch (as moved in "Density" below).
 - **Rejected:** a footer or menu per container (three places for one verb); listing open Files tabs
   in the picker (they are tabs: the strip and Home hold them); a second roots list for the picker;
   keeping × in the picker (a second editing surface for the roots, and a fetch-then-remove flow in an overlay that
   closes on a pick); fetching roots at app start (every byte costs on a bad link); leaving the half sheet open on a pick for sessions only.
+- **Density** (Jimmy, same day, real iPhone: "so much lost space"; about 200 pt before the first row):
+  the switch is a segmented control, 32 pt tall on touch with a 44 pt hit area (the Choice
+  primitive, so Settings' choices match); the + moves beside the switch and the search gets its own
+  full-width row (switch and search read as one group; ~8 pt between rows). With one server shown
+  (one listable, or a server's own sheet, whose title already names it) the list has no "On X"
+  heading; with several it stays, tighter. A root that is Missing or unopenable is left out of the
+  picker (the Files tab keeps it to fix or remove); with none usable the side says "No folders to show".
+  The half sheet's tab strip has 8 pt above its pills and only the safe-area inset below. With no
+  heading, "Updating" is not shown (it would shift the rows). **Rejected:** a one-row header with the
+  switch beside the search (too tight at 390 pt); a heading kept for one server (the lost space).
 - **Review fixes** (same day): the Files-side + is named for what it does, "New Files tab" (Add folder
   lives in the Files tab; on desktop focus lands on the new tab's pill). The remembered side is one value for the page,
   shared by the three containers (`sessions/pickerMemory.ts`), not one per container. Each server's roots are

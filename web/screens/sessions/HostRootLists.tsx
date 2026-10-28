@@ -17,7 +17,7 @@ import type { Commit } from "./SessionPicks";
 
 type Answer = { roots: Roots } | { error: HttpRefusal } | null;
 
-function HostRoots({ host, query, commit }: { host: HostClient; query: string; commit: Commit }) {
+function HostRoots({ host, titled, query, commit }: { host: HostClient; titled: boolean; query: string; commit: Commit }) {
   const app = useApp();
   const name = host.name ?? "the server";
   const { hostId } = host;
@@ -46,9 +46,10 @@ function HostRoots({ host, query, commit }: { host: HostClient; query: string; c
   } else {
     body = <RootsList roots={answer.roots} hostName={name} query={query} onOpen={(place) => { commit(() => { app.openFiles(hostId, place); }); }} />;
   }
-  return <HostSection hostName={name} label={`Folders on ${name}`}>{body}</HostSection>;
+  return <HostSection hostName={name} label={`Folders on ${name}`} titled={titled}>{body}</HostSection>;
 }
 
 export function HostRootLists({ query, only, commit }: { query: string; only?: string | undefined; commit: Commit }) {
-  return <>{useListedHosts(only).map((h) => <HostRoots key={h.entry.handle} host={h} query={query} commit={commit} />)}</>;
+  const hosts = useListedHosts(only);
+  return <>{hosts.map((h) => <HostRoots key={h.entry.handle} host={h} titled={hosts.length > 1} query={query} commit={commit} />)}</>;
 }

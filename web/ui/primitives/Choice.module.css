@@ -1,18 +1,20 @@
-.group { display: flex; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-bg-raised); }
-/* No clipping on the group: the 2 px focus ring sits outside the option. The ends round themselves to the group's corners. */
-.option:first-child { border-radius: calc(var(--radius-2) - 1px) 0 0 calc(var(--radius-2) - 1px); }
-.option:last-child { border-radius: 0 calc(var(--radius-2) - 1px) calc(var(--radius-2) - 1px) 0; }
+/* A segmented control: a track with the chosen option as a raised segment. Its visual height is --size-segment; each option's hit area grows to --size-target without growing the control. */
+.group { display: flex; flex: 1; min-width: 0; width: 100%; box-sizing: border-box; padding: 2px; gap: 2px; border-radius: var(--radius-2); background: var(--color-bg-hover); }
 .option {
+  position: relative;
   flex: 1 1 0;
+  min-width: 0;
+  height: calc(var(--size-segment) - 4px);
   border: 0;
+  border-radius: calc(var(--radius-2) - 2px);
   background: transparent;
   font: inherit;
-  min-height: var(--size-target);
+  line-height: 1;
   padding: 0 var(--space-2);
   color: var(--color-text-muted);
   white-space: nowrap;
   transition: background var(--duration-1) var(--ease-out);
 }
-.option + .option { border-left: 1px solid var(--color-border); }
-.option:hover { background: var(--color-bg-hover); color: var(--color-text); }
+.option::after { content: ""; position: absolute; inset: calc((var(--size-segment) - 4px - var(--size-target)) / 2) 0; }
+.option:hover { color: var(--color-text); }
 .selected, .selected:hover { background: var(--color-bg-selected); color: var(--color-text); font-weight: var(--weight-medium); }

@@ -32,8 +32,8 @@
   background: var(--sheet-bg);
 }
 .sheet .body { padding-bottom: calc(var(--space-4) + var(--safe-bottom)); }
-/* A footer carries the safe area, which a lifted sheet has the keyboard under instead. */
-.footer { flex: none; padding: var(--space-3) var(--space-3) calc(var(--space-3) + max(0px, var(--safe-bottom) - var(--keyboard-inset))); border-top: 1px solid var(--color-border); }
+/* A footer carries the safe area, which a lifted sheet has the keyboard under instead; the safe area is its bottom padding when it is deeper than --space-2. */
+.footer { flex: none; padding: var(--space-2) var(--space-3) max(var(--space-2), calc(var(--safe-bottom) - var(--keyboard-inset))); border-top: 1px solid var(--color-border); }
 .panel:has(> .footer) .body { padding-bottom: var(--space-3); }
 .sheet[open] { animation: rise var(--duration-2) var(--ease-out); }
 @keyframes rise { from { translate: 0 24px; opacity: 0; } }

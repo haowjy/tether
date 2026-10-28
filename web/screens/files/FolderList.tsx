@@ -44,7 +44,8 @@ export function RootsList({ roots, hostName, onOpen, onAdd, onRemove, query = ""
   ].map((row) => ({ ...row, label: shorten(row.entry.canonical ?? row.entry.path, roots.home) }));
   const usable = rows.filter((r) => r.entry.ok && r.entry.canonical !== null);
   const needle = query.trim().toLowerCase();
-  const shown = rows.filter((r) => r.label.toLowerCase().includes(needle));
+  // The picker only opens roots, so it leaves out the ones that can't be opened; the Files tab keeps them to fix or remove.
+  const shown = (onRemove ? rows : usable).filter((r) => r.label.toLowerCase().includes(needle));
   const add = onAdd && (
     <Button icon="plus" focusTarget="addFolder" onClick={onAdd}>Add folder…</Button>
   );

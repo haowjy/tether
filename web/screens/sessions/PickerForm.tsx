@@ -1,5 +1,5 @@
 // The picker (browser-behaviors.md "Picker (desktop) and picker sheet (phone)"): a Sessions / Files
-// switch, a search that filters the side showing, and + beside it, over that side's list. One
+// switch, and + for the side showing, then a search that filters it, over that side's list. One
 // component for the desktop popover, the phone half sheet and a server's full-height sheet; those
 // are `Picker`, `Sessions` and `ServerSheet`, each only a container and what it adds (a Back, a
 // tab strip). Any pick closes the picker and then acts, so the tab it opens gets focus. A pick
@@ -50,8 +50,23 @@ export function PickerForm({ open, onClose, title, variant, returnFocusTo, foote
   const host = only === undefined ? active : own;
   const reason = reasonOf(host);
   const hostId = host?.hostId;
-  const switcher = <Choice as="tabs" label="Open from" options={SIDES} value={side} onChange={(s) => { memory.setSide(s); }} panel={panel} />;
   const plus = side === "sessions" ? "New session" : "New Files tab";
+  // Row one: the switch, filling the middle, and + for the side showing; Back leads it on a full-height sheet.
+  const controls = (
+    <>
+      <Choice as="tabs" label="Open from" options={SIDES} value={side} onChange={(s) => { memory.setSide(s); }} panel={panel} />
+      <IconButton
+        icon="plus"
+        label={reason ?? plus}
+        disabled={reason !== undefined}
+        onClick={(e) => {
+          const opener = e.currentTarget;
+          // The reason covers a missing server or id: nothing runs without one.
+          if (host && hostId) commit(() => { if (side === "sessions") openNewSession(app, host, opener); else app.openFiles(hostId); });
+        }}
+      />
+    </>
+  );
   return (
     <Dialog
       open={open}
@@ -61,19 +76,9 @@ export function PickerForm({ open, onClose, title, variant, returnFocusTo, foote
       onClose={onClose}
       header={
         <>
-          {back === undefined ? <ToolBar>{switcher}</ToolBar> : <PageBar back={back} onBack={onClose}>{switcher}</PageBar>}
+          {back === undefined ? <ToolBar>{controls}</ToolBar> : <PageBar back={back} onBack={onClose}>{controls}</PageBar>}
           <ToolBar>
             <SearchField label={FIND[side]} placeholder={FIND[side]} value={query} onInput={setQuery} class={styles.search} {...(searchFocus && { "data-initial-focus": "" })} />
-            <IconButton
-              icon="plus"
-              label={reason ?? plus}
-              disabled={reason !== undefined}
-              onClick={(e) => {
-                const opener = e.currentTarget;
-                // The reason covers a missing server or id: nothing runs without one.
-                if (host && hostId) commit(() => { if (side === "sessions") openNewSession(app, host, opener); else app.openFiles(hostId); });
-              }}
-            />
           </ToolBar>
         </>
       }

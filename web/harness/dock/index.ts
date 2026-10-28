@@ -27,6 +27,19 @@ export const fixtures: Fixtures = {
   dockEmpty: { daemon: (d) => { d.listing = LISTING; } },
   /** The sessions overlay over a live tab: several sessions, the active one with three windows ("here" and its windows), another open, a Files tab in the strip. The overlay name picks the form, so this is the half-height sheet in either layout. */
   sessions: { options: () => ({ workspace: WITH_FILES }), openActive: true, overlay: SHEET, daemon: (d) => { d.listing = SEVERAL; d.watch = "ok"; serveTree(d); } },
+  /** The half-height sheet with two servers listed: each side groups its list by server. */
+  sessionsTwoServers: {
+    options: () => ({
+      workspace: WITH_FILES,
+      hosts: [
+        { handle: "h1", hostId: "h-pop", name: "pop-os", pageOrigin: null },
+        { handle: "h2", hostId: "h-mac", name: "jimmys-macbook-air", pageOrigin: null },
+      ],
+    }),
+    openActive: true,
+    overlay: SHEET,
+    daemon: (d) => { d.listing = SEVERAL; d.watch = "ok"; serveTree(d); },
+  },
   /** The overlay over a Files tab: no session reads "here". */
   sessionsOnFiles: {
     options: () => ({ workspace: { ...WITH_FILES, active: "files-1" } }),

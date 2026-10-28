@@ -35,6 +35,7 @@ export function HostSessionLists({ query, only, active, onOpen }: HostSessionLis
           <SessionList
             key={handle}
             hostName={h.name ?? "the server"}
+            titled={hosts.length > 1}
             unreachable={h.admission.kind === "unreachable"}
             bellsUnavailable={bellsUnavailable(bells, h.hostId)}
             sessions={state.hosts[handle]}

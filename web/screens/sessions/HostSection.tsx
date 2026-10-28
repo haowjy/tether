@@ -1,5 +1,6 @@
 // One server's block in the picker: "On pop-os" and its status, then the side's list. Both sides
-// (sessions, folders) draw their servers the same way.
+// (sessions, folders) draw their servers the same way. The heading tells servers apart, so it is
+// drawn only when several are listed; a lone server's status stands on its own line when it has one.
 import type { ComponentChildren } from "preact";
 import { useAppView } from "../../app/context";
 import type { HostClient } from "../../net/hosts";
@@ -14,13 +15,25 @@ export function useListedHosts(only?: string): HostClient[] {
   return useAppView((v) => v.hosts).filter((h) => LISTABLE.has(h.admission.kind) && (only === undefined || h.entry.handle === only));
 }
 
-export function HostSection({ hostName, label, status, children }: { hostName: string; label: string; status?: ComponentChildren; children: ComponentChildren }) {
+interface HostSectionProps {
+  hostName: string;
+  label: string;
+  /** Several servers are listed: head this one's block with its name. */
+  titled: boolean;
+  status?: ComponentChildren;
+  children: ComponentChildren;
+}
+
+export function HostSection({ hostName, label, titled, status, children }: HostSectionProps) {
+  const note = <span class={styles.status} role="status">{status}</span>;
   return (
     <section class={styles.section} aria-label={label}>
-      <div class={styles.heading}>
-        <h2 class={styles.title}>On {hostName}</h2>
-        <span class={styles.status} role="status">{status}</span>
-      </div>
+      {titled ? (
+        <div class={styles.heading}>
+          <h2 class={styles.title}>On {hostName}</h2>
+          {note}
+        </div>
+      ) : note}
       {children}
     </section>
   );

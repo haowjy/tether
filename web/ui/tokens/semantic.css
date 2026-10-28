@@ -81,6 +81,7 @@
 :root[data-density="compact"] {
   --space-gutter: var(--space-4);
   --size-target: 32px;
+  --size-segment: 24px;
   --text-body: var(--font-size-3);
   --term-font-size: 13px;
 }
@@ -93,6 +94,7 @@
 :root[data-density="touch"] {
   --space-gutter: var(--space-4);
   --size-target: 44px;
+  --size-segment: 32px;
   --text-body: var(--font-size-4);
   --term-font-size: 12px;
 }

@@ -97,7 +97,7 @@ Returning from the background keeps the screen the user left.
 - Selecting a tab activates it; other tabs remain open. Opening a session already represented by a tab activates that tab. Implementation identity must use server/session IDs, not mutable display names.
 - **The tab follows its session.** When the session's current window changes (prefix-n on the laptop, the window switcher below, a window exiting, a script), the tab shows the new window: its snapshot replaces the old one in place and the label changes. The tab, its draft and its place in the tab order stay. Typing, the line field, paste and an inserted path go to the window the tab is showing on this screen, so keys sent just before a change made elsewhere still reach the window the user was looking at. Opening or activating a tab enters Terminal through the router; desktop focus lands on the terminal after that screen is rendered.
 - Closing the active tab activates its right-hand neighbour, or the left-hand neighbour if it was last. Only the active tab shows ×, on desktop and in the phone sheet; every tab keeps the space for one, so changing tabs never moves the others. It closes that tether tab, never its tmux session or process. Scroll the active tab into view. Closing the last tab returns Home. Creation-dialog cancellation/Escape restores focus to its opener.
-- The resting bar's Home button and the system back gesture return to Home, preserving open tabs and active selection. Desktop Home is in the top row. Desktop + opens the picker; the phone current-tab button opens the picker sheet. In the picker, + beside search is New session on Sessions and New Files tab on Files.
+- The resting bar's Home button and the system back gesture return to Home, preserving open tabs and active selection. Desktop Home is in the top row. Desktop + opens the picker; the phone current-tab button opens the picker sheet. In the picker, + beside the switch is New session on Sessions and New Files tab on Files.
 - Files opens as a tab from Home or the picker; switching tabs preserves the terminal and running process.
 - Terminal output is not editable mock text masquerading as live input. The prototype says it is sample content and sends no input.
 - On the terminal, show connection status only when not live. Reconnecting/error is visible in text, with Retry, and is distinct from active-tab selection and the bell dot. Home server cards still show live or offline status.
@@ -113,11 +113,14 @@ Returning from the background keeps the screen the user left.
 
 ## Picker (desktop) and picker sheet (phone)
 
-One picker opens a session or a Files tab, on every surface. It has a **Sessions / Files**
-switch at the top (a tablist, each tab 44 px tall), a search field that filters whichever
-side is showing (“Find a session” / “Find a folder”), and one **+** beside the search: New
-session on Sessions, New Files tab on Files. The lists are grouped by server (“On pop-os”)
-when several servers are listed. The three surfaces differ only in their container and in
+One picker opens a session or a Files tab, on every surface. Its top row is a **Sessions /
+Files** switch (a tablist: a segmented control 32 px tall on touch, each tab with a 44 px hit
+area) and one **+** at its end: New session on Sessions, New Files tab on Files; a full-height
+sheet leads the row with Back. Under it, a full-width search field filters whichever side is
+showing (“Find a session” / “Find a folder”), and the list starts right below, with about 8 px
+between rows. With several servers, the lists are grouped by server, each under an “On pop-os”
+heading; with one server shown (one listable, or a server's own sheet) there is no heading,
+since nothing needs telling apart (its transient “Updating” note goes with it, so no row shifts). The three surfaces differ only in their container and in
 who offers the way out. The picker remembers its side while the page is open, one side for all three surfaces.
 
 **Sessions side.** Fetches sessions when opened, searches locally by name without a request
@@ -130,7 +133,8 @@ at, Uploads included), with the same rows as that list. A row opens a **new** Fi
 listed (they are in the bottom strip and on Home). The roots are asked for when the side is
 first shown in an opening, once per server and kept until the picker closes, not per keystroke; a server that can't be reached says so. Folders are
 added and removed in a Files tab, so this list has no ×: + opens a new Files tab at the
-folder list, where Add folder is. + is disabled with its reason while the server is unreachable or its
+folder list, where Add folder is. A root that can't be opened (Missing) is left out here; the
+Files tab still shows it to fix or remove. When none can be opened, the side says there are no folders to show. + is disabled with its reason while the server is unreachable or its
 access is still being checked.
 
 **A pick closes the picker**, on every surface, and then acts: a session row, a window
@@ -141,7 +145,7 @@ exception: it switches the tab behind the sheet and the sheet stays, for flippin
 open tabs.
 
 **Desktop:** + in the top row opens a popover under it with the switch, search and list; there is no
-footer (+ beside search creates). Focus returns to terminal input, or + when there is no tab.
+footer (the picker's + creates). Focus returns to terminal input, or + when there is no tab.
 Search is auto-focused.
 
 **Phone:** the current-tab button opens a half-height sheet over the current terminal or
@@ -152,11 +156,11 @@ button (Home is on the resting bar) and has the open tabs at its bottom; the ful
 ```text
 half-height over current tab             full-height from Home
 ┌──────────────────────────────────┐     ┌──────────────────────────────────┐
-│ current terminal / Files         │     │ [‹] [ Sessions | Files        ]  │
-├──────────────────────────────────┤     │ [ Find a session        ] [+]    │
-│ [ Sessions | Files             ] │     │ sessions or roots for this server│
-│ [ Find a session         ] [+]   │     │                                  │
-│ sessions, grouped by server      │     │                                  │
+│ current terminal / Files         │     │ [‹] [ Sessions | Files     ] [+] │
+├──────────────────────────────────┤     │ [ Find a session               ] │
+│ [ Sessions | Files          ] [+]│     │ sessions or roots for this server│
+│ [ Find a session               ] │     │ (no "On …" heading: one server)  │
+│ sessions (no heading: one server)│     │                                  │
 │                                  │     │                                  │
 │ (a1 python ×) (b1 claude) …      │     │                                  │
 └──────────────────────────────────┘     └──────────────────────────────────┘
@@ -167,7 +171,7 @@ half-height over current tab             full-height from Home
 - The bottom strip contains terminal and Files tabs in order, with the next tab peeking
   when more remain; swipe scrolls the strip, tap switches the active tab behind the
   sheet, and the sheet stays open. Only the active tab shows ×. Closing a terminal tab
-  leaves its session running. The strip has no +: it sits beside search.
+  leaves its session running. The strip has no +: it sits beside the switch. Its pills have 8 px above and below, and the safe-area inset under them.
 - + acts on the active tab's server (the first server when no tab is open; the full-height
   sheet's server); it is disabled with its reason when that server can't be reached.
 - Session rows mark the active tab's session “here” and other open sessions “open”.

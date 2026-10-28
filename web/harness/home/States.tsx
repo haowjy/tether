@@ -48,6 +48,7 @@ export function States() {
         <Block key={s.name} title={s.name}>
           <SessionList
             // A landmark name must be unique on the page: each list is a different host here.
+            titled
             hostName={`pop-os (${s.name.toLowerCase()})`}
             unreachable={s.unreachable ?? false}
             bellsUnavailable={s.bellsUnavailable ?? false}
