@@ -4041,6 +4041,13 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   The half sheet's tab strip has 8 pt above its pills and only the safe-area inset below. With no
   heading, "Updating" is not shown (it would shift the rows). **Rejected:** a one-row header with the
   switch beside the search (too tight at 390 pt); a heading kept for one server (the lost space).
+- **Controls at the bottom on the phone** (Jimmy, same day, real iPhone: thumb reach; matches the dock
+  and Home at the bottom): the control block (switch + `+`, then search) moves below the list on the
+  half sheet (above the open-tab strip) and the full-height sheet (whose top bar is Back and the
+  server's name); the desktop popover keeps it on top. One block placed by container: the Dialog's
+  footer slot on the phone, its header on desktop. The sheet already lifts above the keyboard, so
+  the block rides on it; the half sheet's tab strip hides while the keyboard is up. **Rejected:** only
+  the switch at the bottom (splits it from the search again); keeping the block at the top.
 - **Review fixes** (same day): the Files-side + is named for what it does, "New Files tab" (Add folder
   lives in the Files tab; on desktop focus lands on the new tab's pill). The remembered side is one value for the page,
   shared by the three containers (`sessions/pickerMemory.ts`), not one per container. Each server's roots are

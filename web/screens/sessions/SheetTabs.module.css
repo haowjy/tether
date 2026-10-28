@@ -1,0 +1,2 @@
+/* Under the picker's controls, which carry the gutter and the gap above. */
+.tabs { padding: var(--space-1) var(--space-3) 0; }

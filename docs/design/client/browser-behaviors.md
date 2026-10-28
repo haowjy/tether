@@ -21,7 +21,7 @@ Interactive mockup: [mockups/index.html](mockups/index.html). It predates this r
 | Primary navigation | One top row: Home, terminal and Files tabs, +, and server context. No rail. | Home is server-first. Terminal, Files and previews have a resting bar with Home and the current-tab button, which opens the picker; Home has no tab strip. |
 | Tabs | Top row, with × on the active tab only. + opens the picker. | With the keyboard down, the bar has Home, the current-tab button and keyboard control. The open tabs are at the bottom of the picker sheet, not on the terminal. |
 | Terminal | All available space below the top row. Direct physical-keyboard input; no dock. | Full-bleed above the dock. With the keyboard up, the compose box and key row replace the resting bar. |
-| Picker | + opens a popover: a Sessions / Files switch, search, and that side's list. | The same picker as a half-height sheet over the current tab, or a full-height sheet with Back when entered from Home. |
+| Picker | + opens a popover: a Sessions / Files switch with +, search, and that side's list. | The same picker as a half-height sheet over the current tab, or a full-height sheet with Back when entered from Home; the switch, + and search sit at the bottom, in thumb reach. |
 
 Safe areas and browser chrome are real platform constraints. Use the measured visible
 viewport and keep controls unobscured. Mobile controls target at least 44 px of touch
@@ -113,12 +113,13 @@ Returning from the background keeps the screen the user left.
 
 ## Picker (desktop) and picker sheet (phone)
 
-One picker opens a session or a Files tab, on every surface. Its top row is a **Sessions /
-Files** switch (a tablist: a segmented control 32 px tall on touch, each tab with a 44 px hit
-area) and one **+** at its end: New session on Sessions, New Files tab on Files; a full-height
-sheet leads the row with Back. Under it, a full-width search field filters whichever side is
-showing (“Find a session” / “Find a folder”), and the list starts right below, with about 8 px
-between rows. With several servers, the lists are grouped by server, each under an “On pop-os”
+One picker opens a session or a Files tab, on every surface. Its controls are one block: a
+row with a **Sessions / Files** switch (a tablist: a segmented control 32 px tall on touch, each
+tab with a 44 px hit area) and one **+** at its end (New session on Sessions, New Files tab on
+Files), and under it a full-width search field that filters whichever side is showing (“Find a
+session” / “Find a folder”), about 8 px apart. On the desktop the block leads the popover, with
+the list below it. On the phone the block sits at the bottom, in thumb reach like the dock,
+and the list above it is the only thing that scrolls; the list still starts at its top. With several servers, the lists are grouped by server, each under an “On pop-os”
 heading; with one server shown (one listable, or a server's own sheet) there is no heading,
 since nothing needs telling apart (its transient “Updating” note goes with it, so no row shifts). The three surfaces differ only in their container and in
 who offers the way out. The picker remembers its side while the page is open, one side for all three surfaces.
@@ -150,28 +151,31 @@ Search is auto-focused.
 
 **Phone:** the current-tab button opens a half-height sheet over the current terminal or
 Files tab, which remains visible behind it. From Home's “Sessions and files” row the
-sheet is full-height for that server, with Back to Home. The half-height sheet has no Home
-button (Home is on the resting bar) and has the open tabs at its bottom; the full-height sheet has no tab strip (Home already lists the open tabs).
+sheet is full-height for that server: a top bar with Back to Home and the server's name, the
+list, then the control block. The half-height sheet has no Home button (Home is on the resting
+bar) and has the open tabs under the control block, as its last row; the full-height sheet has no tab strip (Home already lists the open tabs).
 
 ```text
 half-height over current tab             full-height from Home
 ┌──────────────────────────────────┐     ┌──────────────────────────────────┐
-│ current terminal / Files         │     │ [‹] [ Sessions | Files     ] [+] │
-├──────────────────────────────────┤     │ [ Find a session               ] │
-│ [ Sessions | Files          ] [+]│     │ sessions or roots for this server│
-│ [ Find a session               ] │     │ (no "On …" heading: one server)  │
-│ sessions (no heading: one server)│     │                                  │
-│                                  │     │                                  │
-│ (a1 python ×) (b1 claude) …      │     │                                  │
+│ current terminal / Files         │     │ [‹] pop-os                       │
+├──────────────────────────────────┤     │                                  │
+│ sessions (no heading: one server)│     │ sessions or roots for this server│
+│ …                                │     │ (no "On …" heading: one server)  │
+│ [ Sessions | Files          ] [+]│     │                                  │
+│ [ Find a session               ] │     │ [ Sessions | Files          ] [+]│
+│ (a1 python ×) (b1 claude) …      │     │ [ Find a session               ] │
 └──────────────────────────────────┘     └──────────────────────────────────┘
 ```
 
 - Search is not auto-focused. With its keyboard up, the sheet sits above the keyboard
-  (above Safari's form bar in the browser) and the list scrolls in the remaining space.
+  (above Safari's form bar in the browser), the control block rides directly on the keyboard,
+  and the list scrolls in the remaining space. The half-height sheet's tab strip is hidden
+  while the keyboard is up (it is no use then) and returns when it goes down.
 - The bottom strip contains terminal and Files tabs in order, with the next tab peeking
   when more remain; swipe scrolls the strip, tap switches the active tab behind the
   sheet, and the sheet stays open. Only the active tab shows ×. Closing a terminal tab
-  leaves its session running. The strip has no +: it sits beside the switch. Its pills have 8 px above and below, and the safe-area inset under them.
+  leaves its session running. The strip has no +: it sits beside the switch, in the control block. Its pills have 8 px above and below, and the safe-area inset under them.
 - + acts on the active tab's server (the first server when no tab is open; the full-height
   sheet's server); it is disabled with its reason when that server can't be reached.
 - Session rows mark the active tab's session “here” and other open sessions “open”.

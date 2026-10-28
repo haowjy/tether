@@ -1,5 +1,6 @@
 // The picker (browser-behaviors.md "Picker (desktop) and picker sheet (phone)"): a Sessions / Files
-// switch, and + for the side showing, then a search that filters it, over that side's list. One
+// switch, and + for the side showing, then a search that filters it, with that side's list: the
+// block is below the list on the phone and above it on the desktop. One
 // component for the desktop popover, the phone half sheet and a server's full-height sheet; those
 // are `Picker`, `Sessions` and `ServerSheet`, each only a container and what it adds (a Back, a
 // tab strip). Any pick closes the picker and then acts, so the tab it opens gets focus. A pick
@@ -51,7 +52,7 @@ export function PickerForm({ open, onClose, title, variant, returnFocusTo, foote
   const reason = reasonOf(host);
   const hostId = host?.hostId;
   const plus = side === "sessions" ? "New session" : "New Files tab";
-  // Row one: the switch, filling the middle, and + for the side showing; Back leads it on a full-height sheet.
+  // Row one: the switch, filling the middle, and + for the side showing.
   const controls = (
     <>
       <Choice as="tabs" label="Open from" options={SIDES} value={side} onChange={(s) => { memory.setSide(s); }} panel={panel} />
@@ -67,6 +68,16 @@ export function PickerForm({ open, onClose, title, variant, returnFocusTo, foote
       />
     </>
   );
+  const block = (
+    <>
+      <ToolBar>{controls}</ToolBar>
+      <ToolBar>
+        <SearchField label={FIND[side]} placeholder={FIND[side]} value={query} onInput={setQuery} class={styles.search} {...(searchFocus && { "data-initial-focus": "" })} />
+      </ToolBar>
+    </>
+  );
+  // On the phone the block sits at the bottom, in thumb reach and above the keyboard, over the tab strip (if any); the desktop popover hangs from the top row, so the block leads it.
+  const phone = typeof variant === "string";
   return (
     <Dialog
       open={open}
@@ -74,15 +85,8 @@ export function PickerForm({ open, onClose, title, variant, returnFocusTo, foote
       variant={variant}
       {...(returnFocusTo !== undefined && { returnFocusTo })}
       onClose={onClose}
-      header={
-        <>
-          {back === undefined ? <ToolBar>{controls}</ToolBar> : <PageBar back={back} onBack={onClose}>{controls}</PageBar>}
-          <ToolBar>
-            <SearchField label={FIND[side]} placeholder={FIND[side]} value={query} onInput={setQuery} class={styles.search} {...(searchFocus && { "data-initial-focus": "" })} />
-          </ToolBar>
-        </>
-      }
-      {...(footer !== undefined && { footer })}
+      header={phone ? (back !== undefined && <PageBar back={back} onBack={onClose} title={own?.name ?? title} />) : block}
+      {...((phone || footer !== undefined) && { footer: <>{phone && block}{footer}</> })}
     >
       {open && SIDES.map(({ value }) => (
         <div key={value} role="tabpanel" id={`${panel}-panel-${value}`} aria-labelledby={`${panel}-tab-${value}`} hidden={side !== value}>
