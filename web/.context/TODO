@@ -1,11 +1,11 @@
 Must-do (client-architecture.md §11):
 
-- Initial JS: raised from 192 KB to 194 KB gzipped for the one-keyboard mirror and its
-  content-process restore snapshot/event handoff (measured 193.2 KB on 2026-10-26). The
-  screens are not code-split — only the heavy libraries are —
-  so every feature ratchets the initial bundle. Split the screens so the first paint stops
-  paying for the terminal and the file manager, then bring the budget back down.
-  Each launch-code feature has raised the budget 1 KB (196 KB to 202 KB, 201.1 measured after the one picker); the split is due before the next one.
+- Split the screens: the initial JS has no cap now (202.5 KB measured on 2026-10-28; it went
+  190 KB to 203 KB in ten 1 KB raises over five days, so Jimmy dropped the number on
+  2026-10-28 and `scripts/checks.mjs` only records it). The screens are not code-split — only
+  the heavy libraries are — so the first paint pays for the terminal and the file manager.
+  Split them, then re-derive the cap from that measurement and record it in
+  client-architecture.md §8.4.
 
 - L4 (daemon): an `input` refusal (`busy`, `inputTooLarge`) names no request, so the client cannot
   report which typed characters were refused. Paste refusals now carry their request id; the

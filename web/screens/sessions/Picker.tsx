@@ -1,12 +1,12 @@
 // The picker (browser-behaviors.md "Picker (desktop) and picker sheet (phone)"): one component for the
-// desktop popover, the phone's half-height sheet and the full-height sheet from Home's card. The router
-// overlay open says which: `picker` is the popover under the top row's +, `sheet` the half sheet over the
-// current tab, `server` the full sheet for one server (`host` param). Everything else is shared: a search
-// that filters the side showing (on Files, a path too), a Sessions / Files switch, and that side's list,
-// ending with creation. The control block is below the list on the phone (search, switch, then the open
-// tabs) and above it in the popover (switch, search). Every pick leaves it open, the tab it puts on screen behind it; "New
-// session" replaces the list with a form page, a router entry of its own, so Back and Escape return to the
-// list before they close the picker (a reload drops overlays, so a page never outlives its list).
+// desktop popover and the phone's half-height sheet. The router overlay open says which: `picker` is the
+// popover under the top row's +, `sheet` the half sheet over the current tab (Home's card row lands on a
+// tab, then opens the sheet over it). Everything else is shared: a search that filters the side showing
+// (on Files, a path too), a Sessions / Files switch, and that side's list, ending with creation. The
+// control block is below the list on the phone (search, switch, then the open tabs) and above it in the
+// popover (switch, search). Every pick leaves it open, the tab it puts on screen behind it; "New session"
+// replaces the list with a form page, a router entry of its own, so Back and Escape return to the list
+// before they close the picker (a reload drops overlays, so a page never outlives its list).
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { useApp, useAppView } from "../../app/context";
 import { describeError } from "../../files/browser";
@@ -34,26 +34,21 @@ import styles from "./Picker.module.css";
 const SIDES = [{ value: "sessions", label: "Sessions" }, { value: "files", label: "Files" }] as const;
 const FIND: Record<Side, string> = { sessions: "Find a session", files: "Find a folder or type a path" };
 
-type Kind = "popover" | "half" | "full";
-const KINDS: Record<string, Kind> = { picker: "popover", sheet: "half", server: "full" };
+type Kind = "popover" | "half";
+const KINDS: Record<string, Kind> = { picker: "popover", sheet: "half" };
 
 /** What the open overlay says the picker is; what it was while it closes, so the dialog doesn't change shape on its way out. */
-function useContainer(): { open: boolean; name: string; kind: Kind; only: string | undefined; params: Record<string, unknown> | undefined } {
+function useContainer(): { open: boolean; name: string; kind: Kind; params: Record<string, unknown> | undefined } {
   const overlay = useAppView((v) => v.entry.overlay);
   const kind = overlay?.screen === "sessions" ? KINDS[overlay.name] : undefined;
-  const last = useRef<{ kind: Kind; only: string | undefined }>({ kind: "half", only: undefined });
-  if (kind) last.current = { kind, only: kind === "full" && typeof overlay?.params?.["host"] === "string" ? overlay.params["host"] : undefined };
-  return { open: kind !== undefined, name: overlay?.name ?? "sheet", ...last.current, params: kind ? overlay?.params : undefined };
+  const last = useRef<Kind>("half");
+  if (kind) last.current = kind;
+  return { open: kind !== undefined, name: overlay?.name ?? "sheet", kind: last.current, params: kind ? overlay?.params : undefined };
 }
 
 export function Picker() {
   const container = useContainer();
-  const active = useActiveHost();
-  const own = useAppView((v) => v.hosts.find((h) => h.entry.handle === container.only));
-  const host = container.kind === "full" ? own : active;
-  const app = useApp();
-  // A server removed while its sheet is open leaves nothing to show.
-  useEffect(() => { if (container.open && container.kind === "full" && !own) app.router.closeOverlay(); }, [container.open, container.kind, own]);
+  const host = useActiveHost();
   if (!host) return null;
   return <PickerDialog {...container} host={host} />;
 }
@@ -63,13 +58,12 @@ interface DialogProps {
   /** The overlay's name, for a page to open as the same overlay. */
   name: string;
   kind: Kind;
-  only: string | undefined;
   params: Record<string, unknown> | undefined;
   /** The server the sheet is for, else the active tab's: where a typed path and the page's actions go by default. */
   host: HostClient;
 }
 
-function PickerDialog({ open, name, kind, only, params, host }: DialogProps) {
+function PickerDialog({ open, name, kind, params, host }: DialogProps) {
   const app = useApp();
   const memory = pickerMemoryOf(app);
   const side = useStore(memory, (s) => s.side);
@@ -86,8 +80,6 @@ function PickerDialog({ open, name, kind, only, params, host }: DialogProps) {
   const returnFocusTo = kind === "popover" ? (noTabs || touch ? "plus" as const : "terminal" as const) : onTerminal && !touch ? "terminal" as const : undefined;
   const hosts = useAppView((v) => v.hosts);
   const close = (): void => { app.router.closeOverlay(); };
-  // ‹ on the full sheet goes Home, even when Create has put a tab under the sheet.
-  const toHome = (): void => { if (app.snapshot.entry.route === "home") close(); else app.router.goHome(); };
 
   // A form page is the same overlay with `newSession` (the server's handle) and `name`.
   const target = typeof params?.["newSession"] === "string" ? hosts.find((h) => h.entry.handle === params["newSession"]) : undefined;
@@ -149,18 +141,17 @@ function PickerDialog({ open, name, kind, only, params, host }: DialogProps) {
   const block = phone
     ? <><ToolBar>{searchField}</ToolBar><ToolBar>{switcher}</ToolBar></>
     : <><ToolBar>{switcher}</ToolBar><ToolBar>{searchField}</ToolBar></>;
-  const fullTitle = `Open on ${host.name ?? "the server"}`;
   const problem = pathError ?? field.said;
   return (
     <Dialog
       open={open}
-      title={kind === "full" ? fullTitle : "Open"}
-      variant={kind === "popover" ? { to: "plus" } : kind === "full" ? "page" : "sheet"}
+      title="Open"
+      variant={kind === "popover" ? { to: "plus" } : "sheet"}
       {...(returnFocusTo && { returnFocusTo })}
       onClose={close}
       header={page
         ? <PageBar back="Back to sessions" onBack={close} title={`New session on ${target?.name ?? "the server"}`} />
-        : kind === "full" ? <PageBar back="Back to Home" onBack={toHome} title={host.name ?? "the server"} /> : kind === "half" ? false : block}
+        : kind === "half" ? false : block}
       {...(phone && { footer: <>{!page && block}{open && <SheetTabs />}</> })}
     >
       {/* The list stays mounted under a page, so Back finds it as it was. */}
@@ -168,14 +159,14 @@ function PickerDialog({ open, name, kind, only, params, host }: DialogProps) {
         {open && SIDES.map(({ value }) => (
           <div key={value} role="tabpanel" id={`${panel}-panel-${value}`} aria-labelledby={`${panel}-tab-${value}`} hidden={side !== value}>
             {value === "sessions" ? (
-              <SessionPicks query={query} only={only} onNew={newSession} />
+              <SessionPicks query={query} onNew={newSession} />
             ) : filesShown && (pathMode ? (
-              <HostSection hostName={pathHost.name ?? "the server"} label={`Folders on ${pathHost.name ?? "the server"}`} titled={hosts.length > 1 && only === undefined}>
+              <HostSection hostName={pathHost.name ?? "the server"} label={`Folders on ${pathHost.name ?? "the server"}`} titled={hosts.length > 1}>
                 {problem && <p class={styles.refused} role="alert">{problem}</p>}
                 {field.completion && field.home !== null && <CompletionList completion={field.completion} home={field.home} hostName={session.hostName} {...field.list} />}
               </HostSection>
             ) : (
-              <HostFavoriteLists query={query} only={only} onPath={startPath} />
+              <HostFavoriteLists query={query} onPath={startPath} />
             ))}
           </div>
         ))}

@@ -9,6 +9,7 @@ import { Button } from "../../ui/primitives/Button";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { useStore } from "../../ui/store";
 import { NewSession } from "../sessions/NewSession";
+import { openSession } from "../sessions/openSession";
 import { pillMeta, tabPills } from "../terminal/tabView";
 import { terminalsOf } from "../terminal/terminals";
 import { HostBanner } from "../shell/HostBanner";
@@ -25,7 +26,9 @@ function hostOf(hostId: string, hosts: HostClient[]): HostClient | undefined {
 function HostCard({ host, tabs }: { host: HostClient; tabs: CardTab[] }) {
   const app = useApp();
   const handle = host.entry.handle;
-  const { body, pickable, count } = cardOf(host, useStore(app.sessions, (s) => s.hosts[handle]));
+  const sessions = useStore(app.sessions, (s) => s.hosts[handle]);
+  const { body, pickable, count } = cardOf(host, sessions);
+  const workspaceTabs = useAppView((v) => v.workspace.tabs);
   const unreadable = bellsUnavailable(useBells(), host.hostId);
   return (
     <ServerCard
@@ -35,7 +38,18 @@ function HostCard({ host, tabs }: { host: HostClient; tabs: CardTab[] }) {
       bellsUnavailable={unreadable}
       notice={body.kind !== "offline" && <HostBanner host={host} />}
       onRetry={() => { app.retryHost(handle); }}
-      picker={pickable ? { count, onOpen: (opener) => { app.openOverlay({ screen: "sessions", name: "server", params: { host: handle } }, opener); } } : undefined}
+      picker={pickable ? {
+        count,
+        onOpen: (opener) => {
+          // The row lands on a tab, then opens the sheet over it: this server's tab if there is one, else its
+          // first session's tab. With neither, the sheet opens over Home (a later pick still moves the route under it).
+          const onHost = host.hostId !== null ? workspaceTabs.find((t) => t.host === host.hostId) : undefined;
+          const listing = sessions?.listing;
+          if (onHost) app.dispatch({ type: "activated", id: onHost.id });
+          else if (listing && listing.sessions[0]) openSession(app, host, listing, listing.sessions[0]);
+          app.openOverlay({ screen: "sessions", name: "sheet" }, opener);
+        },
+      } : undefined}
       newSession={<NewSession host={host} />}
     />
   );

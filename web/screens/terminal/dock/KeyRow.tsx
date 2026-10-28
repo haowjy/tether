@@ -15,23 +15,29 @@ type Spec =
   | { label: string; aria?: string; key: RowKey; repeat?: boolean }
   | { label: string; modifier: "ctrl" | "alt" };
 
+// Order: a keyboard's left edge top to bottom (esc, tab, ctrl, alt), then the keys used while
+// typing a command (arrows for recall and the caret, then the shell's punctuation), then the
+// control chords, last because a tap on one is rare and not always reversible (^Z suspends).
 const KEYS: Spec[] = [
   { label: "esc", key: { name: "Escape" } },
+  { label: "tab", key: { name: "Tab" } },
+  { label: "⇧tab", aria: "Shift tab", key: { name: "BTab" } },
+  { label: "ctrl", modifier: "ctrl" },
+  { label: "alt", modifier: "alt" },
   { label: "←", aria: "Left arrow", key: { name: "Left" }, repeat: true },
   { label: "↑", aria: "Up arrow", key: { name: "Up" }, repeat: true },
   { label: "↓", aria: "Down arrow", key: { name: "Down" }, repeat: true },
   { label: "→", aria: "Right arrow", key: { name: "Right" }, repeat: true },
-  { label: "⇧tab", aria: "Shift tab", key: { name: "BTab" } },
-  { label: "tab", key: { name: "Tab" } },
-  { label: "^C", aria: "Control C", key: { name: "C-c" } },
-  { label: "^R", aria: "Control R", key: { name: "C-r" } },
-  { label: "ctrl", modifier: "ctrl" },
-  { label: "alt", modifier: "alt" },
-  { label: "⏎", aria: "Return", key: { name: "Enter" } },
   { label: "|", key: { text: "|" } },
   { label: "~", key: { text: "~" } },
   { label: "/", key: { text: "/" } },
   { label: "-", key: { text: "-" } },
+  { label: "^C", aria: "Control C", key: { name: "C-c" } },
+  { label: "^R", aria: "Control R", key: { name: "C-r" } },
+  { label: "^S", aria: "Control S", key: { name: "C-s" } },
+  { label: "^Q", aria: "Control Q", key: { name: "C-q" } },
+  { label: "^Z", aria: "Control Z", key: { name: "C-z" } },
+  { label: "⏎", aria: "Return", key: { name: "Enter" } },
 ];
 
 /** A held arrow repeats after this, then at this rate. */

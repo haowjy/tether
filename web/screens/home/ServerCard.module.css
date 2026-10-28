@@ -6,8 +6,20 @@
 .status[data-status="live"] { color: var(--color-status-live); }
 .status[data-status="checking"] { color: var(--color-status-reconnecting); }
 .status[data-status="attention"] { color: var(--color-status-error); }
-.tab { display: flex; align-items: center; gap: var(--space-1); }
-.tab > :first-child { flex: 1; min-width: 0; }
+/* One swipeable tab row: the row slides left over a Close action it hides until then. */
+.tab { --reveal: 88px; position: relative; display: flex; align-items: center; gap: var(--space-1); overflow: hidden; border-radius: var(--radius-2); touch-action: pan-y; }
+.slide { position: relative; z-index: 1; flex: 1; min-width: 0; will-change: transform; }
+/* Two classes so the red fill and radius beat the Button primitive's own variant. */
+.action { position: absolute; inset: 0 0 0 auto; width: var(--reveal); opacity: 0; pointer-events: none; }
+.tab[data-open] .action { opacity: 1; pointer-events: auto; }
+.close.close { width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: var(--color-status-error); color: var(--color-on-danger); font-weight: var(--weight-bold); }
+/* One close affordance per pointer kind, never both. The swipe's action stays in the tree on touch,
+   so VoiceOver reaches it without the gesture. */
+.x { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .x { display: grid; }
+  .action { display: none; }
+}
 .note { padding: 0 var(--space-1); font-size: var(--text-small); color: var(--color-text-muted); }
 .loading { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-1); color: var(--color-text-muted); }
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }

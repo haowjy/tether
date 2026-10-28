@@ -22,32 +22,39 @@ for (const version of VERSIONS) {
     test.afterAll(async () => { await stack.stop(); });
 
     const home = (page: Page): Promise<void> => goHome(page, stack.url);
-    const serverSheet = (page: Page) => page.getByRole("dialog", { name: /^Open on / });
-    const sessionRow = (page: Page, name: string) => serverSheet(page).getByRole("button", { name: new RegExp(`^${name} \\d+ windows?`) }).first();
-    const allSessions = (page: Page) => page.getByRole("button", { name: /^Sessions and files/ });
+    const sheet = (page: Page) => page.getByRole("dialog", { name: "Open" });
+    const sessionRow = (page: Page, name: string) => sheet(page).getByRole("button", { name: new RegExp(`^${name} \\d+ windows?`) }).first();
+    const allSessions = (page: Page) => page.getByRole("button", { name: /^All sessions and files/ });
 
-    /** The server sheet's "New session" row, on its Sessions side. */
+    /** The sheet's "New session" row, on its Sessions side. */
     const newSession = async (page: Page): Promise<void> => {
       await allSessions(page).click();
-      await serverSheet(page).getByRole("button", { name: "New session", exact: true }).click();
+      await sheet(page).getByRole("button", { name: "New session", exact: true }).click();
     };
 
     test("lists the real sessions, and opening one makes its tab", async ({ page }) => {
       await home(page);
+      // The listing must be loaded first: the row lands on its first session.
+      await expect(allSessions(page)).toContainText(/[0-9]/);
       await allSessions(page).click();
-      await expect(sessionRow(page, "alpha")).toContainText("2 windows");
-      await sessionRow(page, "alpha").click();
+      // Tapping the row lands on the first session's tab, with the sheet open over it.
       await expect(page).toHaveURL(/#\/tab$/);
+      await expect(sessionRow(page, "alpha")).toContainText("2 windows");
+      await expect(sessionRow(page, "alpha")).toContainText("here");
+      // Escape closes the sheet and leaves the tab on screen.
       await page.keyboard.press("Escape");
-      await page.getByRole("button", { name: "Home" }).click();
-      // The tab shows the session's current window, the one tmux made current with new-window.
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      // The tab's pill carries the session's current window, the one tmux made current with new-window.
+      await expect(page.locator("[aria-current='true']").first()).toHaveAttribute("aria-label", /^alpha shell/);
+      // Back goes Home.
+      await page.goBack();
+      await expect(page).toHaveURL(/#\/$/);
       await expect(page.getByRole("button", { name: "alpha shell", exact: true })).toBeVisible();
-      // The row is marked, and opening it again activates the tab: no duplicate.
+      // The row again activates the existing tab: no duplicate.
       await allSessions(page).click();
-      await expect(sessionRow(page, "alpha")).toContainText("open");
-      await sessionRow(page, "alpha").click();
+      await expect(sessionRow(page, "alpha")).toContainText("here");
       await page.keyboard.press("Escape");
-      await page.getByRole("button", { name: "Home" }).click();
+      await page.goBack();
       await expect(page.getByRole("button", { name: "alpha shell", exact: true })).toHaveCount(1);
     });
 
@@ -60,7 +67,7 @@ for (const version of VERSIONS) {
       expect(stack.tmux("list-sessions", "-F", "#{session_name}")).toContain("made-here");
 
       // The sheet stays open over the new tab, which is the route under it; closing it leaves the tab, and Back goes Home.
-      await expect(page.getByRole("dialog", { name: /^Open on / }).getByText("here", { exact: true })).toBeVisible();
+      await expect(sheet(page).getByText("here", { exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await page.goBack();
@@ -75,11 +82,11 @@ for (const version of VERSIONS) {
       await page.getByRole("button", { name: "Create" }).click();
       await expect(page.getByRole("alert")).toBeVisible();
       await expect(page.getByRole("heading", { name: /^New session on / })).toBeVisible();
-      // Escape returns from the form to the list; Escape again closes the sheet, and focus goes back to what opened it.
+      // Escape returns from the form to the list; Escape again closes the sheet.
       await page.keyboard.press("Escape");
-      await expect(serverSheet(page).getByRole("button", { name: "New session", exact: true })).toBeVisible();
+      await expect(sheet(page).getByRole("button", { name: "New session", exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
-      await expect(allSessions(page)).toBeFocused();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
     });
 
     test("a tab under an off-screen Home closes when its session is killed", async ({ page }) => {

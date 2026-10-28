@@ -50,7 +50,7 @@ export interface StartOptions {
   history?: HistoryPort;
 }
 
-/** The listing surface on screen: Home, or one sessions overlay (a server's sheet, the picker). */
+/** The listing surface on screen: Home, or one sessions overlay (the picker, the sheet). */
 interface ListingSurface {
   kind: "home" | "sessions";
   name: string;
@@ -323,21 +323,21 @@ export class AppController extends Store<AppView> {
     const { overlay } = entry;
     const sessionsOverlay = overlay?.screen === "sessions" ? overlay : null;
     const listingShown = home || sessionsOverlay !== null;
-    // Each surface asks afresh when it is entered, for the hosts it shows: a server's sheet lists that server, the picker and Home list all. Returning from an overlay to the screen under it is not entering.
+    // Each surface asks afresh when it is entered, for every host it shows: the picker, the sheet and
+    // Home all list every listable server. Returning from an overlay to the screen under it is not entering.
     const surface: ListingSurface | null = sessionsOverlay ? { kind: "sessions", name: sessionsOverlay.name } : home ? { kind: "home", name: "" } : null;
     const before = this.listingSurface;
     const returning = surface?.kind === "home" && before?.kind === "sessions";
     const same = surface?.kind === before?.kind && surface?.name === before?.name;
     const entered = surface !== null && !same && !returning;
     this.listingSurface = surface;
-    const shown = sessionsOverlay?.name === "server" ? sessionsOverlay.params?.["host"] : undefined;
     for (const client of this.hosts.all()) {
       const { handle } = client.entry;
       const admitted = client.admission.kind === "admitted";
       const hasTab = client.hostId !== null && workspace.tabs.some((t) => t.host === client.hostId);
       const listed = this.listing.setWanted(handle, admitted && (listingShown || hasTab));
       // Entering a listing surface lists afresh, unless joining the host just started a listing.
-      if (entered && admitted && !listed && (shown === undefined || shown === handle)) this.listing.refresh(handle);
+      if (entered && admitted && !listed) this.listing.refresh(handle);
     }
   }
 

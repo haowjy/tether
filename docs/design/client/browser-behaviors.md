@@ -21,7 +21,7 @@ Interactive mockup: [mockups/index.html](mockups/index.html). It predates this r
 | Primary navigation | One top row: Home, terminal and Files tabs, +, and server context. No rail. | Home is server-first. Terminal, Files and previews have a resting bar with Home and the current-tab button, which opens the picker; Home has no tab strip. |
 | Tabs | Top row, with × on the active tab only. + opens the picker. | With the keyboard down, the bar has Home, the current-tab button and keyboard control. The open tabs are at the bottom of the picker sheet, not on the terminal. |
 | Terminal | All available space below the top row. Direct physical-keyboard input; no dock. | Full-bleed above the dock. With the keyboard up, the compose box and key row replace the resting bar. |
-| Picker | + opens a popover: a Sessions / Files switch, search, and that side's list, which ends with creation (New session; on Files, Open a folder…). | The same picker as a half-height sheet over the current tab, or at full height with Back when entered from Home; the search, the switch and the open tabs sit at the bottom, in thumb reach. |
+| Picker | + opens a popover: a Sessions / Files switch, search, and that side's list, which ends with creation (New session; on Files, Open a folder…). | The same picker as a half-height sheet over the current tab; the search, the switch and the open tabs sit at the bottom, in thumb reach. |
 
 Safe areas and browser chrome are real platform constraints. Use the measured visible
 viewport and keep controls unobscured. Mobile controls target at least 44 px of touch
@@ -67,10 +67,13 @@ between the key row and keyboard. Standalone PWA mode has no Safari toolbar.
 
 Home is a separate server-first screen, not a detent of the picker sheet. It has no
 phone tab strip. Each server card shows its name and status and its open terminal and
-Files tabs; a row returns to that tab. One row, “Sessions and files”, with the server's
-session count at its end, opens the full-height picker for that server, on the side last used
-on this page (Sessions at first). It shows whenever the server answers (an empty server shows
-a count of 0; while the count is unknown, or tmux is not running, it has none, since folders need no tmux). One and several
+Files tabs, at most three of them; a row returns to that tab, closes it with a left swipe
+(touch) or its × (a mouse), and the rest are in the picker. One row, “All sessions and
+files”, with the server's session count at its end, lands on a tab and opens the picker sheet over
+it: this server's tab if there is one, else its first session's tab, else Home's sheet (an empty
+server). It opens on the side last used on this page (Sessions at first). It shows whenever the
+server answers (an empty server shows a count of 0; while the count is unknown, or tmux is
+not running, it has none, since folders need no tmux). One and several
 servers use the same card; a single server does not auto-navigate past Home. Add server
 leads to enrolment. An offline server shows when last reached and Retry, distinct from an
 empty server; open tabs remain available as reconnecting. A restored terminal tab reads
@@ -121,17 +124,16 @@ last row of each list. On the desktop the block leads the popover, switch first 
 with the list below it. On the phone the block sits at the bottom, in thumb reach like the dock,
 search first and the switch under it, then the open tabs as the last row, and the list above it is
 the only thing that scrolls; the list still starts at its top. With several servers, the lists are
-grouped by server, each under an “On pop-os” heading; with one server shown (one listable, or a
-server's own sheet) there is no heading, since nothing needs telling apart (its transient
+grouped by server, each under an “On pop-os” heading; with one server shown (one listable) there is
+no heading, since nothing needs telling apart (its transient
 “Updating” note goes with it, so no row shifts). The phone sheet and the desktop popover differ only
 in their container and in who offers the way out. The picker remembers its side while the page is
 open, one side for all surfaces.
 
-**The phone sheet is one component at two heights.** The half-height sheet over the current tab
-and the full-height sheet from Home's “Sessions and files” row have the same list, search, switch,
-end-of-list rows and open-tab strip. The full-height sheet differs in height, in a top bar with
-‹ Back to Home and the server's name (no tab is behind it), and in listing only the server tapped
-on Home.
+**The phone sheet is the half-height sheet**, over the current terminal or Files tab, which stays
+visible behind it. Home's “All sessions and files” row lands on a tab first (the server's if there
+is one, else its first session's) and opens the sheet over it, so a pick never looks like a no-op:
+every list, search, switch, end-of-list row and open-tab strip is the one sheet.
 
 **Sessions side.** Fetches sessions when opened, searches locally by name without a request
 per keystroke, distinguishes no matches from loading and errors, and marks sessions already
@@ -145,11 +147,11 @@ the strip stays), an optional Name, an optional Start directory that is the same
 field as the Files tab's (below), and Create. ‹, the system Back and Escape return to the list
 (a router entry of its own); a second Back or Escape closes the picker. Create does not close the
 picker: the new session's tab opens and becomes active behind it, and the picker returns from the
-form to its list, where the row reads “here”. Over Home too: Create (or a typed path) switches the route under the
-full-height sheet to the new tab and keeps the sheet open on its list, the strip showing the tab. ‹
-still goes Home; closing the sheet any other way leaves you on the new tab. A refused directory or name
-shows the daemon's reason in the form. Home's empty-card New session opens the full-height sheet
-on this form, and Back returns to its list.
+form to its list, where the row reads “here”. Over Home too: the row has already landed the sheet on a
+tab, and Create (or a typed path) switches that route to the new tab, keeping the sheet open on its
+list with the strip showing the tab. Closing the sheet any way leaves you on the new tab. A refused
+directory or name shows the daemon's reason in the form. Home's empty-card New session opens the
+sheet on this form (a router entry of its own), and Back returns to its list.
 
 **Files side.** Lists each server's folders: Home (`~`, always first, built in), then the favorites
 alphabetically by path, then Uploads when it exists; the order is the client's, from the unsorted
@@ -165,42 +167,40 @@ left out. Home is listed even with no favorites, so the side is never empty.
 
 The search is also the **path field** here. Plain text filters the folders above. Text starting
 with `~` or `/` is a path: the list becomes that folder's completions (the Files tab's completion,
-below, with its “‹ ..” row and Tab or → to accept, on the one server the sheet is for, else the
-active tab's), and a tap on a completion, or Go, opens a **new** Files tab there, any readable
+below, with its “‹ ..” row and Tab or → to accept, on the server whose “Open a folder…” row started
+it, else the active tab's), and a tap on a completion, or Go, opens a **new** Files tab there, any readable
 folder. As with Create, the tab opens behind the picker, which stays open on its list with the
 search cleared. A path that isn't a readable folder shows the
 daemon's reason under the search's list. Each server's group ends with **Open a folder…**, like its New session row: inside the tap it puts
 `~/` in the search and focuses it, so the keyboard comes up, and the path is on that server (a typed
-path with no row tapped is on the one the sheet is for, else the active tab's).
+path with no row tapped is on the active tab's server).
 
 **Every pick leaves the picker open**, in every container: a session row, a window row, a folder row
 (activate-or-open), Create, a typed path and a strip pill each switch or open the tab behind it, and the
 picker stays on its list with that row marked “here”. Nothing a pick does closes it; the user does, with a
-swipe down, a tap outside, Escape, or ‹ on the full-height sheet (which goes Home). Closing it any other
-way leaves the tab the pick put on screen. A pick leaves no picker entry in history. Over Home the route
-under the full sheet switches to the tab and the sheet stays.
+swipe down, a tap outside, or Escape. Closing it leaves the tab the pick put on screen. A pick leaves no
+picker entry in history; over Home the route under the sheet is the tab, and the sheet stays.
 
 **Desktop:** + in the top row opens a popover under it with the switch, search and list; the
 popover has no open-tab strip (the top row has the tabs). Focus returns to terminal input, or + when
 there is no tab. Search is auto-focused.
 
 **Phone:** the current-tab button opens the half-height sheet over the current terminal or Files
-tab, which remains visible behind it. Home's “Sessions and files” row opens the same sheet at full
-height for that server. Neither has a Home button of its own (Home is on the resting bar, and the
-full-height sheet's Back).
+tab, which remains visible behind it. Home's “All sessions and files” row lands on a tab and opens
+the same sheet over it. The sheet has no Home button of its own (Home is on the resting bar).
 
 ```text
-half-height over current tab             full-height from Home
-┌──────────────────────────────────┐     ┌──────────────────────────────────┐
-│ current terminal / Files         │     │ [‹] pop-os                       │
-├──────────────────────────────────┤     │                                  │
-│ sessions (no heading: one server)│     │ sessions or folders, this server │
-│ …                                │     │ …                                │
-│ + New session                    │     │ + New session                    │
-│ [ Find a session               ] │     │ [ Find a session               ] │
-│ [ Sessions | Files             ] │     │ [ Sessions | Files             ] │
-│ (a1 python ×) (b1 claude) …      │     │ (a1 python ×) (b1 claude) …      │
-└──────────────────────────────────┘     └──────────────────────────────────┘
+half-height over current tab
+┌──────────────────────────────────┐
+│ current terminal / Files         │
+├──────────────────────────────────┤
+│ sessions (no heading: one server)│
+│ …                                │
+│ + New session                    │
+│ [ Find a session               ] │
+│ [ Sessions | Files             ] │
+│ (a1 python ×) (b1 claude) …      │
+└──────────────────────────────────┘
 ```
 
 - Search is not auto-focused. With its keyboard up, the sheet sits above the keyboard
@@ -341,7 +341,7 @@ keyboard down                              keyboard up
 terminal, full-bleed       $ █             terminal, panned       $ █
 ───────────────────────────────            ───────────────────────────────────
 [⌂] [a1 python   4 tabs  ⌃] [⌨]            [ Type or dictate a line          ]
-bottom safe area                           esc ← ↑ ↓ → ⇧tab tab ^C ^R ctrl alt ⏎ … [⌨↓]
+bottom safe area                           esc tab ⇧tab ctrl alt ← ↑ ↓ → | ~ / - ^C ^R ^S ^Q ^Z ⏎ … [⌨↓]
                                            iOS keyboard
                                            (Safari's ⌃ ⌄ Done bar sits above it)
 ```

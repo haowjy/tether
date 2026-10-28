@@ -108,7 +108,7 @@ function HostFavorites({ host, titled, query, onPath }: Props & { host: HostClie
   );
 }
 
-export function HostFavoriteLists({ only, ...rest }: Props & { only?: string | undefined }) {
-  const hosts = useListedHosts(only);
-  return <>{hosts.map((h) => <HostFavorites key={h.entry.handle} host={h} titled={hosts.length > 1} {...rest} />)}</>;
+export function HostFavoriteLists(props: Props) {
+  const hosts = useListedHosts();
+  return <>{hosts.map((h) => <HostFavorites key={h.entry.handle} host={h} titled={hosts.length > 1} {...props} />)}</>;
 }

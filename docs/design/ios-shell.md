@@ -74,7 +74,7 @@ above the keyboard is the web view; native draws no accessory.
 │ last row visible unless cursor needs │  top of the keyboard
 │ the bottom edge)                     │
 │ [ Type or dictate a line          ]  │  web dock: always-visible line mirror
-│ esc ← ↑ ↓ → ^R ^C tab … [⌨↓]         │  web dock: text-only key row and hide
+│ esc tab ⇧tab ctrl alt ← ↑ ↓ → … [⌨↓] │  web dock: text-only key row and hide
 ├──────────────────────────────────────┤
 │           iOS keyboard               │  system; Return label follows target
 └──────────────────────────────────────┘

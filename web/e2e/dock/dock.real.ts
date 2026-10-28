@@ -244,7 +244,7 @@ for (const version of VERSIONS) {
       // The switcher's button replaces the key row: lower the keyboard to reach it. The draft stays.
       await toggle(page).click();
       // The second session's tab, from the switcher.
-      await page.getByRole("button", { name: /, 1 tab, open sessions and files$/ }).click();
+      await page.getByRole("button", { name: /, \d+ tabs?, open sessions and files$/ }).click();
       const sheet = page.getByRole("dialog", { name: "Open" });
       await expect(sheet).toBeVisible();
       // A row opens its tab behind the sheet, which stays until it is closed.
@@ -259,7 +259,7 @@ for (const version of VERSIONS) {
       await page.waitForTimeout(500);
       await toggle(page).click();
 
-      await page.getByRole("button", { name: /, 2 tabs, open sessions and files$/ }).click();
+      await page.getByRole("button", { name: /, \d+ tabs?, open sessions and files$/ }).click();
       // A pill in the strip switches the tab behind the sheet, which stays until it is closed.
       await sheet.getByRole("button", { name: /^swap .*, (connected|open)$/ }).click();
       await page.keyboard.press("Escape");
@@ -301,7 +301,7 @@ for (const version of VERSIONS) {
       await painted(page);
       await sheet.getByRole("searchbox").fill("");
       // "here" follows the tab on screen; the other open session reads "open".
-      await expect(sheet.getByText("open", { exact: true })).toBeVisible();
+      await expect(sheet.getByText("open", { exact: true }).first()).toBeVisible();
 
       // Closing a tab from its pill leaves the sheet open and tmux alone.
       await sheet.getByRole("button", { name: /^Close other / }).first().click();

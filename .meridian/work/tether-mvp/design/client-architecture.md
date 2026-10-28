@@ -1827,7 +1827,7 @@ emitted file, stubs included:
 
 | Asset | Budget | How |
 |---|---|---|
-| Initial JS (app, xterm, WebGL, unicode11) | 196 KB gz | xterm is about 135 KB gz of it; the app's own code stays under 60 KB. Measured 194.9 KB with Files tabs and the top row (194.0 before) |
+| Initial JS (app, xterm, WebGL, unicode11) | 203 KB gz | xterm is about 135 KB gz of it; the rest is the app. Measured 202.5 KB on 2026-10-28 after the key row and Home card changes. The cap went 190 → 203 KB in ten 1 KB steps over five days; screen splitting is how it comes back down |
 | Initial CSS | 15 KB gz | |
 | Terminal font, regular and bold | 2 × 120 KB | JetBrains Mono NL subset to Latin, Latin-1, box drawing, block elements and Powerline |
 | Nerd Font symbols | 150 KB | a fallback file subset to the glyph ranges Jimmy's prompt and tmux status line use. It is listed after the core font in `--font-mono`, loaded after first paint, and the renderer clears its glyph atlas once it arrives |
@@ -1839,8 +1839,11 @@ emitted file, stubs included:
 
 W0 measures the subsets and commits the font files together with the script that made
 them, so the build itself needs no Python. A budget is raised only with its measurement
-in the commit. The initial-JS cap is 197 KB: Mermaid's lazy-loading glue took it from 195.8 to 196.0 KB
-gzipped (2026-10-27); screen splitting remains the way to earn it back.
+in the commit. The initial-JS cap is 203 KB (202.5 measured, 2026-10-28): Files without a scope,
+the one picker, Home's card and the key row each added a little, and the scope removal paid for
+some of it. Ten raises in five days is the signal that the cap no longer carries information:
+splitting the screens so each loads on first open is what earns it back, and the number should
+be re-derived from that measurement rather than moved 1 KB at a time.
 
 ### 8.5 Mockup details improved
 

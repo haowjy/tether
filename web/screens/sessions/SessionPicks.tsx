@@ -8,8 +8,7 @@ import { terminalsOf } from "../terminal/terminals";
 import { HostSessionLists } from "./HostSessionLists";
 import { openSession } from "./openSession";
 
-/** `only`: one host's sessions, by handle (the full sheet); every listable host's otherwise. */
-export function SessionPicks({ query, only, onNew }: { query: string; only?: string | undefined; onNew: (host: HostClient, name: string) => void }) {
+export function SessionPicks({ query, onNew }: { query: string; onNew: (host: HostClient, name: string) => void }) {
   const app = useApp();
   const terminals = terminalsOf(app);
   // "here" is the tab on screen: on Home no tab is, and every open session reads "open".
@@ -18,7 +17,6 @@ export function SessionPicks({ query, only, onNew }: { query: string; only?: str
   return (
     <HostSessionLists
       query={query}
-      only={only}
       {...(tab && { active: { id: tab.id, shownId, onWindow: (window: number) => { terminals.selectWindow(tab.id, window); } } })}
       onNew={onNew}
       onOpen={(host, listing, session) => { openSession(app, host, listing, session); }}

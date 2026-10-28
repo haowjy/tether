@@ -4125,3 +4125,54 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   paths alike. Start directory accepts `~/…` and sends the absolute path (`parseCreation` is
   unchanged). Path field details (Jimmy): the caret goes to the end when an edit starts, set
   again after iOS places it; no "in <folder>" line; "‹ .." steps to the parent folder.
+
+### 2026-10-28: Home's picker row lands on a tab; the full-height sheet is gone
+
+- **Decided:** 2026-10-28, Jimmy. Home's "All sessions and files" row opened a full-height picker
+  page over Home, with "Back to Home", filtered to the one server. Nothing sat behind it, so a pick
+  looked like a no-op.
+- **What:** the full-height container is gone; there is one picker, the desktop popover and the phone
+  half-height sheet. Home's row lands on a tab first — the server's open tab if there is one, else its
+  first session's tab, else Home for a server with none — then opens the sheet over it. The sheet and
+  the popover list every listable server, grouped when several, as the half sheet already did. Home's
+  empty-card New session opens the sheet on its form page. Every pick still leaves the picker open,
+  the tab it put on screen behind it.
+- **Deletes:** `Picker`'s `full` kind — the `server` overlay, `useContainer`'s `only` and host params,
+  the "server removed while open" effect, `fullTitle`, the "Back to Home" `PageBar` and `toHome` — and
+  the `only` prop threaded through `SessionPicks`, `HostSessionLists`, `HostFavoriteLists` and
+  `HostSection.useListedHosts`; the `serverSheet` harness fixture goes with it.
+- **Reverses** "One sheet, two heights" and the over-Home route switch: closing the sheet leaves you
+  on the tab it opened over, and the browser Back returns Home, not a dedicated full-height sheet.
+
+## The key row's order, and Home's card
+
+- **Decided:** 2026-10-28, Jimmy, on a real iPhone, over two screenshots of his own use.
+- **The key row's order** (Jimmy: "esc tab, ctrl, alt (some characters) ^C, ^S, ^Z I think (can u
+  research it)?"): esc, tab, ⇧tab, ctrl, alt, ← ↑ ↓ →, `|` `~` `/` `-`, ^C, ^R, ^S, ^Q, ^Z, ⏎.
+  Three groups in the order a keyboard and a command suggest them: a keyboard's left edge top to
+  bottom (esc, then tab, then the ctrl/alt cluster); the keys typing a command needs, arrows for
+  recall and the caret before the shell's punctuation; then the control chords, last because a tap
+  on one is rare. The widest single-row precedent puts the same four first: Termux's default extra
+  keys are `[[ESC, TAB, CTRL, ALT, {key: '-', popup: '|'}, DOWN, UP]]`, and WebSSH's iPhone
+  accessory row is `{ESC}{TAB}{CTL}{FN}{ARROWS}[/][:][-][|]…`.
+- **^Q joins ^S.** `^S` is XOFF on a shell's tty: sent to a pane, it stops all output until `^Q`
+  (measured on tmux 3.4 here: a pane writing every 200 ms produced five lines before `^S`, none in
+  the 1.2 s after, and resumed on `^Q`), and inside a raw-mode TUI it is an ordinary key instead, so
+  the same chip behaves two ways. With no `^Q` in the row the only way back is ctrl-arming `q` on
+  the system keyboard. `^Q` costs one chip at the far end of a scrolling row.
+- **Home's card shows at most three tab rows** (Jimmy: "why is it listing ALL of them...? I thought
+  we just limited it to the first 3"), then the one row to the rest; the spec never said three, so
+  the card is what changes.
+- **A tab row closes by swiping left**, as an iOS list row does, revealing a red Close; a long swipe
+  closes at once, and a tap on a revealed row closes the reveal rather than opening the tab. With a
+  mouse there is no swipe, so the row keeps its × — one close affordance per pointer kind, never
+  both (Jimmy: "the x might make more sense on desktop?"). The action is a real button behind the
+  row, so it stays in the tree for VoiceOver, which takes swipes for navigation.
+- **"Sessions and files" reads "All sessions and files"** (Jimmy), on Home's row and wherever the
+  spec names it.
+- **Rejected:** arrows at the end of the row as both Termux and the physical keyboard's right-hand
+  cluster would have them (the row scrolls; an arrow past the first screenful costs a swipe and ↑ is
+  the most-tapped key after tab); dropping `^R` or ⇧tab from Jimmy's list (Claude Code's Shift+Tab
+  cycles permission mode, `^R` is reverse search: he named the order, not the members); an × on
+  touch beside the swipe (two affordances for one verb); keeping the swipe and the × both live on a
+  computer (a mouse drag can swipe, but one verb gets one control).

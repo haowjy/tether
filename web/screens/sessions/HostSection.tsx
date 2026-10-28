@@ -10,9 +10,9 @@ import styles from "./HostSection.module.css";
 /** Hosts whose sessions or folders can be listed or are about to be; the others show a banner or the Enrol screen instead. */
 const LISTABLE = new Set(["admitted", "deciding", "unreachable"]);
 
-/** The servers a picker side draws: every listable one, or only the one with handle `only` (a server's own sheet). */
-export function useListedHosts(only?: string): HostClient[] {
-  return useAppView((v) => v.hosts).filter((h) => LISTABLE.has(h.admission.kind) && (only === undefined || h.entry.handle === only));
+/** The servers a picker side draws: every listable one, grouped when several. */
+export function useListedHosts(): HostClient[] {
+  return useAppView((v) => v.hosts).filter((h) => LISTABLE.has(h.admission.kind));
 }
 
 interface HostSectionProps {

@@ -7,7 +7,7 @@ const NO_OP = (): void => undefined;
 const tab = (id: string, label: string, meta?: string): CardTab => ({
   id, icon: id.startsWith("files") ? "folder" : "terminal", label, meta, selected: false, bell: false, onOpen: NO_OP, onClose: NO_OP,
 });
-const TABS = [tab("t1", "tether agent"), tab("t2", "notes shell"), tab("files-1", "tether")];
+const TABS = [tab("t1", "tether agent"), tab("t2", "notes shell"), tab("files-1", "tether"), tab("t3", "infra build"), tab("files-2", "~/gitrepos")];
 const NEW = <Button variant="quiet" icon="plus">New session</Button>;
 const ready = (count: number | null) => ({ count, onOpen: NO_OP });
 const base = { bellsUnavailable: false, onRetry: NO_OP, newSession: NEW };

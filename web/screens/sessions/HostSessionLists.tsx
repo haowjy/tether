@@ -1,4 +1,4 @@
-// Every listable host's sessions (or one host's), as the sessions overlay draws them
+// Every listable host's sessions, as the sessions overlay draws them
 // (client-architecture.md §6.3). It reads the cache and the open tabs and retries a listing; what
 // opening or creating does is the caller's.
 import { useApp, useAppView, useBells } from "../../app/context";
@@ -13,8 +13,6 @@ import { SessionList, type ActiveWindows } from "./SessionList";
 
 interface HostSessionListsProps {
   query: string;
-  /** Only this host's list (a server's full-height sheet); every listable host's when absent. */
-  only?: string | undefined;
   /** The terminal tab on screen: its session says "here" and lists its windows. None on Home and Files. */
   active?: ActiveWindows & { id: string };
   onOpen: (host: HostClient, listing: TmuxListing, session: SessionListing) => void;
@@ -22,9 +20,9 @@ interface HostSessionListsProps {
   onNew: (host: HostClient, name: string) => void;
 }
 
-export function HostSessionLists({ query, only, active, onOpen, onNew }: HostSessionListsProps) {
+export function HostSessionLists({ query, active, onOpen, onNew }: HostSessionListsProps) {
   const app = useApp();
-  const hosts = useListedHosts(only);
+  const hosts = useListedHosts();
   const tabs = useAppView((v) => v.workspace.tabs);
   const state = useStore(app.sessions, (s) => s);
   const bells = useBells();

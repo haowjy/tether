@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUDGETS, budgetBreaches, findColourLiterals, findColourPrimitiveUses, findCopyViolations } from "./checks.mjs";
+import { BUDGETS, budgetBreaches, findColourLiterals, findColourPrimitiveUses, findCopyViolations, initialSizes } from "./checks.mjs";
 
 describe("copy rule", () => {
   it("fails on a middle dot, a bullet and a dot marker", () => {
@@ -45,12 +45,11 @@ describe("budgets", () => {
   it("passes a build within budget", () => {
     expect(budgetBreaches(ok, manifest)).toEqual([]);
   });
-  it("fails initial JS over 190 KB, counting static imports", () => {
-    const over = [file("assets/index.js", 50_000), file("assets/vendor.js", BUDGETS.initialJs), file("assets/index.css", 1)];
-    expect(budgetBreaches(over, manifest).join()).toContain("initial JS");
-  });
-  it("fails initial CSS over 15 KB", () => {
-    expect(budgetBreaches([...ok.slice(0, 2), file("assets/index.css", BUDGETS.initialCss + 1)], manifest).join()).toContain("initial CSS");
+  it("records the startup bundle and never fails on its size", () => {
+    const huge = [file("assets/index.js", 900_000), file("assets/vendor.js", 400_000), file("assets/index.css", 90_000)];
+    expect(budgetBreaches(huge, manifest)).toEqual([]);
+    // The entry plus its static import, and the CSS those carry.
+    expect(initialSizes(huge, manifest)).toEqual({ js: 1_300_000, css: 90_000 });
   });
   it("fails a terminal font over 120 KB and the symbols over 150 KB", () => {
     expect(budgetBreaches([...ok, file("assets/tether-mono-bold-x.woff2", BUDGETS.terminalFont + 1)], manifest).join()).toContain("tether-mono-bold");

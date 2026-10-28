@@ -182,7 +182,8 @@ a tab never kills a tmux process.
 
 The phone's keyboard-down bar shows Home, the current tab and a keyboard control; the
 tab's button opens the half-height picker sheet, with the open tabs at its bottom. Home's
-server card has one row, Sessions and files, that opens a full-height picker with Back.
+server card shows up to three of its open tabs (each swiped left to close, or its × with a mouse), then one row,
+All sessions and files, that lands on a tab and opens the picker sheet over it.
 Desktop has Home, tabs and + in its top row; + opens the same picker as a popover. The
 picker has a Sessions / Files switch and a search; creating is each list's last row (New session; on
 Files the search also takes a path, and Open a folder… starts one), and a Files row activates or opens
@@ -369,8 +370,8 @@ the iPhone app, phone browser/PWA and desktop. Desktop has a top row with Home, 
 and Files tabs, + and server context; there is no rail. Phone Home is server-first, with
 settings behind a gear and no tab strip. The terminal, Files and preview use a resting
 bar with Home, the current-tab button and keyboard control. The current-tab button opens
-the half-height picker sheet (a Sessions / Files switch, search and +); from Home the
-picker is full-height. The half-height sheet's bottom strip contains the open tabs. With the keyboard up the bar is replaced by an always-visible one-line
+the half-height picker sheet (a Sessions / Files switch, search and +); Home's "All sessions and
+files" row lands on a tab and opens the sheet over it. The half-height sheet's bottom strip contains the open tabs. With the keyboard up the bar is replaced by an always-visible one-line
 compose box above the text-only key row, with Hide keyboard. The phone browser, PWA and
 native app share the web dock ([Phone dock](client/browser-behaviors.md#phone-dock)).
 
@@ -462,8 +463,10 @@ after Tab, ↑ or readline edits.
 
 Shown directly above the keyboard (above Safari's form bar) and below the compose box
 while the keyboard is up, the same in the browser, PWA and app. The text-only row scrolls
-horizontally and includes esc, ←, ↑, ↓, →, ^R, ^C, tab, ctrl and alt, plus Hide keyboard.
-While the line has focus, unmodified ← and → move its caret, esc returns focus to
+horizontally, in this order: esc, tab, ⇧tab, ctrl, alt, ←, ↑, ↓, →, `|`, `~`, `/`, `-`,
+^C, ^R, ^S, ^Q, ^Z and ⏎, plus Hide keyboard. A keyboard's left edge first, then the keys a
+command needs, then the control chords; ^Q follows ^S because ^S stops a shell's output
+until it. While the line has focus, unmodified ← and → move its caret, esc returns focus to
 tmux, and ↑, ↓, ^R, ^C, tab and other terminal controls go to tmux. Visually distinguish destinations.
 In terminal mode the controls go to tmux; character keys go where typing goes. ctrl and
 alt arm the next key. Arrows repeat while held. Command recall is the shell's own (↑,
