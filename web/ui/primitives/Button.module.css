@@ -14,7 +14,8 @@
   transition: background var(--duration-1) var(--ease-out);
 }
 /* A label of user text (a tab's name) gives way before the button outgrows its row. */
-.label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.label { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-block: 0.15em; margin-block: -0.15em; }
+/* padding-block keeps descenders inside the clip of a line-height: 1 box. */
 .primary {
   background: var(--color-accent);
   color: var(--color-on-accent);

@@ -159,9 +159,10 @@ export function go(text: string, highlighted: CompletionRow | null, ctx: Complet
   const c = complete(text, ctx);
   const { typed, folder } = c;
   if (highlighted) {
-    // A row above the roots is no folder to open: Go descends, as Tab does.
-    if (typed && scopeOf(typed.parent, ctx.where) === "roots") return { fill: accept(typed, highlighted.name) };
-    return reachable(highlighted.path, ctx.where);
+    // A row that is only a step toward a root is no folder to open: Go descends, as Tab does.
+    // The row's own scope decides, not the typed parent's: a root or home listed there opens.
+    // `typed` is set whenever a row is listed.
+    return scopeOf(highlighted.path, ctx.where) === "roots" && typed ? { fill: accept(typed, highlighted.name) } : reachable(highlighted.path, ctx.where);
   }
   if (!typed) return { say: "Start with ~ or /" };
   if (c.note === "outside") return { say: "Outside your folders" };

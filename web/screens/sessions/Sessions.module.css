@@ -1,3 +1,5 @@
 .search { flex: 1; min-width: 0; }
 .actions { display: flex; gap: var(--space-2); }
-.reason { align-self: center; margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: var(--text-small); color: var(--color-text-muted); }
+.actions .reason { align-self: center; }
+/* Lined up with the menu's button labels, not centred in its column. */
+.reason { margin: 0; padding: var(--space-2) var(--space-4); min-width: 0; overflow-wrap: anywhere; font-size: var(--text-small); color: var(--color-text-muted); }
