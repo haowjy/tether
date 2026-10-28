@@ -20,8 +20,8 @@ const reasonOf = (error: unknown): string => (error instanceof Error ? error.mes
 
 /**
  * Replaces every ```mermaid block under `root` with its diagram, and returns the function that
- * puts the blocks back (so a scheme change renders again from the source). A block that does not
- * draw stays as a code block with the reason after it.
+ * puts the blocks back (so a scheme change renders again from the source). A block shows "Loading diagram…"
+ * until it draws; one that does not draw stays as a code block with the reason after it.
  */
 export function mountDiagrams(root: HTMLElement, scheme: Viewport["scheme"]): () => void {
   const blocks = [...root.querySelectorAll<HTMLElement>(DIAGRAM_BLOCK)].flatMap((code) => (code.parentElement ? [code.parentElement] : []));
@@ -30,23 +30,32 @@ export function mountDiagrams(root: HTMLElement, scheme: Viewport["scheme"]): ()
   const abort = new AbortController();
   // A function, so the checks after each await are not narrowed to the value they had before it.
   const stale = (): boolean => abort.signal.aborted;
-  const note = (pre: Element, text: string): void => {
+  // Each block waits behind a status line in its place; a failure brings the code back, with the reason in the line.
+  const waiting = blocks.map((pre) => {
     const p = document.createElement("p");
-    p.setAttribute("role", "note");
-    p.textContent = text;
+    p.setAttribute("role", "status");
+    p.textContent = "Loading diagram…";
+    pre.hidden = true;
     added.push(p);
     pre.after(p);
+    return p;
+  });
+  const fail = (pre: HTMLElement, line: Element, text: string): void => {
+    pre.hidden = false;
+    line.setAttribute("role", "note");
+    line.textContent = text;
   };
   void (async () => {
     let mermaid: Awaited<ReturnType<typeof load>>;
     try {
       mermaid = await load();
     } catch {
-      if (!stale()) for (const pre of blocks) note(pre, "Diagrams couldn't load. Reload to try again.");
+      if (!stale()) blocks.forEach((pre, i) => { fail(pre, waiting[i] as Element, "Diagrams couldn't load. Reload to try again."); });
       return;
     }
-    for (const pre of blocks) {
+    for (const [i, pre] of blocks.entries()) {
       if (stale()) return;
+      const line = waiting[i] as Element;
       try {
         const svg = await mermaid.renderDiagram(pre.textContent, scheme);
         if (stale()) return;
@@ -56,11 +65,10 @@ export function mountDiagrams(root: HTMLElement, scheme: Viewport["scheme"]): ()
         // Natural size, so a wide diagram scrolls inside its figure instead of shrinking past reading.
         const width = el?.viewBox.baseVal.width;
         if (el && width) { el.setAttribute("width", String(width)); el.style.maxWidth = "none"; }
-        pre.hidden = true;
         added.push(figure);
-        pre.after(figure);
+        line.replaceWith(figure);
       } catch (error) {
-        if (!stale()) note(pre, `Diagram couldn't render: ${reasonOf(error)}`);
+        if (!stale()) fail(pre, line, `Diagram couldn't render: ${reasonOf(error)}`);
       }
     }
   })();

@@ -1,15 +1,16 @@
-/* Fills the resting bar beside Show keyboard (or alone on a Files screen), content from the left. */
+/* Fills the resting bar beside Show keyboard (or alone on a Files screen), content from the left. Never wider than its host, in a flex row or not: the labels truncate and the count and chevron stay. */
 .chip {
   flex: 1;
+  width: 100%;
   min-width: 0;
   justify-content: flex-start;
   gap: var(--space-2);
   padding: 0 var(--space-3);
 }
-/* The session name is bold and the window's regular, set apart by space alone; the window truncates first. */
+/* The session name is bold and the window's regular, set apart by space alone. Both shrink, the window far faster: it truncates first, then the session, so the count and chevron never leave the bar. */
 .session, .window { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session { flex: 0 0.01 auto; font-weight: var(--weight-bold); }
-.window { flex: 0 1 auto; }
+.session { flex: 0 1 auto; font-weight: var(--weight-bold); }
+.window { flex: 0 100 auto; }
 /* The count and the chevron sit at the right edge; with no tab, the chevron follows "Sessions" there. */
 .count { flex: none; margin-left: auto; font-size: var(--font-size-1); color: var(--color-text-muted); }
 .count + .open, .only + .open { margin-left: var(--space-1); }

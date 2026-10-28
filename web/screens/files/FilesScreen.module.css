@@ -33,9 +33,8 @@
   font-weight: var(--weight-bold);
 }
 .crumb {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wraps, so the title's truncated name can be read whole here. */
+  overflow-wrap: anywhere;
   font-size: var(--text-meta);
   color: var(--color-text-muted);
 }

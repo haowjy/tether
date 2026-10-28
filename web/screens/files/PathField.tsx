@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useApp, useOverlay } from "../../app/context";
-import { accept, complete, go, slashAccepts, type CompleteContext, type Completion } from "../../files/pathfield";
+import { accept, complete, go, slashAccepts, type CompleteContext, type Completion, type CompletionRow } from "../../files/pathfield";
 import type { FilesPlace } from "../../platform/types";
 import { useStore } from "../../ui/store";
 import { Button } from "../../ui/primitives/Button";
@@ -94,13 +94,15 @@ export function PathField({ session, rest, onEditing, onOpen }: Props) {
     setSaid(null);
   };
 
-  const submit = async (): Promise<void> => {
+  /** Go: opens `row`, else the highlighted folder, else the folder the text names. */
+  const submit = async (row?: CompletionRow): Promise<void> => {
     if (!ctx || text === null || !c) return;
-    let result = go(text, highlighted ?? null, ctx);
+    const target = row ?? highlighted ?? null;
+    let result = go(text, target, ctx);
     if ("wait" in result && c.ask) {
       await browser.folders.load(c.ask.path, c.ask.hidden);
       if (latest.current !== text) return;
-      result = go(text, highlighted ?? null, { ...ctx, folder: (key) => browser.folders.snapshot.held.get(key)?.names ?? undefined });
+      result = go(text, target, { ...ctx, folder: (key) => browser.folders.snapshot.held.get(key)?.names ?? undefined });
     }
     if ("open" in result) {
       endEditing();
@@ -176,7 +178,7 @@ export function PathField({ session, rest, onEditing, onOpen }: Props) {
             home={roots.home}
             hostName={session.hostName}
             highlighted={highlighted?.name ?? null}
-            onAccept={take}
+            onOpen={(row) => { void submit(row); }}
             onRetry={() => { if (c.ask) { browser.folders.drop(c.ask.path); void browser.folders.load(c.ask.path, c.ask.hidden); } }}
           />
         </div>

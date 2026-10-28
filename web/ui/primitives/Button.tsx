@@ -8,7 +8,7 @@ import styles from "./Button.module.css";
 export interface ButtonProps extends Omit<ButtonHTMLAttributes, "icon"> {
   variant?: "primary" | "secondary" | "quiet";
   icon?: IconName;
-  /** Why the button can't be used now. Disabled controls say why: the button stays focusable, does nothing, and describes itself. */
+  /** Why the button can't be used now. Disabled controls say why: the button stays focusable and does nothing, and the reason is shown beside it, where a touch user sees it, and is its description. */
   disabledReason?: string | undefined;
   /** Registers the button with the focus controller under this name. */
   focusTarget?: FocusTarget;
@@ -34,7 +34,7 @@ export function Button({ variant = "secondary", icon, disabledReason, focusTarge
         {icon && <Icon name={icon} size={16} />}
         {children}
       </button>
-      {blocked && <span id={reasonId} class="sr-only">{disabledReason}</span>}
+      {blocked && <span id={reasonId} class={styles.reason}>{disabledReason}</span>}
     </>
   );
 }

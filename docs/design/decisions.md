@@ -3991,3 +3991,11 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   and the save drops hosts the device no longer lists. The first-mark-is-baseline rule now covers only a session
   with nothing saved. Clear local data resets the marks to the current ones. Rejected: a separate storage key
   (a second owner and writer).
+
+### 2026-10-27: Choosing files on a phone (walkthrough fixes)
+
+- **A tap on a completion row opens the folder** (it is Go on that row), instead of filling the field and waiting for a Return the phone's user does not know about. Drilling deeper is a tap in the opened folder's list. Tab and → on a hardware keyboard still accept in place. Rejected: a visible "Open" button beside the field (a second step for the common case).
+- **A disabled `Button` shows its reason beside it**, from the one `disabledReason` prop that already named it to screen readers; the visible span is also the button's `aria-describedby`. Rejected: a per-screen caption (each screen would repeat the rule). Busy states ("Adding") now show too; the label already says it, and the repeat was judged cheaper than a second kind of reason.
+- **A previewed file's path line wraps** (the title still truncates), so its full name is readable without a new control; matches the code and Markdown viewers, which wrap on a phone. Rejected: tap-to-expand title (a hidden gesture for text that can simply be shown).
+- **The current-tab button is `width: 100%` and both its labels shrink** (the window far faster), so it is never wider than its host and the count and chevron stay, whether the host is a flex row or not.
+- **A Mermaid block reads "Loading diagram…" until it draws**, its source hidden; a failure restores the source with the reason.

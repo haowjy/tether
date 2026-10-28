@@ -34,3 +34,5 @@
   cursor: not-allowed;
 }
 .button[aria-disabled="true"]:hover { filter: none; }
+/* A sibling of the button, so it sits in whatever row or wrap the button is in. */
+.reason { min-width: 0; font-size: var(--text-small); color: var(--color-text-muted); text-wrap: pretty; }

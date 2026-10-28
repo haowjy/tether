@@ -1,6 +1,6 @@
 import { describeError } from "../../files/browser";
 import { shorten } from "../../files/format";
-import type { Completion } from "../../files/pathfield";
+import type { Completion, CompletionRow } from "../../files/pathfield";
 import { Button } from "../../ui/primitives/Button";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { Row } from "../../ui/primitives/Row";
@@ -17,16 +17,17 @@ interface Props {
   hostName: string;
   /** The highlighted row's name. */
   highlighted: string | null;
-  onAccept: (name: string) => void;
+  /** A tap on a row opens that folder. */
+  onOpen: (row: CompletionRow) => void;
   onRetry: () => void;
 }
 
 /**
  * What the list shows while the path field has focus: the typed parent's subfolders that
- * match, each a tap to accept. Rows take the tap without taking focus from the field, which
- * keeps the phone's keyboard up.
+ * match, each a tap to open. Rows take the tap without taking focus from the field, which
+ * keeps the edit from being cancelled by the blur.
  */
-export function CompletionList({ listId, completion: c, home, hostName, highlighted, onAccept, onRetry }: Props) {
+export function CompletionList({ listId, completion: c, home, hostName, highlighted, onOpen, onRetry }: Props) {
   const { typed, folder } = c;
   if (c.note === "start") return <p class={find.note}>Type a path that starts with ~ or /.</p>;
   if (c.note === "outside" || !typed) return <EmptyState icon="folder" title="Outside your folders" />;
@@ -56,9 +57,9 @@ export function CompletionList({ listId, completion: c, home, hostName, highligh
               meta={row.added ? undefined : "not added"}
               trailing="chevron"
               selected={row.name === highlighted}
-              // The row takes the tap without taking focus from the field: the keyboard stays up.
+              // The row takes the tap without taking focus from the field, so the blur cannot cancel the edit before the open.
               onMouseDown={(e) => { e.preventDefault(); }}
-              onClick={() => { onAccept(row.name); }}
+              onClick={() => { onOpen(row); }}
             />
           ))}
         </div>
