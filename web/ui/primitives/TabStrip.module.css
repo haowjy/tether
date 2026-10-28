@@ -48,3 +48,5 @@
 .window { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; margin-left: var(--space-2); font-weight: normal; }
 .bell { margin-left: var(--space-2); }
 .close { width: var(--tab-height); height: var(--tab-height); flex: none; color: var(--color-text-muted); }
+/* Hidden, not removed: the slot keeps every pill's width, and a hidden button takes no tap or focus. */
+.pill:not(.active) .close { visibility: hidden; }
