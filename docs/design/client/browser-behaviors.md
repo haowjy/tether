@@ -169,9 +169,11 @@ half-height over current tab             full-height from Home
     local data resets them to the current marks. Two pages of one origin each save: the last
     writer wins, so a dot cleared in one page can return in the other after a reload.
   - **A session this device has no seen mark for** takes the first mark it learns as its
-    baseline (no dot), unless this page has already heard marks from that host: the
-    session's counter then started after that, at 0, so any mark is a bell not yet shown.
-    One rule for a listing and for a `bell` message, a restarted tmux included.
+    baseline (no dot), unless this page has already listed that host (on any tmux
+    instance): every session there was then got a seen mark, so this one's counter started
+    after that, at 0, and any mark is a bell not yet shown. A `bell` message arriving before
+    the page's first listing of the host doesn't count as listed. One rule for a listing
+    and for a `bell` message, a restarted tmux included.
   - **Not tracked, in words, never a silent dot-free tab.** When the listing or a
     `bell` message says `covered: false` for a session, its row says "tmux settings hide
     bells in this session". When the `bell` message carries `available: false` for the

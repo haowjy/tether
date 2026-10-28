@@ -24,6 +24,8 @@ interface HostBells {
   server: string | null | undefined;
   /** False while the daemon couldn't read tmux's bell state at its last try. */
   available: boolean;
+  /** This page has had a complete answer (a listing) for the host. A partial `bell` before it doesn't count. */
+  listed: boolean;
 }
 
 /** What a session's row or tab says about bells. */
@@ -95,21 +97,24 @@ export class BellMarks extends Store<BellsState> {
   /** The host can't read tmux's bell state: a `bell` message says so, or a listing failed with a tmux error (not "no server"). */
   unreadable(hostId: string): void {
     const { hosts } = this.snapshot;
-    this.commit({ hosts: { ...hosts, [hostId]: { server: hosts[hostId]?.server, available: false } } });
+    const host = hosts[hostId];
+    this.commit({ hosts: { ...hosts, [hostId]: { server: host?.server, available: false, listed: host?.listed ?? false } } });
   }
 
   /**
    * One rule for both paths. A session this device has no seen mark for takes the mark it learns
-   * as its baseline, unless the device has already heard marks from the host: the session's
-   * counter then started after that, at 0, so every mark is a bell this device hasn't shown. A
-   * tmux restart is such a case. Marks of another instance go with it; `complete` says `sessions`
+   * as its baseline, unless this page has already listed the host: every session there was then
+   * got a seen mark, so this one's counter started after that, at 0, and every mark is a bell
+   * this device hasn't shown. A tmux restart is such a case. A partial `bell` arriving before the
+   * first listing doesn't count as listed, or that listing would dot every session that ever rang. Marks of another instance go with it; `complete` says `sessions`
    * is every session there is (a listing).
    */
   private learn(hostId: string, server: string | null, sessions: BellChange[], complete: boolean): void {
     const { marks, seen, hosts } = this.snapshot;
-    const heard = hosts[hostId]?.server !== undefined;
+    const prior = hosts[hostId];
+    const heard = prior?.listed === true;
     // A restarted server's answer is every session, like a listing.
-    const replaces = complete || (heard && hosts[hostId]?.server !== server);
+    const replaces = complete || (prior?.server !== undefined && prior.server !== server);
     const own = (id: string): boolean => id.startsWith(`${hostId}/`);
     const nextMarks = replaces ? dropped(marks, own) : { ...marks };
     const nextSeen = replaces ? dropped(seen, own) : { ...seen };
@@ -118,7 +123,7 @@ export class BellMarks extends Store<BellsState> {
       nextMarks[id] = { mark: change.mark, covered: change.covered };
       nextSeen[id] = seen[id] ?? (heard ? 0 : change.mark);
     }
-    this.commit({ marks: nextMarks, seen: nextSeen, hosts: { ...hosts, [hostId]: { server, available: true } } });
+    this.commit({ marks: nextMarks, seen: nextSeen, hosts: { ...hosts, [hostId]: { server, available: true, listed: complete || heard } } });
   }
 
   private commit(next: Partial<BellsState>): void {

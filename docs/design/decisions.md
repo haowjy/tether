@@ -3965,10 +3965,12 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   device already keeps).
 - **One baseline rule on the device, for a listing and a `bell`** (review p369). A session
   with no seen mark takes the first mark it learns as its baseline, unless the page has
-  already heard marks from that host: its counter then started after that, at 0, so the
-  mark is a bell not yet shown. Review p369 asked for "an instance this device has already
+  already listed that host, on any instance: its counter then started after that, at 0, so
+  the mark is a bell not yet shown. Review p369 asked for "an instance this device has already
   listed"; that still swallows the first bell of a restarted server, whose first answer
-  arrives as a `bell` before any relist. Rejected: a rule per path (a race decided
+  arrives as a `bell` before any relist. Rejected: "heard any marks from that host"
+  (re-check p373): a `bell` reaching a page before its first listing would make that listing
+  dot every session that ever rang. Rejected: a rule per path (a race decided
   whether a new session got a dot). An overlay over a terminal tab still counts the tab as
   seen (the half-height sheet leaves it visible); two pages of one origin save one
   `bellSeen` each and the last writer wins, a stated limit. `Row` gets a `mark` slot that

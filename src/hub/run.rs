@@ -74,6 +74,9 @@ pub(super) async fn run(
             }
         }
     }
+    // Nothing reads the inbox past here: closing it makes a late one-shot's send fail at once
+    // instead of waiting on a full inbox, which would hold the hook removal to its timeout.
+    drop(inbox);
     io.shut_down(pump_out, &state.endpoints[MAIN].endpoint)
         .await;
 }
