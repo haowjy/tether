@@ -60,7 +60,7 @@ export function PathField({ session, rest, onEditing, onOpen }: Props) {
     setSaid(null);
     if (input.current && document.activeElement === input.current) app.focus.blurElement(input.current);
   };
-  /** Ends editing from the field (Escape, Cancel, blur): Back's step. */
+  /** Ends editing from the field (Escape, Cancel): Back's step. */
   const cancel = (): void => {
     if (!active.current) return;
     endEditing();
@@ -138,8 +138,8 @@ export function PathField({ session, rest, onEditing, onOpen }: Props) {
             app.router.openOverlay({ screen: "files", name: "find" });
             setText(rest === "" ? "~/" : rest.endsWith("/") ? rest : `${rest}/`);
           }}
-          // Losing focus ends editing, but not when the whole window lost it (the element is still the active one).
-          onBlur={(e) => { if (document.activeElement !== e.currentTarget) cancel(); }}
+          // Losing focus (the keyboard hidden, a tap elsewhere) only lowers the keyboard: the edit and its text
+          // stay, and a tap on the field resumes it. Cancel, Escape and Back end it.
           onInput={(value, el) => {
             setChosen(null);
             setSaid(null);

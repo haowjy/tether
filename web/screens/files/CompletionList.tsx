@@ -23,9 +23,9 @@ interface Props {
 }
 
 /**
- * What the list shows while the path field has focus: the typed parent's subfolders that
+ * What the list shows while the path field is being edited: the typed parent's subfolders that
  * match, each a tap to open. Rows take the tap without taking focus from the field, which
- * keeps the edit from being cancelled by the blur.
+ * keeps the keyboard up until the folder opens.
  */
 export function CompletionList({ listId, completion: c, home, hostName, highlighted, onOpen, onRetry }: Props) {
   const { typed, folder } = c;
@@ -57,7 +57,7 @@ export function CompletionList({ listId, completion: c, home, hostName, highligh
               meta={row.added ? undefined : "not added"}
               trailing="chevron"
               selected={row.name === highlighted}
-              // The row takes the tap without taking focus from the field, so the blur cannot cancel the edit before the open.
+              // The row takes the tap without taking focus from the field, so the keyboard doesn't drop before the open.
               onMouseDown={(e) => { e.preventDefault(); }}
               onClick={() => { onOpen(row); }}
             />
