@@ -148,17 +148,21 @@ export function slashAccepts(before: string, ctx: CompleteContext): string | nul
   return c.rows.some((row) => row.name === c.typed?.segment) ? null : accept(c.typed, c.predicted.name);
 }
 
-/** What Go does: open a folder, say why not (null: the list already shows the refusal), or wait for the typed parent's listing (never for a folder named whole, which opening lists). */
-export type Go = { open: string } | { say: string | null } | { wait: true };
+/** What Go does: open a folder, fill the field (a step toward a root), say why not (null: the list already shows the refusal), or wait for the typed parent's listing (never for a folder named whole, which opening lists). */
+export type Go = { open: string } | { fill: string } | { say: string | null } | { wait: true };
 
 /**
  * Go opens the highlighted row, or with none the folder the text names. The listing of the
  * typed parent decides whether that folder exists, so it must have arrived (`wait`).
  */
 export function go(text: string, highlighted: CompletionRow | null, ctx: CompleteContext): Go {
-  if (highlighted) return reachable(highlighted.path, ctx.where);
   const c = complete(text, ctx);
   const { typed, folder } = c;
+  if (highlighted) {
+    // A row above the roots is no folder to open: Go descends, as Tab does.
+    if (typed && scopeOf(typed.parent, ctx.where) === "roots") return { fill: accept(typed, highlighted.name) };
+    return reachable(highlighted.path, ctx.where);
+  }
   if (!typed) return { say: "Start with ~ or /" };
   if (c.note === "outside") return { say: "Outside your folders" };
   // A trailing `.` or `..` names a folder that exists; any other segment must be one in the listing, exactly.

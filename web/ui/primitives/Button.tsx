@@ -10,7 +10,7 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes, "icon"> {
   icon?: IconName;
   /** Why the button can't be used now. Disabled controls say why: the button stays focusable and does nothing, and the reason is shown beside it, where a touch user sees it, and is its description. */
   disabledReason?: string | undefined;
-  /** Its work is in flight: it does nothing until that ends, and shows no reason, since the caller's label already says what is happening ("Adding…"). */
+  /** Blocked by work in flight (its own, or a sibling's it must wait for): it does nothing until that ends and shows no reason, since the caller's label already says what is happening ("Adding…"). */
   busy?: boolean;
   /** Registers the button with the focus controller under this name. */
   focusTarget?: FocusTarget;
@@ -36,7 +36,7 @@ export function Button({ variant = "secondary", icon, disabledReason, busy = fal
         onClick={blocked ? (e) => { e.preventDefault(); } : onClick}
       >
         {icon && <Icon name={icon} size={16} />}
-        {children}
+        <span class={styles.label}>{children}</span>
       </button>
       {reasoned && <span id={reasonId} class={styles.reason}>{disabledReason}</span>}
     </>

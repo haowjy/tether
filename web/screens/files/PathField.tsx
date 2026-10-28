@@ -87,11 +87,13 @@ export function PathField({ session, rest, onEditing, onOpen }: Props) {
     if (highlighted) document.getElementById(rowId(listId, highlighted.name))?.scrollIntoView({ block: "nearest" });
   }, [listId, highlighted?.name]);
 
-  const take = (name: string): void => {
-    if (!c?.typed) return;
-    setText(accept(c.typed, name));
+  const fill = (to: string): void => {
+    setText(to);
     setChosen(null);
     setSaid(null);
+  };
+  const take = (name: string): void => {
+    if (c?.typed) fill(accept(c.typed, name));
   };
 
   /** Go: opens `row`, else the highlighted folder, else the folder the text names. */
@@ -107,7 +109,8 @@ export function PathField({ session, rest, onEditing, onOpen }: Props) {
     if ("open" in result) {
       endEditing();
       app.router.closeOverlay(() => { onOpen({ kind: "dir", path: result.open }); });
-    } else if ("say" in result) setSaid(result.say);
+    } else if ("fill" in result) fill(result.fill);
+    else if ("say" in result) setSaid(result.say);
   };
 
   const step = (by: 1 | -1): void => {

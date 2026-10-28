@@ -1,5 +1,5 @@
 // New session and Browse files on `host`, a server the caller chose: the active tab's for the
-// sessions overlay; Home's card has New session alone (its Files row is Browse files). An unreachable one disables both with the reason; neither
+// sessions overlay; Home's card has New session alone (its Files row is Browse files). An unreachable one shows its reason once in their place; neither
 // acts on another server. Both go through `commit`, so the form decides when they run: at once
 // behind the sheet, after the picker or a server's sheet has closed.
 import { useApp, useAppView } from "../../app/context";
@@ -7,6 +7,7 @@ import type { HostClient } from "../../net/hosts";
 import { Button } from "../../ui/primitives/Button";
 import { activeTab } from "../../workspace/state";
 import type { Commit } from "./SessionPicks";
+import styles from "./Sessions.module.css";
 
 /** The active tab's server, or the first when no tab is open. */
 export function useActiveHost(): HostClient | undefined {
@@ -60,6 +61,9 @@ function BrowseFiles({ host, commit }: { host: HostClient | undefined; commit: C
 }
 
 export function NewActions({ host, commit }: { host: HostClient | undefined; commit: Commit }) {
+  // The reason is about the server, not either button: say it once in place of two dead buttons.
+  const reason = reasonOf(host);
+  if (reason) return <p class={styles.reason}>{reason}</p>;
   return (
     <>
       <NewSession host={host} commit={commit} />

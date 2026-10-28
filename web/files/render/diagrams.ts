@@ -32,16 +32,19 @@ export function mountDiagrams(root: HTMLElement, scheme: Viewport["scheme"]): ()
   const stale = (): boolean => abort.signal.aborted;
   // Each block waits behind a status line in its place; a failure brings the code back, with the reason in the line.
   const waiting = blocks.map((pre) => {
-    const p = document.createElement("p");
-    p.setAttribute("role", "status");
-    p.textContent = "Loading diagram…";
+    const line = document.createElement("p");
+    line.setAttribute("role", "status");
+    line.textContent = "Loading diagram…";
+    // The block's height, so the text below does not move when it comes back; WebKit does not keep the reader's place.
+    line.style.minHeight = String(pre.offsetHeight) + "px";
     pre.hidden = true;
-    added.push(p);
-    pre.after(p);
-    return p;
+    added.push(line);
+    pre.after(line);
+    return { pre, line };
   });
-  const fail = (pre: HTMLElement, line: Element, text: string): void => {
+  const fail = ({ pre, line }: { pre: HTMLElement; line: Element }, text: string): void => {
     pre.hidden = false;
+    line.removeAttribute("style");
     line.setAttribute("role", "note");
     line.textContent = text;
   };
@@ -50,12 +53,12 @@ export function mountDiagrams(root: HTMLElement, scheme: Viewport["scheme"]): ()
     try {
       mermaid = await load();
     } catch {
-      if (!stale()) blocks.forEach((pre, i) => { fail(pre, waiting[i] as Element, "Diagrams couldn't load. Reload to try again."); });
+      if (!stale()) for (const pair of waiting) fail(pair, "Diagrams couldn't load. Reload to try again.");
       return;
     }
-    for (const [i, pre] of blocks.entries()) {
+    for (const pair of waiting) {
+      const { pre, line } = pair;
       if (stale()) return;
-      const line = waiting[i] as Element;
       try {
         const svg = await mermaid.renderDiagram(pre.textContent, scheme);
         if (stale()) return;
@@ -68,7 +71,7 @@ export function mountDiagrams(root: HTMLElement, scheme: Viewport["scheme"]): ()
         added.push(figure);
         line.replaceWith(figure);
       } catch (error) {
-        if (!stale()) fail(pre, line, `Diagram couldn't render: ${reasonOf(error)}`);
+        if (!stale()) fail(pair, `Diagram couldn't render: ${reasonOf(error)}`);
       }
     }
   })();

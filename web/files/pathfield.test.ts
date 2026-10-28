@@ -149,9 +149,9 @@ describe("go", () => {
     expect(go("repos", null, repos)).toEqual({ say: "Start with ~ or /" });
   });
 
-  it("opens nothing for a row above the roots", () => {
+  it("fills the field for a row above the roots", () => {
     const row = complete("/ho", ctxOf({})).predicted;
-    expect(go("/ho", row, ctxOf({}))).toEqual({ say: "Outside your folders" });
+    expect(go("/ho", row, ctxOf({}))).toEqual({ fill: "/home/" });
   });
 
   it("opens a folder named whole without waiting for a listing, and one past the scan cap that the list lacks", () => {

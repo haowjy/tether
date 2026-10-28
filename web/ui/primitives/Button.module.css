@@ -9,9 +9,12 @@
   border-radius: var(--radius-2);
   font-weight: var(--weight-medium);
   line-height: 1;
+  max-width: 100%;
   white-space: nowrap;
   transition: background var(--duration-1) var(--ease-out);
 }
+/* A label of user text (a tab's name) gives way before the button outgrows its row. */
+.label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .primary {
   background: var(--color-accent);
   color: var(--color-on-accent);
@@ -35,4 +38,4 @@
 }
 .button[aria-disabled="true"]:hover { filter: none; }
 /* A sibling of the button, so it sits in whatever row or wrap the button is in. */
-.reason { min-width: 0; font-size: var(--text-small); color: var(--color-text-muted); text-wrap: pretty; }
+.reason { align-self: center; min-width: 0; overflow-wrap: anywhere; font-size: var(--text-small); color: var(--color-text-muted); text-wrap: pretty; }
