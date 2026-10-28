@@ -43,3 +43,16 @@ State checked from c312, read-only, 2026-10-27: `tailscale serve status` shows
   would delete tether's 443 route here. pop-os's unix-socket target isn't matched.
 - Flow's `pnpm dev --funnel` publishes on 443 and 8443
   (`meridian-flow/tools/dev/lib/dev-share-ports.ts:19`), on the same node as tether.
+
+## Restored (c312, 2026-10-27 20:36 EDT)
+
+After meridian-flow#1167 merged, Jimmy (or Flow) had already done steps 2-3: portless on
+127.0.0.1/::1:443 only, Serve `/` → `unix:/run/user/1000/tether/serve.sock`. c312 did
+step 4: pulled `~/gitrepos/tether` to `3e2a594`, `cargo install --locked --path .` (pnpm
+is nvm's, `~/.nvm/versions/node/v24.13.0/bin`, not on a non-interactive PATH),
+`loginctl enable-linger` (no sudo needed), `tether setup --background`. Setup first
+refused: `config.toml` pinned `[tmux] program = "/home/jimyao/.local/bin/tmux"` (a
+3.4-era workaround; the file is gone, the server is now 3.8 at /usr/local/bin); the
+config was emptied, backup `~/.config/tether/config.toml.bak-2026-10-27`. Result:
+`tether.service` active and enabled, page 200 over the tailnet, bell hook
+`alert-bell[9100]` on Jimmy's live 3.8 server (no other alert-bell entries).

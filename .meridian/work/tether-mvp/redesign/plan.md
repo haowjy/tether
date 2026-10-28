@@ -273,3 +273,6 @@ keep their default (opus). Frontend: "probably sonnet is enough, maybe we need o
   `98ee0d5` (+`?? ""`), `d7021ae`, `6d47e05`. Pushed `163026b..6d47e05`: all seven slices
   on main. Remaining: iPhone device pass (slices 1-7), live bell hook after Jimmy's tmux
   restart, homebox 443 restore after meridian-flow#1167.
+- 2026-10-27 20:36: Jimmy restarted homebox tmux (3.8) and merged meridian-flow#1167.
+  tether `3e2a594` installed as homebox user service; bell hook live at 9100. Details:
+  `serve-443-coexistence.md` "Restored".
