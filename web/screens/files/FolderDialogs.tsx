@@ -49,7 +49,7 @@ export function RemoveFolderDialog({ session }: { session: FilesSession }) {
           {error && <p class={styles.error} role="alert">{error}</p>}
           <div class={styles.actions}>
             <Button variant="quiet" onClick={close}>Cancel</Button>
-            <Button variant="secondary" class={styles.danger} disabledReason={busy ? "Removing" : undefined} onClick={() => { void remove(); }}>{busy ? "Removing…" : "Remove folder"}</Button>
+            <Button variant="secondary" class={styles.danger} busy={busy} onClick={() => { void remove(); }}>{busy ? "Removing…" : "Remove folder"}</Button>
           </div>
         </div>
       )}

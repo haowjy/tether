@@ -19,7 +19,7 @@ export function AddThisFolder({ session, path }: { session: FilesSession; path: 
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const home = roots?.home ?? null;
-  const reason = path === home ? "Open a folder inside your home folder first" : roots?.roots.some((r) => r.canonical === path) ? "Already in your folders" : busy ? "Adding" : undefined;
+  const reason = path === home ? "Open a folder inside your home folder first" : roots?.roots.some((r) => r.canonical === path) ? "Already in your folders" : undefined;
 
   const add = async (): Promise<void> => {
     setBusy(true);
@@ -36,7 +36,7 @@ export function AddThisFolder({ session, path }: { session: FilesSession; path: 
   return (
     <div class={styles.notAdded}>
       <p>Not one of your folders</p>
-      <Button variant="primary" icon="plus" disabledReason={reason} onClick={() => { void add(); }}>{busy ? "Adding…" : "Add this folder"}</Button>
+      <Button variant="primary" icon="plus" disabledReason={reason} busy={busy} onClick={() => { void add(); }}>{busy ? "Adding…" : "Add this folder"}</Button>
       {refused && <p class={styles.refused} role="alert">{refused}</p>}
     </div>
   );

@@ -64,7 +64,7 @@ function Confirm({ name, title, confirmLabel, run, children }: {
           {error && <p class={styles.error} role="alert">{error}</p>}
           <div class={styles.actions}>
             <Button variant="quiet" onClick={close}>Cancel</Button>
-            <Button variant="primary" disabledReason={busy ? "Working" : undefined} onClick={() => { void confirm(); }}>
+            <Button variant="primary" busy={busy} onClick={() => { void confirm(); }}>
               {busy ? "Working…" : confirmLabel}
             </Button>
           </div>

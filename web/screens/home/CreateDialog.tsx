@@ -42,7 +42,7 @@ function Form({ params }: { params: CreateParams }) {
       {error && <p class={styles.error} role="alert">{error}</p>}
       <div class={styles.actions}>
         <Button variant="quiet" onClick={() => { app.router.closeOverlay(); }}>Cancel</Button>
-        <Button variant="primary" type="submit" disabledReason={busy ? "Creating" : undefined}>{busy ? "Creating…" : "Create"}</Button>
+        <Button variant="primary" type="submit" busy={busy}>{busy ? "Creating…" : "Create"}</Button>
       </div>
     </form>
   );

@@ -67,8 +67,8 @@ export function Enrol({ host }: { host: HostClient }) {
             <TextField label="Device name" value={deviceName} onInput={setDeviceName} hint="Shown in the server's device list." />
             {error && <p class={styles.error} role="alert">{error}</p>}
             <div class={styles.actions}>
-              <Button onClick={() => { setError(null); setStep("code"); }} disabledReason={busy ? "Enrolling" : undefined}>Back</Button>
-              <Button variant="primary" type="submit" disabledReason={busy ? "Enrolling" : undefined}>
+              <Button onClick={() => { setError(null); setStep("code"); }} busy={busy}>Back</Button>
+              <Button variant="primary" type="submit" busy={busy}>
                 {busy ? "Enrolling…" : "Enrol this device"}
               </Button>
             </div>
