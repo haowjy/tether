@@ -108,7 +108,7 @@ Jimmy's decisions, as they stand ([log](decisions.md#jimmys-decisions)):
   one-time code and can be revoked with `tether device remove` ([auth.md](auth.md)).
 - **Access:** tether is reachable only from Jimmy's tailnet.
 - **Hosts:** several servers are part of the product, not a later extension: Home shows
-  one card per server and the sessions sheet groups sessions by server. The app connects
+  one card per server and the picker sheet groups sessions by server. The app connects
   to each host's daemon directly. A browser/PWA is still bound to its page origin until a
   multi-server browser design lands (an origin and admission design that keeps the
   browser boundary; [interaction contract](client/browser-behaviors.md#product-boundaries-and-vocabulary)).
@@ -172,7 +172,7 @@ running, the app says so and offers nothing that would start one. The scratch se
 is the one exception, started in its own transient scope so it never lives in
 tether's cgroup.
 
-### Tabs and the session sheet
+### Tabs and the picker
 
 A terminal tab opens one tmux session on its current window, follows it when the laptop,
 a script or tether changes the window, and follows the active pane inside it. Its label
@@ -180,11 +180,12 @@ is the session name then the window name; identity is the stable server/session 
 is also a tab: any number can be open, each with its own saved folder or preview. Closing
 a tab never kills a tmux process.
 
-The phone's keyboard-down bar shows the current tab and a keyboard control; its button
-opens the half-height sessions sheet. Tabs and + sit at the sheet's bottom. Home's server
-card opens a full-height sheet with Back. Desktop has Home, tabs and + in its top row;
-+ opens a session picker with New session and Browse files. Home and Browse files open
-new Files tabs at the selected server's folder list (its roots). Session search is local and refresh
+The phone's keyboard-down bar shows Home, the current tab and a keyboard control; the
+tab's button opens the half-height picker sheet, with the open tabs at its bottom. Home's
+server card has one row, Sessions and files, that opens a full-height picker with Back.
+Desktop has Home, tabs and + in its top row; + opens the same picker as a popover. The
+picker has a Sessions / Files switch, search, and + (New session, or a new Files tab); a Files row
+opens a new Files tab at that root folder. Session search is local and refresh
 is event-driven. Only sessions with multiple windows offer switching in the sheet or
 desktop equivalent. A terminal bell puts an attention dot on its tab and session row
 (Bell attention below). See [the interaction contract](client/browser-behaviors.md)
@@ -366,9 +367,9 @@ The [client interaction contract](client/browser-behaviors.md) defines the redes
 the iPhone app, phone browser/PWA and desktop. Desktop has a top row with Home, terminal
 and Files tabs, + and server context; there is no rail. Phone Home is server-first, with
 settings behind a gear and no tab strip. The terminal, Files and preview use a resting
-bar with current-tab button and keyboard control. The current-tab button opens a
-half-height sessions sheet; from Home the sheet is full-height. Its bottom strip contains
-tabs and +. With the keyboard up the bar is replaced by an always-visible one-line
+bar with Home, the current-tab button and keyboard control. The current-tab button opens
+the half-height picker sheet (a Sessions / Files switch, search and +); from Home the
+picker is full-height. The half-height sheet's bottom strip contains the open tabs. With the keyboard up the bar is replaced by an always-visible one-line
 compose box above the text-only key row, with Hide keyboard. The phone browser, PWA and
 native app share the web dock ([Phone dock](client/browser-behaviors.md#phone-dock)).
 
@@ -397,7 +398,7 @@ placement may move the cursor while terminal input already has the keyboard. Scr
 selection and reconnects do not toggle it.
 
 Opening a sheet lowers the keyboard, and closing it does not raise it again (the phone's
-sessions sheet cannot open with the keyboard up; the wide-screen picker returns focus to `+`). An
+picker sheet cannot open with the keyboard up; the wide-screen picker returns focus to `+`). An
 interruption restores the native target, including `line`. Desktop click-to-focus is
 unchanged. Native mechanics are in [ios-shell.md](ios-shell.md#keyboard), touch rules in
 [terminal interaction](client/terminal-interaction-design.md).
@@ -609,7 +610,7 @@ width.
 
 ## File manager
 
-Files opens as a tab from Home or the sessions sheet / desktop picker. Any number of
+Files opens as a tab from Home or the picker. Any number of
 Files tabs can be open, each remembering its own folder or file preview. A new one starts
 at the selected server's folder list (its roots); existing tabs are restored by selecting them.
 
@@ -767,7 +768,7 @@ web/           one Preact app embedded by the daemon and bundled into the iOS ap
   screens/
     shell/        destination frame, top navigation and host banner
     home/         server cards and settings entry
-    sessions/     the sessions overlay: the phone sheet, the desktop picker, the + menu
+    sessions/     the picker: the phone sheets, the desktop popover
     terminal/     tab strip, terminal surface, status band and the phone dock; terminals.ts
                   holds the renderer and every tab's driver outside Preact
     files/        folder list, preview, upload and path insertion
@@ -869,7 +870,7 @@ The spikes come first. The native app's keyboard checks are in
   strict CSP.
 - **Tabs and layout:** 1 terminal tab = 1 session, following its current window; the window
   switcher for multi-window sessions; collapsed and keyboard states; safe areas; the
-  desktop picker, phone sessions sheet, Files tabs and creation actions; pinch font size
+  desktop picker, phone picker sheet, Files tabs and creation actions; pinch font size
   per tab; landscape.
 - **Reconnect:** indefinite "reconnecting" with backoff and instant retry; the connect
   timeout with web view recreation; a snapshot on every (re)watch; prompt release of

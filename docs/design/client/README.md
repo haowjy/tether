@@ -24,7 +24,7 @@ focus and touch behavior also require the [device checklist](../ios-shell.md#dev
 
 The [interaction contract](browser-behaviors.md) governs layout: desktop uses a top
 row with Home, tabs and +; phone Home is server-first, and the current-tab button opens
-the sessions sheet. Files is a tab. With the keyboard up the phone dock shows a compose
+the picker sheet. Files is a tab. With the keyboard up the phone dock shows a compose
 box above the key row. The contract covers browser/PWA and native differences and the
 open implementation details. Older mockups and review notes do not override it.
 

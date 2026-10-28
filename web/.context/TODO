@@ -5,6 +5,7 @@ Must-do (client-architecture.md §11):
   screens are not code-split — only the heavy libraries are —
   so every feature ratchets the initial bundle. Split the screens so the first paint stops
   paying for the terminal and the file manager, then bring the budget back down.
+  Each launch-code feature has raised the budget 1 KB (196 KB to 202 KB, 201.1 measured after the one picker); the split is due before the next one.
 
 - L4 (daemon): an `input` refusal (`busy`, `inputTooLarge`) names no request, so the client cannot
   report which typed characters were refused. Paste refusals now carry their request id; the

@@ -8,8 +8,7 @@ import { bellsUnavailable } from "../../sessions/bells";
 import { Button } from "../../ui/primitives/Button";
 import { IconButton } from "../../ui/primitives/IconButton";
 import { useStore } from "../../ui/store";
-import { NewSession } from "../sessions/NewActions";
-import { now } from "../sessions/SessionPicks";
+import { NewSession } from "../sessions/NewSession";
 import { pillMeta, tabPills } from "../terminal/tabView";
 import { terminalsOf } from "../terminal/terminals";
 import { HostBanner } from "../shell/HostBanner";
@@ -26,9 +25,8 @@ function hostOf(hostId: string, hosts: HostClient[]): HostClient | undefined {
 function HostCard({ host, tabs }: { host: HostClient; tabs: CardTab[] }) {
   const app = useApp();
   const handle = host.entry.handle;
-  const { body, files } = cardOf(host, useStore(app.sessions, (s) => s.hosts[handle]));
-  const { hostId } = host;
-  const unreadable = bellsUnavailable(useBells(), hostId);
+  const { body, pickable, count } = cardOf(host, useStore(app.sessions, (s) => s.hosts[handle]));
+  const unreadable = bellsUnavailable(useBells(), host.hostId);
   return (
     <ServerCard
       name={host.name ?? "the server"}
@@ -37,9 +35,8 @@ function HostCard({ host, tabs }: { host: HostClient; tabs: CardTab[] }) {
       bellsUnavailable={unreadable}
       notice={body.kind !== "offline" && <HostBanner host={host} />}
       onRetry={() => { app.retryHost(handle); }}
-      onSessions={(opener) => { app.openOverlay({ screen: "sessions", name: "server", params: { host: handle } }, opener); }}
-      newSession={<NewSession host={host} commit={now} />}
-      onFiles={files && hostId !== null ? () => { app.openFiles(hostId); } : undefined}
+      picker={pickable ? { count, onOpen: (opener) => { app.openOverlay({ screen: "sessions", name: "server", params: { host: handle } }, opener); } } : undefined}
+      newSession={<NewSession host={host} />}
     />
   );
 }

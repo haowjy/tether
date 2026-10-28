@@ -5,6 +5,7 @@ version section on release.
 
 ## [Unreleased]
 
+- One picker opens a session or a Files folder everywhere: a Sessions / Files switch, a search that filters the side you are on, and one + beside it (New session on Sessions, Add folder on Files). It is the desktop + popover, the phone's half-height sheet and the full-height sheet from Home. The Files side lists each server's folders; tapping one opens a new Files tab there. Any pick now closes the picker (the half-height sheet used to stay open); the tabs in its bottom strip still switch behind it. Home's card has one "Sessions and files" row, with the session count, in place of "All N sessions" and "Files", and "Browse files" is gone. On the phone, Home moved to the bottom bar, before the current-tab button, on terminal and Files tabs.
 - Files on a phone: a long name no longer pushes the current-tab button's count and chevron off the screen (it truncates the name), the full path of a previewed file wraps so its name can be read, a disabled button such as Insert path shows why beside it ("Open a terminal tab first"), tapping a folder in the Go to folder list opens it instead of only filling the field, and a Markdown diagram shows "Loading diagram…" until it draws instead of its source.
 - A terminal bell in any tmux session puts a dot on that session's tab, its row in the session lists, Home's tab rows and the current-tab button, until you open the tab on that device (the tab you are looking at never gets one), even when the bell rang while the page or app was closed. tether reads bells with one tmux `alert-bell` hook it installs while the daemon runs, only while a device is connected, so a bell shows within about 5 seconds. A session whose tmux settings hide bells says so, and a host that can't read tmux says "Bell tracking unavailable on this host". Claude Code rings only with `"preferredNotifChannel": "terminal_bell"`, and Codex inside tmux only with `notification_method = "bel"` under `[tui]` in `~/.codex/config.toml` (it sends OSC 9 by default); [running.md](docs/running.md) has the details and limits.
 - The session list stays correct when a tmux window name contains a line break (tmux 3.4 allows it): the break shows as `\n`, and a listing the host can't read as a whole is an error instead of a list with windows missing.
@@ -16,8 +17,8 @@ version section on release.
   5 minutes, after 1 hour (the new default) or only at launch. A longer wait asks for Face ID
   first, and the background time can no longer be defeated by setting the clock back.
 - In the browser, Send no longer sends a line while an IME is still composing it, as in the app.
-- Home is now a card per server: its name and status, the tabs you have open on it, "All N
-  sessions" (a full-height list with its own search and +) and Files. A server that can't be
+- Home is now a card per server: its name and status, the tabs you have open on it and one
+  "Sessions and files" row that opens a full-height picker. A server that can't be
   reached says when it was last reached and offers Retry; one where tmux isn't running says so.
   Settings moved behind the gear in Home's header, and Add to Home Screen moved onto Home.
   Clear local data now stays cleared: the tabs open at that moment are not saved again, so
@@ -28,9 +29,9 @@ version section on release.
   running an older version than the host shows "Update required" with Reload when that download is gone.
 - On the phone, the terminal's bar is now the current tab's name, the open-tab count and
   Show keyboard; the tab strip and + moved into the sessions sheet. The button opens a
-  half-height sheet over the tab with Home, search, every server's sessions, the open
-  tabs and + (New session, Browse files) at the bottom. Tapping a session or a tab opens
-  it behind the sheet and the sheet stays; Back, Escape or a tap outside closes it. The
+  half-height sheet over the tab with search, every server's sessions and the open
+  tabs at the bottom. Tapping a tab switches to it behind the sheet and the sheet stays;
+  Back, Escape or a tap outside closes it. The
   active session lists its windows under its row, with the shown one marked.
 - On the phone with the keyboard up, the compose box is always visible above the key row, and
   the key row (esc ← ↑ ↓ → ⇧tab tab ^C ^R ctrl alt ⏎ | ~ / -, Hide keyboard fixed at its end)
@@ -43,7 +44,7 @@ version section on release.
   Home the open sessions all read "open". The desktop's "New window" dialog is gone with
   its only entry point: create windows with tmux's `prefix c`.
 - On the desktop, + now opens a popover under the top row, in place of the centred dialog:
-  search (already focused), every server's sessions, and New session and Browse files.
+  search (already focused) and every server's sessions.
   The active session lists its windows under its row, replacing the windows button on the
   tab. Choosing anything closes it; Escape or a click outside leaves the tab as it was.
 - Files opens as tabs, any number of them, each remembering its own folder or preview

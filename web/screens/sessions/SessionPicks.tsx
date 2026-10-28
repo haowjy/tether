@@ -1,7 +1,5 @@
-// What both forms of the sessions overlay hold between their search box and their actions: every
-// listable server's sessions, with the terminal tab on screen's session marked "here" and its
-// windows beneath it. What a pick does afterwards is the form's: `commit` runs the pick once the
-// form is ready for it: at once on the half-height sheet, after the picker or a server's sheet has closed.
+// The picker's Sessions side: every listable server's sessions, with the terminal tab on screen's
+// session marked "here" and its windows beneath it. `commit` runs a pick once the picker has closed.
 import { useEffect, useState } from "preact/hooks";
 import { useApp, useAppView } from "../../app/context";
 import type { AppController } from "../../app/controller";
@@ -13,13 +11,10 @@ import { openSession } from "./openSession";
 
 export type Commit = (pick: () => void) => void;
 
-/** The sheet's commit: a pick runs at once, behind the sheet that stays open. */
-export const now: Commit = (pick) => { pick(); };
-
-/** The picker's and the server sheet's commit: close the overlay, then act, so the tab the pick opens is the one that gets focus and Back returns to what was under the overlay. */
+/** Every pick's commit: close the picker, then act, so the tab the pick opens is the one that gets focus and Back returns to what was under the picker. */
 export const closing = (app: AppController): Commit => (pick) => { app.router.closeOverlay(pick); };
 
-/** The search box's text, cleared whenever the overlay closes so each opening starts fresh. */
+/** The search box's text, cleared whenever the picker closes so each opening starts fresh. */
 export function useQuery(open: boolean): [string, (query: string) => void] {
   const [query, setQuery] = useState("");
   useEffect(() => { if (!open) setQuery(""); }, [open]);
@@ -27,7 +22,7 @@ export function useQuery(open: boolean): [string, (query: string) => void] {
 }
 
 /** `only`: one host's sessions, by handle (a server's sheet); every listable host's otherwise. */
-export function SessionPicks({ query, commit, only }: { query: string; commit: Commit; only?: string }) {
+export function SessionPicks({ query, commit, only }: { query: string; commit: Commit; only?: string | undefined }) {
   const app = useApp();
   const terminals = terminalsOf(app);
   // "here" is the tab on screen: on Home no tab is, and every open session reads "open".
@@ -36,7 +31,7 @@ export function SessionPicks({ query, commit, only }: { query: string; commit: C
   return (
     <HostSessionLists
       query={query}
-      {...(only !== undefined && { only })}
+      only={only}
       {...(tab && { active: { id: tab.id, shownId, onWindow: (window: number) => { commit(() => { terminals.selectWindow(tab.id, window); }); } } })}
       onOpen={(host, listing, session) => { commit(() => { openSession(app, host, listing, session); }); }}
     />

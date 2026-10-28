@@ -1,5 +1,5 @@
 // One server on Home (browser-behaviors.md "Home"): its name and status, the open tabs on it, and
-// what its state offers: All N sessions, Files, or Retry. One card for one server or several. A view
+// what its state offers: Sessions and files, or Retry. One card for one server or several. A view
 // over props, so the harness can draw every state; `Home` derives them from the host and the cache.
 import type { ComponentChildren } from "preact";
 import { BellDot } from "../../ui/primitives/BellDot";
@@ -45,18 +45,17 @@ export interface ServerCardProps {
   bellsUnavailable: boolean;
   /** Looks at the server again: admission when it can't be reached, the sessions otherwise. */
   onRetry: () => void;
-  onSessions: (opener: HTMLElement) => void;
   /** New session, for a server with none. */
   newSession: ComponentChildren;
-  /** A new Files tab at this server's roots; absent while the server can't be browsed. */
-  onFiles: (() => void) | undefined;
+  /** The one row into this server's sessions and folders: its session count, if known, and opening the full-height picker. Absent while the server can't be picked from. */
+  picker: { count: number | null; onOpen: (opener: HTMLElement) => void } | undefined;
 }
 
 function Note({ children }: { children: ComponentChildren }) {
   return <p class={styles.note}>{children}</p>;
 }
 
-function Body({ name, body, onRetry, onSessions, newSession }: Omit<ServerCardProps, "tabs" | "onFiles" | "notice" | "bellsUnavailable">) {
+function Body({ name, body, onRetry, newSession }: Pick<ServerCardProps, "name" | "body" | "onRetry" | "newSession">) {
   const retry = <Button variant="secondary" icon="refresh" onClick={onRetry}>Retry</Button>;
   switch (body.kind) {
     case "offline":
@@ -94,11 +93,11 @@ function Body({ name, body, onRetry, onSessions, newSession }: Omit<ServerCardPr
         </>
       );
     case "ready":
-      return <Row icon="sessions" label={`All ${String(body.count)} sessions`} trailing="chevron" onClick={(e) => { onSessions(e.currentTarget); }} />;
+      return null;
   }
 }
 
-export function ServerCard({ name, tabs, body, notice, bellsUnavailable, onRetry, onSessions, newSession, onFiles }: ServerCardProps) {
+export function ServerCard({ name, tabs, body, notice, bellsUnavailable, onRetry, newSession, picker }: ServerCardProps) {
   return (
     <section class={styles.card} aria-label={name}>
       <div class={styles.head}>
@@ -113,8 +112,16 @@ export function ServerCard({ name, tabs, body, notice, bellsUnavailable, onRetry
           <IconButton icon="close" label={`Close ${t.label}`} onClick={t.onClose} />
         </div>
       ))}
-      <Body name={name} body={body} onRetry={onRetry} onSessions={onSessions} newSession={newSession} />
-      {onFiles && <Row icon="folder" label="Files" trailing="chevron" onClick={onFiles} />}
+      {picker && (
+        <Row
+          icon="sessions"
+          label="Sessions and files"
+          meta={picker.count === null ? undefined : String(picker.count)}
+          trailing="chevron"
+          onClick={(e) => { picker.onOpen(e.currentTarget); }}
+        />
+      )}
+      <Body name={name} body={body} onRetry={onRetry} newSession={newSession} />
     </section>
   );
 }

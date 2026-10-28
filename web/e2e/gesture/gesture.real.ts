@@ -320,8 +320,8 @@ for (const version of VERSIONS) {
       await finger.drag(at.x, at.y, at.x, at.y + 200, 5, 6);
       await finger.up();
       await paneIncludes(s, "^[[A");
-      await page.getByRole("button", { name: /, 1 tab, open sessions$/ }).tap();
-      const sheet = page.getByRole("dialog", { name: "Sessions" });
+      await page.getByRole("button", { name: /, 1 tab, open sessions and files$/ }).tap();
+      const sheet = page.getByRole("dialog", { name: "Open" });
       await sheet.getByRole("button", { name: new RegExp(`^${next} \\d+ window`) }).tap();
       await expect(sheet).toBeHidden();
       const sent = count(s, "^[[A");

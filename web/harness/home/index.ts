@@ -39,7 +39,7 @@ export const fixtures: Fixtures = {
   homeStates: { render: States },
   /** Every state of a Home server card at once. */
   homeCards: { render: Cards },
-  /** Saved terminal tabs and a Files tab on a live server: rows on the card, "All 9 sessions" and Files. */
+  /** Saved terminal tabs and a Files tab on a live server: rows on the card and "Sessions and files". */
   homeTabs: { options: () => ({ workspace: WITH_FILES }), daemon: (d) => { d.listing = SEVERAL; serveTree(d); } },
   /** Two servers, one card each, in the app (Add server shown). */
   homeTwoServers: {
@@ -65,6 +65,6 @@ export const fixtures: Fixtures = {
     overlay: { screen: "settings", name: "settings" },
     daemon: (d) => { d.listing = LISTING; },
   },
-  /** A server's full-height sessions sheet, as "All 9 sessions" opens it. */
-  serverSheet: { overlay: { screen: "sessions", name: "server", params: { host: "h1" } }, daemon: (d) => { d.listing = SEVERAL; } },
+  /** A server's full-height sessions sheet, as "Sessions and files" opens it. */
+  serverSheet: { overlay: { screen: "sessions", name: "server", params: { host: "h1" } }, daemon: (d) => { d.listing = SEVERAL; serveTree(d); } },
 };

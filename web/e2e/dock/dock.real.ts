@@ -244,12 +244,11 @@ for (const version of VERSIONS) {
       // The switcher's button replaces the key row: lower the keyboard to reach it. The draft stays.
       await toggle(page).click();
       // The second session's tab, from the switcher.
-      await page.getByRole("button", { name: /, 1 tab, open sessions$/ }).click();
-      const sheet = page.getByRole("dialog", { name: "Sessions" });
+      await page.getByRole("button", { name: /, 1 tab, open sessions and files$/ }).click();
+      const sheet = page.getByRole("dialog", { name: "Open" });
       await expect(sheet).toBeVisible();
-      // A row switches the tab behind the sheet, which stays until it is closed.
+      // A row opens its tab and closes the sheet.
       await sheet.getByRole("button", { name: /^twin \d+ window/ }).click();
-      await page.keyboard.press("Escape");
       await expect(sheet).toBeHidden();
       await painted(page);
       await expect(draft(page)).toHaveValue("");
@@ -258,7 +257,8 @@ for (const version of VERSIONS) {
       await page.waitForTimeout(500);
       await toggle(page).click();
 
-      await page.getByRole("button", { name: /, 2 tabs, open sessions$/ }).click();
+      await page.getByRole("button", { name: /, 2 tabs, open sessions and files$/ }).click();
+      // A pill in the strip switches the tab behind the sheet, which stays until it is closed.
       await sheet.getByRole("button", { name: /^swap .*, (connected|open)$/ }).click();
       await page.keyboard.press("Escape");
       await expect(sheet).toBeHidden();
@@ -275,9 +275,9 @@ for (const version of VERSIONS) {
       stack.tmux("new-window", "-t", s, "-n", "shell", "env PS1='$ ' sh");
       stack.tmux("new-session", "-d", "-s", "other", "-x", "100", "-y", "30", "env PS1='$ ' sh");
       await open(page, s);
-      const chip = page.getByRole("button", { name: /, \d+ tabs?, open sessions$/ });
+      const chip = page.getByRole("button", { name: /, \d+ tabs?, open sessions and files$/ });
       await chip.click();
-      const sheet = page.getByRole("dialog", { name: "Sessions" });
+      const sheet = page.getByRole("dialog", { name: "Open" });
       await expect(sheet).toBeVisible();
       // The session holding the active tab is marked "here".
       await expect(sheet.getByText("here")).toBeVisible();
@@ -288,24 +288,28 @@ for (const version of VERSIONS) {
       await expect(sheet.getByRole("button", { name: /^1: shell/ })).toContainText("shown");
       await sheet.getByRole("button", { name: /^0: / }).click();
       await expect.poll(() => stack.tmux("display-message", "-p", "-t", s, "#{window_index}").trim()).toBe("0");
+      // A window row closes the sheet like any pick.
+      await expect(sheet).toBeHidden();
+      await chip.click();
 
-      // A row switches the tab behind the sheet, which stays until it is closed.
+      // A row opens its tab and closes the sheet.
       await sheet.getByRole("searchbox").fill("oth");
       await expect(sheet.getByRole("button", { name: /^other \d+ window/ })).toBeVisible();
       await expect(sheet.getByRole("button", { name: /^sw \d+ windows/ })).toHaveCount(0);
       await sheet.getByRole("button", { name: /^other \d+ window/ }).click();
+      await expect(sheet).toBeHidden();
       await painted(page);
+      await chip.click();
       await sheet.getByRole("searchbox").fill("");
       // "here" follows the tab on screen; the other open session reads "open".
       await expect(sheet.getByText("open", { exact: true })).toBeVisible();
 
       // Closing a tab from its pill leaves the sheet open and tmux alone.
       await sheet.getByRole("button", { name: /^Close other / }).first().click();
-      await expect(page.getByRole("dialog", { name: "Sessions" })).toBeVisible();
+      await expect(page.getByRole("dialog", { name: "Open" })).toBeVisible();
       expect(stack.tmux("list-windows", "-t", s, "-F", "#{window_index}").trim().split("\n")).toHaveLength(2);
 
-      await sheet.getByRole("button", { name: "New session or Browse files" }).click();
-      await page.getByRole("button", { name: "New session", exact: true }).click();
+      await sheet.getByRole("button", { name: "New session", exact: true }).click();
       const create = page.getByRole("dialog", { name: "New session" });
       await create.getByLabel("Name").fill("made");
       await create.getByRole("button", { name: "Create" }).click();

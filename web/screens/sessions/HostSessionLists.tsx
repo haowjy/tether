@@ -7,15 +7,13 @@ import { tabId } from "../../platform/tabKey";
 import { bellLook, bellsUnavailable } from "../../sessions/bells";
 import type { SessionListing, TmuxListing } from "../../proto/generated/messages";
 import { useStore } from "../../ui/store";
+import { useListedHosts } from "./HostSection";
 import { SessionList, type ActiveWindows } from "./SessionList";
-
-/** Hosts whose sessions can be listed or are about to be; the others show a banner or the Enrol screen instead. */
-const LISTABLE = new Set(["admitted", "deciding", "unreachable"]);
 
 interface HostSessionListsProps {
   query: string;
   /** Only this host's list (a server's full-height sheet); every listable host's when absent. */
-  only?: string;
+  only?: string | undefined;
   /** The terminal tab on screen: its session says "here" and lists its windows. None on Home and Files. */
   active?: ActiveWindows & { id: string };
   onOpen: (host: HostClient, listing: TmuxListing, session: SessionListing) => void;
@@ -23,14 +21,14 @@ interface HostSessionListsProps {
 
 export function HostSessionLists({ query, only, active, onOpen }: HostSessionListsProps) {
   const app = useApp();
-  const hosts = useAppView((v) => v.hosts);
+  const hosts = useListedHosts(only);
   const tabs = useAppView((v) => v.workspace.tabs);
   const state = useStore(app.sessions, (s) => s);
   const bells = useBells();
   const open = new Set(tabs.map((t) => t.id));
   return (
     <>
-      {hosts.filter((h) => LISTABLE.has(h.admission.kind) && (only === undefined || h.entry.handle === only)).map((h) => {
+      {hosts.map((h) => {
         const handle = h.entry.handle;
         const listing = state.hosts[handle]?.listing;
         return (

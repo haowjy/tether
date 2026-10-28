@@ -11,7 +11,7 @@ import { Button } from "../../ui/primitives/Button";
 import { EmptyState } from "../../ui/primitives/EmptyState";
 import { RovingList } from "../../ui/primitives/RovingList";
 import { Row } from "../../ui/primitives/Row";
-import { Spinner } from "../../ui/primitives/Spinner";
+import { HostSection, Loading } from "./HostSection";
 import styles from "./SessionList.module.css";
 
 /** What a session's row says about it: its tab is the one on screen ("here"), open ("open"), or neither, in words; and the bell dot or the words that no dot can appear. */
@@ -41,15 +41,6 @@ export interface SessionListProps {
   onOpen: (listing: TmuxListing, session: SessionListing) => void;
   /** A fresh listing, or admission again when the host is unreachable. */
   onRetry: () => void;
-}
-
-function Heading({ hostName, status }: { hostName: string; status: ComponentChildren }) {
-  return (
-    <div class={styles.heading}>
-      <h2 class={styles.title}>On {hostName}</h2>
-      <span class={styles.status} role="status">{status}</span>
-    </div>
-  );
 }
 
 export function SessionList(props: SessionListProps) {
@@ -86,12 +77,7 @@ export function SessionList(props: SessionListProps) {
         </EmptyState>
       );
     } else {
-      body = (
-        <div class={styles.loading}>
-          <Spinner label="Loading sessions" />
-          <span>Loading sessions</span>
-        </div>
-      );
+      body = <Loading what="Loading sessions" />;
     }
   } else if (listing === null) {
     body = (
@@ -157,9 +143,6 @@ export function SessionList(props: SessionListProps) {
   }
 
   return (
-    <section class={styles.section} aria-label={`Sessions on ${hostName}`}>
-      <Heading hostName={hostName} status={status} />
-      {body}
-    </section>
+    <HostSection hostName={hostName} label={`Sessions on ${hostName}`} status={status}>{body}</HostSection>
   );
 }

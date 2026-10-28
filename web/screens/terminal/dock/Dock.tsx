@@ -1,5 +1,5 @@
 // The phone dock (client-architecture.md §7.4), the bottom of Terminal on touch in the browser,
-// the PWA and the app. It is one of two things, from who holds the keyboard: resting (the
+// the PWA and the app. It is one of two things, from who holds the keyboard: resting (Home, the
 // current-tab button and Show keyboard) or typing (the key row and Hide keyboard, with the compose
 // box above). It rides on the keyboard but never resizes tmux: the row is the same height in both
 // and in flow in the keyboard-hidden layout, and the lifted dock is translated out of the slot by
@@ -12,6 +12,7 @@ import { useStore } from "../../../ui/store";
 import { terminalTabOf } from "../../../workspace/state";
 import { terminalsOf } from "../terminals";
 import { CurrentTabButton } from "./CurrentTabButton";
+import { HomeButton } from "./HomeButton";
 import { KeyRow } from "./KeyRow";
 import { LineField, type LocalNote } from "./LineField";
 import { lineDraftsOf } from "./lineDrafts";
@@ -122,7 +123,7 @@ export function Dock({ active }: { active: boolean }) {
           </div>
         </div>
         <div class={styles.row} ref={row}>
-          {typing ? <KeyRow /> : phone && <CurrentTabButton />}
+          {typing ? <KeyRow /> : phone && <><HomeButton /><CurrentTabButton /></>}
           <DockButton
             kind="control"
             class={styles.toggle}

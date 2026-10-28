@@ -34,7 +34,7 @@ Use real user paste/copy events and text/plain. A user-driven Copy action may ca
 
 ### The dock: line field, key row and one keyboard toggle
 
-On touch, Terminal ends in a dock shared by the phone browser, PWA and native app. With the keyboard down, the bar holds the current-tab button, which opens the sessions sheet, and Show keyboard. With it up, the bar is hidden and the compose box is always visible above the text-only key row, which includes Hide keyboard. The web draws the controls; layout and sizes are in [browser-behaviors.md](browser-behaviors.md#phone-dock).
+On touch, Terminal ends in a dock shared by the phone browser, PWA and native app. With the keyboard down, the bar holds Home, the current-tab button, which opens the picker sheet, and Show keyboard. With it up, the bar is hidden and the compose box is always visible above the text-only key row, which includes Hide keyboard. The web draws the controls; layout and sizes are in [browser-behaviors.md](browser-behaviors.md#phone-dock).
 
 **Two targets share one keyboard in the app.** The *terminal* target sends each keystroke as typed. In the browser/PWA the *line field* is an editable textarea; in the app a single hidden native `UITextField` edits the line and the web draws a non-editable mirror. Native app traits disable autocorrection, capitalization, spell checking, smart punctuation and inline prediction; WebKit-owned sheet fields keep WebKit's ordinary editor. The app mirror supports tap-to-place-caret, marked composition, the spacebar caret trackpad and Paste / Select all / Clear without handles. Auto-capitalization is off for the browser field too, since most lines are commands; dictation may capitalize on its own. Nothing typed in the line target reaches tmux until Return.
 

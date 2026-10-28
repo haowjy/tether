@@ -53,22 +53,11 @@
 .page[open] { animation: rise var(--duration-2) var(--ease-out); }
 .page .body { box-sizing: border-box; width: min(var(--page-width), 100%); margin: 0 auto; padding: var(--space-3) var(--space-gutter) calc(var(--space-4) + var(--safe-bottom)); }
 
-/* The desktop's + picker and the + menus: placed against their anchor by script, over the page with no scrim. The scrim stays, clear, to catch a press outside. */
+/* The desktop's + picker: placed against their anchor by script, over the page with no scrim. The scrim stays, clear, to catch a press outside. */
 .popover {
   inset: auto;
   margin: 0;
   width: min(var(--popover-width), calc(100% - 2 * var(--space-gutter)));
   box-shadow: var(--shadow-2);
 }
-.popover::backdrop, .menu::backdrop { background: transparent; }
-/* A short list of buttons beside the control that opened it. */
-.menu {
-  inset: auto;
-  margin: 0;
-  width: max-content;
-  min-width: var(--menu-min-width);
-  max-width: calc(100% - 2 * var(--space-gutter));
-  box-shadow: var(--shadow-2);
-}
-.menu .body { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); padding: var(--space-1); }
-.menu .body > button { justify-content: flex-start; }
+.popover::backdrop { background: transparent; }

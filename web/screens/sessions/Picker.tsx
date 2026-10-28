@@ -1,35 +1,12 @@
-// The desktop's sessions picker: the router overlay `{ screen: "sessions", name: "picker" }`,
-// opened by the top row's +, as a popover under that row anchored to + (the focus registry's `plus`). Search (in focus), every
-// session by server with the active tab's windows under its row, and New session / Browse files.
-// Any pick closes it and then acts, so the tab it opens is the one that gets focus back; Escape or
+// The desktop's picker: the router overlay `{ screen: "sessions", name: "picker" }`, opened by the
+// top row's +, as a popover under that row anchored to + (the focus registry's `plus`). Escape or
 // a press outside dismisses it and leaves the active tab as it is.
-import { useApp, useAppView, useOverlay } from "../../app/context";
-import { Dialog } from "../../ui/primitives/Dialog";
-import { ToolBar } from "../../ui/primitives/DialogBars";
-import { SearchField } from "../../ui/primitives/TextField";
-import { NewActions, useActiveHost } from "./NewActions";
-import { closing, SessionPicks, useQuery } from "./SessionPicks";
-import styles from "./Sessions.module.css";
+import { useAppView, useOverlay } from "../../app/context";
+import { PickerForm } from "./PickerForm";
 
 export function Picker() {
-  const app = useApp();
   const { open, close } = useOverlay("sessions", "picker");
   const touch = useAppView((v) => v.viewport.density === "touch");
-  const host = useActiveHost();
   const noTabs = useAppView((v) => v.workspace.tabs.length === 0);
-  const [query, setQuery] = useQuery(open);
-  const commit = closing(app);
-  return (
-    <Dialog
-      open={open}
-      title="Open session"
-      variant={{ kind: "popover", to: "plus" }}
-      returnFocusTo={noTabs || touch ? "plus" : "terminal"}
-      onClose={close}
-      header={<ToolBar><SearchField label="Find a session" placeholder="Find a session" value={query} onInput={setQuery} class={styles.search} data-initial-focus="" /></ToolBar>}
-      footer={open && <div class={styles.actions}><NewActions host={host} commit={commit} /></div>}
-    >
-      {open && <SessionPicks query={query} commit={commit} />}
-    </Dialog>
-  );
+  return <PickerForm open={open} onClose={close} title="Open" variant={{ to: "plus" }} returnFocusTo={noTabs || touch ? "plus" : "terminal"} searchFocus />;
 }

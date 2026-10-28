@@ -22,15 +22,14 @@ for (const version of VERSIONS) {
     test.afterAll(async () => { await stack.stop(); });
 
     const home = (page: Page): Promise<void> => goHome(page, stack.url);
-    const serverSheet = (page: Page) => page.getByRole("dialog", { name: /^Sessions on / });
+    const serverSheet = (page: Page) => page.getByRole("dialog", { name: /^Open on / });
     const sessionRow = (page: Page, name: string) => serverSheet(page).getByRole("button", { name: new RegExp(`^${name} \\d+ windows?`) }).first();
-    const allSessions = (page: Page) => page.getByRole("button", { name: /^All \d+ sessions/ });
+    const allSessions = (page: Page) => page.getByRole("button", { name: /^Sessions and files/ });
 
-    /** The sessions sheet's +, then New session. */
+    /** The server sheet's +, on its Sessions side. */
     const newSession = async (page: Page): Promise<void> => {
       await allSessions(page).click();
-      await page.getByRole("button", { name: "New session or Browse files" }).click();
-      await page.getByRole("button", { name: "New session", exact: true }).click();
+      await serverSheet(page).getByRole("button", { name: "New session", exact: true }).click();
     };
 
     test("lists the real sessions, and opening one makes its tab", async ({ page }) => {
@@ -72,7 +71,7 @@ for (const version of VERSIONS) {
       await expect(page.getByRole("alert")).toBeVisible();
       await expect(page.getByRole("dialog", { name: "New session" })).toBeVisible();
       await page.keyboard.press("Escape");
-      // The sheet closed to open the form, so focus goes back to what opened the sheet.
+      // The picker closed to open the form, so focus goes back to what opened the picker.
       await expect(allSessions(page)).toBeFocused();
     });
 

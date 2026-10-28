@@ -4,8 +4,6 @@ import { useFocus } from "../focus";
 
 interface RovingListProps {
   label: string;
-  /** `menu` for a popup menu whose rows are `menuitem`s. */
-  role?: "group" | "menu";
   class?: string | undefined;
   children: ComponentChildren;
 }
@@ -15,7 +13,7 @@ interface RovingListProps {
  * and End move among the visible `data-roving` items inside. The `tabindex` bookkeeping is
  * done on the DOM after each render, so rows and disclosures stay plain primitives.
  */
-export function RovingList({ label, role = "group", class: className, children }: RovingListProps) {
+export function RovingList({ label, class: className, children }: RovingListProps) {
   const root = useRef<HTMLDivElement>(null);
   const current = useRef<HTMLElement | null>(null);
   const focus = useFocus();
@@ -44,7 +42,7 @@ export function RovingList({ label, role = "group", class: className, children }
   return (
     <div
       ref={root}
-      role={role}
+      role="group"
       aria-label={label}
       class={className}
       onKeyDown={onKeyDown}

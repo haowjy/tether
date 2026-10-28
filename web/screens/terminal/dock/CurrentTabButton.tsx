@@ -19,7 +19,7 @@ export function CurrentTabButton() {
     <DockButton
       kind="control"
       class={styles.chip}
-      aria-label={label ? `${label.full}, ${String(count)} ${count === 1 ? "tab" : "tabs"}, open sessions${ringing ? ", bell rang in a tab" : ""}` : undefined}
+      aria-label={label ? `${label.full}, ${String(count)} ${count === 1 ? "tab" : "tabs"}, open sessions and files${ringing ? ", bell rang in a tab" : ""}` : undefined}
       onClick={(e) => { app.openOverlay({ screen: "sessions", name: "sheet" }, e.currentTarget); }}
     >
       {label ? (

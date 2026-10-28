@@ -34,8 +34,10 @@ export const STATUS: Record<CardBody["kind"], CardStatus> = {
 
 export interface Card {
   body: CardBody;
-  /** A Files tab can be opened here: the host admits this page and a listing has told its id. */
-  files: boolean;
+  /** The server can be picked from: it admits this page and a listing has told its id (folders need no tmux). */
+  pickable: boolean;
+  /** Its session count for the picker row; null while unknown or without tmux. */
+  count: number | null;
 }
 
 function bodyOf(host: HostClient, sessions: HostSessions | undefined): CardBody {
@@ -56,5 +58,6 @@ function bodyOf(host: HostClient, sessions: HostSessions | undefined): CardBody 
 }
 
 export function cardOf(host: HostClient, sessions: HostSessions | undefined): Card {
-  return { body: bodyOf(host, sessions), files: host.admission.kind === "admitted" && host.hostId !== null };
+  const body = bodyOf(host, sessions);
+  return { body, pickable: host.admission.kind === "admitted" && host.hostId !== null, count: body.kind === "ready" ? body.count : body.kind === "empty" ? 0 : null };
 }

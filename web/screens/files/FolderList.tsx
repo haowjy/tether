@@ -30,48 +30,51 @@ export interface RootsListProps {
   roots: Roots;
   hostName: string;
   onOpen: (place: FilesPlace) => void;
-  /** Starts the path field at `~/`. */
-  onAdd: () => void;
-  onRemove: (path: string, from: HTMLElement) => void;
+  /** Starts the path field at `~/`. With `onRemove`, the list edits the roots; without both it only opens them (the picker's). */
+  onAdd?: () => void;
+  onRemove?: (path: string, from: HTMLElement) => void;
+  /** Only the folders whose shown path contains this, ignoring case. */
+  query?: string;
 }
 
-export function RootsList({ roots, hostName, onOpen, onAdd, onRemove }: RootsListProps) {
+export function RootsList({ roots, hostName, onOpen, onAdd, onRemove, query = "" }: RootsListProps) {
   const rows = [
     ...roots.roots.map((r) => ({ key: r.path, entry: r, removable: true, meta: undefined })),
     { key: "uploads", entry: roots.uploadsDir, removable: false, meta: "Uploads" },
-  ];
+  ].map((row) => ({ ...row, label: shorten(row.entry.canonical ?? row.entry.path, roots.home) }));
   const usable = rows.filter((r) => r.entry.ok && r.entry.canonical !== null);
-  const add = (
+  const needle = query.trim().toLowerCase();
+  const shown = rows.filter((r) => r.label.toLowerCase().includes(needle));
+  const add = onAdd && (
     <Button icon="plus" focusTarget="addFolder" onClick={onAdd}>Add folder…</Button>
   );
   return (
     <div class={styles.wrap}>
       {usable.length === 0 ? (
-        <EmptyState icon="folder" title="No folders to show" action={add}>Add a folder inside your home folder to browse it here.</EmptyState>
+        <EmptyState icon="folder" title="No folders to show" {...(add && { action: add })}>Add a folder inside your home folder to browse it here.</EmptyState>
+      ) : shown.length === 0 ? (
+        <EmptyState icon="search" title="No matching folders">Nothing on {hostName} matches "{query.trim()}".</EmptyState>
       ) : (
         <>
           <RovingList label="Folders" class={styles.list}>
-            {rows.map(({ key, entry, removable, meta }) => {
-              const label = shorten(entry.canonical ?? entry.path, roots.home);
-              return (
-                <div key={key} class={styles.line}>
-                  <Row
-                    roving
-                    class={styles.item}
-                    icon="folder"
-                    label={label}
-                    meta={entry.ok ? meta : "Missing"}
-                    {...(entry.ok && { trailing: "chevron" as const })}
-                    disabled={!entry.ok || entry.canonical === null}
-                    onClick={() => { if (entry.canonical) onOpen({ kind: "dir", path: entry.canonical }); }}
-                  />
-                  {removable && <IconButton icon="close" label={`Remove ${label}`} class={styles.remove} onClick={(e) => { onRemove(entry.path, e.currentTarget); }} />}
-                </div>
-              );
-            })}
+            {shown.map(({ key, entry, removable, meta, label }) => (
+              <div key={key} class={styles.line}>
+                <Row
+                  roving
+                  class={styles.item}
+                  icon="folder"
+                  label={label}
+                  meta={entry.ok ? meta : "Missing"}
+                  {...(entry.ok && { trailing: "chevron" as const })}
+                  disabled={!entry.ok || entry.canonical === null}
+                  onClick={() => { if (entry.canonical) onOpen({ kind: "dir", path: entry.canonical }); }}
+                />
+                {removable && onRemove && <IconButton icon="close" label={`Remove ${label}`} class={styles.remove} onClick={(e) => { onRemove(entry.path, e.currentTarget); }} />}
+              </div>
+            ))}
           </RovingList>
-          <div class={styles.footer}>{add}</div>
-          <p class={styles.note}>Uploads go to the folder marked Uploads. Change it in ~/.config/tether/config.toml on {hostName}.</p>
+          {add && <div class={styles.footer}>{add}</div>}
+          {onAdd && <p class={styles.note}>Uploads go to the folder marked Uploads. Change it in ~/.config/tether/config.toml on {hostName}.</p>}
         </>
       )}
     </div>

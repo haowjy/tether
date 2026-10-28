@@ -40,7 +40,7 @@ export function TopRow() {
         onClose={(id) => { app.dispatch({ type: "closed", id }); }}
       />
       <span class={styles.plus}>
-        <IconButton icon="plus" label="Open another session" focusTarget="plus" onClick={(e) => { app.openOverlay({ screen: "sessions", name: "picker" }, e.currentTarget); }} />
+        <IconButton icon="plus" label="Open a session or folder" focusTarget="plus" onClick={(e) => { app.openOverlay({ screen: "sessions", name: "picker" }, e.currentTarget); }} />
       </span>
       {current && <span class={styles.host} data-tone={look?.tone}>{hostName(current.host)}</span>}
     </nav>

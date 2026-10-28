@@ -9,10 +9,9 @@ import styles from "./Dialog.module.css";
  * A dialog placed against a control, over the page with no scrim: a press outside closes it. It
  * hangs under `to` (an element or a registered focus target) with left edges aligned, above it
  * when there is more room there, kept inside the window and re-placed when the window resizes. With
- * no `to` on screen it sits centred. `popover` is wide, for a search and a list; `menu` fits its buttons.
+ * no `to` on screen it sits centred. A `popover` is wide, for a search and a list.
  */
 export interface Anchored {
-  kind: "popover" | "menu";
   to: HTMLElement | FocusTarget | null;
 }
 
@@ -87,7 +86,7 @@ export function Dialog({ open, onClose, title, variant = "dialog", returnFocusTo
     if (dialog?.open) dialog.close();
   }, []);
 
-  const placement = typeof variant === "object" ? variant.kind : variant;
+  const placement = typeof variant === "object" ? "popover" : variant;
   return (
     <dialog
       ref={ref}

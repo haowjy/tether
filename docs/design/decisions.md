@@ -3999,3 +3999,46 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
 - **A previewed file's path line wraps** (the title still truncates), so its full name is readable without a new control; matches the code and Markdown viewers, which wrap on a phone. Rejected: tap-to-expand title (a hidden gesture for text that can simply be shown).
 - **The current-tab button is `width: 100%` and both its labels shrink** (the window far faster), so it is never wider than its host and the count and chevron stay, whether the host is a flex row or not.
 - **A Mermaid block reads "Loading diagram…" until it draws**, its source hidden; a failure restores the source with the reason.
+
+### 2026-10-28: One picker, Sessions | Files, on every surface
+
+- **Decided:** 2026-10-28, Jimmy, on a real iPhone: Home had separate "All N sessions" and "Files" rows,
+  the phone sheets hid Browse files behind a + that sat at the bottom of one sheet and the top of the
+  other, the desktop popover kept it in a footer, and a pick left the half sheet open but closed the
+  others. He wanted "1 shared thing that can open a session or a file".
+- **What:** (1) one picker, a Sessions / Files switch (a tablist, 44 px tabs), a search that filters
+  the side showing ("Find a session" / "Find a folder"), rows grouped by server, and one + beside the
+  search: New session on Sessions, New Files tab on Files. It is the desktop popover, the phone half
+  sheet and the full-height sheet from Home: one component, three containers. (2) The Files side
+  lists each server's roots (Uploads included) with the Files tab's own roots list; a root opens a
+  **new** Files tab at that folder; open Files tabs are not listed. Folder editing stays in the Files
+  tab: the picker's list has no × and no Add folder button, and its + ("New Files tab") opens a new Files tab at the
+  folder list, where Add folder is. The roots are asked for when the side is shown (`fs.roots()`
+  per server), never per keystroke. (3) A pick closes the picker on every surface, then acts. (4) Home's
+  card has one row, "Sessions and files", with the session count as its meta, opening the full-height
+  picker on the side last used (in memory; it also serves the phone sheet and the desktop popover).
+  It shows for any server that answers, including an empty one and one with no tmux running (roots
+  need no tmux). (5) "Browse files" is gone; the phone empty-terminal text names the current-tab button; the
+  desktop popover is titled "Open".
+- **Reverses** "a session-row tap opens or activates that tab behind the sheet and the sheet stays
+  open" (2026-10-27, above) for rows and for Browse files. Why: a pick means "take me there", the
+  half sheet covers half of what you opened, and a new Files tab is for browsing. Peeking at open
+  tabs survives in the bottom strip, whose pills still switch the tab behind the sheet and keep it open.
+- **Home button** (Jimmy, same day): the phone sheet's Home moves to the resting dock row, before
+  the current-tab button, on Terminal and Files alike (the keyboard-up row is unchanged). The
+  current-tab button shrinks to fit; the row keeps its height. The strip's + is gone: + sits beside search.
+- **Rejected:** a footer or menu per container (three places for one verb); listing open Files tabs
+  in the picker (they are tabs: the strip and Home hold them); a second roots list for the picker;
+  keeping × in the picker (a second editing surface for the roots, and a fetch-then-remove flow in an overlay that
+  closes on a pick); fetching roots at app start (every byte costs on a bad link); leaving the half sheet open on a pick for sessions only.
+- **Review fixes** (same day): the Files-side + is named for what it does, "New Files tab" (Add folder
+  lives in the Files tab; on desktop focus lands on the new tab's pill). The remembered side is one value for the page,
+  shared by the three containers (`sessions/pickerMemory.ts`), not one per container. Each server's roots are
+  kept until the picker closes, so switching sides doesn't ask again or flash "Loading folders". A pick leaves
+  no picker entry in history, so Back from the opened tab never reopens it (the earlier "returns to what was
+  under the picker" was wrong: switching tabs replaces the history entry). The switch is a full tablist
+  (`aria-controls`, a labelled panel, Home and End). + is disabled with "Checking access" while the server's id is unknown.
+  The current-tab button is named "…, open sessions and files".
+- **Budget:** initial JS 201 to 202 KB (201.1 measured): the switch, the roots side and the dock's Home button are
+  launch code, and the cuts the change could make (the dead menu variant, `RovingList`'s role prop) did not cover them.
+  Rejected: splitting screens into lazy chunks in this change (its own piece of work, in `web/.context/TODO`).

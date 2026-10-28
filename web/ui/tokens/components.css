@@ -28,7 +28,6 @@
   --page-width: 720px;
   /* Every screen's header row: back or title, and its controls. */
   --header-height: 44px;
-  --menu-min-width: 11rem;
   --sheet-height: 62svh;
   --dialog-bg: var(--color-bg-raised);
   /* The phone sheet follows the theme's raised surface, dark in dark mode and light in light mode. */

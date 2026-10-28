@@ -46,7 +46,7 @@ export function TerminalScreen({ active }: { active: boolean }) {
       <div class={styles.surface} ref={slot}>
         {current === null && (
           <div class={styles.empty}>
-            <EmptyState icon="terminal" title={dock && phone ? "Open a session from Sessions." : "Open a session with + or from Home."} />
+            <EmptyState icon="terminal" title={dock && phone ? "Tap Sessions below to open a session." : "Open a session with + or from Home."} />
           </div>
         )}
         {scrolled && (

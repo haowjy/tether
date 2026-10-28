@@ -1,10 +1,11 @@
 // Files: the screen of the active Files tab (its folder or preview), on every layout. The
-// phone's dock holds its current-tab button, with no keyboard control: Files has no terminal
+// phone's dock holds Home and its current-tab button, with no keyboard control: Files has no terminal
 // input to raise.
 import { useApp, useAppView } from "../../app/context";
 import { Spinner } from "../../ui/primitives/Spinner";
 import { activeTab } from "../../workspace/state";
 import { CurrentTabButton } from "../terminal/dock/CurrentTabButton";
+import { HomeButton } from "../terminal/dock/HomeButton";
 import { FilesPane } from "./FilesPane";
 import { filesSession } from "./session";
 import styles from "./FilesScreen.module.css";
@@ -18,7 +19,7 @@ export function FilesScreen() {
   return (
     <div class={styles.screen}>
       {host ? <FilesPane key={tab.id} session={filesSession(app, host)} tab={tab} /> : <Spinner label="Checking access" />}
-      {dock && <div class={styles.dock}><CurrentTabButton /></div>}
+      {dock && <div class={styles.dock}><HomeButton /><CurrentTabButton /></div>}
     </div>
   );
 }

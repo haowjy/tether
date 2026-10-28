@@ -56,7 +56,7 @@ rebuilding the app.
 | Native (Swift) | Web (`web/`, in the WKWebView) |
 |---|---|
 | Keyboard: the first responder, software and hardware keys | Terminal rendering (xterm.js), touch gestures, selection overlay |
-| Nothing drawn above the keyboard: one native `UITextField` responder with terminal/line targets and system keyboard traits | The dock: current-tab button and keyboard control at rest; line mirror above the key row while the keyboard is up; the sessions sheet; the terminal's edit menu (Copy, Paste) |
+| Nothing drawn above the keyboard: one native `UITextField` responder with terminal/line targets and system keyboard traits | The dock: Home, the current-tab button and keyboard control at rest; line mirror above the key row while the keyboard is up; the picker sheet; the terminal's edit menu (Copy, Paste) |
 | Focus: who holds the keyboard; native owns terminal and line editing, WebKit owns sheet fields | File manager and viewers; the editor (v2) |
 | Keyboard geometry: sizing the web view | Host protocol: WebSocket per host, tabs, reconnect |
 | Auth: Face ID lock, tokens in the Keychain, lock screen | |

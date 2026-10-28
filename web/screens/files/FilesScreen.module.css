@@ -1,6 +1,9 @@
 .screen { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; }
 /* The phone's resting bar: the dock's row without its keyboard controls. */
 .dock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: none;
   padding: var(--space-1) var(--space-2) calc(var(--space-1) + var(--safe-bottom));
   border-top: 1px solid var(--color-border);
