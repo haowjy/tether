@@ -39,7 +39,9 @@
   --weight-medium: 560;
   --weight-bold: 680;
 
-  /* The platform sets the insets it sized tmux from; env() covers the moment before. */
+  /* The platform sets the side and top insets it sized tmux from; env() covers the moment before.
+     The bottom is always env(): the inset at the view's own bottom edge, none above the app's
+     docked keyboard (ui/theme.ts). */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);

@@ -403,7 +403,9 @@ Native sizes the web view, so the web never measures the keyboard.
 - **Every `viewport` carries the full-screen layout's `safeArea`, including while the
   keyboard is up.** The web view that ends above the keyboard has no bottom inset of its own
   (its `env(safe-area-inset-bottom)` is 0), but the web sizes tmux from `stableHeight`
-  and sets its padding from `safeArea` (`--safe-*` in `web/ui/tokens.css`). Native
+  and `safeArea`, and pads with the top and side insets from `safeArea` (`--safe-*` in
+  `web/ui/tokens/semantic.css`). The bottom padding is always the view's own
+  `env(safe-area-inset-bottom)`, so the key row meets the keyboard with no band. Native
   therefore sends the insets of the full-screen layout in every message, so a rotation
   while the keyboard is up gives the rows the collapsed layout has.
 - The web computes the tmux size from `stableHeight` and width only, and sends a

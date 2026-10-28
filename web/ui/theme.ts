@@ -69,7 +69,11 @@ export function applyViewport(viewport: Viewport): void {
   setData("scheme", viewport.scheme);
   setData("density", viewport.density);
   setData("layout", viewport.layout);
-  for (const side of ["top", "right", "bottom", "left"] as const) {
+  // Not the bottom: CSS pads by the inset at the view's own bottom edge, which env() gives. The
+  // app ends its web view at a docked keyboard's top, where that edge has none, while
+  // `safeArea.bottom` stays the full-screen inset tmux is sized from; padding by it left a blank
+  // band above the keyboard. In a browser the two are equal.
+  for (const side of ["top", "right", "left"] as const) {
     const value = `${String(viewport.safeArea[side])}px`;
     if (root.style.getPropertyValue(`--safe-${side}`) !== value) root.style.setProperty(`--safe-${side}`, value);
   }
