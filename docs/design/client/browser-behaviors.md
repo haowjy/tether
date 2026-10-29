@@ -147,7 +147,7 @@ the strip stays), an optional Name, an optional Start directory that is the same
 field as the Files tab's (below), and Create. ‹, the system Back and Escape return to the list
 (a router entry of its own); a second Back or Escape closes the picker. Create does not close the
 picker: the new session's tab opens and becomes active behind it, and the picker returns from the
-form to its list, where the row reads “here”. Over Home too: the row has already landed the sheet on a
+form to its list, where that row is the filled one. Over Home too: the row has already landed the sheet on a
 tab, and Create (or a typed path) switches that route to the new tab, keeping the sheet open on its
 list with the strip showing the tab. Closing the sheet any way leaves you on the new tab. A refused
 directory or name shows the daemon's reason in the form. Home's empty-card New session opens the
@@ -158,7 +158,7 @@ alphabetically by path, then Uploads when it exists; the order is the client's, 
 list the daemon returns, and there is no reordering. A row **activates the Files tab on that
 server whose current place is that folder** (canonical path match), else opens a **new** Files tab
 there, like a session row; a tab browsed elsewhere no longer matches. Rows carry the session rows'
-marks: “here” when the active tab shows the folder, “open” when another tab does. The favorites are
+marks: the filled row is the one on screen, and any other open one reads “open”. The favorites are
 asked for when the side is first shown in an opening, once per server and kept until the picker
 closes, not per keystroke; a server that can't be reached says so. A favorite whose folder no longer
 exists stays in the list, dimmed, reading “Missing”, with a × “Remove from favorites”: its star is
@@ -177,7 +177,7 @@ path with no row tapped is on the active tab's server).
 
 **Every pick leaves the picker open**, in every container: a session row, a window row, a folder row
 (activate-or-open), Create, a typed path and a strip pill each switch or open the tab behind it, and the
-picker stays on its list with that row marked “here”. Nothing a pick does closes it; the user does, with a
+picker stays on its list with that row filled. Nothing a pick does closes it; the user does, with a
 swipe down, a tap outside, or Escape. Closing it leaves the tab the pick put on screen. A pick leaves no
 picker entry in history; over Home the route under the sheet is the tab, and the sheet stays.
 
@@ -212,7 +212,8 @@ half-height over current tab
   sheet, and the sheet stays open. Only the active tab shows ×. Closing a terminal tab
   leaves its session running. Its pills have 8 px above and below, and the safe-area inset under them.
 - A server's **New session** row is disabled with its reason when that server can't be reached.
-- Session rows mark the active tab's session “here” and other open sessions “open”.
+- The active tab's session row is filled; other open sessions read “open”. The fill alone marks the
+  row on screen, so “here” is never a word. A window row is filled while it is the window shown.
   When the active tab's session has more than one window, its row lists them beneath it
   (see Window switcher); other rows show a window count.
   An attention dot on tab buttons and session rows marks a terminal bell since this

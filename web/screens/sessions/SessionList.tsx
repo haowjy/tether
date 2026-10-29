@@ -123,7 +123,7 @@ export function SessionList(props: SessionListProps) {
                       <StateMark state={state} />
                     </>
                   }
-                  selected={state !== null}
+                  selected={state === "here"}
                   onClick={() => { onOpen(listing, session); }}
                 />
                 {bell.hidden && <p class={styles.hidden}>tmux settings hide bells in this session</p>}
@@ -137,7 +137,6 @@ export function SessionList(props: SessionListProps) {
                           roving
                           icon="terminal"
                           label={`${String(w.index)}: ${w.name}`}
-                          meta={shown ? "shown" : undefined}
                           selected={shown}
                           onClick={() => { if (!shown) active.onWindow(w.id); }}
                         />

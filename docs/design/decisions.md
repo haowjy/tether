@@ -4176,3 +4176,10 @@ Decided 2026-10-24 by design within Jimmy's Mac-host decisions. Probe results:
   cycles permission mode, `^R` is reverse search: he named the order, not the members); an × on
   touch beside the swipe (two affordances for one verb); keeping the swipe and the × both live on a
   computer (a mouse drag can swipe, but one verb gets one control).
+
+- **The row on screen is the filled one, not the word** (Jimmy: "why do we need the word 'here' while
+  also having it selected?"). A session, window or favorite row whose tab is on screen is marked by
+  its fill alone; every other open one reads "open" in its meta, and a window row is filled while it
+  is the window shown. The fill no longer means "has a tab": it means "is the thing you are looking
+  at", which is what a fill means on the pills too. Rejected: a checkmark for the row on screen
+  (a third mark beside the fill and the word).

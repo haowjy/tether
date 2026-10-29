@@ -8,9 +8,12 @@ export const listClass = styles.list;
 export const lineClass = styles.line;
 export const missingClass = styles.missing;
 
-/** A row's mark: its tab is the one on screen ("here") or open ("open"). Sits in the meta slot, after the row's own meta. */
+/**
+ * A row's mark: its tab is open somewhere. The row on screen needs no word, because its fill says so;
+ * every other open one is filled-free and says "open", in the meta slot after the row's own meta.
+ */
 export function StateMark({ state }: { state: "here" | "open" | null }) {
-  return state ? <span class={styles.state}>{state}</span> : null;
+  return state === "open" ? <span class={styles.state}>open</span> : null;
 }
 
 /** `what`: "Sessions" or "Folders". */

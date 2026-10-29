@@ -84,7 +84,7 @@ function HostFavorites({ host, titled, query, onPath }: Props & { host: HostClie
                 label={label}
                 meta={entry.ok ? <>{meta}<StateMark state={state} /></> : "Missing"}
                 {...(entry.ok && { trailing: "chevron" as const })}
-                selected={state !== null}
+                selected={state === "here"}
                 disabled={!entry.ok || entry.canonical === null}
                 onClick={() => { if (entry.canonical && hostId) { openFolder(app, hostId, entry.canonical); } }}
               />
